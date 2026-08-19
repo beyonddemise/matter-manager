@@ -219,3 +219,64 @@ to a public repository is serious — and it was still shipped untested. Proving
 a literal token took one command and found it immediately. **The checks written to protect
 against the worst outcomes are the ones most worth making fail on purpose**, and the ones
 most often trusted on sight because writing them felt like the diligent act.
+
+---
+
+## L11 · A negative test must actually change the input
+
+**What happened:** verifying that CouchDB rejects tampered JWTs, the test replaced the final
+character of the signature. CouchDB returned **200 and served the document**. For a moment
+that looked like a signature-verification vulnerability.
+
+**It was the test.** An ES256 signature is 64 bytes encoded in 86 base64url characters.
+86 × 6 = 516 bits for 512 bits of data, so the final character carries 4 significant bits and
+2 that are discarded. Changing `Q` to `X` decoded to **byte-identical** input:
+
+```
+orig bytes: 64  tampered bytes: 64  identical: true
+```
+
+Editing a middle character, or the payload, produced `Bad signature` correctly.
+
+**Rule:** for any negative test, assert that the input actually differs before asserting the
+system rejects it. With encodings that have padding or normalisation — base64/base64url,
+Unicode, JSON key order, trailing whitespace — "I changed a character" and "I changed the
+value" are different claims.
+
+**Why this one is worth remembering:** the bogus result pointed at a *catastrophic* finding
+in someone else's code. That is the most dangerous direction for a test bug to fail, because
+the conclusion is alarming enough to feel urgent and to get reported before it is checked.
+The cost of confirming was one command comparing the decoded bytes.
+
+**Companion to L3.** There, a uniformly negative result came from a broken harness; here, a
+falsely positive one did. Both were resolved by testing the test rather than the subject.
+
+---
+
+## L12 · Change one variable, or you will blame the wrong one
+
+**What happened:** while testing CouchDB JWT authentication, three settings were applied in a
+single step — `authentication_handlers`, `jwt_keys`, and `jwt_auth.required_claims` — and
+nothing authenticated. After a restart it worked. The conclusion drawn was *"`jwt_keys` is
+read only at startup"*, and it was written into three documents and a verification script.
+
+**It was wrong.** `jwt_keys` is applied **live**. The startup-only setting is
+`authentication_handlers`. The restart had fixed the handler, not the key.
+
+**How it surfaced:** the verification script was run a second time and failed its own first
+assertion. Idempotency caught what a single run could not — the second run began with the
+handler already loaded, which isolated the variable by accident.
+
+**Rule:** when several settings are changed together and the outcome changes, no individual
+setting has been tested. Isolate before concluding — set one, observe, revert, set the next.
+The corrected finding matters operationally: keys being live is the difference between
+zero-downtime key rotation and rotation that drops every replication.
+
+**Why this was easy to believe.** A plausible mechanism was already available — a trusted
+reference implementation calls `/_restart` after updating keys — so the wrong conclusion
+arrived pre-justified. Corroboration is not confirmation: that project may restart for its
+own reasons, or for an older version. It explained the observation without ever being tested
+against it.
+
+**Run a verification twice before trusting it.** A script that passes once may be reading
+state its own previous steps created.

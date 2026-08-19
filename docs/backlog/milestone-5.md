@@ -20,7 +20,8 @@ Scenario: a project is created
   Then a project_<uuid> database exists
   And its _security lists me as a member and a writer
   And _design/access is installed
-  And a pointer document appears in my user database
+  And a document appears in the central projects registry listing me as owner
+  And GET /projects returns it to me and to nobody else
 
 Scenario: creation requires connectivity
   Given no connectivity
@@ -96,6 +97,7 @@ Scenario: an invitation is accepted
   When I invite an email address that has no account
   Then they receive an invitation
   And on signing in with Google using that address, they gain the granted role
+  And the project's document in the projects registry gains them as a participant
 
 Scenario: an invitation expires
   Then an expired invitation cannot be redeemed

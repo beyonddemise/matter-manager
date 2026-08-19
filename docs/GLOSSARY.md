@@ -82,3 +82,23 @@ application's responsibility.
 
 **Design document** — A document whose id begins `_design/`, holding views and validation
 functions. Matter Manager installs `_design/access` into every project database.
+
+## Storage terms
+
+**Registry** — the central `projects` database. One document per project with a
+`participants` array. Server-side only; the API reads it to answer `GET /projects`. Never
+replicated to a browser, because CouchDB has no row-level read permission and one readable
+registry would disclose every project's address and participant list to every user.
+
+**Profile store** — CouchDB's built-in `_users` database, used here to hold display name,
+email, locale and theme. **Not an authentication store**: under JWT auth CouchDB never
+consults it, and a browser cannot read even its own document. Profiles come from
+`GET /profile`.
+
+**`mm-local`** — a PouchDB database that exists only in the browser and is never given a
+remote counterpart. Caches `GET /projects` and `GET /profile` so project discovery and locale
+work offline. A cache, never an authorisation input.
+
+**`localState`** — on a cached project: `not-downloaded`, `syncing` or `downloaded`. Distinct
+from having access. The registry says what you *may* open; `localState` says what is
+*actually on this device*.

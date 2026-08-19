@@ -6,6 +6,13 @@ Date: 2026-08-19
 
 Accepted — **verified experimentally on 2026-08-19 against CouchDB 3.5.2**
 
+> **Amended by [ADR 0012](0012-central-project-registry.md).** The core decision below —
+> one database per project, with read/write enforced by `_security` plus
+> `validate_doc_update` — stands unchanged and is what the CI contract check guards.
+> Only the *discovery* mechanism was replaced: the per-user `user_<sub>` database described
+> under "Decision" gave way to a server-side `projects` registry read through the API, plus a
+> local-only browser cache. Read 0012 alongside this.
+
 ## Context
 
 A project is a house or apartment. Users grant others read or write access to specific
@@ -49,6 +56,9 @@ Read access is `members.names`. Write access is a custom `writers.names` key in
 
 Clients never enumerate databases. `_all_dbs` is blocked at the reverse proxy, and a user
 discovers their projects through pointer documents in their own `user_<sub>` database.
+*(Superseded by [ADR 0012](0012-central-project-registry.md): discovery now goes through a
+server-side `projects` registry and `GET /projects`. The prohibition on enumeration is
+unchanged.)*
 
 ## Verification
 

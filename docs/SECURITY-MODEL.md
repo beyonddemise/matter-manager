@@ -17,31 +17,63 @@ control below load-bearing rather than defence-in-depth.
 
 ## Authentication
 
-```
-Browser                    API                      Google           CouchDB
-   │  GET /auth/google      │                          │                │
-   ├───────────────────────►│  authorization code+PKCE │                │
-   │                        ├─────────────────────────►│                │
-   │  ◄── redirect with session ──────────────────────┤                │
-   │                        │                          │                │
-   │  POST /auth/token      │                          │                │
-   ├───────────────────────►│                          │                │
-   │  ◄── RS256 JWT ────────┤                          │                │
-   │                        │                          │                │
-   │  replication, Authorization: Bearer <jwt>          │                │
-   ├────────────────────────────────────────────────────────────────────►│
-   │                                        validated with public key    │
+```mermaid
+sequenceDiagram
+  participant U as Browser
+  participant A as Fastify API
+  participant G as Google (OIDC)
+  participant C as CouchDB
+
+  U->>A: GET /auth/google
+  A->>G: authorization code + PKCE
+  G-->>A: ID token
+  Note over A: verified, then discarded.<br/>Provider tokens are never<br/>used as credentials here.
+  A-->>U: session established
+  U->>A: POST /auth/token
+  A-->>U: ES256 JWT — sub = CouchDB username
+  U->>C: replication, Authorization: Bearer <jwt>
+  Note over C: validates with the EC public key;<br/>the API is never on this path
+  C-->>U: documents
 ```
 
-The JWT's `sub` claim **is** the CouchDB username. CouchDB validates the signature itself
-using the public key, so replication never passes through the API — which would otherwise sit
-in front of every document write for no security benefit.
+The identity provider's own token is **exchanged, not reused**. Every OIDC provider shapes
+its claims differently, so accepting them directly would push provider-specific handling into
+CouchDB's `_security` and into every authorisation check — and adding Facebook later would
+mean revisiting all of it. Exchanging once means we control the claim names and the signing
+key.
 
-The public key is injected at startup via
-`PUT /_node/_local/_config/jwt_keys/rsa:_default`, not baked into the image. Key material
-therefore never enters the container registry, and rotation does not require redeploying
-CouchDB. The consequence to handle: CouchDB rejects every JWT until that call succeeds, so
-the API must make it before serving traffic and must fail loudly if it cannot.
+Tokens are **ES256** (EC P-256), not RS256: much smaller signatures on every replication
+request for equivalent security. Verified working against CouchDB 3.5.2, along with correct
+rejection of expired tokens, tokens signed by another key, and tokens whose payload was
+edited to claim a different `sub`.
+
+The JWT's `sub` claim **is** the CouchDB username. CouchDB validates the signature itself, so
+replication never passes through the API — which would otherwise sit in front of every
+document write for no security benefit.
+
+### Key handling and rotation
+
+The public key is injected via `PUT /_node/<node>/_config/jwt_keys/ec:<kid>` rather than
+baked into the image, so key material never enters the container registry.
+
+**`[jwt_keys]` is applied live**, on the next request. Rotation is therefore zero-downtime:
+
+1. Add the new key under a new `kid`.
+2. Begin issuing tokens with it. Tokens carrying the old `kid` keep validating.
+3. Remove the old key once no live token references it.
+
+No restart, no interrupted replication. Verified against CouchDB 3.5.2 and guarded in CI by
+`infra/couchdb/verify-jwt-model.sh`.
+
+**`[chttpd] authentication_handlers`, by contrast, is read only at startup.** Setting it at
+runtime returns `200` and has no effect until the node restarts — and in the meantime every
+request authenticates as *anonymous* rather than failing loudly, which is a particularly
+unhelpful way to be broken. Production bakes the handler into the image
+(`infra/couchdb/local.ini`) so it is active from boot; treat changing it as a deployment, not
+a configuration tweak.
+
+The API should still confirm its key is in effect before serving traffic and fail loudly if
+it is not, rather than issuing tokens that might be ignored.
 
 Tokens are short-lived. On a 401, the client refreshes and retries. **A local write never
 blocks on token freshness** — offline writes must always succeed.
@@ -107,8 +139,20 @@ Run it against any new CouchDB version before adopting it.
 ## What isolation does and does not give you
 
 **Does:** a member of project A cannot read project B, cannot enumerate databases
-(`_all_dbs` is blocked at Caddy), and cannot discover projects except through pointers the
-API wrote into their own user database.
+(`_all_dbs` is blocked at Caddy), and cannot discover projects except through `GET /projects`,
+which the API answers from a registry the client can never read directly.
+
+**Two of the three server-side databases are unreachable from a browser**, and this is
+load-bearing rather than tidy:
+
+- **`projects`** holds every project's name, address and participant list. CouchDB has no
+  row-level read permission, so making it member-readable would disclose all of it to every
+  authenticated user.
+- **`_users`** holds profiles. Verified: a JWT-authenticated user cannot read even their own
+  document, which is why profiles come from `GET /profile`.
+
+The browser's `mm-local` cache of those responses is never consulted for an authorisation
+decision. It determines what the client will *attempt*; `_security` determines what succeeds.
 
 **Does not:** recall data. Revoking access stops future replication; it cannot retrieve what
 already synced to someone's device. This is inherent to offline-first replication, not a

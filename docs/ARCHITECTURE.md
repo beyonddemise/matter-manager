@@ -5,26 +5,40 @@ How Matter Manager is put together, and why. Decisions are recorded individually
 
 ## The shape of the system
 
-```
-Browser (Cloudflare Pages)              DigitalOcean droplet
-┌──────────────────────────────┐        ┌──────────────────────────┐
-│ Lit + Web Awesome SPA        │        │ Caddy (TLS)              │
-│  ├── @lit/localize (en/de)   │        │   ├── api.* → Fastify    │
-│  ├── PWA service worker      │        │   └── db.*  → CouchDB    │
-│  ├── QR scan / QR render     │  HTTPS │                          │
-│  ├── pdf-lib (client-side)   │◄──────►│ Fastify (TypeScript)     │
-│  └── PouchDB (IndexedDB)     │  REST  │   Google OIDC → JWT      │
-│        │                     │        │   project provisioning   │
-│        └─ replication ───────┼───────►│ CouchDB 3.5              │
-│                              │  JWT   │   user_<sub>             │
-└──────────────────────────────┘        │   project_<uuid> × N     │
-                                        └──────────────────────────┘
+```mermaid
+flowchart LR
+  subgraph B["Browser — Cloudflare Pages"]
+    UI["Lit + Web Awesome SPA<br/>@lit/localize · PWA<br/>QR scan / render · pdf-lib"]
+    LOCAL[("PouchDB / IndexedDB<br/>mm-local (cache)<br/>project_uuid replicas")]
+    UI --- LOCAL
+  end
+
+  subgraph D["DigitalOcean droplet"]
+    CADDY["Caddy — TLS, sole ingress"]
+    API["Fastify (TypeScript)<br/>OIDC · token issuance<br/>project provisioning"]
+    subgraph CDB["CouchDB 3.5"]
+      USERS[("_users<br/>profile store")]
+      REG[("projects<br/>registry, admin-only")]
+      PROJ[("project_uuid × N<br/>the shared unit")]
+    end
+    CADDY --> API
+    CADDY --> CDB
+    API -->|admin| USERS
+    API -->|admin| REG
+    API -->|provision| PROJ
+  end
+
+  UI -->|"REST + Bearer JWT"| CADDY
+  LOCAL <-->|"replication, Bearer JWT"| CADDY
+
+  classDef store fill:#eef,stroke:#557
+  class LOCAL,USERS,REG,PROJ store
 ```
 
 ## The two paths, and why they are separate
 
-Notice that data flows to the server by **two independent routes**, and that this is the
-single most important structural fact about the system.
+Data reaches the server by **two independent routes**, and that is the single most important
+structural fact about the system.
 
 **Device data replicates browser-to-CouchDB directly.** It never touches the API. The
 browser authenticates to CouchDB with a JWT that CouchDB validates itself using a public
@@ -32,10 +46,62 @@ key. Putting the API on that path would place it in front of every document writ
 a failure point for synchronisation, and gain nothing — CouchDB already enforces
 authorisation through `_security` and `validate_doc_update`.
 
-**The API handles only what replication cannot**: proving who someone is, and creating
-databases the browser has no rights to create.
+**The API handles only what replication cannot**: proving who someone is, listing projects,
+serving the profile, and creating databases the browser has no rights to create.
 
 This is why the OpenAPI contract has no device endpoints. Their absence is the design.
+
+## Authentication
+
+The system uses OIDC, but **the identity provider's own JWT is never used as an API or
+CouchDB credential.** It is exchanged, once, for a token this project issues.
+
+Two reasons. Every OIDC provider shapes its claims differently, so accepting them directly
+would push provider-specific handling into CouchDB's `_security` and into every
+authorisation check — and adding Facebook later would mean revisiting all of it. And CouchDB
+must validate these tokens itself, which means we control the signing key and the claim
+names, not Google.
+
+Our tokens are **ES256** (EC P-256) rather than RS256: substantially smaller signatures on
+every replication request, for equivalent security.
+
+```mermaid
+sequenceDiagram
+  participant U as Browser
+  participant A as Fastify API
+  participant G as Google (OIDC)
+  participant C as CouchDB
+
+  U->>A: GET /auth/google
+  A->>G: authorization code + PKCE
+  G-->>A: ID token (provider-shaped)
+  Note over A: verified, then discarded —<br/>never used as a credential
+  A-->>U: session established
+  U->>A: POST /auth/token
+  A-->>U: ES256 JWT (sub = CouchDB username)
+  U->>C: replication, Authorization: Bearer <jwt>
+  Note over C: validates with the EC public key alone;<br/>the API is not involved
+  C-->>U: documents
+```
+
+### Which CouchDB settings are live, and which are not
+
+The asymmetry here is easy to get backwards, and getting it backwards is expensive:
+
+| Setting | Applied |
+|---|---|
+| `[chttpd] authentication_handlers` | **at startup only** |
+| `[jwt_keys]` | **live**, on the next request |
+
+Setting the handler at runtime returns `200` and does nothing until the node restarts — and
+until then every request authenticates as **anonymous** rather than failing, which looks
+exactly like a permissions bug. Production bakes the handler into the image
+(`infra/couchdb/local.ini`), so it is active at boot and this never arises in operation.
+
+Keys being live is what makes **zero-downtime key rotation** possible: add the new key under
+a new `kid`, start issuing tokens with it, and remove the old key later. Both keys validate
+throughout, and no replication is interrupted. Verified against CouchDB 3.5.2 and guarded in
+CI by `infra/couchdb/verify-jwt-model.sh`.
 
 ## Packages
 
@@ -91,8 +157,23 @@ enforced by `validate_doc_update`. This was verified against CouchDB 3.5.2 befor
 was built on it, and the verification runs in CI
 (`infra/couchdb/verify-access-model.sh`).
 
-Clients never enumerate databases. `_all_dbs` is blocked at Caddy; users discover projects
-through pointer documents in their own `user_<sub>` database.
+### Three stores, three different exposures
+
+That same "no row-level read permission" fact governs the other two databases, and it lands
+differently in each:
+
+| Store | Client access | Why |
+|---|---|---|
+| `project_<uuid>` | **replicated**, per-project `_security` | The sharing boundary. One database is the only way to say "this house, not that one". |
+| `projects` | **never** — API only | It holds every project's name, address and participant list. One readable database would disclose all of them to any authenticated user. |
+| `_users` | **never** — API only | Verified: a JWT-authenticated user cannot read even their own document. Profiles are served by `GET /profile`. |
+
+Clients never enumerate databases: `_all_dbs` is blocked at Caddy, and users discover
+projects through `GET /projects`, which reads the registry server-side.
+
+Because that call needs connectivity and the application does not, the browser keeps a
+**local-only cache** of the result in `mm-local` — never replicated, single-writer, and never
+consulted for authorisation. See [ADR 0012](adr/0012-central-project-registry.md).
 
 ## Deployment
 

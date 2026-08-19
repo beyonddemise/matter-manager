@@ -95,6 +95,7 @@ Four packages: `core` (pure domain), `data` (PouchDB), `web` (Lit), `api` (Fasti
 | Entitlement seam, billing deferred | [0009](../../adr/0009-entitlement-seam-billing-deferred.md) |
 | Embedded remarks, deterministic merge | [0010](../../adr/0010-embedded-remarks-conflict-merge.md) |
 | User-owned, org-ready tenancy | [0011](../../adr/0011-user-owned-org-ready-tenancy.md) |
+| Central project registry + local cache | [0012](../../adr/0012-central-project-registry.md) |
 
 ## Milestones
 
@@ -106,7 +107,7 @@ Release 1.0 is **M0–M5**. Later milestones are planned and tracked but do not 
 | M1 | Domain core | Payload encode/decode, manual pairing code, validation, room paths |
 | M2 | Local catalogue | PouchDB repositories, device and room CRUD, remarks, scanner, Lit shell, i18n, PWA |
 | M3 | PDF export | Label sheet and inventory layouts, grouping, selection, manual codes |
-| M4 | Auth + backend | Google OIDC, JWT, user database, OpenAPI drift check, entitlement seam |
+| M4 | Auth + backend | Google OIDC, ES256 JWT, `_users` profile store, OpenAPI drift check, entitlement seam |
 | M5 | Projects + sync | Provisioning, `_security`, roles, invitations, transfer, live sync, conflict resolution |
 | M6 | Enrichment | DCL lookup, photos, CSV/JSON import-export |
 | M7 | Admin + audit | Operator console, audit log |

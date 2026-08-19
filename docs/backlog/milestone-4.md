@@ -49,11 +49,11 @@ out until they try to use it.
 ```gherkin
 Scenario: a new user signs in
   When I sign in with Google
-  Then an account is created and I am returned to the app signed in
-  And a user_<sub> database is created for me
+  Then I am returned to the app signed in with an application-issued JWT
+  And a profile document is created in the _users database
 
 Scenario: a returning user signs in
-  Then my existing account and preferences are used
+  Then my existing account and the preferences stored in _users are used
 
 Scenario: sign-in is abandoned
   When I cancel at Google's consent screen
@@ -87,10 +87,36 @@ Scenario: a token for one user cannot open another's database
   Then access is denied
 ```
 
-**Key handling:** the API injects the public key at startup via
-`PUT /_node/_local/_config/jwt_keys/rsa:_default`, so key material never enters the image.
-CouchDB rejects every JWT until that succeeds, so **the API must fail loudly if it cannot**
-rather than starting and serving broken tokens.
+**Tokens are ES256** (EC P-256), not RS256 — smaller signatures on every replication request
+for equivalent security. Verified working against CouchDB 3.5.2, including correct rejection
+of expired tokens, tokens signed with another key, and tokens whose payload was edited to
+claim a different `sub`.
+
+**Key handling.** The API injects the public key via
+`PUT /_node/<node>/_config/jwt_keys/ec:<kid>`, so key material never enters the image.
+
+```gherkin
+Scenario: the key is confirmed in effect before serving traffic
+  Given the API has written its public key to CouchDB's config
+  When it mints a token and checks CouchDB accepts it
+  And CouchDB does not
+  Then the API refuses to serve traffic and says why
+
+Scenario: rotation does not interrupt anyone
+  Given tokens are being issued under kid A
+  When a new key is added under kid B and issuance switches to B
+  Then tokens carrying kid A continue to validate
+  And no replication is interrupted
+```
+
+**`[jwt_keys]` is applied live** — verified against 3.5.2 — which is what makes that second
+scenario achievable. Name keys by `kid` so old and new coexist.
+
+**The trap is a neighbouring setting.** `[chttpd] authentication_handlers` is read only at
+*startup*: setting it at runtime returns `200`, does nothing, and leaves every request
+authenticating as **anonymous** rather than failing. Production bakes it into the image, so
+this bites during experimentation rather than in operation — but it costs an afternoon if you
+assume the two settings behave alike. They do not.
 
 ---
 
@@ -100,10 +126,21 @@ rather than starting and serving broken tokens.
 
 ```gherkin
 Scenario: a locale preference is saved and applied
-  When I set my language to German in my profile
-  Then the interface switches immediately without a reload
+  When I set my language to German
+  Then the API updates my profile document in _users
+  And the interface switches immediately without a reload
   And the preference persists across sessions and devices
+
+Scenario: my locale is available offline
+  Given my profile was fetched at least once
+  When I reload with no connectivity
+  Then the interface is still German
 ```
+
+**The profile is read through `GET /profile`, not from CouchDB directly.** A
+JWT-authenticated browser cannot read `_users` at all — not even its own document; it gets a
+`403`. Verified against CouchDB 3.5.2. That is why the second scenario exists: the value has
+to be cached in `mm-local` (M2-4b) or the preference is simply unavailable offline.
 
 ---
 

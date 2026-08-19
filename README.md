@@ -57,25 +57,43 @@ full rationale.
 
 ## Architecture at a glance
 
-```
-Browser (Cloudflare Pages)              DigitalOcean droplet
-┌──────────────────────────────┐        ┌──────────────────────────┐
-│ Lit + Web Awesome SPA        │        │ Caddy (TLS)              │
-│  ├── @lit/localize (en/de)   │        │   ├── api.* → Fastify    │
-│  ├── PWA service worker      │        │   └── db.*  → CouchDB    │
-│  ├── QR scan / QR render     │  HTTPS │                          │
-│  ├── pdf-lib (client-side)   │◄──────►│ Fastify (TypeScript)     │
-│  └── PouchDB (IndexedDB)     │  REST  │   Google OIDC → JWT      │
-│        │                     │        │   project provisioning   │
-│        └─ replication ───────┼───────►│ CouchDB 3.x              │
-│                              │  JWT   │   user_<sub>             │
-└──────────────────────────────┘        │   project_<uuid> × N     │
-                                        └──────────────────────────┘
+```mermaid
+flowchart LR
+  subgraph B["Browser — Cloudflare Pages"]
+    UI["Lit + Web Awesome SPA<br/>@lit/localize · PWA<br/>QR scan / render · pdf-lib"]
+    LOCAL[("PouchDB / IndexedDB")]
+    UI --- LOCAL
+  end
+
+  subgraph D["DigitalOcean droplet"]
+    CADDY["Caddy — TLS, sole ingress"]
+    API["Fastify (TypeScript)<br/>OIDC · token issuance<br/>project provisioning"]
+    subgraph CDB["CouchDB 3.5"]
+      USERS[("_users — profiles")]
+      REG[("projects — registry")]
+      PROJ[("project_uuid × N")]
+    end
+    CADDY --> API
+    CADDY --> CDB
+    API -->|admin only| USERS
+    API -->|admin only| REG
+  end
+
+  UI -->|"REST + Bearer JWT"| CADDY
+  LOCAL <-->|"replication, Bearer JWT"| CADDY
+
+  classDef store fill:#eef,stroke:#557
+  class LOCAL,USERS,REG,PROJ store
 ```
 
 **One CouchDB database per project.** CouchDB has no row-level read permission, so
 per-project databases are the only way "share this house but not that one" can actually be
 enforced. See [ADR 0003](docs/adr/0003-database-per-project.md).
+
+**Only `project_<uuid>` is ever replicated to a browser.** The profile store and the project
+registry are reachable through the API alone — a single readable registry would disclose
+every project's address and participant list to every user
+([ADR 0012](docs/adr/0012-central-project-registry.md)).
 
 ### Packages
 

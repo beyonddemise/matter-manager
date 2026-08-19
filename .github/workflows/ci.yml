@@ -104,5 +104,17 @@ jobs:
           COUCHDB_ADMIN_PASSWORD: devonly
         run: ./infra/couchdb/verify-access-model.sh
 
+      # Guards the authentication half: that CouchDB validates our ES256 tokens at all, that
+      # bad tokens are actually refused, and that a newly written key does nothing until the
+      # node restarts - the last one being a silent failure that looks like a permissions bug.
+      - name: Verify JWT model
+        env:
+          COUCHDB_URL: http://localhost:5984
+          COUCHDB_ADMIN_USER: admin
+          COUCHDB_ADMIN_PASSWORD: devonly
+          # GitHub-generated service container id, not user input.
+          COUCHDB_CONTAINER: ${{ job.services.couchdb.id }}
+        run: ./infra/couchdb/verify-jwt-model.sh
+
   # An e2e job is added in M2, once there is a UI to drive. Adding it now would mean a
   # permanently skipped job, which trains people to ignore the CI summary.

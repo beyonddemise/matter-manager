@@ -1,27 +1,85 @@
 # Data model
 
-Two kinds of database: one per user, and one per project.
+Four stores. Three live in CouchDB; one lives only in the browser.
 
-## `user_<sub>` — one per user
+```mermaid
+flowchart TB
+  subgraph SERVER["CouchDB — server side"]
+    U[("_users<br/><i>profile store</i><br/>admin access only")]
+    R[("projects<br/><i>registry</i><br/>admin access only")]
+    P[("project_uuid × N<br/><i>the shared unit</i><br/>per-project _security")]
+  end
+  subgraph CLIENT["Browser — PouchDB"]
+    L[("mm-local<br/><i>cache, never replicated</i>")]
+    PR[("project_uuid replicas")]
+  end
+  API["Fastify API"]
+  API -->|GET /profile| U
+  API -->|GET /projects| R
+  API -->|writes result into| L
+  P <-->|replication| PR
+  classDef srv fill:#eef,stroke:#557
+  classDef cli fill:#efe,stroke:#575
+  class U,R,P srv
+  class L,PR cli
+```
 
-Replicated to that user's browsers. `<sub>` is the internal user id, which is also the
-CouchDB username carried in the JWT's `sub` claim.
+**Only `project_<uuid>` is ever replicated to a browser.** The other two CouchDB databases
+are reachable through the API alone, and the fourth exists only on the client. That split is
+the whole authorisation design — see [ADR 0003](adr/0003-database-per-project.md) and
+[ADR 0012](adr/0012-central-project-registry.md).
 
-### `profile`
+---
+
+## `_users` — a profile store, not an authentication store
+
+CouchDB's built-in `_users` database. Never replicated.
+
+**It is not what authenticates anyone.** Under JWT authentication CouchDB does not consult
+`_users` at all: the token's `sub` claim becomes `userCtx.name` and roles come from
+`_couchdb.roles`. A user with no `_users` document authenticates perfectly well — verified
+against CouchDB 3.5.2. This database is used here because it is a convenient, already-secured
+place to keep profiles, and for no other reason.
+
+Two consequences that follow, and will surprise anyone who assumes otherwise:
+
+- **Nothing keeps it in sync with reality.** An entry here is a profile record, not proof
+  that an account exists or may sign in.
+- **The browser cannot read it — not even its own document.** A JWT-authenticated request for
+  `_users/org.couchdb.user:<sub>` returns `403`. Verified. Profiles are therefore served by
+  `GET /profile`, and cached client-side like everything else the API owns.
+
+User documents follow CouchDB's required shape (`name`, `type: "user"`, `roles`) with the
+profile fields alongside. No password is set — password authentication is never used.
 
 ```jsonc
 {
-  "_id": "profile",
-  "type": "profile",
+  "_id": "org.couchdb.user:auth0|abc123",
+  "name": "auth0|abc123",       // must equal the id suffix; also the JWT `sub`
+  "type": "user",               // required by CouchDB's own validation
+  "roles": [],
   "displayName": "Stephan",
   "email": "someone@example.com",
-  "locale": "auto",          // "auto" | "en" | "de" — "auto" follows the browser
+  "locale": "auto",             // "auto" | "en" | "de" — "auto" follows the browser
   "theme": "auto",
   "createdAt": "2026-08-19T08:00:00.000Z"
 }
 ```
 
-### `project:<uuid>` — membership pointers
+When updating a profile, read-modify-write the whole document. Never drop `roles`, and never
+introduce a `password` field.
+
+---
+
+## `projects` — the registry
+
+One document per project, listing who may access it. **Admin access only; never replicated
+to a client, and never made a member-readable database.**
+
+That constraint is not a precaution, it is the design. CouchDB has no row-level read
+permission, so a `projects` database readable by authenticated users would disclose *every*
+project's name, address and participant list to *every* user. Project names here are street
+addresses, and `participants` is a map of who has access to whose home.
 
 ```jsonc
 {
@@ -29,20 +87,85 @@ CouchDB username carried in the JWT's `sub` claim.
   "type": "projectPointer",
   "projectId": "8f14e45f-ceea-467a-9c0e-1b2c3d4e5f60",
   "dbName": "project_8f14e45f_ceea_467a_9c0e_1b2c3d4e5f60",
-  "role": "owner",           // owner | manage | write | read
   "projectName": "Musterstraße 12",
+  "participants": [
+    // role: owner | manage | write | read
+    { "role": "owner", "userid": "auth0|abc123" },
+    { "role": "read", "userid": "auth0|def456" }
+  ],
   "addedAt": "2026-08-19T08:00:00.000Z"
 }
 ```
 
-**This is how a client discovers what to replicate.** `_all_dbs` is blocked, so there is no
-enumeration path — a user sees exactly the projects the server has told them about.
+### Listing a user's projects needs a view
 
-Pointers are written by the API on grant and revoke, and a `validate_doc_update` in this
-database makes them read-only to the user. Otherwise a user could grant themselves
-membership by writing a pointer, and CouchDB would happily let them try to replicate it.
-(The project database's own `_security` would still refuse, but a client showing projects it
-cannot open is a bug worth preventing at the source.)
+Answering "which projects may this user see?" without an index means scanning every project
+document on the server. A view emitting one row per participant is required:
+
+```js
+// projects/_design/by_participant, view "by_user"
+function (doc) {
+  if (doc.type === 'projectPointer' && doc.participants) {
+    doc.participants.forEach(function (p) {
+      emit(p.userid, { projectId: doc.projectId, dbName: doc.dbName,
+                       projectName: doc.projectName, role: p.role })
+    })
+  }
+}
+```
+
+`GET /projects` is then `_view/by_user?key="<sub>"`. Verified working against CouchDB 3.5.2.
+
+### One document per project means membership writes contend
+
+All participants live in a single document, so two concurrent membership changes to the same
+project conflict. The API is the only writer, so this is handled with `_rev` and a retry on
+`409` — not with the merge strategies used for device documents. Volume is low; it simply
+must not be forgotten.
+
+---
+
+## `mm-local` — the client's cache
+
+A PouchDB database that exists **only in the browser and is never given a remote
+counterpart.** Written solely by the client, from the result of `GET /projects` and
+`GET /profile`.
+
+It exists because removing the per-user database removed the client's ability to discover
+projects offline. Everything else in the application works without connectivity; this keeps
+project discovery in that category.
+
+```jsonc
+{
+  "_id": "project:8f14e45f-ceea-467a-9c0e-1b2c3d4e5f60",
+  "type": "cachedProject",
+  "dbName": "project_8f14e45f_ceea_467a_9c0e_1b2c3d4e5f60",
+  "projectName": "Musterstraße 12",
+  "myRole": "owner",
+  "fetchedAt": "2026-08-19T08:00:00.000Z",   // when the server last confirmed this
+  "localState": "downloaded",                 // not-downloaded | syncing | downloaded
+  "lastSyncedAt": "2026-08-19T09:12:00.000Z"
+}
+```
+
+**`fetchedAt` and `localState` answer different questions, and both are needed.** The server
+list says what you *may* access; `localState` says what you *actually have* on this device.
+They diverge constantly — a project granted on your phone is not downloaded on your laptop —
+and only the second answers "what can I open on a train", which is what the UI needs. It also
+gives an honest indicator: *3 of 5 projects available offline*.
+
+Three properties to preserve:
+
+- **Single writer.** Only this browser writes it, so it has no conflicts and needs no merge
+  logic — uniquely among the stores here.
+- **It is a cache, not a source of truth.** Nothing reads it to make an authorisation
+  decision. It decides only what to *attempt*; CouchDB's `_security` decides what succeeds.
+- **It goes stale in the permissive direction.** A project whose access was revoked stays
+  listed until the next successful fetch. That is not a new exposure — the local replica
+  already holds the data ([SECURITY.md](../SECURITY.md)) — but replication will begin
+  returning `403`, and the UI must show *access removed* rather than appearing broken.
+
+Cleared on sign-out, along with the project replicas.
 
 ## `project_<uuid>` — one per project
 

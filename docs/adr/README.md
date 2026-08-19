@@ -11,7 +11,7 @@ decision to be wrong. That is the part people need eighteen months later.
 |---|---|---|
 | [0001](0001-record-architecture-decisions.md) | Record architecture decisions | Accepted |
 | [0002](0002-offline-first-pouchdb-couchdb.md) | Offline-first with PouchDB and CouchDB | Accepted |
-| [0003](0003-database-per-project.md) | One CouchDB database per project | Accepted (verified) |
+| [0003](0003-database-per-project.md) | One CouchDB database per project | Accepted (verified); discovery amended by 0012 |
 | [0004](0004-typescript-backend-openapi-contract.md) | TypeScript backend behind an OpenAPI contract | Accepted |
 | [0005](0005-plaintext-payload-storage.md) | Store Matter payloads unencrypted | Accepted |
 | [0006](0006-materialised-path-rooms.md) | Rooms as materialised paths | Accepted |
@@ -20,6 +20,7 @@ decision to be wrong. That is the part people need eighteen months later.
 | [0009](0009-entitlement-seam-billing-deferred.md) | Entitlement seam now, billing later | Accepted |
 | [0010](0010-embedded-remarks-conflict-merge.md) | Embedded remarks with deterministic merge | Accepted |
 | [0011](0011-user-owned-org-ready-tenancy.md) | User-owned projects, org-ready schema | Accepted |
+| [0012](0012-central-project-registry.md) | Central project registry + local cache | Accepted (amends 0003) |
 
 ## Writing one
 

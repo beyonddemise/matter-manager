@@ -120,6 +120,56 @@ Scenario: documents are keyed by type prefix
 
 ---
 
+## M2-4b · The `mm-local` cache
+
+`type:story` `area:data` `size:M`
+
+**Story:** as a user on a train, I want to see which projects I have on this device, so the
+app is usable without a connection.
+
+`mm-local` is a PouchDB database that exists **only in the browser and is never given a
+remote counterpart**. It caches `GET /projects` and `GET /profile`, because both are
+server-only and everything else in the app works offline
+([ADR 0012](../adr/0012-central-project-registry.md)).
+
+```gherkin
+Scenario: the project list survives going offline
+  Given I have signed in and the project list was fetched
+  When I go offline and reload the app
+  Then my projects are still listed
+  And each shows whether it is available offline on this device
+
+Scenario: what I may access and what I have are tracked separately
+  Given a project I have access to but have never opened on this device
+  Then it is listed with localState "not-downloaded"
+  And a project whose replica is present shows "downloaded"
+
+Scenario: my locale survives going offline
+  Given my profile locale is German and was fetched once
+  When I go offline and reload
+  Then the interface is still German
+
+Scenario: revoked access is reported, not hidden
+  Given my access to a project was revoked while I was offline
+  When I reconnect and replication returns 403
+  Then the project is shown as "access removed"
+  And the app does not appear broken
+```
+
+**Out of scope:** any authorisation decision. The cache decides what the client *attempts*;
+CouchDB's `_security` decides what succeeds. **A permission check that reads `mm-local` is a
+defect** — treat it as one in review.
+
+**Why `localState` is not redundant with the server list:** the server says what you *may*
+access; `localState` says what you *actually have here*. They diverge constantly — a project
+granted on your phone is not downloaded on your laptop — and only the second answers "what
+can I open right now". It also gives an honest indicator: *3 of 5 available offline*.
+
+**Test plan:** `pouchdb-adapter-memory`; assert the cache is never handed to a replication
+target (a test that fails if anything calls `sync()` on it).
+
+---
+
 ## M2-5 · Scan a QR code
 
 `type:story` `area:web` `area:qr` `size:L`
@@ -257,6 +307,8 @@ Scenario: a remark is added
 Scenario: remarks read newest first
   Then remarks display in reverse chronological order
 ```
+
+Remarks are stored in the device document as JSON array
 
 **Out of scope:** editing or deleting remarks. They are an append-only log; mutability would
 defeat both the audit value and the conflict-free merge.
