@@ -48,7 +48,9 @@ gh label create "type:story" --color 0E8A16 --description "A vertical slice of u
 # ... see .github/labels.yml
 
 # Milestones
-gh api repos/:owner/:repo/milestones -f title="M0 Foundations" -f description="..."
+# gh substitutes {owner} and {repo}. ":owner" is NOT a placeholder - it would be sent
+# literally and create a milestone on a repository that does not exist.
+gh api repos/{owner}/{repo}/milestones -f title="M0 Foundations" -f description="..."
 
 # Issues
 gh issue create --title "..." --body-file ... --label "type:story,area:core,size:M" --milestone "M1 Domain core"

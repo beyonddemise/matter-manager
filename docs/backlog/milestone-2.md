@@ -26,13 +26,26 @@ select, dialog, drawer, card, tab group, menu, tooltip, form validation, dark mo
 Scenario: the Pro build is what actually installed
   When dependencies are installed
   Then @awesome.me/webawesome-pro resolves from npm.webawesome.com
-  And a Pro-only component renders, proving it is not the free build
+  And <wa-data-grid> renders, which exists only in the Pro build
 ```
 
 **Why that second assertion earns its place:** the free and Pro packages carry the *same
 version number*, and the free one is on public npm. A misconfigured registry would install
 something plausible with no error at all. Assert on a Pro-only capability, not on a version
-string.
+string — and name a specific one, or the assertion cannot be written.
+
+**The 17 Pro-only components**, established by diffing `@awesome.me/webawesome@3.11.0`
+against `@awesome.me/webawesome-pro@3.11.0` (70 components vs 87):
+
+```text
+bar-chart  bubble-chart  chart  combobox  data-grid  date-input  date-picker
+doughnut-chart  file-input  line-chart  pie-chart  polar-area-chart  radar-chart
+scatter-chart  sparkline  video  video-playlist
+```
+
+Four are directly useful here: **`data-grid`** for the device list, **`combobox`** for room
+selection with inline creation, **`date-picker`** for the installation date, and
+**`file-input`** for photos in M6. Everything else this milestone needs is in the free build.
 
 ---
 
@@ -52,7 +65,15 @@ against both `@awesome.me/webawesome@3.11.0` and `@awesome.me/webawesome-pro@3.1
 product feature therefore does not depend on Pro at all, which keeps the free-build fallback
 genuinely viable rather than nominally so.
 
-The answer still depends on how much Pro the rest of the UI uses, so decide after M2-1.
+**But the Pro-only list changes the calculation.** Of 87 Pro components, 17 are absent from
+the free build, and four of those are ones this UI would naturally reach for: `data-grid`
+(device list), `combobox` (room selection with inline creation), `date-picker` (installation
+date) and `file-input` (photos, M6).
+
+So a free-build fallback is viable only if the UI deliberately avoids those four. That is a
+real design constraint rather than a packaging detail, and it is worth deciding on purpose
+instead of discovering it when a fork PR fails. Substituting `<wa-input>` with a datalist for
+`combobox` is cheap; replacing `data-grid` is not.
 
 **Do not** reach for `pull_request_target` to solve this. It runs untrusted code with access
 to secrets, which trades an inconvenience for a credential compromise.
@@ -205,9 +226,11 @@ convenience; if the reproduced code does not scan, the product has no reason to 
 `fill`, `background`, `radius` and `errorCorrection`. No QR generation library, and no
 hand-rolled encoder.
 
-Set `errorCorrection` deliberately rather than leaving the default. Higher correction survives
-a scuffed or partly obscured printed label at the cost of a denser code; this is a decision
-about where these codes end up, which is inside fuse boxes and behind panels.
+**Set `errorCorrection="H"`.** Level H recovers from roughly 30% damage against about 7% at
+the default L. These codes end up on adhesive labels inside fuse boxes, behind panels and on
+devices that get handled — scuffing, dust and partial obstruction are the normal case here,
+not the exception. The cost is a denser code, which barely matters: a Matter payload is a
+fixed 19 characters, so even at H it stays small enough to print on a label and scan.
 
 ---
 
