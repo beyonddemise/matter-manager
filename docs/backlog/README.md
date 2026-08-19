@@ -1,7 +1,7 @@
 # Backlog
 
-Reviewable source for the GitHub issues. **Nothing is created in GitHub until this has been
-reviewed** — editing a markdown file is far faster than editing forty issues, and a bad
+Reviewable source for the GitHub issues. ~~**Nothing is created in GitHub until this has been reviewed**~~ **Now created.**
+These files were the reviewable source; GitHub is the source of truth from here on — editing a markdown file is far faster than editing forty issues, and a bad
 decomposition is expensive to undo once it is a board.
 
 | Milestone | File | Issues | Status |
