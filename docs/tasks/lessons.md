@@ -154,3 +154,38 @@ only defence is to force the negative case and watch it behave.
 
 **Corollary:** treat "100%" and "0 problems found" as claims requiring evidence, not as
 reassurance. They are equally consistent with a tool that is not running.
+
+---
+
+## L9 · A local green is conditioned on your machine's accumulated state
+
+**What happened:** `npm run verify` passed locally and was reported as clean. CI then failed
+immediately on `npm ci`: `Missing: @matter-manager/{api,data,web,e2e} from lock file`. Those
+workspaces had been created *after* the last `npm install`, so the lockfile never learned
+about them.
+
+**Why local passed:** `node_modules` was already populated, so nothing forced npm to
+re-resolve the dependency graph. The lockfile was stale and it did not matter — locally.
+`npm ci` installs from the lockfile alone, which is exactly why CI uses it.
+
+**Rule:** before claiming a clean build, run the command CI runs, not the one that happens to
+be convenient. `npm ci`, not `npm install`. If the change touched `package.json`, workspaces
+or dependencies, that is not optional.
+
+**The wider pattern.** Each of these strips away a layer of state your machine is silently
+contributing:
+
+| Local convenience | What CI does | What it exposes |
+|---|---|---|
+| `npm install` | `npm ci` | stale lockfile, phantom dependencies |
+| existing `node_modules` | clean checkout | anything uncommitted or untracked |
+| warm build cache | cold build | missing generated files, stale artefacts |
+| your `.env` | configured secrets | undocumented required configuration |
+| your installed tools | container image | undeclared system dependencies |
+
+"Works on my machine" persists as a phrase because the machine is genuinely doing part of the
+build — invisibly, and for free.
+
+**Relationship to L8:** L8 was about proving a gate *can* fail. This is about proving it is
+being run under the conditions that matter. A gate that passes only because your environment
+is doing half the work is not measuring what you think it is.
