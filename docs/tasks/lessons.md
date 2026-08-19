@@ -232,7 +232,7 @@ that looked like a signature-verification vulnerability.
 86 × 6 = 516 bits for 512 bits of data, so the final character carries 4 significant bits and
 2 that are discarded. Changing `Q` to `X` decoded to **byte-identical** input:
 
-```
+```text
 orig bytes: 64  tampered bytes: 64  identical: true
 ```
 
@@ -280,3 +280,45 @@ against it.
 
 **Run a verification twice before trusting it.** A script that passes once may be reading
 state its own previous steps created.
+
+---
+
+## L13 · Test every path to a property, not one path
+
+**What happened:** `access.js` guaranteed that audit entries are immutable. The verification
+suite asserted it, passed, and shipped. A reviewer pointed out that audit entries could be
+**deleted**. They could:
+
+```text
+=== edit an audit entry (expect forbidden) ===
+{"error":"forbidden","reason":"Audit entries are immutable."}
+=== DELETE an audit entry ===
+{"ok":true,"id":"audit:1","rev":"2-7754f99..."}
+```
+
+**Root cause.** A CouchDB deletion is `{_id, _rev, _deleted: true}` and carries *no other
+fields*. The validation function returned early on `_deleted`, then checked `newDoc.type ===
+'audit'` — which is never true for a deletion, because a deletion has no `type`. The type had
+to come from `oldDoc`.
+
+**Two separate failures, and the second is the instructive one.**
+
+*The guard tested one mutation path.* "Immutable" has at least two: edit and delete. Asserting
+one and calling the property verified is the same error as a negative test that does not
+change the input (L11) — the assertion is true, and it is not the claim.
+
+*The verifier contained a copy of the code under test.* The validation function was hand-copied
+into the verification script as a string, and the copy had the identical bug. So the suite
+compared the implementation against a duplicate of its own mistake and agreed with itself. It
+now reads `access.js` directly, and that coupling was proved by deleting the guard from the
+source and watching the suite fail.
+
+**Rules.**
+
+1. For a property, enumerate the ways it can be violated and assert each. Immutable means no
+   edit *and* no delete. Read-only means no write, no delete, no attachment change.
+2. A verifier must exercise the artefact that ships. If it embeds a copy, it validates the
+   copy. Prove the coupling by breaking the source and watching the check fail.
+
+**A reviewer found this, not the tests.** Worth sitting with: the suite was written carefully,
+with the failure mode explicitly in mind, and still checked only half of it.

@@ -39,7 +39,9 @@ services:
       COUCHDB_USER: admin
       COUCHDB_PASSWORD: devonly
     ports:
-      - '5985:5984'
+      # Loopback only. This instance uses the known credentials admin:devonly, so binding
+      # it to 0.0.0.0 would expose it to everything else on the network.
+      - '127.0.0.1:5985:5984'
     volumes:
       - couchdb-data:/opt/couchdb/data
     healthcheck:

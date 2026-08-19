@@ -45,8 +45,13 @@ function (newDoc, oldDoc, userCtx, secObj) {
     throw { forbidden: 'You have read-only access to this project.' }
   }
 
-  // Deletions are ordinary writes in CouchDB; nothing extra to check here.
+  // A deletion is `{_id, _rev, _deleted: true}` and carries NO other fields - so the
+  // document's type has to come from oldDoc. Checking newDoc.type here would silently
+  // let every audit entry be deleted, which is exactly the hole this used to have.
   if (newDoc._deleted) {
+    if (oldDoc && oldDoc.type === 'audit') {
+      throw { forbidden: 'Audit entries are immutable and cannot be deleted.' }
+    }
     return
   }
 
@@ -54,8 +59,9 @@ function (newDoc, oldDoc, userCtx, secObj) {
     throw { forbidden: 'Every document must carry a `type` field.' }
   }
 
-  // Audit entries are append-only. Allowing edits would defeat the point of
-  // having them, and they are conflict-free precisely because nothing rewrites them.
+  // Append-only in both directions: no edits, and no deletions above. Allowing either
+  // would defeat the point of having an audit log, and they are conflict-free precisely
+  // because nothing ever rewrites them.
   if (newDoc.type === 'audit' && oldDoc) {
     throw { forbidden: 'Audit entries are immutable.' }
   }

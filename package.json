@@ -20,13 +20,14 @@
     "check": "biome check .",
     "check:fix": "biome check --write .",
     "check:deps": "node scripts/check-dependencies.mjs",
+    "check:npmrc": "node scripts/check-npmrc.mjs",
     "typecheck": "tsc --build",
     "typecheck:clean": "tsc --build --clean",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "e2e": "playwright test",
-    "verify": "npm run check:deps && npm run check && npm run typecheck && npm run test"
+    "verify": "npm run check:deps && npm run check:npmrc && npm run check && npm run typecheck && npm run test"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.9",

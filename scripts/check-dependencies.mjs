@@ -6,7 +6,11 @@
  * reasonable, and the audit surface has doubled by the time anyone looks. This turns "we try to
  * keep dependencies down" into something that fails a build.
  *
- * Only `dependencies` are checked. `devDependencies` do not ship and are unrestricted.
+ * `dependencies`, `optionalDependencies` and `peerDependencies` are all checked, because all
+ * three can end up installed in production. `devDependencies` are unrestricted ONLY in
+ * packages that do not ship a bundle — in `packages/web` a bundler will happily inline a
+ * devDependency that application source imports, so "it is a devDependency" is not by itself
+ * evidence that it does not reach users.
  *
  * Itself written with no dependencies, which would otherwise be an embarrassing irony.
  */
@@ -33,36 +37,50 @@ function manifests() {
   return found
 }
 
+/** Fields whose contents can reach a production install. */
+const SHIPPING_FIELDS = ['dependencies', 'optionalDependencies', 'peerDependencies']
+
+/** Packages that produce a browser bundle: a devDependency imported by source ships too. */
+const BUNDLED_PACKAGES = new Set(['packages/web'])
+
 const problems = []
 
 for (const { name, path } of manifests()) {
   const pkg = JSON.parse(readFileSync(path, 'utf8'))
-  for (const dep of Object.keys(pkg.dependencies ?? {})) {
-    if (policy.banned[dep]) {
-      problems.push({ pkg: name, dep, reason: policy.banned[dep], banned: true })
-    } else if (!policy.allowed[dep]) {
-      problems.push({
-        pkg: name,
-        dep,
-        reason:
-          'Not in dependency-policy.json. Check the platform first (fetch, node:crypto, ' +
-          'crypto.randomUUID, structuredClone, Intl). If it is genuinely needed, add it to ' +
-          'the allowlist with a one-line justification.',
-        banned: false,
-      })
+  const fields = BUNDLED_PACKAGES.has(name)
+    ? [...SHIPPING_FIELDS, 'devDependencies']
+    : SHIPPING_FIELDS
+
+  for (const field of fields) {
+    for (const dep of Object.keys(pkg[field] ?? {})) {
+      if (policy.banned[dep]) {
+        problems.push({ pkg: name, field, dep, reason: policy.banned[dep], banned: true })
+      } else if (!policy.allowed[dep] && !(policy.allowedDev ?? {})[dep]) {
+        problems.push({
+          pkg: name,
+          field,
+          dep,
+          reason:
+            'Not in dependency-policy.json. Check the platform first (fetch, node:crypto, ' +
+            'crypto.randomUUID, structuredClone, Intl). If it is genuinely needed, add it to ' +
+            'the allowlist with a one-line justification. Build-only tooling for a bundled ' +
+            'package goes in "allowedDev".',
+          banned: false,
+        })
+      }
     }
   }
 }
 
 if (problems.length === 0) {
   const count = manifests().length
-  console.log(`Dependency policy: ok (${count} manifests, no undeclared runtime dependencies)`)
+  console.log(`Dependency policy: ok (${count} manifests, no undeclared shipping dependencies)`)
   process.exit(0)
 }
 
 console.error('Dependency policy violations:\n')
 for (const p of problems) {
-  console.error(`  ${p.banned ? 'BANNED  ' : 'UNLISTED'} ${p.dep}  in ${p.pkg}`)
+  console.error(`  ${p.banned ? 'BANNED  ' : 'UNLISTED'} ${p.dep}  in ${p.pkg} (${p.field})`)
   console.error(`           ${p.reason}\n`)
 }
 console.error('See docs/adr/0013-minimal-runtime-dependencies.md')

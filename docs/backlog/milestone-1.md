@@ -53,17 +53,31 @@ so a test that checks only `vendorId` would pass against badly broken code.
 **Story:** as a user, I want the exact original QR reproduced, so a scanner accepts it.
 
 ```gherkin
-Scenario: round trip is exact
-  Given any valid payload
+Scenario: round trip is exact for the fixed 88-bit payload
+  Given a valid payload with no TLV extension section
   When it is decoded and re-encoded
   Then the result is character-for-character identical to the original
+
+Scenario: a payload carrying a TLV extension is not silently truncated
+  Given a valid payload longer than the 19-character base section
+  When it is decoded
+  Then either the extension is preserved so the round trip stays exact
+  Or a PayloadError states that extensions are unsupported
+  But the extension is never dropped while reporting success
 
 Scenario: out-of-range fields are rejected
   When encoding with a discriminator above 4095
   Then a PayloadError names the field and its permitted range
 ```
 
-**Out of scope:** rendering a QR image (M2).
+**Out of scope:** rendering a QR image (M2); *interpreting* TLV extension contents.
+
+**Why the second scenario exists.** M1-1 excludes the optional TLV extension section, so
+"round-trips any valid payload" would be false the moment one appears — and the dangerous
+failure is not an error, it is decoding the base section, re-encoding without the extension,
+and reporting success. The user then has a stored code that is subtly not the code on the
+device. Preserving the extension verbatim or refusing it are both acceptable; silently
+shortening it is not.
 
 ---
 
@@ -168,12 +182,24 @@ Scenario: concurrent remarks all survive
   And a conflicting revision with remarks A and C
   When the revisions are merged
   Then the result contains A, B and C exactly once each
-  And they are ordered by createdAt
+  And they are ordered by createdAt, ties broken by remark id
 
 Scenario: scalar fields take the most recent write
   Given two revisions differing in name with different updatedAt
   When merged
   Then the name from the later updatedAt wins
+
+Scenario: equal timestamps still produce one deterministic winner
+  Given two conflicting revisions with identical updatedAt
+  When merged
+  Then the revision with the higher _rev wins
+  And merging the same two revisions in the opposite order gives the same result
+
+Scenario: the merge is a pure function of the conflicting revisions
+  Given the same set of conflicting revisions
+  When merged repeatedly, in any order
+  Then the result is identical every time
+  And nothing outside those documents influences it
 
 Scenario: a device is never orphaned by a deleted room
   Given a device referencing a room deleted in the winning revision
@@ -188,6 +214,14 @@ These are pure `(winner, conflicts[]) => merged` functions.
 **Why the ordering assertion matters:** union alone would satisfy "nothing lost" while
 producing a history in arbitrary order, which reads as corrupted even though no data is
 missing.
+
+**Why the tie-breaker scenarios matter more.** An ordering with undefined ties is not a total
+order, and offline clients produce equal timestamps routinely. If two replicas can pick
+different winners, they **never converge** — each stays internally consistent, they disagree
+permanently, and no amount of further replication repairs it. That is strictly worse than
+picking the "wrong" winner, because there is no longer a single answer to converge on. Order
+scalars by `(updatedAt, _rev)` and remarks by `(createdAt, id)`; both second elements are
+unique. See [ADR 0010](../adr/0010-embedded-remarks-conflict-merge.md).
 
 ---
 

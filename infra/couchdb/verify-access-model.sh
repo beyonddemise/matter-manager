@@ -27,11 +27,13 @@ URL="${COUCHDB_URL:-http://localhost:5985}"
 ADMIN="${COUCHDB_ADMIN_USER:-admin}:${COUCHDB_ADMIN_PASSWORD:-devonly}"
 DB="verify-access-model-$$"
 PW='verify-only-pw'
+WORK_DD="$(mktemp)"
 
 pass=0
 fail=0
 
 cleanup() {
+  rm -f "$WORK_DD"
   curl -s -u "$ADMIN" -X DELETE "$URL/$DB" >/dev/null 2>&1 || true
   for u in "vam-writer" "vam-reader" "vam-outsider"; do
     rev=$(curl -s -u "$ADMIN" "$URL/_users/org.couchdb.user:$u" | grep -o '"_rev":"[^"]*"' | cut -d'"' -f4 || true)
@@ -65,10 +67,23 @@ done
 curl -s -u "$ADMIN" -X PUT "$URL/$DB/_security" -H 'Content-Type: application/json' \
   -d '{"members":{"names":["vam-writer","vam-reader"],"roles":[]},"writers":{"names":["vam-writer"]}}' >/dev/null
 
-# The design doc mirrors infra/couchdb/design-docs/access.js. Keep them in step.
-curl -s -u "$ADMIN" -X PUT "$URL/$DB/_design/access" -H 'Content-Type: application/json' -d '{
-  "validate_doc_update": "function (newDoc, oldDoc, userCtx, secObj) { if (userCtx.roles.indexOf(\"_admin\") !== -1) { return } var writers = (secObj && secObj.writers && secObj.writers.names) || []; if (writers.indexOf(userCtx.name) === -1) { throw { forbidden: \"You have read-only access to this project.\" } } if (newDoc._deleted) { return } if (!newDoc.type) { throw { forbidden: \"Every document must carry a `type` field.\" } } if (newDoc.type === \"audit\" && oldDoc) { throw { forbidden: \"Audit entries are immutable.\" } } }"
-}' >/dev/null
+# Install the REAL validation function, read from design-docs/access.js.
+#
+# It used to be hand-copied into this script as a string. That is how a hole survived:
+# access.js returned early on _deleted before the audit check, so audit entries could be
+# deleted - and this script's copy had the same bug, so it asserted the code was correct
+# against a duplicate of the same mistake. A verifier that tests a copy of the subject
+# tests nothing.
+node -e '
+const fs = require("fs")
+const src = fs.readFileSync(process.argv[1], "utf8")
+const start = src.indexOf("function (")
+if (start === -1) { console.error("no function found in access.js"); process.exit(1) }
+fs.writeFileSync(process.argv[2], JSON.stringify({ validate_doc_update: src.slice(start) }))
+' "$(dirname "$0")/design-docs/access.js" "$WORK_DD"
+
+curl -s -u "$ADMIN" -X PUT "$URL/$DB/_design/access" \
+  -H 'Content-Type: application/json' --data-binary @"$WORK_DD" >/dev/null
 
 assert "_security preserves the non-standard 'writers' key" \
   "$(curl -s -u "$ADMIN" "$URL/$DB/_security")" '"writers"'
@@ -84,7 +99,9 @@ assert "a reader cannot create a document" \
 assert "a reader CAN read a document" \
   "$(curl -s -u "vam-reader:$PW" "$URL/$DB/device:1")" '"name":"Kitchen light"'
 
-rev=$(curl -s -u "vam-reader:$PW" "$URL/$DB/device:1" | grep -o '"_rev":"[^"]*"' | cut -d'"' -f4)
+# `|| true` because a failed read makes grep exit 1, and `set -o pipefail` would then abort
+# the whole script instead of letting the assertion below report a failure.
+rev=$(curl -s -u "vam-reader:$PW" "$URL/$DB/device:1" | grep -o '"_rev":"[^"]*"' | cut -d'"' -f4 || true)
 assert "a reader cannot delete a document (deletes are writes)" \
   "$(curl -s -u "vam-reader:$PW" -X DELETE "$URL/$DB/device:1?rev=$rev")" 'read-only access'
 
@@ -93,9 +110,16 @@ assert "a document without a type is rejected" \
   'must carry a'
 
 curl -s -u "vam-writer:$PW" -X PUT "$URL/$DB/audit:1" -H 'Content-Type: application/json' -d '{"type":"audit","action":"created"}' >/dev/null
-arev=$(curl -s -u "vam-writer:$PW" "$URL/$DB/audit:1" | grep -o '"_rev":"[^"]*"' | cut -d'"' -f4)
-assert "audit entries are immutable once written" \
+arev=$(curl -s -u "vam-writer:$PW" "$URL/$DB/audit:1" | grep -o '"_rev":"[^"]*"' | cut -d'"' -f4 || true)
+assert "an audit entry cannot be EDITED" \
   "$(curl -s -u "vam-writer:$PW" -X PUT "$URL/$DB/audit:1" -H 'Content-Type: application/json' -d "{\"type\":\"audit\",\"action\":\"tampered\",\"_rev\":\"$arev\"}")" \
+  'immutable'
+
+# Deleting is the other way to mutate a log, and it was the one this suite missed. A CouchDB
+# delete body is {_id, _rev, _deleted} with no `type`, so a validation function that reads
+# newDoc.type lets every audit entry be removed while still passing the edit assertion above.
+assert "an audit entry cannot be DELETED" \
+  "$(curl -s -u "vam-writer:$PW" -X DELETE "$URL/$DB/audit:1?rev=$arev")" \
   'immutable'
 
 assert "a non-member cannot read at all" \

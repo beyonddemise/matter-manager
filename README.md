@@ -141,7 +141,7 @@ npm run verify        # lint + typecheck + tests
 
 | Command | Does |
 |---|---|
-| `npm run verify` | Everything CI runs: Biome, typecheck, tests |
+| `npm run verify` | Dependency policy, `.npmrc` guard, Biome, typecheck, tests. CI additionally runs coverage gates and the CouchDB contract checks, which need a live CouchDB. |
 | `npm test` | Unit and integration tests |
 | `npm run test:watch` | Test watcher for red-green-refactor |
 | `npm run check:fix` | Auto-fix formatting and lint |

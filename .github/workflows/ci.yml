@@ -7,7 +7,9 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ci-${{ github.ref }}
+  # Scoped to this workflow so others sharing the expression do not cancel it, and keyed
+  # on head_ref for pull requests so a PR does not cancel an in-progress run on main.
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -23,16 +25,11 @@ jobs:
       # This repository is public, so a literal token committed in .npmrc would be a live
       # credential leak the moment it is pushed. The file must only ever reference the
       # environment variable.
-      # Deliberately avoids \s, which GNU grep supports and BSD grep does not - an earlier
-      # version of this check used it and silently passed on macOS because the first grep
-      # matched nothing at all. Verified by appending a literal token and watching it fail.
+      # Fails closed: the value must BE ${VARIABLE}, not merely mention one. The previous
+      # inline grep accepted any line containing `${` anywhere, so a literal token followed
+      # by a comment mentioning the variable passed cleanly.
       - name: Reject a literal token in .npmrc
-        run: |
-          if grep '_authToken' .npmrc | grep -v '[$]{' | grep -q .; then
-            echo "::error file=.npmrc::.npmrc contains a literal auth token. Use \${WEBAWESOME_NPM_TOKEN} instead."
-            exit 1
-          fi
-          echo ".npmrc references the environment only"
+        run: node scripts/check-npmrc.mjs
 
       - uses: actions/setup-node@v4
         with:

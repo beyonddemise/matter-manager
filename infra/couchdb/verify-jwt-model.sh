@@ -57,7 +57,16 @@ assert() {
   fi
 }
 
-wait_up() { until curl -s -m 2 "$URL/_up" >/dev/null 2>&1; do sleep 1; done; }
+wait_up() {
+  # Bounded on purpose: an unbounded loop turns a failed `docker restart` into a job that
+  # hangs until the runner timeout, with nothing in the log explaining why.
+  for _ in $(seq 1 60); do
+    curl -s -m 2 "$URL/_up" >/dev/null 2>&1 && return 0
+    sleep 1
+  done
+  printf '  FAIL CouchDB did not become available within 60s\n'
+  exit 1
+}
 
 # CouchDB config values cannot contain real newlines: PEM line breaks go in as the two
 # characters backslash + n, which is \\n once JSON-encoded.

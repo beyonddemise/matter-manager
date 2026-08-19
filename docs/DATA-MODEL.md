@@ -62,9 +62,15 @@ profile fields alongside. No password is set — password authentication is neve
   "email": "someone@example.com",
   "locale": "auto",             // "auto" | "en" | "de" — "auto" follows the browser
   "theme": "auto",
+  "plan": "free",               // the entitlement seam reads this; see ADR 0009
   "createdAt": "2026-08-19T08:00:00.000Z"
 }
 ```
+
+`plan` exists from the first migration even though nothing consults it yet. That is the point
+of [ADR 0009](adr/0009-entitlement-seam-billing-deferred.md): `can(principal, action, project)`
+has somewhere to look when there is finally an answer, so choosing a billing model later
+changes one file rather than requiring a schema migration across every existing account.
 
 When updating a profile, read-modify-write the whole document. Never drop `roles`, and never
 introduce a `password` field.

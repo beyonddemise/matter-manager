@@ -31,9 +31,11 @@ Examples of unacceptable behaviour:
 ## Enforcement
 
 Instances of abusive, harassing, or otherwise unacceptable behaviour may be reported to the
-project maintainers through
-[GitHub Security Advisories](https://github.com/beyonddemise/matter-manager/security/advisories/new)
-or by opening a private discussion. All complaints will be reviewed and investigated
+project maintainers by email at **notessensei@mac.com**.
+
+Do not use GitHub Security Advisories for conduct reports — that channel is for software
+vulnerabilities, is scoped to a repository, and routes to people triaging security rather
+than to a person who can act on a conduct complaint. All complaints will be reviewed and investigated
 promptly and fairly. Maintainers are obligated to respect the privacy and security of the
 reporter of any incident.
 

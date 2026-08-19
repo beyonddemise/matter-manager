@@ -35,7 +35,10 @@ Store payloads unencrypted. The security boundary is per-project database isolat
 ## Consequences
 
 This is a real trade-off with real exposure, so the compensating controls are requirements,
-not recommendations. They are tracked as M9 issues and enumerated in SECURITY.md:
+not recommendations. They are enumerated in SECURITY.md and belong to M9 (Production),
+which is named in the design document but has no backlog file yet — M6–M9 are written when
+M0–M5 is close to done. **No instance holding data belonging to anyone but the operator may
+be deployed before those issues exist and are closed.**
 
 - TLS only; no plaintext CouchDB port reachable from the internet
 - `_all_dbs` and Fauxton blocked at the reverse proxy

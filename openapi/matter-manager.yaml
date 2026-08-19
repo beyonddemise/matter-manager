@@ -84,7 +84,7 @@ paths:
       tags: [auth]
       summary: Issue a CouchDB-validatable access token
       description: |
-        Returns a short-lived RS256 JWT whose `sub` is the CouchDB username. PouchDB sends
+        Returns a short-lived ES256 (EC P-256) JWT whose `sub` is the CouchDB username. PouchDB sends
         it as a bearer token on replication requests; CouchDB validates it with the public
         key without consulting this API.
 
@@ -223,7 +223,12 @@ paths:
               properties:
                 toEmail: { type: string, format: email }
                 retainAccess:
-                  { $ref: '#/components/schemas/Role', description: Omit to leave entirely }
+                  type: string
+                  # Deliberately NOT a $ref to Role. Referencing the full enum would let a
+                  # departing owner keep `owner` or `manage`, so a "transfer" could leave
+                  # them able to remove the new owner. Read is the only defensible retention.
+                  enum: [read]
+                  description: Retain read-only access after transfer. Omit to leave entirely.
       responses:
         '204': { description: Transferred }
         '403': { $ref: '#/components/responses/Forbidden' }

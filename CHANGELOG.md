@@ -13,7 +13,7 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Playwright
 - Devcontainer with a CouchDB 3.x service matching the production image
 - CI workflow enforcing lint, typecheck, tests and coverage gates
-- Architecture documentation, data model, security model and ten ADRs recording the
+- Architecture documentation, data model, security model and thirteen ADRs recording the
   decisions behind them
 - Reviewable backlog for milestones M0–M5
 - `packages/core`: Base38 decoder for Matter onboarding payloads, developed test-first

@@ -40,5 +40,8 @@
     "underscore": "See lodash.",
     "ramda": "See lodash.",
     "workbox-window": "The service worker is hand-written; see ADR 0013."
+  },
+  "allowedDev": {
+    "$comment": "Build-only tooling permitted as a devDependency in a package that ships a bundle. Anything here must be provably absent from the built output."
   }
 }
