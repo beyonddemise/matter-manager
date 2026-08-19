@@ -95,6 +95,18 @@ render() {
 }
 ```
 
+## Credentials
+
+**Never put a token in `.npmrc`.** It references `${WEBAWESOME_NPM_TOKEN}` and must continue
+to. This repository is public, so a literal token there is a live credential the moment it is
+pushed — CI fails the build if it finds one, but the leak has already happened by then.
+Export the variable in your shell instead.
+
+If you are an outside contributor without a Web Awesome Pro licence, `npm ci` will fail and
+CI on your pull request will too, because GitHub does not give fork workflows access to
+secrets. Please open an issue describing the change rather than a PR you cannot build, and
+we will work out how to land it.
+
 ## Handling Matter payloads
 
 Setup passcodes are secrets. Within the codebase:

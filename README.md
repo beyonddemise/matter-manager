@@ -94,8 +94,24 @@ a database to test, that is a signal it belongs elsewhere.
 
 ## Getting started
 
+### Prerequisite: a Web Awesome Pro token
+
+The UI uses [Web Awesome Pro](https://webawesome.com), which is published only to Web
+Awesome's own registry. Export your token before installing — `.npmrc` reads it from the
+environment, and `npm ci` fails without it:
+
+```bash
+export WEBAWESOME_NPM_TOKEN=...   # from your Web Awesome account
+```
+
+Put it in your shell profile rather than in `.env`, so plain `npm ci`, the devcontainer and
+your editor all see it. **Never write it into `.npmrc`** — this repository is public, and CI
+fails the build if it finds a literal token there.
+
+### Then
+
 **With the devcontainer (recommended)** — VS Code will offer "Reopen in Container". CouchDB
-comes up alongside, already configured.
+comes up alongside, already configured, and your token is forwarded from the host shell.
 
 **Without:**
 

@@ -7,17 +7,45 @@ At the end of M2 this is already worth using for your own house.
 
 ---
 
-## M2-1 · Confirm Web Awesome licensing and coverage
+## M2-1 · Confirm Web Awesome component coverage
 
 `type:spike` `area:web` `size:S` **← do this first**
 
-Before any UI is built on it, confirm the licence permits this use, and that the components
-actually needed exist and behave: button, input, select, dialog, drawer, card, tab group,
-menu, tooltip, form validation, dark mode.
+**Licensing is resolved** — the project owner holds a Web Awesome Pro licence, and registry
+access is configured (`.npmrc` + `WEBAWESOME_NPM_TOKEN`, mirrored as a repository secret).
+See [ADR 0008](../adr/0008-lit-and-web-awesome.md).
 
-**Done when:** findings recorded in an ADR amendment, and either Web Awesome is confirmed or
-an alternative is chosen. Exposure is contained — its components are Lit-based — but
-discovering a gap halfway through M2 is much more expensive than discovering it now.
+What remains is whether the components actually needed exist and behave: button, input,
+select, dialog, drawer, card, tab group, menu, tooltip, form validation, dark mode.
+
+```gherkin
+Scenario: the Pro build is what actually installed
+  When dependencies are installed
+  Then @awesome.me/webawesome-pro resolves from npm.webawesome.com
+  And a Pro-only component renders, proving it is not the free build
+```
+
+**Why that second assertion earns its place:** the free and Pro packages carry the *same
+version number*, and the free one is on public npm. A misconfigured registry would install
+something plausible with no error at all. Assert on a Pro-only capability, not on a version
+string.
+
+---
+
+## M2-1b · Decide the fork pull request story
+
+`type:chore` `area:infra` `size:S`
+
+The repository is public and now has a private dependency. GitHub does not expose secrets to
+workflows triggered by pull requests from forks, so an outside contributor's PR will fail at
+`npm ci`.
+
+**Decide between:** accepting it and documenting that fork PRs are reviewed locally; or
+keeping Pro usage isolated enough that a free-build fallback compiles. The right answer
+depends on how much Pro the UI actually uses, so decide after M2-1.
+
+**Do not** reach for `pull_request_target` to solve this. It runs untrusted code with access
+to secrets, which trades an inconvenience for a credential compromise.
 
 ---
 

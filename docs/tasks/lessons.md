@@ -189,3 +189,33 @@ build — invisibly, and for free.
 **Relationship to L8:** L8 was about proving a gate *can* fail. This is about proving it is
 being run under the conditions that matter. A gate that passes only because your environment
 is doing half the work is not measuring what you think it is.
+
+---
+
+## L10 · Do not use `\s` in a shell `grep` that must run on both macOS and Linux
+
+**What happened:** a CI guard meant to stop a literal npm token being committed to a public
+repository was written as `grep -nE '_authToken\s*=' .npmrc | grep -qv '\${'`. Tested against
+a deliberately planted literal token, it **passed** — reporting the file clean.
+
+**Root cause:** `\s` is a GNU extension. BSD `grep` on macOS does not support it, so the first
+grep matched nothing, the pipeline was empty, and the check reported success. It would have
+worked on Linux CI and never on a developer's Mac — a guard that appears to work everywhere
+while protecting only half the places it runs.
+
+**Portable form:**
+
+```sh
+grep '_authToken' .npmrc | grep -v '[$]{' | grep -q .
+```
+
+`[[:space:]]` is the portable character class if whitespace matching is genuinely needed.
+
+**Rule:** shell in CI runs on Linux; shell in a developer's terminal often does not. Stick to
+POSIX constructs in anything committed, and test on the platform you actually use.
+
+**Why this is L8 again, and worth noticing.** The guard was written *because* leaking a token
+to a public repository is serious — and it was still shipped untested. Proving it by planting
+a literal token took one command and found it immediately. **The checks written to protect
+against the worst outcomes are the ones most worth making fail on purpose**, and the ones
+most often trusted on sight because writing them felt like the diligent act.

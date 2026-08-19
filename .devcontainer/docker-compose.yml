@@ -20,6 +20,9 @@ services:
       COUCHDB_URL: http://couchdb:5984
       COUCHDB_ADMIN_USER: admin
       COUCHDB_ADMIN_PASSWORD: devonly
+      # Forwarded from the host shell. .npmrc reads it to reach Web Awesome's registry.
+      # Absent here is not a build-time error - it fails at npm install, loudly.
+      WEBAWESOME_NPM_TOKEN: ${WEBAWESOME_NPM_TOKEN:-}
     depends_on:
       couchdb:
         condition: service_healthy

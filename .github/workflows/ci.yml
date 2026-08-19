@@ -20,12 +20,31 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # This repository is public, so a literal token committed in .npmrc would be a live
+      # credential leak the moment it is pushed. The file must only ever reference the
+      # environment variable.
+      # Deliberately avoids \s, which GNU grep supports and BSD grep does not - an earlier
+      # version of this check used it and silently passed on macOS because the first grep
+      # matched nothing at all. Verified by appending a literal token and watching it fail.
+      - name: Reject a literal token in .npmrc
+        run: |
+          if grep '_authToken' .npmrc | grep -v '[$]{' | grep -q .; then
+            echo "::error file=.npmrc::.npmrc contains a literal auth token. Use \${WEBAWESOME_NPM_TOKEN} instead."
+            exit 1
+          fi
+          echo ".npmrc references the environment only"
+
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
           cache: npm
 
+      # .npmrc routes the @awesome.me scope to Web Awesome's own registry and reads this
+      # token from the environment. Without it, npm ci fails on the Pro package rather
+      # than quietly installing a free substitute.
       - run: npm ci
+        env:
+          WEBAWESOME_NPM_TOKEN: ${{ secrets.WEBAWESOME_NPM_TOKEN }}
 
       - name: Biome
         run: npm run check

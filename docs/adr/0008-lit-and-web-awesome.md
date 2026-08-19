@@ -31,13 +31,39 @@ Cloudflare Pages.
 - A smaller ecosystem than React. Expect to write things that would be an npm install
   elsewhere.
 
-## Risk: Web Awesome
+## Web Awesome Pro
 
-Web Awesome is comparatively young, and its licensing and component coverage must be
-confirmed as the **first task of M2**, before the UI is built on it — not discovered
-halfway through.
+**Licensing resolved (2026-08-19): the project owner holds a Web Awesome Pro licence.**
 
-The exposure is contained: Web Awesome components are themselves Lit-based, so replacing
+Distribution is not what it first appears, and the difference matters:
+
+| Package | Registry | Notes |
+|---|---|---|
+| `@awesome.me/webawesome` | public npm **and** `npm.webawesome.com` | Free build. Identical `sha512-WM8kyP+A…` integrity on both — the private registry merely mirrors it. |
+| `@awesome.me/webawesome-pro` | `npm.webawesome.com` only | Pro build. Returns `E404` on public npm. |
+
+So the private registry is genuinely required, and it is required for the `-pro` package
+specifically. Authentication is a **Bearer** token against `https://npm.webawesome.com/` —
+not Font Awesome's `npm.fontawesome.com`, which rejects the same token.
+
+`.npmrc` routes the `@awesome.me` scope there and reads `WEBAWESOME_NPM_TOKEN` from the
+environment. The token is never written to the file: this repository is public, and a
+literal token in `.npmrc` would be a live credential the moment it was pushed. CI enforces
+this with a grep that fails the build.
+
+### Two consequences to plan around
+
+**Fork pull requests cannot install.** GitHub does not expose secrets to workflows triggered
+by pull requests from forks, so an outside contributor's PR will fail at `npm ci`. This is
+inherent to a public repository with a private dependency. Options, to decide in M2:
+accept it and review fork PRs locally; or keep the UI's Pro usage isolated enough that a
+free-build fallback is viable. Not decided here because it depends on how much Pro is
+actually used.
+
+**Component coverage is still unverified.** The licence question is answered; whether the
+components needed (form validation, dialog, drawer, tab group, dark mode) behave as required
+is not. That remains the first task of M2.
+
+The exposure stays contained: Web Awesome components are themselves Lit-based, so replacing
 the library would mean rewriting markup and styling, not rearchitecting the application.
-That containment is part of why Lit is the right base layer regardless of how the component
-library question resolves.
+That containment is part of why Lit is the right base layer regardless.
