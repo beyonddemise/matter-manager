@@ -237,9 +237,10 @@ Scenario: everything is permitted today
   When can(principal, any action, project) is called
   Then it returns true
 
-Scenario: the action list is exhaustive and typed
-  Then actions are a union type, so a new gated action cannot be added
-       without the compiler requiring a decision about it
+Scenario: a new action cannot be added without an entitlement decision
+  Given the policy is declared as `satisfies Record<Action, Policy>`
+  When a new member is added to the Action union
+  Then compilation fails until that action has an explicit policy
 ```
 
 **Out of scope:** any actual limit, plan or payment provider (M8).

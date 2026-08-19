@@ -203,13 +203,26 @@ grep matched nothing, the pipeline was empty, and the check reported success. It
 worked on Linux CI and never on a developer's Mac — a guard that appears to work everywhere
 while protecting only half the places it runs.
 
-**Portable form:**
+**Portable form** — as far as portability goes:
 
 ```sh
 grep '_authToken' .npmrc | grep -v '[$]{' | grep -q .
 ```
 
 `[[:space:]]` is the portable character class if whitespace matching is genuinely needed.
+
+**But do not copy that line — it was later shown to be bypassable**, and the fix now lives in
+`scripts/check-npmrc.mjs`. It accepts any line *containing* `${` anywhere, so a literal
+token followed by a comment mentioning the variable passes cleanly:
+
+```text
+//npm.webawesome.com/:_authToken=REALSECRET # normally ${WEBAWESOME_NPM_TOKEN}
+```
+
+That is a second, separate lesson layered on the first: making the check *portable* did
+nothing about making it *correct*, and fixing the platform bug felt like fixing the check.
+A guard must match the whole value and reject everything it does not positively recognise —
+fail closed, not "looks like it mentions a variable".
 
 **Rule:** shell in CI runs on Linux; shell in a developer's terminal often does not. Stick to
 POSIX constructs in anything committed, and test on the platform you actually use.
