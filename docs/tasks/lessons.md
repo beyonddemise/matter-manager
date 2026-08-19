@@ -335,3 +335,38 @@ source and watching the suite fail.
 
 **A reviewer found this, not the tests.** Worth sitting with: the suite was written carefully,
 with the failure mode explicitly in mind, and still checked only half of it.
+
+---
+
+## L14 · Mutation-probe a new decoder before believing its tests
+
+**What happened:** M1-1's payload decoder had 43 passing tests written directly from the
+acceptance criteria, including one asserting every field of the reference device at once. It
+looked thorough. Then each field width was narrowed by one bit in turn to see which tests
+noticed:
+
+```text
+passcode 27 -> 26        SURVIVED - no test failed
+discriminator 12 -> 11   3 failed
+vendorId 16 -> 15        7 failed
+```
+
+**Why the passcode survived.** The reference device's passcode is 20202021, which needs 25
+bits. Bits 26 and 27 are zero in that value, so reading 26 bits instead of 27 returns exactly
+the same number. The test asserted the right value and proved nothing about the width.
+
+**The general trap: a single real-world vector does not pin field widths.** It pins them only
+where the value happens to exercise the top bit. Every field whose reference value is smaller
+than its width is silently untested, and off-by-one in a packed bit stream is precisely the
+error that class of test should catch.
+
+**Fix:** add vectors that set every bit of the widest fields — `0x7FFFFFF` for a 27-bit
+passcode, `0xFFF` for a 12-bit discriminator — plus one isolating the top bit alone. Re-run
+the probe until every mutation is caught. All seven widths and the BLE bit are now
+load-bearing.
+
+**Rule:** after implementing a decoder, parser or codec, change one constant at a time and
+confirm a test fails. It takes minutes, needs no tooling, and finds the tests that are
+decorative. Coverage will not tell you this — the surviving mutant was on a line with 100%
+coverage, because coverage measures whether a line *ran*, never whether anything would have
+noticed it being wrong.

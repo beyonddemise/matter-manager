@@ -13,3 +13,11 @@
  */
 
 export { BASE38_ALPHABET, Base38Error, decodeBase38, encodeBase38 } from './matter/base38.js'
+export {
+  type CustomFlow,
+  type DiscoveryCapabilities,
+  decodePayload,
+  type OnboardingPayload,
+  PAYLOAD_PREFIX,
+  PayloadError,
+} from './matter/payload.js'
