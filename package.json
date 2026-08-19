@@ -17,7 +17,7 @@
     "e2e"
   ],
   "scripts": {
-    "check": "biome check . && npm run check:deps",
+    "check": "biome check .",
     "check:fix": "biome check --write .",
     "check:deps": "node scripts/check-dependencies.mjs",
     "typecheck": "tsc --build",
@@ -26,7 +26,7 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "e2e": "playwright test",
-    "verify": "npm run check && npm run typecheck && npm run test"
+    "verify": "npm run check:deps && npm run check && npm run typecheck && npm run test"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.9",
