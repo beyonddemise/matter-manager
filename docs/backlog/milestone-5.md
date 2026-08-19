@@ -143,7 +143,8 @@ Scenario: concurrent remarks all survive
 Scenario: concurrent field edits resolve deterministically
   Given two people rename the same device offline
   When both reconnect
-  Then the later edit wins, on both devices
+  Then the same edit wins on both devices, ordered by (updatedAt, _rev)
+  And that holds even when both updatedAt values are identical
   And both devices show the same result
 
 Scenario: conflict revisions do not accumulate

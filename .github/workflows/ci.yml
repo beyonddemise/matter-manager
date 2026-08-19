@@ -107,8 +107,9 @@ jobs:
         run: ./infra/couchdb/verify-access-model.sh
 
       # Guards the authentication half: that CouchDB validates our ES256 tokens at all, that
-      # bad tokens are actually refused, and that a newly written key does nothing until the
-      # node restarts - the last one being a silent failure that looks like a permissions bug.
+      # bad tokens are actually refused, and that a key added under a new kid takes effect
+      # WITHOUT a restart - which is what makes zero-downtime rotation possible. (The
+      # startup-only setting is [chttpd] authentication_handlers, not [jwt_keys].)
       - name: Verify JWT model
         env:
           COUCHDB_URL: http://localhost:5984

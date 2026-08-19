@@ -21,6 +21,10 @@ services:
       - couchdb
 
   api:
+    # NOTE: packages/api/Dockerfile does not exist yet - the API is built in M4 and this
+    # stack is finished in M9. `docker compose -f infra/compose.prod.yml up` will fail here
+    # until then. Left in place because the file documents the intended topology, and a
+    # missing Dockerfile is a loud, obvious failure rather than a silent one.
     build:
       context: ..
       dockerfile: packages/api/Dockerfile
