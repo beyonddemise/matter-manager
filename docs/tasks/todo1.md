@@ -84,18 +84,32 @@ test, and the implementation would have been bent to match it.
   documented in `lessons.md`.
 - **Toolchain versions are newer than assumed**: Vitest 4, TypeScript 7, Biome 2.5.9.
 
+### Follow-up in the same session
+
+**M0-6 fixed.** `.env.example` now points at port 5985.
+
+**M0-7 fixed, and the gate had been broken.** Coverage reported 100% while being unable to
+see untested code: `coverage.include` was `src/**/*.ts`, which resolves against the
+repository root rather than each project, so it matched nothing — and a glob matching nothing
+is not an error. Coverage fell back to measuring only the files tests had imported, which are
+by definition the covered ones.
+
+Proved by adding an unimported module with real statements: before the fix it was invisible
+and coverage stayed at 100%; after the fix coverage dropped to 93.61% and the thresholds
+correctly failed. Probe removed, back to 100% (44/44) passing. The empty per-file table
+turned out to be the same bug rather than a separate cosmetic issue.
+
+Recorded as lesson L8: **a gate that has never been observed failing has not been shown to be
+a gate.**
+
 ### Known gaps
 
-- `.env.example` still reads port 5984; a local permission rule blocked editing it (M0-6)
-- Coverage's per-file table is empty under Vitest 4 `projects`; thresholds work, but that
-  untested files count against the gate is unconfirmed (M0-7)
-- Nothing pushed; CI has not run on GitHub yet
 - No issues created in GitHub — awaiting review of `docs/backlog/`
+- `packages/data`, `web`, `api` are documented placeholders with no `tsconfig.json`, by
+  design; each gets one in the milestone that fills it
 
 ### Next
 
 1. Review `docs/backlog/` and adjust
-2. Fix M0-6 and M0-7
-3. Commit, push, confirm CI green
-4. Bootstrap labels, milestones and issues (M0-8)
-5. Begin M1 with M1-1, payload decoding
+2. Bootstrap labels, milestones and issues (M0-8)
+3. Begin M1 with M1-1, payload decoding

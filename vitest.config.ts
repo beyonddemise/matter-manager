@@ -27,13 +27,15 @@ export default defineConfig({
       provider: 'v8',
       reporter: ['text', 'html', 'lcov'],
       // Explicit include so that a module no test ever imports still counts against the
-      // gate. Without it, v8 measures only loaded files and a completely untested module
-      // is invisible rather than reported as 0%.
+      // gate. Without it, v8 measures only the files the tests happened to load, and a
+      // completely untested module is invisible rather than reported as 0% - a gate that
+      // silently ignores untested code is worse than none, because the number gets trusted.
       //
-      // KNOWN ISSUE: under Vitest 4 `projects`, the text reporter's per-file table renders
-      // empty while the summary and thresholds are correct. Use the HTML report for the
-      // per-file breakdown. Tracked as an M0 chore.
-      include: ['src/**/*.ts'],
+      // These globs are relative to the REPOSITORY ROOT, not to each project's `root`.
+      // Using a project-relative glob such as 'src/**/*.ts' matches nothing here, which
+      // fails silently: coverage falls back to loaded files only and still reports 100%.
+      // Verified by adding an unimported module and confirming the total drops.
+      include: ['packages/*/src/**/*.ts'],
       // `core` is currently the only package, so the global gate is its gate. When data,
       // web and api arrive they get their own lower per-project thresholds; core stays
       // at 90 because it holds the logic that can actually be wrong.

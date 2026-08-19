@@ -118,3 +118,39 @@ hung forever with no useful error.
 **Rule:** `require_valid_user_except_for_up = true` when `require_valid_user` is set.
 Generally: check that a healthcheck's endpoint is reachable under the security configuration
 it will actually run with, not the default one.
+
+---
+
+## L8 · Prove a quality gate can fail before trusting it
+
+**What happened:** the coverage gate reported a confident **100%** while being entirely
+incapable of noticing untested code. `coverage.include` was set to `src/**/*.ts`, which reads
+as project-relative but resolves against the repository root. It matched nothing.
+
+**Why it was invisible:** a glob that matches nothing is not an error. Coverage silently fell
+back to measuring only the files the tests happened to import — which are, by definition,
+the tested ones. Every file it measured was well covered, so it reported 100% and the
+thresholds passed. A module with zero tests would not have appeared at all.
+
+**How it was found:** by adding a module with real statements and branches that no test
+imports, and checking the number moved. It did not. After the fix, coverage dropped to
+93.61% and the thresholds failed — which is the gate working.
+
+**Rule:** a gate that has never been observed failing has not been shown to be a gate. Prove
+it by making it fail on purpose:
+
+| Gate | Prove it by |
+|---|---|
+| Coverage threshold | Add an unimported module; confirm the total drops and thresholds fail |
+| Lint in CI | Push a deliberate violation; confirm CI goes red |
+| Type checking | Introduce a type error; confirm the build fails |
+| A contract test | Break the contract; confirm the test catches it |
+| A security check | Remove the control it protects; confirm it objects |
+
+**This is the same principle as L1 and as watching a test go red first.** In each case the
+failure mode is agreement-with-itself: a wrong vector, an unverified assumption, and a gate
+that measures only what already passes are all internally consistent and quietly wrong. The
+only defence is to force the negative case and watch it behave.
+
+**Corollary:** treat "100%" and "0 problems found" as claims requiring evidence, not as
+reassurance. They are equally consistent with a tool that is not running.

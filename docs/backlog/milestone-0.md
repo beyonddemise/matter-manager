@@ -116,36 +116,50 @@ re-deriving it externally.
 
 ---
 
-## M0-6 · Fix the .env.example CouchDB port
+## M0-6 · Fix the .env.example CouchDB port ✅
 
 `type:chore` `area:infra` `size:S`
 
-`COUCHDB_URL` still reads `http://localhost:5984`; the dev stack moved to `5985`. A
-one-line change that was blocked by a local tooling permission rule during setup.
+`COUCHDB_URL` read `http://localhost:5984`; the dev stack moved to `5985`.
 
-**Done when:** `.env.example` reads `COUCHDB_URL=http://localhost:5985` with a comment
-explaining why it is not the default port.
+**Done:** `.env.example` reads `COUCHDB_URL=http://localhost:5985` with a comment explaining
+that the container-internal port is still 5984.
 
 ---
 
-## M0-7 · Confirm coverage counts untested files
+## M0-7 · Confirm coverage counts untested files ✅
 
 `type:chore` `area:infra` `size:S`
 
-Under Vitest 4 with `projects`, the text reporter's per-file table renders empty while the
-summary and thresholds are correct. Before relying on the gate, confirm that a module no
-test imports is reported at 0% rather than being invisible.
+**The gate was broken, and it was broken in the way that produces false confidence.**
 
-**Done when:**
 ```gherkin
 Scenario: an untested module counts against the gate
   Given a module in packages/core/src that no test imports
   When coverage runs
   Then that module appears in the report at 0%
   And the overall percentage drops accordingly
+  And the thresholds fail
 ```
-If it does not, fix the configuration. A coverage gate that silently ignores untested files
-is worse than none, because it produces a number people trust.
+
+**What was wrong:** `coverage.include` was `src/**/*.ts`, which reads as project-relative but
+is resolved against the **repository root**. It therefore matched nothing — and matching
+nothing does not raise an error. Coverage silently fell back to measuring only the files the
+tests happened to load, and reported a confident **100%**.
+
+**Verified by proof, not inspection.** An unimported module with real statements and branches
+was added:
+
+| | Before fix | After fix |
+|---|---|---|
+| Probe visible in report | no | yes, at 0%, lines 4–7 |
+| Statements | 100% (44/44) | 93.61% (44/47) |
+| Thresholds | passed | **failed**, as they should |
+
+Probe removed; back to 100% (44/44) and passing. Fixed to `packages/*/src/**/*.ts`.
+
+The empty per-file table noted earlier was the same bug, not a separate cosmetic issue — it
+populates correctly now.
 
 ---
 
