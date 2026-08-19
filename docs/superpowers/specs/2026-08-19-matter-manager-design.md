@@ -107,13 +107,15 @@ and the ZXing decode loop.
 
 ## Milestones
 
-Release 1.0 is **M0–M5**. Later milestones are planned and tracked but do not block it.
+Release 1.0 is **M0–M5**, including M2b. Later milestones are planned and tracked but do not
+block it.
 
 | # | Milestone | Delivers |
 |---|---|---|
 | M0 | Foundations | Monorepo, devcontainer, CI, docs, ADRs, backlog, Base38 codec |
 | M1 | Domain core | Payload encode/decode, manual pairing code, validation, room paths |
-| M2 | Local catalogue | PouchDB repositories, device and room CRUD, remarks, scanner, Lit shell, i18n, PWA |
+| M2 | Local catalogue | PouchDB repositories, device and room CRUD, remarks, Lit shell, i18n, deploy |
+| M2b | Scanning + offline | Camera capture, ZXing fallback for iOS, hand-written service worker, update handling |
 | M3 | PDF export | Label sheet and inventory layouts, grouping, selection, manual codes |
 | M4 | Auth + backend | Google OIDC, ES256 JWT, `_users` profile store, OpenAPI drift check, entitlement seam |
 | M5 | Projects + sync | Provisioning, `_security`, roles, invitations, transfer, live sync, conflict resolution |
@@ -140,13 +142,13 @@ conflicting edits.
 | Risk | Status |
 |---|---|
 | CouchDB `_security` extra keys unsupported | **Retired.** Verified against 3.5.2; 8/8 assertions pass. Guarded in CI by `verify-access-model.sh`. |
-| iOS Safari lacks `BarcodeDetector` | `@zxing/browser` WASM fallback plus manual entry. Decided in M2. |
+| iOS Safari lacks `BarcodeDetector` | `@zxing/browser` fallback, lazily loaded, plus manual entry. M2b-2. |
 | Web Awesome licensing | **Resolved.** Pro licence held; registry access configured and verified in CI. |
 | Web Awesome component coverage | **Open.** First task of M2. Contained: components are Lit-based. |
 | Fork pull requests cannot install a private dependency | **Open** (M2-1b). Fork workflows get no secrets. |
 | Plaintext passcodes in an installer's instance | Accepted in ADR 0005; compensating controls are M9 issues. |
 | Silent remark loss on conflict | Merge strategy designed in M2, e2e-tested in M5. |
-| Scope creep across nine milestones | Release 1.0 fixed at M0–M5. |
+| Scope creep | Release 1.0 fixed at M0–M5. M2 was split at M2b so the platform risk (camera APIs, service worker updates) is estimated separately from ordinary application work. |
 
 ## Verified during design
 

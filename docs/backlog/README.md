@@ -8,9 +8,10 @@ decomposition is expensive to undo once it is a board.
 |---|---|---|---|
 | M0 Foundations | [milestone-0.md](milestone-0.md) | 8 | mostly done in the setup session |
 | M1 Domain core | [milestone-1.md](milestone-1.md) | 7 | ready |
-| M2 Local catalogue | [milestone-2.md](milestone-2.md) | 12 | ready |
+| M2 Local catalogue | [milestone-2.md](milestone-2.md) | 11 | ready |
+| M2b Scanning + offline | [milestone-2b.md](milestone-2b.md) | 4 | ready |
 | M3 PDF export | [milestone-3.md](milestone-3.md) | 6 | ready |
-| M4 Auth + backend | [milestone-4.md](milestone-4.md) | 8 | ready |
+| M4 Auth + backend | [milestone-4.md](milestone-4.md) | 10 | ready |
 | M5 Projects + sync | [milestone-5.md](milestone-5.md) | 10 | ready |
 
 M6–M9 are named in the [design document](../superpowers/specs/2026-08-19-matter-manager-design.md)

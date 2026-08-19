@@ -170,7 +170,31 @@ Scenario: only genuinely server-bound actions are blocked
   When offline
   Then only project creation and member management are unavailable
   And each explains why rather than merely being greyed out
+
+Scenario: the project list survives going offline
+  Given the project list was fetched while online
+  When I go offline and reload
+  Then my projects are still listed from mm-local
+  And each shows whether it is available offline on this device
+
+Scenario: what I may access and what I have are tracked separately
+  Given a project I have access to but have never opened on this device
+  Then it is listed with localState "not-downloaded"
+  And a project whose replica is present shows "downloaded"
+
+Scenario: revoked access is reported, not hidden
+  Given my access to a project was revoked while I was offline
+  When I reconnect and replication returns 403
+  Then the project is shown as "access removed"
+  And the app does not appear broken
 ```
+
+**Extends `mm-local` (M4-5b)** from caching the profile to caching the project list.
+
+**Why `localState` is not redundant with the server list:** the server says what you *may*
+access; `localState` says what you *actually have here*. They diverge constantly — a project
+granted on your phone is not downloaded on your laptop — and only the second answers "what can
+I open right now". It also gives an honest indicator: *3 of 5 available offline*.
 
 ---
 

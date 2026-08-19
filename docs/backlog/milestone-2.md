@@ -1,9 +1,13 @@
 # M2 — Local catalogue
 
-**Goal:** a usable application. Scan a code, file a device, find it again — entirely in the
-browser, with no server, no account and no connectivity.
+**Goal:** a working catalogue — file a device, find it again, reproduce its code — entirely in
+the browser, with no server and no account.
 
-At the end of M2 this is already worth using for your own house.
+Camera scanning and the offline service worker are **[M2b](milestone-2b.md)**. The split is
+deliberate: everything here is ordinary application work, while M2b holds the platform risk
+(`BarcodeDetector` absent on iOS, service worker update semantics). Devices are added by
+pasting an `MT:` payload or typing a manual pairing code, which is a path that must work
+anyway — a camera cannot always reach a mounted device.
 
 ---
 
@@ -126,117 +130,32 @@ Scenario: documents are keyed by type prefix
 
 ---
 
-## M2-4b · The `mm-local` cache
-
-`type:story` `area:data` `size:M`
-
-**Story:** as a user on a train, I want to see which projects I have on this device, so the
-app is usable without a connection.
-
-`mm-local` is a PouchDB database that exists **only in the browser and is never given a
-remote counterpart**. It caches `GET /projects` and `GET /profile`, because both are
-server-only and everything else in the app works offline
-([ADR 0012](../adr/0012-central-project-registry.md)).
-
-```gherkin
-Scenario: the project list survives going offline
-  Given I have signed in and the project list was fetched
-  When I go offline and reload the app
-  Then my projects are still listed
-  And each shows whether it is available offline on this device
-
-Scenario: what I may access and what I have are tracked separately
-  Given a project I have access to but have never opened on this device
-  Then it is listed with localState "not-downloaded"
-  And a project whose replica is present shows "downloaded"
-
-Scenario: my locale survives going offline
-  Given my profile locale is German and was fetched once
-  When I go offline and reload
-  Then the interface is still German
-
-Scenario: revoked access is reported, not hidden
-  Given my access to a project was revoked while I was offline
-  When I reconnect and replication returns 403
-  Then the project is shown as "access removed"
-  And the app does not appear broken
-```
-
-**Out of scope:** any authorisation decision. The cache decides what the client *attempts*;
-CouchDB's `_security` decides what succeeds. **A permission check that reads `mm-local` is a
-defect** — treat it as one in review.
-
-**Why `localState` is not redundant with the server list:** the server says what you *may*
-access; `localState` says what you *actually have here*. They diverge constantly — a project
-granted on your phone is not downloaded on your laptop — and only the second answers "what
-can I open right now". It also gives an honest indicator: *3 of 5 available offline*.
-
-**Test plan:** `pouchdb-adapter-memory`; assert the cache is never handed to a replication
-target (a test that fails if anything calls `sync()` on it).
-
----
-
-## M2-5 · Scan a QR code
-
-`type:story` `area:web` `area:qr` `size:L`
-
-**Story:** as a user standing in front of a device, I want to scan its code with my phone.
-
-```gherkin
-Scenario: a code is scanned with the native detector
-  Given a browser supporting BarcodeDetector
-  When a Matter QR code is in view
-  Then the payload is decoded and the add-device form is prefilled
-
-Scenario: a browser without BarcodeDetector still works
-  Given iOS Safari, which does not support BarcodeDetector
-  Then the ZXing fallback is used and scanning still succeeds
-
-Scenario: camera permission is refused
-  When camera access is denied
-  Then manual entry is offered with an explanation
-  And the app does not appear broken
-
-Scenario: a non-Matter code is scanned
-  When a QR code that is not a Matter payload is scanned
-  Then the error names what was wrong
-  And scanning continues rather than dropping out of the flow
-```
-
-**Out of scope:** NFC; scanning multiple codes in one pass.
-
-**Note:** iOS Safari lacking `BarcodeDetector` is a certainty, not a risk. The fallback is
-part of the story, not a follow-up.
-
-**Load `@zxing/browser` lazily**, only when `BarcodeDetector` is absent. Browsers with the
-native API must never download it ([ADR 0013](../adr/0013-minimal-runtime-dependencies.md)).
-
-**Run the fallback decode loop in a web worker** if it makes the camera preview stutter —
-decoding every frame on the main thread is the classic cause. Measure before adding the
-worker; the native `BarcodeDetector` path is off-thread already and needs nothing.
-
----
-
-## M2-6 · Add a device with metadata
+## M2-5 · Add a device with metadata
 
 `type:story` `area:web` `size:M`
 
 ```gherkin
-Scenario: a scanned device is filed
-  Given a successful scan
+Scenario: a device is filed from a pasted payload
+  Given I paste an "MT:" payload or type a manual pairing code
   When I enter a name and choose a room
   Then the device is saved
   And the installation date defaults to today
-  And vendor and product ids from the payload are stored
+  And vendor and product ids decoded from the payload are stored
 
 Scenario: a room is created without leaving the flow
   When I type a room name that does not exist
   Then I can create it inline and continue
 
-Scenario: a payload can be entered by hand
-  When I paste an "MT:" string or type a manual pairing code
-  Then the device is created exactly as if it had been scanned
+Scenario: an invalid payload is refused before anything is saved
+  When I paste text that is not a Matter payload
+  Then the error names what was wrong
+  And no device is created
 ```
+
+**The form takes a payload, not a scanner.** Camera capture ([M2b-1](milestone-2b.md)) becomes
+one more way to populate the same field. Building it this way round is not a workaround for
+the split — manual entry has to work regardless, because a camera cannot always reach a device
+already mounted behind a panel, and it is also what makes this flow testable without a camera.
 
 **Why inline room creation:** the alternative is abandoning the add-device flow to go and
 set up a room, then starting again. Nobody does that; they type the room into the name field
@@ -244,7 +163,7 @@ instead and the structure never happens.
 
 ---
 
-## M2-7 · List, search and filter devices
+## M2-6 · List, search and filter devices
 
 `type:story` `area:web` `size:M`
 
@@ -263,7 +182,7 @@ Scenario: disabled devices are separated
 
 ---
 
-## M2-8 · Show a device and reproduce its QR
+## M2-7 · Show a device and reproduce its QR
 
 `type:story` `area:web` `area:qr` `size:M`
 
@@ -292,7 +211,7 @@ about where these codes end up, which is inside fuse boxes and behind panels.
 
 ---
 
-## M2-9 · Edit, disable and move a device
+## M2-8 · Edit, disable and move a device
 
 `type:story` `area:web` `size:M`
 
@@ -316,7 +235,7 @@ is the thing that cannot be recreated once lost.
 
 ---
 
-## M2-10 · Timestamped remarks
+## M2-9 · Timestamped remarks
 
 `type:story` `area:web` `size:S`
 
@@ -337,35 +256,7 @@ defeat both the audit value and the conflict-free merge.
 
 ---
 
-## M2-11 · Offline-capable PWA
-
-`type:story` `area:web` `size:M`
-
-**The service worker is hand-written, not generated**
-([ADR 0013](../adr/0013-minimal-runtime-dependencies.md)). What this app needs — precache the
-shell, cache-first for hashed assets, never intercept API or replication requests — is a short
-file we can read in one sitting. A generated worker ships a runtime library to do the same
-job, and a service worker is the last place to want code nobody has read: it sits in front of
-every request and outlives the page that installed it.
-
-```gherkin
-Scenario: the app works with no connectivity
-  Given the app has been loaded once
-  When the device goes offline
-  Then the app opens, lists devices, and accepts new ones
-
-Scenario: it can be installed
-  Then the app is installable on Android and iOS with an icon and splash screen
-
-Scenario: offline state is visible but not alarming
-  When offline
-  Then an unobtrusive indicator is shown
-  And no action is blocked except those genuinely requiring a server
-```
-
----
-
-## M2-12 · Deploy to Cloudflare Pages
+## M2-10 · Deploy to Cloudflare Pages
 
 `type:chore` `area:infra` `size:S`
 
