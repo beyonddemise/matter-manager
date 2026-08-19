@@ -106,8 +106,9 @@ secrets. `npm run check:deps` fails the build on anything not justified in
 |---|---|---|
 | HTTP, client or server | native `fetch` | `axios`, `node-fetch`, `got` |
 | CouchDB from the API | native `fetch` | `nano`, `couchdb` |
-| Sign / verify JWT | `node:crypto` | `jose`, `jsonwebtoken` |
+| Sign / verify JWT (**server only**) | `node:crypto` | `jose`, `jsonwebtoken` |
 | Provider JWKS key | `createPublicKey({ key, format: 'jwk' })` | `jwk-to-pem` |
+| Crypto in **shared or browser** code | `@noble/*` | assuming Node and WebCrypto agree |
 | Identifiers | `crypto.randomUUID()` | `uuid`, `nanoid` |
 | Dates, formatting | `Intl` | `moment`, `date-fns` |
 | Cloning, equality | `structuredClone`, plain code | `lodash` |
@@ -115,6 +116,14 @@ secrets. `npm run check:deps` fails the build on anything not justified in
 This is not aspirational. The entire authentication and CouchDB path — ES256 signing and
 verification, importing Google's RSA key from JWKS, and every CouchDB call including
 `_security` and `_changes` — was verified working on `node:crypto` and `fetch` alone.
+
+**The exception worth knowing.** `node:crypto` and the browser's `SubtleCrypto` are different
+APIs that diverge in the fine print: available curves, sync versus promise-returning, key
+import, and signature encoding. ES256 alone differs — Node emits DER unless given
+`dsaEncoding: 'ieee-p1363'`; WebCrypto emits raw R‖S. Same algorithm, different bytes, no
+warning. So `node:crypto` is fine for code that is server-only and stays server-only, and
+`@noble/*` is the choice for anything in `core`, in the browser, or that might move. Code
+whose correctness depends on which runtime it happens to be executing in is not correct.
 
 `devDependencies` are unrestricted; they do not ship.
 

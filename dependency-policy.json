@@ -17,7 +17,10 @@
     "pouchdb-browser": "The CouchDB replication protocol: revision trees, conflict detection, resumable sync. ADR 0002 rejected writing this by hand because it is the hard part.",
     "pdf-lib": "PDF writing with font embedding (ADR 0007). Not reasonable to hand-roll.",
     "@zxing/browser": "QR decoding where BarcodeDetector is missing, which is every iOS Safari. Must be lazily loaded so native-API browsers never download it.",
-    "fastify": "HTTP server for the API (ADR 0004). Predates this policy; ADR 0013 notes node:http as the alternative if the API stays thin."
+    "fastify": "HTTP server for the API (ADR 0004). Predates this policy; ADR 0013 notes node:http as the alternative if the API stays thin.",
+    "@noble/hashes": "Identical hashing in Node and the browser. node:crypto and WebCrypto diverge in the fine print, and code shared between packages/api and packages/web must not depend on which runtime it lands in. Audited, zero dependencies.",
+    "@noble/curves": "As @noble/hashes, for elliptic curve operations. Depends only on @noble/hashes.",
+    "@noble/ciphers": "As @noble/hashes, for symmetric encryption. Zero dependencies."
   },
   "banned": {
     "axios": "Use native fetch.",

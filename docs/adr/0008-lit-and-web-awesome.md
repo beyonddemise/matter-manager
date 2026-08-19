@@ -51,6 +51,12 @@ environment. The token is never written to the file: this repository is public, 
 literal token in `.npmrc` would be a live credential the moment it was pushed. CI enforces
 this with a grep that fails the build.
 
+**A concrete payoff already banked:** `<wa-qr-code>` ships with the library, verified present
+in `@awesome.me/webawesome-pro@3.11.0`. Reproducing a Matter QR on screen — the core of the
+product — needs no QR library and no hand-rolled encoder. Its encoder is bundled inside the
+component rather than separately importable, which matters only for PDF embedding (see
+[ADR 0007](0007-client-side-pdf.md)).
+
 ### Two consequences to plan around
 
 **Fork pull requests cannot install.** GitHub does not expose secrets to workflows triggered

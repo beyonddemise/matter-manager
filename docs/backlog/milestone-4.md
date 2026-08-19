@@ -49,6 +49,24 @@ Scenario: an undocumented route fails CI
 Without it, "we kept the option open" quietly becomes false within a month, and nobody finds
 out until they try to use it.
 
+**Fastify does not read OpenAPI.** Its model is JSON Schema per route, and `@fastify/swagger`
+*generates* a spec from those — code-first, the opposite direction to what ADR 0004 wants.
+Spec-first plugins exist (`fastify-openapi-glue`, `openapi-backend`) but are runtime
+dependencies, which [ADR 0013](../adr/0013-minimal-runtime-dependencies.md) resists.
+
+**Use build-time tooling instead**, so this costs nothing at runtime:
+
+1. `openapi-typescript` (a **devDependency**) generates types from `openapi/matter-manager.yaml`
+2. Handlers are typed against them, so a response-shape mismatch is a *compile error*
+3. A small script derives Fastify's route schemas from the spec's own JSON Schema components,
+   giving runtime validation from the same source
+4. CI regenerates and runs `git diff --exit-code`, failing when the committed output no longer
+   matches the spec
+
+**Verify the check by breaking it on purpose** before trusting it: change a handler's response
+shape and confirm CI goes red, and add an undocumented route and confirm the same. A drift
+check that has never caught drift has not been shown to catch drift.
+
 ---
 
 ## M4-3 · Google sign-in

@@ -41,8 +41,14 @@ workflows triggered by pull requests from forks, so an outside contributor's PR 
 `npm ci`.
 
 **Decide between:** accepting it and documenting that fork PRs are reviewed locally; or
-keeping Pro usage isolated enough that a free-build fallback compiles. The right answer
-depends on how much Pro the UI actually uses, so decide after M2-1.
+keeping Pro usage isolated enough that a free-build fallback compiles.
+
+**Helpful datum:** `<wa-qr-code>` is in the FREE Web Awesome build as well as Pro — verified
+against both `@awesome.me/webawesome@3.11.0` and `@awesome.me/webawesome-pro@3.11.0`. The core
+product feature therefore does not depend on Pro at all, which keeps the free-build fallback
+genuinely viable rather than nominally so.
+
+The answer still depends on how much Pro the rest of the UI uses, so decide after M2-1.
 
 **Do not** reach for `pull_request_target` to solve this. It runs untrusted code with access
 to secrets, which trades an inconvenience for a credential compromise.
@@ -274,6 +280,15 @@ Scenario: the reproduced code actually works
 
 **That last scenario is the one that matters.** Everything else in this milestone is
 convenience; if the reproduced code does not scan, the product has no reason to exist.
+
+**Use `<wa-qr-code>`.** Web Awesome ships it — verified present in
+`@awesome.me/webawesome-pro@3.11.0` — rendering client-side to a canvas, with `value`, `size`,
+`fill`, `background`, `radius` and `errorCorrection`. No QR generation library, and no
+hand-rolled encoder.
+
+Set `errorCorrection` deliberately rather than leaving the default. Higher correction survives
+a scuffed or partly obscured printed label at the cost of a denser code; this is a decision
+about where these codes end up, which is inside fuse boxes and behind panels.
 
 ---
 

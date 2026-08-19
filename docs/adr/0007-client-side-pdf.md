@@ -40,6 +40,13 @@ alongside each QR, because a phone camera cannot always focus on a small printed
   inventory sheet, not a brochure.
 - **Fonts must be embedded deliberately.** German is a launch language, so umlauts and ß
   must be verified in the output rather than assumed. This is a test case, not a hope.
+- **The QR reaches the PDF as a raster image.** `<wa-qr-code>` renders to a canvas and its
+  encoder is bundled inside the component rather than separately importable (checked against
+  `@awesome.me/webawesome-pro@3.11.0`), so the route is: render off-screen at high resolution,
+  `canvas.toDataURL()`, embed the PNG. Render resolution is therefore a *correctness* concern,
+  not a cosmetic one — a QR that prints marginally is the one failure this feature cannot
+  survive. If paper testing shows raster is not good enough, the fallback is drawing modules
+  as vector rectangles, which needs a QR matrix and so an encoder we can call directly.
 - Large exports do real work on the main thread. If a project of several hundred devices
   makes the UI janky, move generation to a web worker — but measure first rather than
   assuming.

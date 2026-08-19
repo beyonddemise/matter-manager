@@ -35,6 +35,17 @@ Scenario: it works offline
 QR that renders correctly on screen but prints too small or too low-contrast is a defect
 that only physical testing finds — and it defeats the purpose of the entire feature.
 
+**Getting the QR into the PDF.** `<wa-qr-code>` renders to a canvas, and its encoder is
+bundled inside the component rather than separately importable — checked against
+`@awesome.me/webawesome-pro@3.11.0`. So the route is: render the component off-screen at high
+resolution, take `canvas.toDataURL()`, and embed the PNG with `pdf-lib`.
+
+That means the printed QR is **raster, not vector**, which makes render resolution a
+correctness concern rather than a cosmetic one. Render well above the printed size and verify
+on paper. If a physically printed code proves marginal, the fallback is drawing the modules as
+vector rectangles in `pdf-lib`, which needs the QR matrix and therefore an encoder we can call
+directly — a bigger change, so establish whether raster is good enough first.
+
 ---
 
 ## M3-2 · Export a selection

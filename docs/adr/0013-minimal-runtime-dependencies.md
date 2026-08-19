@@ -31,11 +31,34 @@ Runtime dependencies are opt-in, justified individually, and enforced by CI.
 |---|---|---|
 | HTTP requests, client and server | native `fetch` | `axios`, `node-fetch`, `got`, `request` |
 | CouchDB access from the API | native `fetch` | `nano`, `couchdb` |
-| Sign / verify JWT | `node:crypto` | `jose`, `jsonwebtoken` |
+| Sign / verify JWT (**server only**) | `node:crypto` | `jose`, `jsonwebtoken` |
 | Import a provider's JWKS key | `createPublicKey({ key, format: 'jwk' })` | `jwk-to-pem`, `jose` |
+| Crypto in **shared or browser** code | `@noble/*` | hand-rolled, or assuming parity |
 | Identifiers | `crypto.randomUUID()` | `uuid`, `nanoid` |
 | Dates and formatting | `Intl`, `Temporal` where available | `moment`, `date-fns` |
 | Deep equality, cloning | `structuredClone`, plain code | `lodash`, `ramda` |
+
+### The one place "use the platform" is the wrong instinct
+
+`node:crypto` and the browser's `SubtleCrypto` are **not the same API**, and where they
+overlap they differ in the fine print: which curves and algorithms are available, whether an
+operation is synchronous or promise-returning, how keys are imported, and which signature
+encodings are produced. ES256 is a good example — Node emits DER unless told
+`dsaEncoding: 'ieee-p1363'`, while WebCrypto emits raw R‖S. Same algorithm, different bytes,
+and nothing warns you.
+
+That divergence is fine where code is runtime-specific: the API signs tokens on the server
+and can use `node:crypto` directly, which is verified working. It is a problem the moment
+anything crypto-related lands in `packages/core`, which by design runs in both, or in the
+browser at all.
+
+So **`@noble/hashes`, `@noble/curves` and `@noble/ciphers` are allowed** for shared and
+browser-side crypto. They are audited, dependency-free (bar `curves` needing `hashes`), and —
+the property that matters — behave identically in both runtimes. Correctness that depends on
+which runtime the code happens to be executing in is not correctness.
+
+The rule, then: `node:crypto` where the code is server-only and stays server-only; `@noble/*`
+where it is shared, browser-side, or might move.
 
 **Verified before adopting** — the whole authentication and database path runs with zero
 runtime dependencies. Confirmed on Node 24 against CouchDB 3.5.2: ES256 signing and
@@ -46,6 +69,13 @@ over `fetch`. This is not an aspiration; it was measured.
 **Adding a runtime dependency** means adding it to `dependency-policy.json` with a one-line
 reason. CI fails otherwise. The file is the review gate: the question at review time is not
 "does this work" but "is the platform genuinely insufficient here".
+
+**Only direct dependencies are policed**, deliberately. A package we choose is a decision; its
+transitive tree is a consequence of that decision, and banning transitively would mean
+rejecting almost everything — `openapi-backend`, for instance, pulls in `lodash`, which this
+policy bans directly. The right response is to weigh the whole tree when admitting a package,
+not to pretend we can forbid what it depends on. Judge a candidate by `npm ls` after
+installing it, not by its own `dependencies` list.
 
 **Use workers where they earn their place:**
 
@@ -78,15 +108,28 @@ reason. CI fails otherwise. The file is the review gate: the question at review 
 | `pouchdb-browser` | **The largest exception.** It is the CouchDB replication protocol — revision trees, conflict detection, resumable sync. ADR 0002 rejected writing this precisely because it is the hard part. |
 | `pdf-lib` | PDF writing, including font embedding. Not reasonable to hand-roll. |
 | `@zxing/browser` | QR decoding where `BarcodeDetector` is unavailable, which is every iOS Safari. Loaded lazily so browsers with the native API never pay for it. |
+| `@noble/hashes`, `@noble/curves`, `@noble/ciphers` | Identical crypto in both runtimes, for anything shared or browser-side. See above. |
+
+**QR *generation* needs nothing at all.** Web Awesome ships `<wa-qr-code>`, which renders
+client-side to a canvas and takes `value`, `size`, `fill`, `background`, `radius` and
+`errorCorrection`. Verified present in `@awesome.me/webawesome-pro@3.11.0`. Hand-rolling an
+encoder was briefly considered — a Matter payload needs only alphanumeric mode — and is now
+moot. Note for M3: the encoder is bundled inside the component and is not separately
+importable, so PDF embedding goes through the rendered canvas.
 
 ### Deliberately still open
 
-**QR *generation*.** Encoding a Matter payload needs only alphanumeric mode, which is a
-well-specified and testable few hundred lines — a plausible zero-dependency candidate, and
-`core` already owns the payload codec. But a QR that scans slightly worse defeats the product,
-so this needs measurement against real scanners before choosing. Decide in M2-8.
+**Fastify.** ADR 0004 chose it before this policy existed, and it does **not** read OpenAPI
+natively — its model is JSON Schema per route, and `@fastify/swagger` *generates* a spec from
+those, which is the opposite direction to what ADR 0004 wants. Spec-first would mean
+`fastify-openapi-glue` or `openapi-backend`, both runtime dependencies.
 
-**Fastify.** ADR 0004 chose it before this policy existed. It is one well-scoped dependency,
-and `node:http` plus a small router would replace it. Not reversed here — reopening a settled
-ADR for a single server-side dependency is not obviously worth it — but noted so the tension
-is visible rather than forgotten. Revisit if the API stays as thin as currently planned.
+The approach that satisfies both ADRs uses **build-time tooling only**: generate types from
+the spec with `openapi-typescript` (a devDependency), derive Fastify's route schemas from the
+spec's own JSON Schema components with a small script, and fail CI when the generated output
+differs from what is committed. Zero runtime cost, and drift becomes a compile error.
+
+That leaves Fastify providing the HTTP server and plugin ecosystem, and little else. Not
+reversed here — reopening a settled ADR for one server-side dependency is not obviously worth
+it — but the tension is now sharper than when this ADR was written. Revisit if the API stays
+as thin as planned.
