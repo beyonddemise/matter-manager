@@ -202,6 +202,13 @@ Scenario: a non-Matter code is scanned
 **Note:** iOS Safari lacking `BarcodeDetector` is a certainty, not a risk. The fallback is
 part of the story, not a follow-up.
 
+**Load `@zxing/browser` lazily**, only when `BarcodeDetector` is absent. Browsers with the
+native API must never download it ([ADR 0013](../adr/0013-minimal-runtime-dependencies.md)).
+
+**Run the fallback decode loop in a web worker** if it makes the camera preview stutter —
+decoding every frame on the main thread is the classic cause. Measure before adding the
+worker; the native `BarcodeDetector` path is off-thread already and needs nothing.
+
 ---
 
 ## M2-6 · Add a device with metadata
@@ -318,6 +325,13 @@ defeat both the audit value and the conflict-free merge.
 ## M2-11 · Offline-capable PWA
 
 `type:story` `area:web` `size:M`
+
+**The service worker is hand-written, not generated**
+([ADR 0013](../adr/0013-minimal-runtime-dependencies.md)). What this app needs — precache the
+shell, cache-first for hashed assets, never intercept API or replication requests — is a short
+file we can read in one sitting. A generated worker ships a runtime library to do the same
+job, and a service worker is the last place to want code nobody has read: it sits in front of
+every request and outlives the page that installed it.
 
 ```gherkin
 Scenario: the app works with no connectivity

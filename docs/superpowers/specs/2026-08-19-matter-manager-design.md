@@ -81,6 +81,13 @@ and [SECURITY-MODEL.md](../../SECURITY-MODEL.md). Summary:
 Four packages: `core` (pure domain), `data` (PouchDB), `web` (Lit), `api` (Fastify).
 `core` has no I/O and is shared by browser and server, so the Matter codec exists once.
 
+**Runtime dependencies are allowlisted and enforced in CI**
+([ADR 0013](../../adr/0013-minimal-runtime-dependencies.md)). Native `fetch` rather than
+`axios` or `nano`; `node:crypto` rather than `jose`. The whole authentication and CouchDB path
+was verified to need no dependencies at all. Workers are used where they earn it: a
+hand-written service worker for the offline shell, and web workers for large PDF generation
+and the ZXing decode loop.
+
 ### Decisions
 
 | Decision | ADR |
@@ -96,6 +103,7 @@ Four packages: `core` (pure domain), `data` (PouchDB), `web` (Lit), `api` (Fasti
 | Embedded remarks, deterministic merge | [0010](../../adr/0010-embedded-remarks-conflict-merge.md) |
 | User-owned, org-ready tenancy | [0011](../../adr/0011-user-owned-org-ready-tenancy.md) |
 | Central project registry + local cache | [0012](../../adr/0012-central-project-registry.md) |
+| Minimal runtime dependencies | [0013](../../adr/0013-minimal-runtime-dependencies.md) |
 
 ## Milestones
 
@@ -133,7 +141,9 @@ conflicting edits.
 |---|---|
 | CouchDB `_security` extra keys unsupported | **Retired.** Verified against 3.5.2; 8/8 assertions pass. Guarded in CI by `verify-access-model.sh`. |
 | iOS Safari lacks `BarcodeDetector` | `@zxing/browser` WASM fallback plus manual entry. Decided in M2. |
-| Web Awesome maturity and licensing | **Open.** Must be confirmed as the first task of M2. Contained: components are Lit-based. |
+| Web Awesome licensing | **Resolved.** Pro licence held; registry access configured and verified in CI. |
+| Web Awesome component coverage | **Open.** First task of M2. Contained: components are Lit-based. |
+| Fork pull requests cannot install a private dependency | **Open** (M2-1b). Fork workflows get no secrets. |
 | Plaintext passcodes in an installer's instance | Accepted in ADR 0005; compensating controls are M9 issues. |
 | Silent remark loss on conflict | Merge strategy designed in M2, e2e-tested in M5. |
 | Scope creep across nine milestones | Release 1.0 fixed at M0–M5. |

@@ -12,6 +12,15 @@ someone is and gives them somewhere to keep their preferences.
 **Done when:** the service starts, `/healthz` responds, structured logging is in place, and
 routes are typed from `openapi/matter-manager.yaml`.
 
+**CouchDB is accessed with native `fetch`.** No `nano`, no `couchdb`, no `axios` — those
+packages predate global `fetch` and carry their own HTTP stack for what is now a few lines
+([ADR 0013](../adr/0013-minimal-runtime-dependencies.md)). Verified: create, read, write,
+`_security` and `_changes` all work over plain `fetch` against CouchDB 3.5.2.
+
+Write a small typed CouchDB client in `packages/api` — `getDoc`, `putDoc`, `putSecurity`,
+`view`, `createDb` — rather than scattering `fetch` calls. That is a thin wrapper we own and
+test, not a dependency.
+
 **Logging rule from the first commit:** payload and passcode fields are never logged at any
 level. Add a redaction list now, while there is nothing to redact, rather than after
 something leaks.
@@ -91,6 +100,20 @@ Scenario: a token for one user cannot open another's database
 for equivalent security. Verified working against CouchDB 3.5.2, including correct rejection
 of expired tokens, tokens signed with another key, and tokens whose payload was edited to
 claim a different `sub`.
+
+**Signing and verification use `node:crypto` directly.** No `jose`, no `jsonwebtoken`
+([ADR 0013](../adr/0013-minimal-runtime-dependencies.md)). Verified end to end, including the
+part that looks like it needs a library:
+
+```js
+// ES256 requires the raw R||S pair; Node emits DER without dsaEncoding.
+sign.sign({ key, dsaEncoding: 'ieee-p1363' })
+
+// Google publishes JWKS; node:crypto imports those keys directly.
+createPublicKey({ key: jwk, format: 'jwk' })
+```
+
+That second line is the one that usually motivates pulling in `jose`. It is not needed.
 
 **Key handling.** The API injects the public key via
 `PUT /_node/<node>/_config/jwt_keys/ec:<kid>`, so key material never enters the image.

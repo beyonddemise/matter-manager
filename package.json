@@ -17,8 +17,9 @@
     "e2e"
   ],
   "scripts": {
-    "check": "biome check .",
+    "check": "biome check . && npm run check:deps",
     "check:fix": "biome check --write .",
+    "check:deps": "node scripts/check-dependencies.mjs",
     "typecheck": "tsc --build",
     "typecheck:clean": "tsc --build --clean",
     "test": "vitest run",

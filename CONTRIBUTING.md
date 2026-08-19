@@ -95,6 +95,44 @@ render() {
 }
 ```
 
+## Runtime dependencies
+
+**Check the platform before reaching for a package.** Runtime dependencies ship to users,
+need patching, and widen the supply-chain surface of an application holding commissioning
+secrets. `npm run check:deps` fails the build on anything not justified in
+`dependency-policy.json` ([ADR 0013](docs/adr/0013-minimal-runtime-dependencies.md)).
+
+| Need | Use | Not |
+|---|---|---|
+| HTTP, client or server | native `fetch` | `axios`, `node-fetch`, `got` |
+| CouchDB from the API | native `fetch` | `nano`, `couchdb` |
+| Sign / verify JWT | `node:crypto` | `jose`, `jsonwebtoken` |
+| Provider JWKS key | `createPublicKey({ key, format: 'jwk' })` | `jwk-to-pem` |
+| Identifiers | `crypto.randomUUID()` | `uuid`, `nanoid` |
+| Dates, formatting | `Intl` | `moment`, `date-fns` |
+| Cloning, equality | `structuredClone`, plain code | `lodash` |
+
+This is not aspirational. The entire authentication and CouchDB path — ES256 signing and
+verification, importing Google's RSA key from JWKS, and every CouchDB call including
+`_security` and `_changes` — was verified working on `node:crypto` and `fetch` alone.
+
+`devDependencies` are unrestricted; they do not ship.
+
+If a package really is needed, add it to `dependency-policy.json` with a one-line reason. That
+entry is the review gate: the question is not "does it work" but "is the platform genuinely
+insufficient".
+
+## Workers
+
+**Service worker** — hand-written, not generated. What we need (precache the app shell,
+cache-first for assets) is a short auditable file; a generated one ships a runtime library to
+do the same job.
+
+**Web workers** — for work that would otherwise block the interface: large PDF generation, and
+the QR decode loop when the ZXing fallback is active. **Measure before adding one.** Workers
+cost message-passing and serialisation, which is not free if the work was never slow enough to
+notice.
+
 ## Credentials
 
 **Never put a token in `.npmrc`.** It references `${WEBAWESOME_NPM_TOKEN}` and must continue

@@ -21,6 +21,7 @@ decision to be wrong. That is the part people need eighteen months later.
 | [0010](0010-embedded-remarks-conflict-merge.md) | Embedded remarks with deterministic merge | Accepted |
 | [0011](0011-user-owned-org-ready-tenancy.md) | User-owned projects, org-ready schema | Accepted |
 | [0012](0012-central-project-registry.md) | Central project registry + local cache | Accepted (amends 0003) |
+| [0013](0013-minimal-runtime-dependencies.md) | Minimal runtime dependencies | Accepted |
 
 ## Writing one
 

@@ -46,6 +46,11 @@ jobs:
         env:
           WEBAWESOME_NPM_TOKEN: ${{ secrets.WEBAWESOME_NPM_TOKEN }}
 
+      # Runs before Biome: dependency creep is silent and cheap to catch, and the answer to
+      # a violation is a design conversation, not a formatting fix.
+      - name: Dependency policy
+        run: npm run check:deps
+
       - name: Biome
         run: npm run check
 

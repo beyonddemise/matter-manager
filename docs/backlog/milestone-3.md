@@ -112,9 +112,13 @@ Scenario: a large project exports without freezing the UI
   And the export can be cancelled
 ```
 
-**Approach:** measure first. If generation on the main thread is acceptable at realistic
-sizes, do nothing. A web worker is the fix if measurement says so, not a precaution taken in
-advance.
+**Approach:** measure first, then move generation to a **web worker** if the measurement
+justifies it ([ADR 0013](../adr/0013-minimal-runtime-dependencies.md)). This is the strongest
+candidate for one in the whole application — PDF generation is CPU-bound, batched, and has a
+natural boundary: send device records in, get bytes back.
+
+But measure. A worker costs message-passing and serialisation, and a fifteen-device export
+will not notice the main thread at all.
 
 ---
 
