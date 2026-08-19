@@ -1,0 +1,89 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Lint, typecheck, test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+
+      - name: Biome
+        run: npm run check
+
+      - name: TypeScript
+        run: npm run typecheck
+
+      - name: Tests
+        run: npm run test:coverage
+
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage/
+          retention-days: 7
+
+  couchdb-contract:
+    name: CouchDB access model
+    runs-on: ubuntu-latest
+    # This guards a privilege-escalation risk that no application test can catch: if a
+    # CouchDB upgrade stops preserving custom _security keys, read-only project access
+    # silently becomes read-write while the application code behaves exactly as written.
+    services:
+      couchdb:
+        image: couchdb:3.5.2.1
+        env:
+          COUCHDB_USER: admin
+          COUCHDB_PASSWORD: devonly
+        ports:
+          - 5984:5984
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Wait for CouchDB
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fsS -u admin:devonly http://localhost:5984/_all_dbs >/dev/null 2>&1; then
+              echo "CouchDB is up"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "CouchDB did not become available"
+          exit 1
+
+      - name: Create system databases
+        run: |
+          curl -fsS -u admin:devonly -X PUT http://localhost:5984/_users || true
+          curl -fsS -u admin:devonly -X PUT http://localhost:5984/_replicator || true
+
+      - name: Verify access model
+        env:
+          COUCHDB_URL: http://localhost:5984
+          COUCHDB_ADMIN_USER: admin
+          COUCHDB_ADMIN_PASSWORD: devonly
+        run: ./infra/couchdb/verify-access-model.sh
+
+  # An e2e job is added in M2, once there is a UI to drive. Adding it now would mean a
+  # permanently skipped job, which trains people to ignore the CI summary.

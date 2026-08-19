@@ -1,0 +1,26 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      # One PR per ecosystem rather than a swarm. Dev tooling updates are almost always
+      # safe together, and reviewing them as a batch is faster than fifteen separate PRs.
+      dev-tooling:
+        patterns: ['@biomejs/*', 'vitest', '@vitest/*', 'typescript', '@playwright/*']
+      lit:
+        patterns: ['lit', '@lit/*', '@lit-labs/*']
+      pouchdb:
+        patterns: ['pouchdb*']
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+
+  - package-ecosystem: docker
+    directory: /infra
+    schedule:
+      interval: monthly

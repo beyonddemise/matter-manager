@@ -1,0 +1,36 @@
+{
+  "name": "matter-manager",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Offline-first catalogue for Matter smart-home commissioning QR codes",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/beyonddemise/matter-manager.git"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "workspaces": [
+    "packages/*",
+    "e2e"
+  ],
+  "scripts": {
+    "check": "biome check .",
+    "check:fix": "biome check --write .",
+    "typecheck": "tsc --build",
+    "typecheck:clean": "tsc --build --clean",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "e2e": "playwright test",
+    "verify": "npm run check && npm run typecheck && npm run test"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.9",
+    "@vitest/coverage-v8": "^4.1.11",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.11"
+  }
+}

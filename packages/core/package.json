@@ -1,0 +1,16 @@
+{
+  "name": "@matter-manager/core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Pure domain logic. No I/O, no DOM, no network.",
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "default": "./dist/src/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc --build"
+  }
+}

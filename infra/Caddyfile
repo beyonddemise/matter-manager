@@ -1,0 +1,36 @@
+# Caddy handles TLS automatically. Replace the hostnames before deploying.
+#
+# The blocked paths below are not defence in depth - they are the primary control.
+# Because setup passcodes are stored unencrypted (ADR 0005), database enumeration is
+# the difference between "an attacker needs to know a project id" and "an attacker
+# lists every project on the server".
+
+api.matter-manager.example {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+
+	reverse_proxy api:3000
+}
+
+db.matter-manager.example {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		-Server
+	}
+
+	# Database enumeration. Clients discover their projects through their own
+	# user_<sub> database; they must never be able to list what else exists.
+	@forbidden path /_all_dbs /_all_dbs/* /_utils /_utils/* /_membership /_node/* /_cluster_setup /_reshard*
+	respond @forbidden 404
+
+	reverse_proxy couchdb:5984
+}

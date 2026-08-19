@@ -1,0 +1,81 @@
+name: User story
+description: A vertical slice of user-visible value, developed test-first
+title: '[story] '
+labels: ['type:story']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A story is a slice of value, not a layer. "Add a device and see it in the list"
+        is a story. "Create the device repository" is not — it has no user standing
+        behind it, and it cannot be demonstrated.
+
+  - type: textarea
+    id: story
+    attributes:
+      label: User story
+      description: Who wants this, what, and why it matters to them.
+      placeholder: |
+        As a homeowner
+        I want to scan a device's QR code and give it a name and a room
+        So that I can find it again after the packaging is gone
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: >
+        Given/When/Then, one scenario per behaviour. These become the tests verbatim —
+        write them precisely enough that someone else could turn them into assertions
+        without asking you a question.
+      placeholder: |
+        Scenario: a scanned code is stored with its metadata
+          Given I am viewing a project
+          When I scan a valid Matter QR code
+          And I enter the name "Kitchen ceiling light" and the room "Ground Floor/Kitchen"
+          Then the device appears in the device list
+          And its installation date defaults to today
+
+        Scenario: an unreadable code is rejected clearly
+          Given I am viewing a project
+          When I scan a code that is not a Matter payload
+          Then I see an error naming what was wrong
+          And no device is created
+    validations:
+      required: true
+
+  - type: textarea
+    id: out-of-scope
+    attributes:
+      label: Explicitly out of scope
+      description: What this story deliberately does NOT do. This is what stops scope creep.
+      placeholder: |
+        - Photo attachment (separate story)
+        - Vendor lookup from the DCL (M6)
+    validations:
+      required: true
+
+  - type: textarea
+    id: test-plan
+    attributes:
+      label: Test plan
+      description: Which layer tests what. Remember `core` is where logic gets tested exhaustively.
+      placeholder: |
+        - core: payload validation rejects each malformed shape (unit, table-driven)
+        - data: repository round-trips a device through pouchdb-adapter-memory
+        - web: the form surfaces the validation error
+        - e2e: full scan-to-list flow, offline
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: definition-of-done
+    attributes:
+      label: Definition of done
+      options:
+        - label: Test observed failing before the implementation was written
+        - label: All acceptance criteria demonstrably met
+        - label: User-visible strings wrapped in `msg()`
+        - label: '`npm run verify` clean, coverage gates met'

@@ -1,0 +1,77 @@
+# Label taxonomy. Apply with:
+#   gh label create "<name>" --color <color> --description "<desc>" --force
+# A bootstrap script that reads this file is added when the backlog is created in GitHub.
+#
+# Three axes, applied together: what kind of work (type), which part of the system
+# (area), and how big (size). Anything that needs a fourth axis is probably two issues.
+
+# --- type: what kind of work is this ---
+- name: 'type:story'
+  color: '0E8A16'
+  description: A vertical slice of user-visible value
+- name: 'type:bug'
+  color: 'D73A4A'
+  description: Behaves differently from how it should
+- name: 'type:chore'
+  color: 'FEF2C0'
+  description: Tooling, infrastructure, dependencies, refactoring
+- name: 'type:spike'
+  color: 'C5DEF5'
+  description: Time-boxed investigation whose output is an answer, not shippable code
+- name: 'type:docs'
+  color: '0075CA'
+  description: Documentation and ADRs
+
+# --- area: which part of the system ---
+- name: 'area:core'
+  color: '5319E7'
+  description: Pure domain logic - Matter codec, room paths, entitlements, conflict merge
+- name: 'area:data'
+  color: '6F42C1'
+  description: PouchDB repositories, replication, conflict resolution
+- name: 'area:web'
+  color: '1D76DB'
+  description: Lit SPA, components, routing
+- name: 'area:api'
+  color: '006B75'
+  description: Fastify backend, OpenAPI contract
+- name: 'area:infra'
+  color: '444444'
+  description: CouchDB, Caddy, Docker, deployment, CI
+- name: 'area:auth'
+  color: 'B60205'
+  description: OIDC, JWT, sessions, project permissions
+- name: 'area:sync'
+  color: 'E99695'
+  description: Replication, offline behaviour, conflict handling
+- name: 'area:pdf'
+  color: 'BFD4F2'
+  description: PDF generation and print layout
+- name: 'area:i18n'
+  color: 'F9D0C4'
+  description: Translation, locale handling
+- name: 'area:qr'
+  color: 'FBCA04'
+  description: Scanning, rendering, payload handling
+
+# --- size: rough effort ---
+- name: 'size:S'
+  color: 'C2E0C6'
+  description: A few hours
+- name: 'size:M'
+  color: 'FEF2C0'
+  description: A day or so
+- name: 'size:L'
+  color: 'F9D0C4'
+  description: Several days - consider splitting
+
+# --- status ---
+- name: 'blocked'
+  color: 'D93F0B'
+  description: Cannot proceed until something else lands
+- name: 'good first issue'
+  color: '7057FF'
+  description: Well-scoped and self-contained
+- name: 'security'
+  color: 'B60205'
+  description: Touches the authorization model, secrets, or payload handling

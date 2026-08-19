@@ -1,0 +1,32 @@
+{
+  "name": "Matter Manager",
+  "dockerComposeFile": "docker-compose.yml",
+  "service": "app",
+  "workspaceFolder": "/workspaces/matter-manager",
+  "forwardPorts": [5173, 3000, 5985],
+  "portsAttributes": {
+    "5173": { "label": "Web (Vite dev)", "onAutoForward": "notify" },
+    "3000": { "label": "API (Fastify)" },
+    "5985": { "label": "CouchDB (5984 inside the network)" }
+  },
+  "postCreateCommand": "npm ci && npx playwright install --with-deps chromium",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "biomejs.biome",
+        "ms-playwright.playwright",
+        "vitest.explorer",
+        "runem.lit-plugin",
+        "redhat.vscode-yaml",
+        "42crunch.vscode-openapi"
+      ],
+      "settings": {
+        "editor.defaultFormatter": "biomejs.biome",
+        "editor.formatOnSave": true,
+        "editor.codeActionsOnSave": { "source.organizeImports.biome": "explicit" },
+        "typescript.tsdk": "node_modules/typescript/lib"
+      }
+    }
+  },
+  "remoteUser": "node"
+}

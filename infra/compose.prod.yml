@@ -1,0 +1,82 @@
+# Production stack for a single DigitalOcean droplet.
+#
+#   docker compose -f infra/compose.prod.yml up -d
+#
+# Secrets come from an .env file beside this one, never from this file.
+# See .env.example at the repository root.
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - '80:80'
+      - '443:443'
+      - '443:443/udp'
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - api
+      - couchdb
+
+  api:
+    build:
+      context: ..
+      dockerfile: packages/api/Dockerfile
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      API_PORT: 3000
+      COUCHDB_URL: http://couchdb:5984
+      COUCHDB_ADMIN_USER: ${COUCHDB_ADMIN_USER}
+      COUCHDB_ADMIN_PASSWORD: ${COUCHDB_ADMIN_PASSWORD}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
+      JWT_PRIVATE_KEY_PATH: /run/secrets/jwt-private.pem
+      JWT_ISSUER: matter-manager
+      JWT_AUDIENCE: matter-manager
+      API_PUBLIC_URL: ${API_PUBLIC_URL}
+      WEB_PUBLIC_URL: ${WEB_PUBLIC_URL}
+    volumes:
+      - ./secrets/jwt-private.pem:/run/secrets/jwt-private.pem:ro
+    depends_on:
+      couchdb:
+        condition: service_healthy
+    # Never published to the host. Caddy is the only ingress.
+    expose:
+      - '3000'
+
+  couchdb:
+    # Built, not pulled, so the configuration is COPYed in rather than bind-mounted.
+    # See couchdb/Dockerfile - bind-mounting into /opt/couchdb makes the entrypoint
+    # exit 1 with no log output on any host where chown of the mount fails.
+    #
+    # The JWT public key is deliberately NOT baked into this image. The API injects it
+    # at startup via PUT /_node/_local/_config/jwt_keys/rsa:_default, which keeps key
+    # rotation out of the image build and keeps key material out of the registry.
+    build:
+      context: ./couchdb
+      dockerfile: Dockerfile
+    image: matter-manager/couchdb:3.5.2.1
+    restart: unless-stopped
+    environment:
+      COUCHDB_USER: ${COUCHDB_ADMIN_USER}
+      COUCHDB_PASSWORD: ${COUCHDB_ADMIN_PASSWORD}
+    volumes:
+      # Must be an encrypted volume. Setup passcodes are stored unencrypted
+      # at the application layer by design - see ADR 0005.
+      - couchdb-data:/opt/couchdb/data
+    healthcheck:
+      test: ['CMD', 'curl', '-fsS', 'http://localhost:5984/_up']
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    # Never published to the host. Caddy is the only ingress.
+    expose:
+      - '5984'
+
+volumes:
+  couchdb-data:
+  caddy-data:
+  caddy-config:
