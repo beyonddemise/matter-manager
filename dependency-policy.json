@@ -1,0 +1,47 @@
+{
+  "$comment": [
+    "Allowlist of permitted RUNTIME dependencies. Enforced by scripts/check-dependencies.mjs",
+    "in CI. devDependencies are not restricted - they do not ship.",
+    "",
+    "Adding an entry here is the review gate. The question is not 'does this package work'",
+    "but 'is the platform genuinely insufficient'. See docs/adr/0013-minimal-runtime-dependencies.md.",
+    "",
+    "Before adding anything, check the platform: fetch, node:crypto (incl. JWT sign/verify and",
+    "JWK import), crypto.randomUUID, structuredClone, Intl. The whole auth and CouchDB path",
+    "was verified to need no dependencies at all."
+  ],
+  "allowed": {
+    "lit": "The component model itself (ADR 0008).",
+    "@lit/localize": "Runtime locale switching plus message extraction tooling.",
+    "@awesome.me/webawesome-pro": "Component library (ADR 0008). Pro registry, see .npmrc.",
+    "pouchdb-browser": "The CouchDB replication protocol: revision trees, conflict detection, resumable sync. ADR 0002 rejected writing this by hand because it is the hard part.",
+    "pdf-lib": "PDF writing with font embedding (ADR 0007). Not reasonable to hand-roll.",
+    "@zxing/browser": "QR decoding where BarcodeDetector is missing, which is every iOS Safari. Must be lazily loaded so native-API browsers never download it.",
+    "fastify": "HTTP server for the API (ADR 0004). Predates this policy; ADR 0013 notes node:http as the alternative if the API stays thin.",
+    "@noble/hashes": "Identical hashing in Node and the browser. node:crypto and WebCrypto diverge in the fine print, and code shared between packages/api and packages/web must not depend on which runtime it lands in. Audited, zero dependencies.",
+    "@noble/curves": "As @noble/hashes, for elliptic curve operations. Depends only on @noble/hashes.",
+    "@noble/ciphers": "As @noble/hashes, for symmetric encryption. Zero dependencies."
+  },
+  "banned": {
+    "axios": "Use native fetch.",
+    "node-fetch": "Use native fetch.",
+    "got": "Use native fetch.",
+    "request": "Unmaintained. Use native fetch.",
+    "nano": "Predates native fetch and carries its own HTTP stack. Use fetch.",
+    "couchdb": "Predates native fetch. Use fetch.",
+    "jose": "node:crypto signs and verifies ES256/RS256 and imports JWKs directly. Verified.",
+    "jsonwebtoken": "See jose.",
+    "jwk-to-pem": "createPublicKey({ key, format: 'jwk' }) does this natively.",
+    "uuid": "Use crypto.randomUUID().",
+    "nanoid": "Use crypto.randomUUID().",
+    "moment": "Unmaintained and large. Use Intl.",
+    "date-fns": "Use Intl unless a specific gap is demonstrated.",
+    "lodash": "Use plain code and structuredClone.",
+    "underscore": "See lodash.",
+    "ramda": "See lodash.",
+    "workbox-window": "The service worker is hand-written; see ADR 0013."
+  },
+  "allowedDev": {
+    "$comment": "Build-only tooling permitted as a devDependency in a package that ships a bundle. Anything here must be provably absent from the built output."
+  }
+}

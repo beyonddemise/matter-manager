@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/beyonddemise/matter-manager/security/advisories/new
+    about: Report privately. Never open a public issue for a vulnerability.
+  - name: Question or idea
+    url: https://github.com/beyonddemise/matter-manager/discussions
+    about: For anything that is not yet a defined piece of work.

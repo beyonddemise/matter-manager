@@ -1,0 +1,314 @@
+openapi: 3.1.0
+
+# SOURCE OF TRUTH, not documentation generated after the fact.
+#
+# This contract exists so the backend could be reimplemented in Quarkus without the
+# frontend noticing (ADR 0004). That option only stays real if a CI check fails when the
+# handlers drift from this file - otherwise "we kept it open" quietly stops being true.
+#
+# Note what is absent: there are no endpoints for devices, rooms or remarks. Those never
+# touch this API. The browser replicates them directly to CouchDB, authenticated by a JWT
+# CouchDB validates itself. This API only does what replication cannot: identity, and
+# provisioning databases the browser has no rights to create.
+
+info:
+  title: Matter Manager API
+  version: 0.1.0
+  description: |
+    Thin backend for Matter Manager.
+
+    Responsibilities: authentication, project provisioning, membership, and administration.
+    Device data is synchronised browser-to-CouchDB and does not appear here.
+  license:
+    name: Apache-2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0
+
+servers:
+  - url: http://localhost:3000
+    description: Local development
+  - url: https://api.matter-manager.example
+    description: Production
+
+tags:
+  - name: auth
+    description: Sign-in and token issuance
+  - name: projects
+    description: Project lifecycle and membership
+  - name: profile
+    description: The signed-in user's own settings
+
+security:
+  - bearerAuth: []
+
+paths:
+  /healthz:
+    get:
+      tags: [auth]
+      summary: Liveness probe
+      security: []
+      responses:
+        '200':
+          description: Service is up
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: { type: string, const: ok }
+
+  /auth/google:
+    get:
+      tags: [auth]
+      summary: Begin Google sign-in
+      description: Redirects to Google's consent screen using authorization code + PKCE.
+      security: []
+      responses:
+        '302':
+          description: Redirect to Google
+
+  /auth/google/callback:
+    get:
+      tags: [auth]
+      summary: Complete Google sign-in
+      security: []
+      parameters:
+        - { name: code, in: query, required: true, schema: { type: string } }
+        - { name: state, in: query, required: true, schema: { type: string } }
+      responses:
+        '302':
+          description: Redirect to the web app with a session established
+
+  /auth/token:
+    post:
+      tags: [auth]
+      summary: Issue a CouchDB-validatable access token
+      description: |
+        Returns a short-lived ES256 (EC P-256) JWT whose `sub` is the CouchDB username. PouchDB sends
+        it as a bearer token on replication requests; CouchDB validates it with the public
+        key without consulting this API.
+
+        Called on sign-in and again whenever replication receives a 401. Offline clients
+        never call it - local writes must never block on token freshness.
+      security: []
+      responses:
+        '200':
+          description: A new access token
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [accessToken, expiresIn]
+                properties:
+                  accessToken: { type: string }
+                  expiresIn: { type: integer, description: Seconds until expiry }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /profile:
+    get:
+      tags: [profile]
+      summary: Read the signed-in user's profile
+      responses:
+        '200':
+          description: The profile
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Profile' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /projects:
+    get:
+      tags: [projects]
+      summary: List projects the signed-in user can access
+      responses:
+        '200':
+          description: Accessible projects
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ProjectSummary' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+    post:
+      tags: [projects]
+      summary: Create a project
+      description: |
+        The ONLY operation in the entire application that requires connectivity.
+
+        Creating a project means creating a CouchDB database, writing its `_security`
+        document and installing `_design/access` - all of which need admin credentials the
+        browser does not and must not have.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, minLength: 1, maxLength: 200 }
+                address: { type: string, maxLength: 500 }
+      responses:
+        '201':
+          description: Project created and its database provisioned
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectSummary' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: Entitlement check refused (see ADR 0009)
+
+  /projects/{projectId}/members:
+    parameters:
+      - name: projectId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [projects]
+      summary: List project members and their roles
+      responses:
+        '200':
+          description: Members
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Member' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+    put:
+      tags: [projects]
+      summary: Grant or change a member's role
+      description: |
+        Rewrites the database's `_security` document: readers go in `members.names`, and
+        the subset allowed to write additionally in `writers.names`.
+
+        Revocation stops future replication. It cannot recall what already replicated to
+        someone's device - see SECURITY.md.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, role]
+              properties:
+                email: { type: string, format: email }
+                role: { $ref: '#/components/schemas/Role' }
+      responses:
+        '204': { description: Applied }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /projects/{projectId}/transfer:
+    parameters:
+      - name: projectId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      tags: [projects]
+      summary: Transfer ownership
+      description: |
+        The installer hand-over: an installer commissions a house, then transfers the
+        project to the homeowner, optionally retaining read access.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [toEmail]
+              properties:
+                toEmail: { type: string, format: email }
+                retainAccess:
+                  type: string
+                  # Deliberately NOT a $ref to Role. Referencing the full enum would let a
+                  # departing owner keep `owner` or `manage`, so a "transfer" could leave
+                  # them able to remove the new owner. Read is the only defensible retention.
+                  enum: [read]
+                  description: Retain read-only access after transfer. Omit to leave entirely.
+      responses:
+        '204': { description: Transferred }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    Role:
+      type: string
+      enum: [owner, manage, write, read]
+      description: |
+        `read` and `write` map onto CouchDB's `_security`. `manage` and `owner` are
+        enforced by this API only - CouchDB cannot express them, since it has no concept
+        of "may change who else has access".
+
+    Principal:
+      type: object
+      description: |
+        Polymorphic owner. Only `user` exists today; `org` is the seam that lets
+        organisations arrive later without a data migration (ADR 0004, tenancy decision).
+        Nothing in the codebase may compare against a bare user id.
+      required: [ownerType, ownerId]
+      properties:
+        ownerType: { type: string, enum: [user, org] }
+        ownerId: { type: string }
+
+    Profile:
+      type: object
+      required: [sub, email, displayName, locale]
+      properties:
+        sub: { type: string, description: Internal user id; also the CouchDB username }
+        email: { type: string, format: email }
+        displayName: { type: string }
+        locale:
+          type: string
+          enum: [auto, en, de]
+          description: '`auto` follows the browser; anything else overrides it.'
+
+    ProjectSummary:
+      type: object
+      required: [projectId, dbName, name, role, owner]
+      properties:
+        projectId: { type: string, format: uuid }
+        dbName: { type: string, description: 'CouchDB database to replicate, e.g. project_<uuid>' }
+        name: { type: string }
+        role: { $ref: '#/components/schemas/Role' }
+        owner: { $ref: '#/components/schemas/Principal' }
+
+    Member:
+      type: object
+      required: [sub, email, role]
+      properties:
+        sub: { type: string }
+        email: { type: string, format: email }
+        displayName: { type: string }
+        role: { $ref: '#/components/schemas/Role' }
+
+    Problem:
+      type: object
+      description: RFC 9457 problem details.
+      required: [title, status]
+      properties:
+        type: { type: string, format: uri }
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: string }
+
+  responses:
+    Unauthorized:
+      description: Missing or invalid credentials
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    Forbidden:
+      description: Authenticated but not permitted
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }

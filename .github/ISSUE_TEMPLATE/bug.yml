@@ -1,0 +1,48 @@
+name: Bug report
+description: Something behaves differently from how it should
+title: '[bug] '
+labels: ['type:bug']
+body:
+  - type: textarea
+    id: expected-actual
+    attributes:
+      label: Expected vs actual
+      placeholder: |
+        Expected: the remark added offline on my phone appears after sync
+        Actual: the remark added on my tablet replaced it
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Please include whether the device was online or offline at each step — sync state is the single most common factor in this project's bugs.
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      placeholder: |
+        Browser: Safari 18 on iOS 18.2
+        Installed as PWA: yes
+        Connectivity at the time: offline
+    validations:
+      required: true
+
+  - type: textarea
+    id: failing-test
+    attributes:
+      label: Failing test
+      description: >
+        Optional but very welcome. A bug fix here starts with a test that reproduces
+        the bug and fails — if you can express it, paste it.
+
+  - type: markdown
+    attributes:
+      value: |
+        ⚠️ **Never paste a Matter payload (`MT:…`) or a setup passcode into an issue.**
+        It is a secret equivalent to a key for that device. Reference the device by name
+        or id instead.

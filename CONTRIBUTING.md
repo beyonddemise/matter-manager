@@ -1,0 +1,174 @@
+# Contributing to Matter Manager
+
+## The one rule that matters
+
+**Every test is observed failing before the code that makes it pass is written.**
+
+A test that has never failed has never been shown to test anything. It is entirely possible
+to write a test that passes against an empty implementation, against the wrong module, or
+against a typo'd assertion — and you will not find out until the bug it was supposed to
+catch ships. Watching it go red first is the only evidence that the test is wired to the
+behaviour it claims to check.
+
+This is not a stylistic preference here. It is the reason the project is structured the way
+it is.
+
+## Red → Green → Refactor
+
+1. **Red.** Translate the issue's acceptance criteria into a test. Run it. Read the failure
+   message — it should describe the missing behaviour, not a `ReferenceError` from a typo.
+2. **Green.** The simplest implementation that passes. Not the best one. The simplest.
+3. **Refactor.** Improve the design with the tests green. This is where quality is added;
+   skipping it is how "simplest thing that passes" becomes technical debt.
+
+Commit at each transition where it helps a reviewer follow the reasoning.
+
+## Where code goes
+
+| If it... | It belongs in |
+|---|---|
+| is a pure function over plain data | `packages/core` |
+| touches PouchDB or CouchDB | `packages/data` |
+| renders or handles user input | `packages/web` |
+| serves HTTP or talks to Google | `packages/api` |
+
+**`packages/core` must never import a DOM type, a network client, or a database.** If a
+piece of logic seems to need one to be tested, it is nearly always two pieces of logic
+tangled together: a pure decision and an impure action. Separate them, put the decision in
+`core`, and test the decision exhaustively.
+
+## Testing
+
+| Layer | Tool | Coverage gate |
+|---|---|---|
+| `core` | Vitest, node environment | **90%** |
+| `data` | Vitest + `pouchdb-adapter-memory` | 70% |
+| `web` | Vitest browser mode + `@open-wc/testing-helpers` | 70% |
+| `api` | Vitest + Fastify `.inject()` | 70% |
+| end-to-end | Playwright | not gated |
+
+Prefer testing behaviour through public interfaces. A test that reaches into internals will
+break during the refactor step, which defeats the purpose of having it.
+
+### Test naming
+
+Describe the behaviour and the condition, not the function:
+
+```ts
+// yes
+it('rejects a payload whose Base38 length does not match the declared chunk size')
+
+// no
+it('tests decodeBase38')
+```
+
+## Issues and branches
+
+- Every change starts from an issue. Issues carry acceptance criteria as Given/When/Then.
+- Branch as `<issue-number>-<short-slug>`, e.g. `42-base38-decoder`.
+- PRs use `Closes #42` and must be green in CI to merge.
+- Labels: `type:*`, `area:*`, `size:*`. Milestones M0–M9.
+
+## Commit messages
+
+[Conventional Commits](https://www.conventionalcommits.org/). Scope is the package:
+
+```
+feat(core): decode Base38 chunks into byte buffers
+fix(data): merge remark arrays instead of discarding the losing revision
+test(core): add spec vectors for the 21-digit manual pairing code
+docs(adr): record database-per-project decision
+```
+
+## Internationalisation
+
+**Never write a user-visible string literal in a component.** Wrap it in `msg()` from
+`@lit/localize` from the first line, even before German translations exist. Retrofitting
+i18n across a built UI is miserable work that is never quite finished, and it costs nothing
+to do it as you go.
+
+```ts
+import { msg } from '@lit/localize'
+
+render() {
+  return html`<sl-button>${msg('Add device')}</sl-button>`
+}
+```
+
+## Runtime dependencies
+
+**Check the platform before reaching for a package.** Runtime dependencies ship to users,
+need patching, and widen the supply-chain surface of an application holding commissioning
+secrets. `npm run check:deps` fails the build on anything not justified in
+`dependency-policy.json` ([ADR 0013](docs/adr/0013-minimal-runtime-dependencies.md)).
+
+| Need | Use | Not |
+|---|---|---|
+| HTTP, client or server | native `fetch` | `axios`, `node-fetch`, `got` |
+| CouchDB from the API | native `fetch` | `nano`, `couchdb` |
+| Sign / verify JWT (**server only**) | `node:crypto` | `jose`, `jsonwebtoken` |
+| Provider JWKS key | `createPublicKey({ key, format: 'jwk' })` | `jwk-to-pem` |
+| Crypto in **shared or browser** code | `@noble/*` | assuming Node and WebCrypto agree |
+| Identifiers | `crypto.randomUUID()` | `uuid`, `nanoid` |
+| Dates, formatting | `Intl` | `moment`, `date-fns` |
+| Cloning, equality | `structuredClone`, plain code | `lodash` |
+
+This is not aspirational. The entire authentication and CouchDB path — ES256 signing and
+verification, importing Google's RSA key from JWKS, and every CouchDB call including
+`_security` and `_changes` — was verified working on `node:crypto` and `fetch` alone.
+
+**The exception worth knowing.** `node:crypto` and the browser's `SubtleCrypto` are different
+APIs that diverge in the fine print: available curves, sync versus promise-returning, key
+import, and signature encoding. ES256 alone differs — Node emits DER unless given
+`dsaEncoding: 'ieee-p1363'`; WebCrypto emits raw R‖S. Same algorithm, different bytes, no
+warning. So `node:crypto` is fine for code that is server-only and stays server-only, and
+`@noble/*` is the choice for anything in `core`, in the browser, or that might move. Code
+whose correctness depends on which runtime it happens to be executing in is not correct.
+
+`devDependencies` are unrestricted; they do not ship.
+
+If a package really is needed, add it to `dependency-policy.json` with a one-line reason. That
+entry is the review gate: the question is not "does it work" but "is the platform genuinely
+insufficient".
+
+## Workers
+
+**Service worker** — hand-written, not generated. What we need (precache the app shell,
+cache-first for assets) is a short auditable file; a generated one ships a runtime library to
+do the same job.
+
+**Web workers** — for work that would otherwise block the interface: large PDF generation, and
+the QR decode loop when the ZXing fallback is active. **Measure before adding one.** Workers
+cost message-passing and serialisation, which is not free if the work was never slow enough to
+notice.
+
+## Credentials
+
+**Never put a token in `.npmrc`.** It references `${WEBAWESOME_NPM_TOKEN}` and must continue
+to. This repository is public, so a literal token there is a live credential the moment it is
+pushed — CI fails the build if it finds one, but the leak has already happened by then.
+Export the variable in your shell instead.
+
+If you are an outside contributor without a Web Awesome Pro licence, `npm ci` will fail and
+CI on your pull request will too, because GitHub does not give fork workflows access to
+secrets. Please open an issue describing the change rather than a PR you cannot build, and
+we will work out how to land it.
+
+## Handling Matter payloads
+
+Setup passcodes are secrets. Within the codebase:
+
+- **Never log a payload or a passcode**, at any level, including during debugging. Log the
+  device id instead.
+- Never send a payload to a third-party service. The DCL lookup sends *Vendor ID and
+  Product ID only* — never the full payload.
+- Do not add analytics or error reporting that could capture document contents.
+
+## Definition of done
+
+- [ ] Test was observed failing before the implementation existed
+- [ ] All tests green, coverage gates met
+- [ ] `npm run verify` clean
+- [ ] User-visible strings wrapped in `msg()`
+- [ ] Acceptance criteria in the issue are each demonstrably met
+- [ ] Docs or ADR updated if the change alters an architectural decision

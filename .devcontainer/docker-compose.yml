@@ -1,0 +1,58 @@
+# Local development stack.
+#
+# The CouchDB image tag here is deliberately identical to infra/compose.prod.yml.
+# Replication and validate_doc_update behaviour differ between CouchDB minor versions,
+# and those are exactly the behaviours this project depends on most, so dev/prod drift
+# on this image would surface as sync bugs that reproduce nowhere.
+#
+# Host port is 5985, NOT the CouchDB default of 5984, so this stack coexists with any
+# other CouchDB already running on the machine. Inside the compose network the port is
+# still 5984, so `couchdb:5984` is what the app container talks to.
+name: matter-manager-dev
+
+services:
+  app:
+    image: mcr.microsoft.com/devcontainers/typescript-node:1-24-bookworm
+    volumes:
+      - ..:/workspaces/matter-manager:cached
+    command: sleep infinity
+    environment:
+      COUCHDB_URL: http://couchdb:5984
+      COUCHDB_ADMIN_USER: admin
+      COUCHDB_ADMIN_PASSWORD: devonly
+      # Forwarded from the host shell. .npmrc reads it to reach Web Awesome's registry.
+      # Absent here is not a build-time error - it fails at npm install, loudly.
+      WEBAWESOME_NPM_TOKEN: ${WEBAWESOME_NPM_TOKEN:-}
+    depends_on:
+      couchdb:
+        condition: service_healthy
+
+  couchdb:
+    # Built rather than pulled so the configuration can be COPYed in. It must not be
+    # bind-mounted - see the comment in couchdb/Dockerfile for the silent-crash reason.
+    build:
+      context: .
+      dockerfile: couchdb/Dockerfile
+    image: matter-manager/couchdb-dev:3.5.2.1
+    restart: unless-stopped
+    environment:
+      COUCHDB_USER: admin
+      COUCHDB_PASSWORD: devonly
+    ports:
+      # Loopback only. This instance uses the known credentials admin:devonly, so binding
+      # it to 0.0.0.0 would expose it to everything else on the network.
+      - '127.0.0.1:5985:5984'
+    volumes:
+      - couchdb-data:/opt/couchdb/data
+    healthcheck:
+      # Unauthenticated on purpose. This only works because couchdb-local.ini sets
+      # require_valid_user_except_for_up - without it every probe returns 401, the
+      # container never reports healthy, and anything waiting on it hangs silently.
+      test: ['CMD', 'curl', '-fsS', 'http://localhost:5984/_up']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
+volumes:
+  couchdb-data:

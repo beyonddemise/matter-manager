@@ -1,0 +1,27 @@
+name: Chore
+description: Tooling, infrastructure, refactoring, dependencies or documentation
+title: '[chore] '
+labels: ['type:chore']
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What needs doing
+    validations:
+      required: true
+
+  - type: textarea
+    id: why
+    attributes:
+      label: Why now
+      description: What is it blocking, or what risk does leaving it carry?
+    validations:
+      required: true
+
+  - type: textarea
+    id: done-when
+    attributes:
+      label: Done when
+      description: An observable outcome, not an activity. "CI fails on coverage regression" rather than "look at coverage".
+    validations:
+      required: true

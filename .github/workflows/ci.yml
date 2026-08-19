@@ -1,0 +1,126 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  # Scoped to this workflow so others sharing the expression do not cancel it, and keyed
+  # on head_ref for pull requests so a PR does not cancel an in-progress run on main.
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Lint, typecheck, test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # This repository is public, so a literal token in .npmrc is a live credential the
+      # moment it is pushed. The check fails closed: the value must BE ${VARIABLE}, not
+      # merely mention one. An earlier inline grep accepted any line containing `${`
+      # anywhere, so a literal token followed by a comment naming the variable passed.
+      - name: Reject a literal token in .npmrc
+        run: node scripts/check-npmrc.mjs
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      # --ignore-scripts is not caution, it is the point: any transitive dependency's
+      # postinstall would otherwise run with WEBAWESOME_NPM_TOKEN in its environment and
+      # could exfiltrate it. The token is only needed to FETCH packages, never to build them.
+      #
+      # .npmrc routes the @awesome.me scope to Web Awesome's own registry and reads the token
+      # from the environment. Without it, npm ci fails on the Pro package rather than quietly
+      # installing a free substitute.
+      - name: Install (no lifecycle scripts)
+        run: npm ci --ignore-scripts
+        env:
+          WEBAWESOME_NPM_TOKEN: ${{ secrets.WEBAWESOME_NPM_TOKEN }}
+
+      # Runs before Biome: dependency creep is silent and cheap to catch, and the answer to
+      # a violation is a design conversation, not a formatting fix.
+      - name: Dependency policy
+        run: npm run check:deps
+
+      - name: Biome
+        run: npm run check
+
+      - name: TypeScript
+        run: npm run typecheck
+
+      - name: Tests
+        run: npm run test:coverage
+
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage
+          path: coverage/
+          retention-days: 7
+
+  couchdb-contract:
+    name: CouchDB access model
+    runs-on: ubuntu-latest
+    # This guards a privilege-escalation risk that no application test can catch: if a
+    # CouchDB upgrade stops preserving custom _security keys, read-only project access
+    # silently becomes read-write while the application code behaves exactly as written.
+    services:
+      couchdb:
+        image: couchdb:3.5.2.1
+        env:
+          COUCHDB_USER: admin
+          COUCHDB_PASSWORD: devonly
+        ports:
+          - 5984:5984
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Wait for CouchDB
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fsS -u admin:devonly http://localhost:5984/_all_dbs >/dev/null 2>&1; then
+              echo "CouchDB is up"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "CouchDB did not become available"
+          exit 1
+
+      - name: Create system databases
+        run: |
+          curl -fsS -u admin:devonly -X PUT http://localhost:5984/_users || true
+          curl -fsS -u admin:devonly -X PUT http://localhost:5984/_replicator || true
+
+      - name: Verify access model
+        env:
+          COUCHDB_URL: http://localhost:5984
+          COUCHDB_ADMIN_USER: admin
+          COUCHDB_ADMIN_PASSWORD: devonly
+        run: ./infra/couchdb/verify-access-model.sh
+
+      # Guards the authentication half: that CouchDB validates our ES256 tokens at all, that
+      # bad tokens are actually refused, and that a key added under a new kid takes effect
+      # WITHOUT a restart - which is what makes zero-downtime rotation possible. (The
+      # startup-only setting is [chttpd] authentication_handlers, not [jwt_keys].)
+      - name: Verify JWT model
+        env:
+          COUCHDB_URL: http://localhost:5984
+          COUCHDB_ADMIN_USER: admin
+          COUCHDB_ADMIN_PASSWORD: devonly
+          # GitHub-generated service container id, not user input.
+          COUCHDB_CONTAINER: ${{ job.services.couchdb.id }}
+        run: ./infra/couchdb/verify-jwt-model.sh
+
+  # An e2e job is added in M2, once there is a UI to drive. Adding it now would mean a
+  # permanently skipped job, which trains people to ignore the CI summary.
