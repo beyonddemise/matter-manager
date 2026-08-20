@@ -163,13 +163,16 @@ populates correctly now.
 
 ---
 
-## M0-8 · Bootstrap script for labels, milestones and issues
+## M0-8 · Bootstrap script for labels, milestones and issues ✅
 
 `type:chore` `area:infra` `size:M`
 
-**Done when:** a script reads `.github/labels.yml` and `docs/backlog/*.md` and creates the
-labels, milestones and issues via `gh`; is idempotent; and prints what it would do with
-`--dry-run`.
+**Done:** `scripts/bootstrap-github.mjs`. Dry-run verified first, then applied: 21 labels,
+7 milestones, 56 issues, with M0s completed work closed on creation.
+
+Idempotent by design - labels update, milestones are reused, issues are matched by title and
+skipped. That is not politeness: the failure mode of a non-idempotent bootstrap is fifty-six
+duplicate issues with no remedy but closing them by hand.
 
 **Out of scope:** syncing changes back from GitHub into the markdown. One direction only —
 once issues exist, GitHub is the source of truth and these files become historical.
