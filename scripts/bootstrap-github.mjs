@@ -26,9 +26,21 @@ import { fileURLToPath } from 'node:url'
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const DRY = process.argv.includes('--dry-run')
 
+/**
+ * Runs `gh`, always from the repository root.
+ *
+ * `cwd` is not cosmetic. `gh` infers which repository to act on from its working directory,
+ * whereas this script reads its inputs relative to `root`. Left to inherit the caller's
+ * directory, the two could disagree: invoked from outside the checkout, it would read this
+ * backlog and create the issues somewhere else entirely.
+ */
 const gh = (args, { allowFail = false } = {}) => {
   try {
-    return execFileSync('gh', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
+    return execFileSync('gh', args, {
+      cwd: root,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
   } catch (err) {
     if (allowFail) return null
     throw new Error(`gh ${args.join(' ')}\n${err.stderr || err.message}`)
@@ -165,45 +177,74 @@ for (const { milestone } of backlog) {
 }
 
 console.log('\nIssues')
-const existingIssues = new Set(
-  JSON.parse(gh(['issue', 'list', '--state', 'all', '--limit', '500', '--json', 'title'])).map(
-    (i) => i.title,
-  ),
+
+/**
+ * Title -> the issue GitHub already has, keeping its number and state.
+ *
+ * A set of titles is not enough. Existence answers "do I create one?" but the backlog also
+ * marks issues done, and answering "is it closed?" needs the state; acting on it needs the
+ * number.
+ */
+const existingIssues = new Map(
+  JSON.parse(
+    gh(['issue', 'list', '--state', 'all', '--limit', '500', '--json', 'number,title,state']),
+  ).map((i) => [i.title, i]),
 )
+
+/**
+ * `gh` returns state as `OPEN` / `CLOSED` — verified against this repository, because the
+ * documentation says lowercase and the comparison fails silently if that is wrong: every
+ * closed issue would look open, and the script would try to close all of them forever.
+ */
+const isClosed = (existing) => existing?.state?.toUpperCase() === 'CLOSED'
 
 let created = 0
 let skipped = 0
+let closed = 0
 for (const { milestone, issues } of backlog) {
   console.log(`\n  ${milestone}`)
   for (const issue of issues) {
-    if (existingIssues.has(issue.title)) {
+    const existing = existingIssues.get(issue.title)
+    let ref = existing ? String(existing.number) : null
+
+    if (existing) {
       console.log(`    exists: ${issue.title}`)
       skipped++
-      continue
+    } else {
+      const labels = issue.labels.length ? issue.labels : ['type:chore']
+      ref = act(`create: ${issue.title}`, () => {
+        const args = [
+          'issue',
+          'create',
+          '--title',
+          issue.title,
+          '--body',
+          issue.body,
+          '--milestone',
+          milestone,
+        ]
+        for (const l of labels) args.push('--label', l)
+        return gh(args).trim()
+      })
+      created++
     }
-    const labels = issue.labels.length ? issue.labels : ['type:chore']
-    act(`create: ${issue.title}${issue.done ? '  (then close - already done)' : ''}`, () => {
-      const args = [
-        'issue',
-        'create',
-        '--title',
-        issue.title,
-        '--body',
-        issue.body,
-        '--milestone',
-        milestone,
-      ]
-      for (const l of labels) args.push('--label', l)
-      const url = gh(args).trim()
-      // M0 issues completed during setup are recorded and closed, so the milestone
-      // reflects what happened rather than looking untouched.
-      if (issue.done) gh(['issue', 'close', url, '--reason', 'completed'], { allowFail: true })
-    })
-    created++
+
+    // Closing is reconciled against GitHub rather than performed as a step of creation.
+    // Folded into creation it was unreachable on any later run: the title matched, the
+    // issue was skipped, and one failed close left it open permanently. Nothing here is
+    // allowed to fail quietly for the same reason - a bootstrap that reports success while
+    // leaving completed work open is worse than one that stops and says so.
+    if (issue.done && !isClosed(existing)) {
+      act(`close: ${issue.title} (done in the backlog)`, () =>
+        gh(['issue', 'close', ref, '--reason', 'completed']),
+      )
+      closed++
+    }
   }
 }
 
+const verb = DRY ? 'Would create' : 'Created'
 console.log(
-  `\n${DRY ? 'Would create' : 'Created'} ${created} issue(s); ${skipped} already existed.`,
+  `\n${verb} ${created} issue(s) and ${DRY ? 'close' : 'closed'} ${closed}; ${skipped} already existed.`,
 )
 if (DRY) console.log('Re-run without --dry-run to apply.')

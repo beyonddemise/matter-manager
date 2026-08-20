@@ -33,8 +33,9 @@ test-first loop works end to end before any feature depends on it.
 ### Documentation
 - [x] Design specification
 - [x] ARCHITECTURE, DATA-MODEL, SECURITY-MODEL, GLOSSARY
-- [x] 11 ADRs
-- [x] Backlog for M0–M5, 51 issues with Given/When/Then criteria
+- [x] 13 ADRs
+- [x] Backlog for M0–M5 (M2 split into M2 and M2b), 56 issues with
+      Given/When/Then criteria
 
 ### Code
 - [x] `packages/core` with the Base38 codec, test-first
