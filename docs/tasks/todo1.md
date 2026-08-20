@@ -33,8 +33,9 @@ test-first loop works end to end before any feature depends on it.
 ### Documentation
 - [x] Design specification
 - [x] ARCHITECTURE, DATA-MODEL, SECURITY-MODEL, GLOSSARY
-- [x] 11 ADRs
-- [x] Backlog for M0–M5, 51 issues with Given/When/Then criteria
+- [x] 13 ADRs
+- [x] Backlog for M0–M5 (M2 split into M2 and M2b), 56 issues with
+      Given/When/Then criteria
 
 ### Code
 - [x] `packages/core` with the Base38 codec, test-first
@@ -102,14 +103,31 @@ turned out to be the same bug rather than a separate cosmetic issue.
 Recorded as lesson L8: **a gate that has never been observed failing has not been shown to be
 a gate.**
 
+### M0 complete
+
+All eight M0 issues are closed. The backlog is now in GitHub: 21 labels, 7 milestones and
+56 issues, created from `docs/backlog/` by `scripts/bootstrap-github.mjs` after a dry run.
+
+**GitHub is the source of truth from here.** The markdown files are the reviewable source
+that produced them and are not synced back.
+
+### Review round
+
+CodeRabbit raised 46 threads; 35 addressed, 11 deferred with reasons recorded on the PR. Two
+were real bugs:
+
+- **Audit entries could be deleted.** A CouchDB deletion carries no `type` field, so the
+  check on `newDoc.type` never fired. The verification suite missed it twice: it tested
+  edits only, and contained a copy of the code under test with the same bug.
+- **The .npmrc token guard failed open**, accepting any line merely containing `${`.
+
 ### Known gaps
 
-- No issues created in GitHub — awaiting review of `docs/backlog/`
 - `packages/data`, `web`, `api` are documented placeholders with no `tsconfig.json`, by
   design; each gets one in the milestone that fills it
+- 11 review threads deferred to M3-M5, listed on the PR
 
 ### Next
 
-1. Review `docs/backlog/` and adjust
-2. Bootstrap labels, milestones and issues (M0-8)
-3. Begin M1 with M1-1, payload decoding
+1. Merge the PR
+2. Begin M1 with M1-1, payload decoding
