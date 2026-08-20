@@ -17,6 +17,7 @@ export {
   type CustomFlow,
   type DiscoveryCapabilities,
   decodePayload,
+  encodePayload,
   type OnboardingPayload,
   PAYLOAD_PREFIX,
   PayloadError,

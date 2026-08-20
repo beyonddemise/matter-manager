@@ -365,8 +365,84 @@ passcode, `0xFFF` for a 12-bit discriminator — plus one isolating the top bit 
 the probe until every mutation is caught. All seven widths and the BLE bit are now
 load-bearing.
 
+**Recurrence (M1-2).** The same trap reappeared in a check that only asserts *non-zero*. A
+test rejecting reserved padding bits set to `0b1010` did not pin the 4-bit width: narrowing it
+to 3 bits still sees a set bit and still throws. A "must be zero" assertion pins a width only
+when a case isolates the **top bit alone** — `0b1000` — so the narrowed read returns zero and
+sails through. Non-zero is not a boundary; the highest bit is.
+
 **Rule:** after implementing a decoder, parser or codec, change one constant at a time and
 confirm a test fails. It takes minutes, needs no tooling, and finds the tests that are
 decorative. Coverage will not tell you this — the surviving mutant was on a line with 100%
 coverage, because coverage measures whether a line *ran*, never whether anything would have
 noticed it being wrong.
+
+---
+
+## L15 · Verify a reviewer's premises, not just its conclusion
+
+**What happened:** CodeRabbit found a real bug in `scripts/bootstrap-github.mjs` — a failed
+issue-close was suppressed and could never be repaired on a later run — and prescribed the
+fix, including this detail:
+
+> Store each issue's number and state in a `Map`, close matching issues whose state is
+> lowercase `open` [...]
+
+The conclusion was correct. The premise was not:
+
+```console
+$ gh issue list --state all --limit 1 --json number,title,state
+[{"number":57,"state":"OPEN","title":"M5-10 Release 1.0 readiness"}]
+```
+
+`gh` returns `OPEN` and `CLOSED`. Implementing the suggestion verbatim would have produced a
+fix that reads correctly, reviews cleanly, and **does nothing**: every closed issue compares
+as open, so the repair branch either never fires or fires on all fifty-six issues forever.
+
+**Why this is worth a rule.** A reviewer that is right about the defect earns trust that
+carries, unearned, to every factual claim in the same comment. The bug report and the API
+detail arrive in one paragraph and feel like one assertion. They are not: the first came from
+reading the code in front of it, the second from a general belief about a tool.
+
+**Rule:** separate a review's *finding* from its *facts*. Accept the finding on its argument;
+check every factual claim — API shapes, return values, casing, defaults — against the actual
+system before writing code that depends on it. One command usually settles it. When the
+reviewer is a language model, this is not optional.
+
+**Related:** [[L1]] (verify a vector against an independent anchor) is the same discipline
+applied to test data instead of review comments.
+
+---
+
+## L16 · A round trip is not evidence that either direction is right
+
+**What happened:** M1-2 added an encoder to sit opposite M1-1's decoder, and put the field
+widths in one shared table so the two could not drift apart:
+
+```ts
+const WIDTH = { version: 3, vendorId: 16, /* ... */ passcode: 27, padding: 4 } as const
+```
+
+That is the right design, and it quietly disarms the most obvious test. `encode(decode(x)) === x`
+now passes *for every possible mutation of that table*, because the error is applied twice in
+opposite directions and cancels itself out. Narrow the passcode to 26 bits and the round trip
+is still exact — of a payload that is no longer the Matter format.
+
+**What saved it:** the test file keeps `pack`, a second, independently written bit-packer, and
+asserts against that rather than against the encoder. Every one of the eight width mutations
+was caught. Had the width vectors been rebuilt with `encodePayload` — which looked like an
+obvious simplification, since the encoder now existed and the helper appeared redundant — all
+eight would have survived.
+
+**The trap in general:** symmetric functions (encode/decode, serialise/parse, compress/inflate,
+encrypt/decrypt) invite round-trip tests because they are cheap and read as thorough. They test
+*consistency*, not *correctness*. A round trip cannot distinguish an implementation that matches
+the specification from one that is internally coherent and wrong.
+
+**Rule:** every symmetric pair needs at least one assertion against an external anchor — a
+published vector, a hand-computed byte string, or a second implementation written independently.
+Keep that anchor even when it starts to look like duplication. **Deleting a test helper because
+the production code can now do the same job removes the only independent witness.**
+
+**Related:** [[L14]] — the mutation probe is how you find out whether the anchor is load-bearing.
+
