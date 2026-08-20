@@ -79,7 +79,8 @@ function accumulate(digits: string): number {
 export function verhoeffCheckDigit(digits: string): number {
   if (!ONLY_DIGITS.test(digits)) {
     throw new VerhoeffError(
-      `A Verhoeff check digit is defined only over digits; received ${JSON.stringify(digits)}.`,
+      // The input is not echoed: it is a manual pairing code body, which carries the passcode.
+      `A Verhoeff check digit is defined only over digits, and the input contains something else.`,
     )
   }
   // The placeholder zero occupies the position the check digit will take, so that every

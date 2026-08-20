@@ -92,7 +92,10 @@ export function decodeBase38(encoded: string): Uint8Array {
     const maxValue = MAX_VALUE_PER_BYTE_COUNT[byteCount] as number
     if (value > maxValue) {
       throw new Base38Error(
-        `Base38 chunk at position ${cursor} decodes to ${value}, which exceeds the maximum ${maxValue} for ${byteCount} byte(s).`,
+        // The decoded value is not reported: for a Matter payload it is up to three bytes of
+        // the packed struct, which can span the passcode. Position and limit locate the fault
+        // without carrying any of the data.
+        `Base38 chunk at position ${cursor} decodes to a value above the maximum ${maxValue} for ${byteCount} byte(s).`,
       )
     }
 

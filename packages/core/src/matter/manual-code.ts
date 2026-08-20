@@ -131,7 +131,8 @@ export function parseManualCode(code: string): ManualCode {
 
   if (!/^\d+$/.test(digits)) {
     throw new PayloadError(
-      `A manual pairing code contains only digits; received ${JSON.stringify(code)}.`,
+      // The code is not echoed; it carries the passcode.
+      `A manual pairing code contains only digits, separators aside; this one has other characters.`,
     )
   }
 
@@ -157,7 +158,8 @@ export function parseManualCode(code: string): ManualCode {
   const group = Number(digits.slice(1, 6))
   if (group > 0xffff) {
     throw new PayloadError(
-      `Digits 2-6 decode to ${group}, which exceeds the 16 bits they occupy; the code is malformed.`,
+      // The decoded group is not reported; its low 14 bits are the passcode's.
+      `Digits 2-6 decode to a value above the 16 bits they occupy; the code is malformed.`,
     )
   }
 
