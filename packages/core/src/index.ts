@@ -14,6 +14,14 @@
 
 export { BASE38_ALPHABET, Base38Error, decodeBase38, encodeBase38 } from './matter/base38.js'
 export {
+  FORBIDDEN_PASSCODES,
+  isValidPasscode,
+  MAX_PASSCODE,
+  MIN_PASSCODE,
+  type PasscodeProblem,
+  passcodeProblem,
+} from './matter/passcode.js'
+export {
   type CustomFlow,
   type DiscoveryCapabilities,
   decodePayload,
