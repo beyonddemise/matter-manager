@@ -28,7 +28,10 @@ if (!existsSync(file)) {
 }
 
 /** The only accepted form: an environment reference, optionally surrounded by whitespace. */
-// biome-ignore lint/suspicious/noTemplateCurlyInString: matching the literal npmrc syntax
+// The ${...} here is literal .npmrc syntax, not a JS template placeholder.
+// (No biome-ignore needed: noTemplateCurlyInString does not inspect regex
+// literals, so the directive that used to sit here suppressed nothing. It
+// would be needed again if this were ever rewritten as a string.)
 const ENV_REFERENCE = /^\$\{[A-Za-z_][A-Za-z0-9_]*\}$/
 
 const problems = []
