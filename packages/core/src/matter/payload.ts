@@ -219,8 +219,14 @@ export function decodePayload(text: string): OnboardingPayload {
   }
 }
 
-/** Rejects anything that is not a whole number inside the field's width. */
-function requireInRange(name: string, value: number, width: number): number {
+/**
+ * Rejects anything that is not a whole number inside the field's width.
+ *
+ * Exported because the manual pairing code guards the same fields against the same widths.
+ * A second copy would be free to drift, and two range checks disagreeing about what a legal
+ * discriminator is would be a genuinely confusing bug to chase.
+ */
+export function requireInRange(name: string, value: number, width: number): number {
   const max = maxValue(width)
   if (!Number.isInteger(value) || value < 0 || value > max) {
     throw new PayloadError(

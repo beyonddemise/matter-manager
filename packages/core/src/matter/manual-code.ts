@@ -25,7 +25,7 @@
  * @module
  */
 
-import { PayloadError } from './payload.js'
+import { PayloadError, requireInRange } from './payload.js'
 import { isVerhoeffValid, verhoeffCheckDigit } from './verhoeff.js'
 
 /** Fields needed to derive a manual pairing code. */
@@ -63,17 +63,6 @@ const WIDTH = { discriminator: 12, passcode: 27, vendorProduct: 16 } as const
 
 /** How many of the discriminator's bits survive into a manual code. */
 const SHORT_DISCRIMINATOR_SHIFT = 8
-
-/** Rejects anything that is not a whole number inside the field's width. */
-function requireInRange(name: string, value: number, width: number): number {
-  const max = 2 ** width - 1
-  if (!Number.isInteger(value) || value < 0 || value > max) {
-    throw new PayloadError(
-      `${name} must be a whole number between 0 and ${max}; received ${value}.`,
-    )
-  }
-  return value
-}
 
 const padded = (value: number, width: number): string => String(value).padStart(width, '0')
 

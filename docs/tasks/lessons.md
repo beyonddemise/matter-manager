@@ -365,6 +365,16 @@ passcode, `0xFFF` for a 12-bit discriminator — plus one isolating the top bit 
 the probe until every mutation is caught. All seven widths and the BLE bit are now
 load-bearing.
 
+**Recurrence (M1-3).** Four more survivors, all the same root cause. Masking the passcode at
+13 bits instead of 14 changed nothing, because the anchor's low group is 549. Two zero-padding
+widths were never exercised, because the anchor's digit groups are already full width. And a
+range check on a digit group could be deleted outright, because reaching it needs a code that
+is out of range *and* carries a correct check digit — which no natural vector does.
+
+That is three consecutive stories where a verified real-world anchor left an off-by-one
+invisible. The anchor proves the layout; it does not probe the edges, and it never will. Treat
+"we have a verified vector" as the start of the width tests, not the end of them.
+
 **Recurrence (M1-2).** The same trap reappeared in a check that only asserts *non-zero*. A
 test rejecting reserved padding bits set to `0b1010` did not pin the 4-bit width: narrowing it
 to 3 bits still sees a set bit and still throws. A "must be zero" assertion pins a width only
@@ -409,6 +419,13 @@ check every factual claim — API shapes, return values, casing, defaults — ag
 system before writing code that depends on it. One command usually settles it. When the
 reviewer is a language model, this is not optional.
 
+**It applies to your own premises as well.** Two caveats were written into the M1-3 pull
+request — that a helper had to be duplicated, and that a lesson could not be numbered — both
+resting on the belief that PR #61 was still open. It had already merged, and the branch was cut
+from a main that contained it. One `git log` would have settled it; neither caveat was
+necessary, and both were published as fact. A remembered repository state is a claim, not
+knowledge.
+
 **Related:** [[L1]] (verify a vector against an independent anchor) is the same discipline
 applied to test data instead of review comments.
 
@@ -445,4 +462,38 @@ Keep that anchor even when it starts to look like duplication. **Deleting a test
 the production code can now do the same job removes the only independent witness.**
 
 **Related:** [[L14]] — the mutation probe is how you find out whether the anchor is load-bearing.
+
+---
+
+## L17 · Derive the anchor before writing the code, not after
+
+**What happened:** M1-3's acceptance criteria supply `34970112332` as a verified manual pairing
+code for discriminator 3840 and passcode 20202021. Before writing any implementation, it was
+re-derived from first principles — field layout by hand, then the Verhoeff check digit. The
+derivation disagreed:
+
+```text
+body                : 3497011233     <- matches the anchor's first ten digits
+check digit         : 5             <- the anchor says 2
+```
+
+The fault was the placeholder zero: appended to the body it permutes each digit by the position
+it will really occupy, prepended it does not. Corrected, the derivation reproduced the anchor
+exactly.
+
+**Why the timing is the lesson.** The bug would have been found either way. What changed is the
+cost of finding it. Derived first, there was exactly one suspect — no implementation existed —
+and the ten matching digits localised the fault to the check digit alone in a single step.
+
+Written first, the same failure surfaces as *"my code and the anchor disagree"*: two suspects,
+and the more tempting one to doubt is the anchor, because it is a bare constant in an issue
+while the code is something you just reasoned through. The issue even says the anchor is
+verified — and that is precisely the sentence that gets rationalised away at 6pm.
+
+**Rule:** when a story hands you a magic constant, reproduce it independently **before** the
+implementation exists. Partial agreement is the prize: matching ten of eleven digits is a
+bisection you get for free, and you only get it while there is nothing else to blame.
+
+**Related:** [[L1]] is the same instinct applied to trusting a vector at all; [[L16]] is why the
+anchor cannot be replaced by a round trip.
 
