@@ -14,6 +14,12 @@
 
 export { BASE38_ALPHABET, Base38Error, decodeBase38, encodeBase38 } from './matter/base38.js'
 export {
+  deriveManualCode,
+  type ManualCode,
+  type ManualCodeInput,
+  parseManualCode,
+} from './matter/manual-code.js'
+export {
   type CustomFlow,
   type DiscoveryCapabilities,
   decodePayload,
@@ -22,3 +28,4 @@ export {
   PAYLOAD_PREFIX,
   PayloadError,
 } from './matter/payload.js'
+export { isVerhoeffValid, VerhoeffError, verhoeffCheckDigit } from './matter/verhoeff.js'
