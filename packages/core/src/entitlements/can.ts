@@ -70,19 +70,23 @@ export const ALLOW: Policy = () => true
 /**
  * What each action costs.
  *
- * `satisfies` rather than a type annotation is doing real work here: it requires an entry for
- * every {@link Action} and rejects any key that is not one, so adding an action to
- * {@link ACTIONS} breaks the build until it has an explicit policy. A plain
- * `Record<Action, Policy>` annotation would allow the same completeness check, but would also
- * widen the values and lose the literal types.
+ * `satisfies` is doing real work here: it requires an entry for every {@link Action} and
+ * rejects any key that is not one, so adding an action to {@link ACTIONS} breaks the build
+ * until it has an explicit policy.
+ *
+ * Frozen because it is exported. Without that, a consumer could assign
+ * `POLICIES['pdf.export'] = () => true` and {@link can} would use the replacement everywhere -
+ * turning a gate into a suggestion, from outside the module that owns it and with nothing in
+ * this file to show for it. `Readonly` states the same thing to the compiler, which catches it
+ * far earlier than the runtime error does.
  */
-export const POLICIES = {
+export const POLICIES: Readonly<Record<Action, Policy>> = Object.freeze({
   'project.create': ALLOW,
   'project.invite': ALLOW,
   'device.create': ALLOW,
   'device.attachPhoto': ALLOW,
   'pdf.export': ALLOW,
-} satisfies Record<Action, Policy>
+} satisfies Record<Action, Policy>)
 
 /**
  * Applies a policy table to one question.

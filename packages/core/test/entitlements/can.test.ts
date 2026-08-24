@@ -242,6 +242,40 @@ describe('the declared actions', () => {
     expect(Object.keys(POLICIES).sort()).toEqual([...ACTIONS].sort())
   })
 
+  /**
+   * The table is exported, so without freezing a consumer could assign
+   * `POLICIES['pdf.export'] = () => true` and `can` would use the replacement everywhere —
+   * turning the gate into a suggestion from outside the module that owns it.
+   *
+   * Asserting the table is unchanged rather than that the assignment throws: frozen writes
+   * throw in strict mode and fail silently in sloppy mode, and the property that matters is
+   * the same either way.
+   */
+  it('cannot have a policy replaced from outside', () => {
+    const replacement: Policy = () => false
+    const before = POLICIES['pdf.export']
+
+    try {
+      ;(POLICIES as Record<Action, Policy>)['pdf.export'] = replacement
+    } catch {
+      // Strict mode refuses outright; sloppy mode ignores it. Either is fine.
+    }
+
+    expect(POLICIES['pdf.export']).toBe(before)
+    expect(can(owner, 'pdf.export', project)).toBe(true)
+  })
+
+  it('cannot have an action added from outside', () => {
+    try {
+      ;(POLICIES as Record<string, Policy>)['data.export'] = () => true
+    } catch {
+      // as above
+    }
+
+    expect(Object.keys(POLICIES).sort()).toEqual([...ACTIONS].sort())
+    expect(can(owner, 'data.export' as Action, project)).toBe(false)
+  })
+
   it('lists each action exactly once', () => {
     expect(new Set(ACTIONS).size).toBe(ACTIONS.length)
   })
