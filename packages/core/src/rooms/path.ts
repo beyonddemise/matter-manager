@@ -103,6 +103,17 @@ export function isValidRoomPath(path: string): boolean {
  * The folding is deliberately more aggressive than the comparison strictly needs. This drives
  * a *warning*, not a rejection, so an extra prompt costs a moment and a missed one costs a
  * duplicate room nobody can tell apart afterwards.
+ *
+ * **This is case conversion used as a fold, not Unicode `Case_Folding`.** The measured
+ * difference is the Turkish dotless `ı`, which upper-cases to `I` and so matches `i` here,
+ * where true folding keeps them apart. Accepted, for three reasons: the consequence is one
+ * extra warning rather than a merge or any data loss; JavaScript exposes no `toCaseFold`, so
+ * real folding means shipping the `CaseFolding.txt` table against ADR 0013; and the obvious
+ * substitute is worse where it counts — `Intl.Collator` at `sensitivity: 'accent'` reports
+ * `Straße` and `STRASSE` as *different*, failing the German case this fold exists for.
+ *
+ * Revisit if Turkish is ever a supported locale, where `ı` and `i` are separate letters. The
+ * test pinning that pair will fail and force the decision rather than letting it drift.
  */
 export function roomPathKey(path: string): string {
   return splitRoomPath(normaliseRoomPath(path))

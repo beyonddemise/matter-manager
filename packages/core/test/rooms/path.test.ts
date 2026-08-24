@@ -175,6 +175,18 @@ describe('near-duplicate detection', () => {
     expect(isNearDuplicateRoomPath(a, b)).toBe(true)
   })
 
+  /**
+   * A measured consequence of folding by case conversion, recorded rather than hidden.
+   *
+   * `ı`.toUpperCase() is `I`, so it matches `i`; true Unicode folding keeps them apart. This
+   * costs one extra warning and nothing else — the comparison never merges rooms. If Turkish
+   * becomes a supported locale, where these are separate letters, this test fails and forces
+   * the decision instead of letting it drift.
+   */
+  it('treats the Turkish dotless i as a near-duplicate of i, deliberately', () => {
+    expect(isNearDuplicateRoomPath('\u0131', 'i')).toBe(true)
+  })
+
   it('still distinguishes genuinely different names after folding', () => {
     // Folding is deliberately more aggressive than lowercasing, so this pins that it has not
     // become aggressive enough to merge unrelated rooms.
