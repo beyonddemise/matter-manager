@@ -157,6 +157,31 @@ describe('near-duplicate detection', () => {
     expect(isNearDuplicateRoomPath(composed, decomposed)).toBe(true) // ...same room
   })
 
+  /**
+   * `toLowerCase` is case *conversion*, not case *folding*, and the two differ in exactly the
+   * places that matter here. Conversion preserves linguistic distinctions; folding erases them
+   * so that two spellings of the same word compare equal.
+   *
+   * The German case is the one that bites this application: `Straße` and `STRASSE` are the
+   * same room to anybody reading them, and `toLowerCase` alone leaves them as `straße` and
+   * `strasse`. Greek sigma is the same defect in a locale we do not ship, kept as a second
+   * witness that the rule is folding rather than a special case for `ß`.
+   */
+  it.each([
+    ['German sharp s against SS', 'Straße', 'STRASSE'],
+    ['Greek medial and final sigma', 'ΟΣ', 'οσ'],
+    ['a ligature against its letters', 'ﬁle', 'file'],
+  ])('folds %s', (_label, a, b) => {
+    expect(isNearDuplicateRoomPath(a, b)).toBe(true)
+  })
+
+  it('still distinguishes genuinely different names after folding', () => {
+    // Folding is deliberately more aggressive than lowercasing, so this pins that it has not
+    // become aggressive enough to merge unrelated rooms.
+    expect(isNearDuplicateRoomPath('Straße', 'Strand')).toBe(false)
+    expect(isNearDuplicateRoomPath('Küche', 'Kuchen')).toBe(false)
+  })
+
   it('is reflexive and symmetric', () => {
     expect(isNearDuplicateRoomPath('Kitchen', 'Kitchen')).toBe(true)
     expect(isNearDuplicateRoomPath('KITCHEN', 'kitchen')).toBe(

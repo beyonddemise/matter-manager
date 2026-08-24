@@ -87,14 +87,26 @@ export function isValidRoomPath(path: string): boolean {
  * The Unicode step matters more than it looks. `ü` has two spellings — one code point, or `u`
  * followed by a combining diaeresis — which render identically. In a German-speaking house,
  * typing one and pasting the other would otherwise produce two rooms nobody can tell apart on
- * screen. Composing happens after case folding, because folding can decompose.
+ * screen. Composing happens last, because case folding can decompose.
  *
- * Known limitation: `ß` and `SS` do not fold together, so `Straße` and `STRASSE` are not
- * reported as near-duplicates.
+ * Case is *folded*, not merely lowered. `toLowerCase` implements Unicode case **conversion**,
+ * which preserves linguistic distinctions on purpose; folding erases them so two spellings of
+ * one word compare equal. The difference is not academic here: `Straße`.toLowerCase() is
+ * `straße` and `STRASSE`.toLowerCase() is `strasse`, so the same German room would fail to be
+ * recognised as a duplicate of itself. Upper-casing collapses `ß` to `SS`, the Greek final
+ * sigma to the medial form, and ligatures to their letters.
+ *
+ * Upper rather than lower, and nothing after it: lowering the result again was measured to
+ * change no comparison, so it was removed. The key is never displayed - it exists only to be
+ * equal or not.
+ *
+ * The folding is deliberately more aggressive than the comparison strictly needs. This drives
+ * a *warning*, not a rejection, so an extra prompt costs a moment and a missed one costs a
+ * duplicate room nobody can tell apart afterwards.
  */
 export function roomPathKey(path: string): string {
   return splitRoomPath(normaliseRoomPath(path))
-    .map((segment) => segment.replace(/\s+/g, ' ').toLowerCase().normalize('NFC'))
+    .map((segment) => segment.replace(/\s+/g, ' ').toUpperCase().normalize('NFC'))
     .join(ROOM_PATH_SEPARATOR)
 }
 
