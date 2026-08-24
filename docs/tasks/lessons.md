@@ -59,6 +59,16 @@ explicit argument.
 
 ---
 
+**Recurrence (M1-3, twice in one session).** Mutation probes reported `SURVIVED` twice when
+the mutation had not taken effect. Once the replacement text landed in the wrong branch of a
+ternary, so the guarded path was never altered. Once a `&&` written inside a double-quoted
+bash string reached the file as `\&\&`, which does not compile — the run died before any test
+executed, and the script's "no failures matched" check read that as a survivor.
+
+A surviving mutant and a mutant that never ran produce the same silence. Before believing a
+survivor, confirm the mutation is present in the file and that the suite actually ran: a probe
+that reports `SURVIVED` for every input is indistinguishable from a thorough one.
+
 ## L4 · zsh does not word-split unquoted variables
 
 **What happened:** `A="-u admin:pw"; curl $A "$URL"` returned "Name or password is

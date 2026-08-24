@@ -56,6 +56,15 @@ const LONG_LENGTH = 21
 /** Bit 2 of the first digit says whether vendor and product ids follow. */
 const VENDOR_PRODUCT_PRESENT = 0b100
 
+/**
+ * Bit 3 of the first digit is outside this format.
+ *
+ * The digit holds the vendor/product flag in bit 2 and the discriminator's top two bits in
+ * bits 0-1, so its defined range is 0 to 7. A leading 8 or 9 belongs to a later format, and
+ * the reference parser refuses both for that reason.
+ */
+const RESERVED_FORMAT = 0b1000
+
 /** Separators people copy from a printed label, which carry no meaning. */
 const SEPARATORS = /[\s-]/g
 
@@ -145,6 +154,18 @@ export function parseManualCode(code: string): ManualCode {
   }
 
   const first = Number(digits[0])
+
+  // Checked before any field is read, and before the vendor/product flag, because a later
+  // format may lay its fields out differently - complaining that the flag disagrees with the
+  // length would send the reader to the wrong part of the specification. Ignoring this bit
+  // instead would silently reinterpret the code: a leading 8 parses exactly as a leading 0,
+  // describing a plausible device that is not the one on the label.
+  if ((first & RESERVED_FORMAT) !== 0) {
+    throw new PayloadError(
+      `A manual pairing code beginning with ${first} uses a format this version does not define; only leading digits 0 to 7 are valid here.`,
+    )
+  }
+
   const vendorProductPresent = (first & VENDOR_PRODUCT_PRESENT) !== 0
   const expectedLength = vendorProductPresent ? LONG_LENGTH : SHORT_LENGTH
   if (digits.length !== expectedLength) {

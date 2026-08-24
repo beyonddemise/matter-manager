@@ -244,6 +244,42 @@ describe('parseManualCode rejects malformed input', () => {
     expect(() => parseManualCode('06553500004')).not.toThrow()
   })
 
+  /**
+   * The first digit holds the vendor/product flag in bit 2 and the discriminator's top two
+   * bits in bits 0-1. Bit 3 is not part of the encoding, so a leading 8 or 9 belongs to a
+   * later format. Reading it as version 1 silently discards that bit: `8...` parses exactly
+   * as `0...` would, yielding a plausible device that is not the one on the label.
+   *
+   * The reference parser refuses the same values - `if (chunk1 == 8 || chunk1 == 9) return
+   * CHIP_ERROR_INVALID_ARGUMENT;` - commented as "invalid for v1 and would indicate new
+   * format". Both codes below carry correct check digits, so nothing but this rule can
+   * reject them.
+   */
+  it.each([
+    ['8', '84970112331'],
+    ['9', '94970112333'],
+  ])('rejects an 11-digit code whose leading digit %s is reserved', (_label, code) => {
+    expect(() => parseManualCode(code)).toThrow(PayloadError)
+    expect(() => parseManualCode(code)).toThrow(/version|reserved|format/i)
+  })
+
+  it('rejects a reserved leading digit before complaining about anything else', () => {
+    // A 21-digit code led by 8 also disagrees with the vendor/product flag, which is bit 2
+    // and clear in 8. The version is the more fundamental fault and must be reported first,
+    // or the message sends the reader to the wrong part of the specification.
+    expect(() => parseManualCode('897011233655213276873')).toThrow(/version|reserved|format/i)
+  })
+
+  it.each([
+    ['0', '00000000005'],
+    ['3', '34970112332'],
+    ['7', '749701123365521327687'],
+  ])('accepts leading digit %s, the defined range', (_label, code) => {
+    // The boundary belongs to the accepted side: 7 is the largest legal first digit, and a
+    // check written as `first >= 7` would pass every rejection test above.
+    expect(() => parseManualCode(code)).not.toThrow()
+  })
+
   it('rejects a 21-digit code whose flag says no vendor or product follows', () => {
     // The mirror of the case above. Both directions of the disagreement must be refused;
     // testing only one leaves the parser free to trust the length in the other.
