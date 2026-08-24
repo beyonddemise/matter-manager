@@ -49,3 +49,15 @@ export {
   roomPathProblem,
   splitRoomPath,
 } from './rooms/path.js'
+export {
+  compareRevisions,
+  latestRevision,
+  mergeDevice,
+  mergeRemarks,
+  mergeRoom,
+  type Remark,
+  type RemarkBearing,
+  type Revision,
+  type RoomRevision,
+  UNASSIGNED_ROOM_PREFIX,
+} from './sync/merge.js'
