@@ -54,8 +54,18 @@ def main(argv):
     results = []
 
     for entry in mutations:
-        if not (isinstance(entry, list) and len(entry) == 3):
-            raise SystemExit(f'Each mutation must be [label, old, new]; got {entry!r}.')
+        # Types, not just shape. A null replacement crashes inside str.replace and a
+        # non-string label crashes while formatting the report - both after some mutations
+        # have already run, leaving a half-finished report and a restored file that looks
+        # like a completed pass.
+        if not (
+            isinstance(entry, list)
+            and len(entry) == 3
+            and all(isinstance(value, str) for value in entry)
+        ):
+            raise SystemExit(
+                f'Each mutation must be [label, old, new], all strings; got {entry!r}.'
+            )
         label, old, new = entry
 
         # An ambiguous pattern is the probe's own version of the bug it hunts: replacing the
