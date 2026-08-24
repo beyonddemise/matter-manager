@@ -91,6 +91,48 @@ describe('evaluate consults the policy table', () => {
     expect(seen).toEqual([{ principal: owner, project }])
   })
 
+  /**
+   * A lookup walks the prototype chain, so these names resolve to real functions on
+   * `Object.prototype` and pass a `typeof` check. `'constructor'` then returns a truthy
+   * object and `if (can(...))` permits it; `'valueOf'` throws instead, taking the gate down
+   * rather than opening it. Both are reachable from any untyped caller — the API boundary, a
+   * stale persisted value, a query parameter.
+   */
+  it.each([
+    ['constructor'],
+    ['toString'],
+    ['valueOf'],
+    ['hasOwnProperty'],
+    ['__proto__'],
+    ['isPrototypeOf'],
+  ])('refuses the inherited property %s instead of invoking it', (name) => {
+    const action = name as Action
+    expect(() => evaluate(POLICIES, owner, action, project)).not.toThrow()
+    expect(evaluate(POLICIES, owner, action, project)).toBe(false)
+    expect(can(owner, action, project)).toBe(false)
+  })
+
+  it.each([
+    ['a string', 'yes'],
+    ['null', null],
+    ['a number', 1],
+    ['an object', {}],
+  ])('refuses an own entry that is %s rather than calling it', (_label, value) => {
+    // Found by mutation: the own-property guard alone lets this through to be invoked, which
+    // throws rather than refusing. A gate that throws takes the feature down instead of
+    // closing it, so the wrong shape has to be a refusal.
+    const broken = { ...POLICIES, 'pdf.export': value as unknown as Policy }
+    expect(() => evaluate(broken, owner, 'pdf.export', project)).not.toThrow()
+    expect(evaluate(broken, owner, 'pdf.export', project)).toBe(false)
+  })
+
+  it('refuses a policy that returns a truthy value which is not true', () => {
+    // Only an explicit `true` permits. A gate should fail closed on every unexpected value,
+    // and a policy returning a non-boolean is exactly that.
+    const sloppy = { ...POLICIES, 'pdf.export': (() => 'yes') as unknown as Policy }
+    expect(evaluate(sloppy, owner, 'pdf.export', project)).toBe(false)
+  })
+
   it('reports an unknown action as refused rather than permitted', () => {
     // Reachable only from untyped callers - the API boundary, a stale persisted value. The
     // safe direction for an unrecognised action is to refuse it; permitting by default is how

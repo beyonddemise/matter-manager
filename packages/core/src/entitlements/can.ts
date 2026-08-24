@@ -95,6 +95,14 @@ export const POLICIES = {
  * An action with no policy is refused. It is unreachable from typed callers, but the API
  * boundary and stale persisted values are not typed; permitting the unrecognised is how a
  * typo becomes a bypass.
+ *
+ * That refusal needs an **own-property** check, not merely a lookup. A plain `policies[action]`
+ * walks the prototype chain, so `'constructor'` resolves to `Object` — which passes a
+ * `typeof === 'function'` test, gets called, and returns a truthy object. `if (can(...))` then
+ * permits it. `'valueOf'` is worse: it throws, taking the gate down rather than opening it.
+ *
+ * Only an explicit `true` permits. A policy returning anything else fails closed, because for
+ * a gate the safe direction for every unexpected value is no.
  */
 export function evaluate(
   policies: Readonly<Record<Action, Policy>>,
@@ -102,9 +110,10 @@ export function evaluate(
   action: Action,
   project?: ProjectRef,
 ): boolean {
+  if (!Object.hasOwn(policies, action)) return false
   const policy = policies[action]
   if (typeof policy !== 'function') return false
-  return policy(principal, project)
+  return policy(principal, project) === true
 }
 
 /**
