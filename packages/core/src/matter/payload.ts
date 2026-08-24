@@ -145,10 +145,12 @@ function writeBits(bytes: Uint8Array, offset: number, length: number, value: num
  */
 export function decodePayload(text: string): OnboardingPayload {
   if (!text.startsWith(PAYLOAD_PREFIX)) {
+    // The scheme is echoed, never the body: everything after the prefix encodes the
+    // passcode among other fields, and this path is reached by a real payload with, say,
+    // a lower-case prefix.
+    const scheme = /^[A-Za-z0-9.+-]{0,10}:/.exec(text)?.[0] ?? '(no scheme)'
     throw new PayloadError(
-      `A Matter payload must begin with "${PAYLOAD_PREFIX}"; received ${JSON.stringify(
-        text.slice(0, 8),
-      )}.`,
+      `A Matter payload must begin with "${PAYLOAD_PREFIX}"; received ${JSON.stringify(scheme)}.`,
     )
   }
 
@@ -219,12 +221,36 @@ export function decodePayload(text: string): OnboardingPayload {
   }
 }
 
-/** Rejects anything that is not a whole number inside the field's width. */
-function requireInRange(name: string, value: number, width: number): number {
+/**
+ * Fields whose value must never appear in an error message.
+ *
+ * Driven by the field name rather than by a flag at each call site, deliberately. A flag is
+ * something a future caller can forget, and the failure is silent - the code works, the tests
+ * pass, and the passcode quietly ends up in a log. Keying on the name makes the safe
+ * behaviour automatic for every call that guards a secret field, including ones not yet
+ * written.
+ */
+const SECRET_FIELDS: ReadonlySet<string> = new Set(['passcode'])
+
+/**
+ * Rejects anything that is not a whole number inside the field's width.
+ *
+ * Exported because the manual pairing code guards the same fields against the same widths.
+ * A second copy would be free to drift, and two range checks disagreeing about what a legal
+ * discriminator is would be a genuinely confusing bug to chase.
+ *
+ * The message names the field and its permitted range, and echoes the offending value only
+ * when that value is not secret. What went wrong and what is allowed are what a caller needs;
+ * repeating the passcode back adds nothing and puts it somewhere it does not belong.
+ */
+export function requireInRange(name: string, value: number, width: number): number {
   const max = maxValue(width)
   if (!Number.isInteger(value) || value < 0 || value > max) {
+    const received = SECRET_FIELDS.has(name)
+      ? 'the value supplied is outside it'
+      : `received ${value}`
     throw new PayloadError(
-      `${name} must be a whole number between 0 and ${max} (0x${max.toString(16)}); received ${value}.`,
+      `${name} must be a whole number between 0 and ${max} (0x${max.toString(16)}); ${received}.`,
     )
   }
   return value
