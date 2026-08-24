@@ -55,7 +55,7 @@ for (const { name, path } of manifests()) {
     for (const dep of Object.keys(pkg[field] ?? {})) {
       if (policy.banned[dep]) {
         problems.push({ pkg: name, field, dep, reason: policy.banned[dep], banned: true })
-      } else if (!policy.allowed[dep] && !(policy.allowedDev ?? {})[dep]) {
+      } else if (!policy.allowed[dep] && !policy.allowedDev?.[dep]) {
         problems.push({
           pkg: name,
           field,
