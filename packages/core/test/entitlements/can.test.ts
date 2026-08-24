@@ -195,6 +195,39 @@ describe('evaluate consults the policy table', () => {
     expect('data.export' in Object.prototype).toBe(false)
   })
 
+  /**
+   * Why the string check is not redundant with the own-property check.
+   *
+   * Every other non-string action is refused either way — `Object.hasOwn` throws on a
+   * null-prototype object and the catch denies, and a number or `null` is simply not an own
+   * key. A symbol is different: it is a legal property key, so if one is present in the table
+   * it *is* an own property, and without the string check it would be looked up and invoked.
+   * `Action` is a union of strings, so a symbol action is never legitimate.
+   */
+  it('refuses a symbol action even when the table has that symbol as an own key', () => {
+    const sneaky = Symbol('sneaky')
+    const table = { ...POLICIES, [sneaky]: ALLOW } as Record<Action, Policy>
+
+    expect(evaluate(table, owner, sneaky as unknown as Action, project)).toBe(false)
+  })
+
+  it('denies when the policy table itself throws on inspection', () => {
+    // A proxy can throw from getOwnPropertyDescriptor, which is what Object.hasOwn calls. The
+    // guard meant to keep the gate closed then escapes the catch and takes it down instead -
+    // the same failure as valueOf and as a throwing policy, arriving from a third direction.
+    const hostile = new Proxy({} as Record<Action, Policy>, {
+      getOwnPropertyDescriptor() {
+        throw new Error('hostile table')
+      },
+      has() {
+        throw new Error('hostile table')
+      },
+    })
+
+    expect(() => evaluate(hostile, owner, 'pdf.export', project)).not.toThrow()
+    expect(evaluate(hostile, owner, 'pdf.export', project)).toBe(false)
+  })
+
   it('reports an unknown action as refused rather than permitted', () => {
     // Reachable only from untyped callers - the API boundary, a stale persisted value. The
     // safe direction for an unrecognised action is to refuse it; permitting by default is how

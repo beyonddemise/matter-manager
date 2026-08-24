@@ -104,10 +104,12 @@ export const POLICIES = {
  * Only an explicit `true` permits. A policy returning anything else fails closed, and so does
  * one that throws, because for a gate the safe direction for every unexpected outcome is no.
  *
- * **Nothing here throws.** Every guard converts a surprise into a refusal, including the
- * action's own type: `Object.hasOwn` converts its second argument to a property key, and a
- * null-prototype object has no `toString` to convert with, so it raises `TypeError` before any
- * lookup happens. Refusing a non-string action first avoids that.
+ * **Nothing here throws**, and the whole body sits inside the `try` for that reason rather
+ * than only the policy call. Every step can raise: `Object.hasOwn` converts its second
+ * argument to a property key, and a null-prototype object has no `toString` to convert with;
+ * a `policies` object that is a proxy can throw from its `getOwnPropertyDescriptor` trap
+ * during the same call. A guard that escapes the catch makes this contract false, which is
+ * worse than not claiming it, because callers write `if (can(...))` and never wrap it.
  *
  * A policy that throws is a bug, and swallowing it means that bug presents as a blanket denial
  * rather than a stack trace. That is the right trade for a gate — the application keeps
@@ -125,8 +127,8 @@ export function evaluate(
   action: Action,
   project?: ProjectRef,
 ): boolean {
-  if (typeof action !== 'string' || !Object.hasOwn(policies, action)) return false
   try {
+    if (typeof action !== 'string' || !Object.hasOwn(policies, action)) return false
     return policies[action](principal, project) === true
   } catch {
     return false
