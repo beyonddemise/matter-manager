@@ -37,3 +37,15 @@ export {
   PayloadError,
 } from './matter/payload.js'
 export { isVerhoeffValid, VerhoeffError, verhoeffCheckDigit } from './matter/verhoeff.js'
+export {
+  isNearDuplicateRoomPath,
+  isValidRoomPath,
+  normaliseRoomPath,
+  ROOM_PATH_SEPARATOR,
+  RoomPathError,
+  type RoomPathProblem,
+  renameRoomPath,
+  roomPathKey,
+  roomPathProblem,
+  splitRoomPath,
+} from './rooms/path.js'

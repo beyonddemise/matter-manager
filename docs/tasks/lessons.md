@@ -69,6 +69,20 @@ A surviving mutant and a mutant that never ran produce the same silence. Before 
 survivor, confirm the mutation is present in the file and that the suite actually ran: a probe
 that reports `SURVIVED` for every input is indistinguishable from a thorough one.
 
+**Fix, after the third occurrence (M1-5).** The probe moved out of the shell into a script
+that applies the mutation in-process, asserts the pattern was actually found, and reports
+three outcomes rather than two:
+
+```text
+caught        — N tests failed
+SURVIVED      — the suite ran, M passed, nothing noticed
+INCONCLUSIVE  — no test counts in the output, so the mutant likely did not compile
+```
+
+Separating the third case from the second is the whole point. Shell escaping had twice turned
+a broken mutation into a silent "survivor", and each time the instinct was to go and weaken a
+test that was in fact fine.
+
 ## L4 · zsh does not word-split unquoted variables
 
 **What happened:** `A="-u admin:pw"; curl $A "$URL"` returned "Name or password is
