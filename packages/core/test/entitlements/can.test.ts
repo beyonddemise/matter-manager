@@ -133,6 +133,68 @@ describe('evaluate consults the policy table', () => {
     expect(evaluate(sloppy, owner, 'pdf.export', project)).toBe(false)
   })
 
+  /**
+   * `Object.hasOwn` converts its second argument to a property key, and an object with no
+   * prototype has no `toString` to convert with — so the guard meant to refuse an unknown
+   * action raises `TypeError` before it can refuse anything. Reachable from any untyped
+   * caller that forwards a parsed JSON body.
+   */
+  it.each([
+    ['an object with no prototype', Object.create(null)],
+    ['a symbol', Symbol('nope')],
+    ['a number', 7],
+    ['null', null],
+    ['undefined', undefined],
+  ])('refuses %s as an action instead of throwing', (_label, value) => {
+    const action = value as unknown as Action
+    expect(() => evaluate(POLICIES, owner, action, project)).not.toThrow()
+    expect(evaluate(POLICIES, owner, action, project)).toBe(false)
+    expect(() => can(owner, action, project)).not.toThrow()
+    expect(can(owner, action, project)).toBe(false)
+  })
+
+  /**
+   * A policy that throws is a bug, but propagating it takes the gate down and with it the
+   * feature — the same failure as `valueOf`, arriving from the policy side. Denying keeps the
+   * application running and makes the bug visible to whoever tries the action.
+   */
+  it('denies when a policy throws rather than letting the gate fall over', () => {
+    const exploding = {
+      ...POLICIES,
+      'pdf.export': (() => {
+        throw new Error('policy bug')
+      }) as Policy,
+    }
+    expect(() => evaluate(exploding, owner, 'pdf.export', project)).not.toThrow()
+    expect(evaluate(exploding, owner, 'pdf.export', project)).toBe(false)
+  })
+
+  /**
+   * The attack the own-property check exists for, and the reason it is not redundant with the
+   * strict `=== true` result check.
+   *
+   * A polluted prototype supplies a policy returning exactly `true`, so every downstream guard
+   * is satisfied — the value is callable, it does not throw, and it returns the one value that
+   * permits. Only refusing to look up the prototype chain in the first place stops it.
+   */
+  it('refuses an action reachable only through a polluted Object.prototype', () => {
+    const injected = 'data.export'
+    try {
+      ;(Object.prototype as Record<string, unknown>)[injected] = () => true
+
+      expect(evaluate(POLICIES, owner, injected as Action, project)).toBe(false)
+      expect(can(owner, injected as Action, project)).toBe(false)
+    } finally {
+      delete (Object.prototype as Record<string, unknown>)[injected]
+    }
+  })
+
+  it('leaves Object.prototype as it found it', () => {
+    // Guards the test above: if the cleanup failed, later runs would see a polluted prototype
+    // and the assertion would be measuring the wrong thing.
+    expect('data.export' in Object.prototype).toBe(false)
+  })
+
   it('reports an unknown action as refused rather than permitted', () => {
     // Reachable only from untyped callers - the API boundary, a stale persisted value. The
     // safe direction for an unrecognised action is to refuse it; permitting by default is how

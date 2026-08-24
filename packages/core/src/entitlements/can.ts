@@ -101,8 +101,23 @@ export const POLICIES = {
  * `typeof === 'function'` test, gets called, and returns a truthy object. `if (can(...))` then
  * permits it. `'valueOf'` is worse: it throws, taking the gate down rather than opening it.
  *
- * Only an explicit `true` permits. A policy returning anything else fails closed, because for
- * a gate the safe direction for every unexpected value is no.
+ * Only an explicit `true` permits. A policy returning anything else fails closed, and so does
+ * one that throws, because for a gate the safe direction for every unexpected outcome is no.
+ *
+ * **Nothing here throws.** Every guard converts a surprise into a refusal, including the
+ * action's own type: `Object.hasOwn` converts its second argument to a property key, and a
+ * null-prototype object has no `toString` to convert with, so it raises `TypeError` before any
+ * lookup happens. Refusing a non-string action first avoids that.
+ *
+ * A policy that throws is a bug, and swallowing it means that bug presents as a blanket denial
+ * rather than a stack trace. That is the right trade for a gate — the application keeps
+ * running and the symptom is visible to whoever tries the action — but it is a trade, and
+ * worth knowing about when M8 debugs a policy that refuses everything.
+ *
+ * The same catch covers a table whose entry is not callable at all. An explicit `typeof` check
+ * stood here until a mutation probe showed no test could tell it from its absence, which is
+ * true: calling a non-function throws, and the catch already denies. One mechanism is easier
+ * to keep correct than two that overlap.
  */
 export function evaluate(
   policies: Readonly<Record<Action, Policy>>,
@@ -110,10 +125,12 @@ export function evaluate(
   action: Action,
   project?: ProjectRef,
 ): boolean {
-  if (!Object.hasOwn(policies, action)) return false
-  const policy = policies[action]
-  if (typeof policy !== 'function') return false
-  return policy(principal, project) === true
+  if (typeof action !== 'string' || !Object.hasOwn(policies, action)) return false
+  try {
+    return policies[action](principal, project) === true
+  } catch {
+    return false
+  }
 }
 
 /**
