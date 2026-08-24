@@ -20,6 +20,14 @@ export {
   parseManualCode,
 } from './matter/manual-code.js'
 export {
+  FORBIDDEN_PASSCODES,
+  isValidPasscode,
+  MAX_PASSCODE,
+  MIN_PASSCODE,
+  type PasscodeProblem,
+  passcodeProblem,
+} from './matter/passcode.js'
+export {
   type CustomFlow,
   type DiscoveryCapabilities,
   decodePayload,

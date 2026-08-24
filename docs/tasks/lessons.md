@@ -497,3 +497,49 @@ bisection you get for free, and you only get it while there is nothing else to b
 **Related:** [[L1]] is the same instinct applied to trusting a vector at all; [[L16]] is why the
 anchor cannot be replaced by a round trip.
 
+---
+
+## L18 · A test table derived from the code under test can assert nothing — or vanish
+
+**What happened:** M1-4 checks setup passcodes against ten values the specification forbids.
+The obvious way to test that is to iterate the list:
+
+```ts
+it.each([...FORBIDDEN_PASSCODES].map((p) => [p]))('rejects %i', (value) => {
+  expect(passcodeProblem(value)).toBe('forbidden')
+})
+```
+
+Two things are wrong with it, and the second is worse than the first.
+
+**It asserts a tautology.** The claim being tested is *"these ten specific values are
+forbidden"*. What this actually checks is *"every value in the forbidden list is forbidden"*,
+which is true by construction and stays true if someone deletes half the list.
+
+**It can disappear without a sound.** Against the stub, where the set was empty, `it.each`
+received an empty array and generated **zero test cases**. Not a failure, not a skip — the
+block simply produced nothing, and the run reported only passes. A test that silently ceases
+to exist is worse than one that was never written, because the file still looks like coverage.
+
+**Fix:** write the table out as a literal, independent of the production constant, and assert
+its own size:
+
+```ts
+const FORBIDDEN = [11111111, /* ... */ 87654321] as const
+
+it('checked all ten of them', () => {
+  expect(FORBIDDEN).toHaveLength(10)
+  expect(new Set(FORBIDDEN).size).toBe(10)
+})
+```
+
+The separate equality test between the literal and the exported set then makes any edit to
+either one a deliberate act with a failing test behind it.
+
+**Rule:** test data must not come from the subject. When a parameterised table is computed
+rather than written, assert its length as well as its contents — an empty table is silence,
+not success.
+
+**Related:** [[L16]] is the same principle for symmetric functions; [[L14]] is why the values
+in the table have to reach the boundaries.
+
