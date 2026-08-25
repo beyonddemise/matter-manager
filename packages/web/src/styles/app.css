@@ -1,0 +1,52 @@
+/* Application CSS. Global rather than per-component, because the components render into
+   the light DOM so that Web Awesome's utility classes reach them. */
+
+app-shell,
+device-list-view,
+not-found-view {
+  display: block;
+}
+
+.app-empty {
+  color: var(--wa-color-text-quiet);
+}
+
+.app-back {
+  color: var(--wa-color-brand-on-quiet);
+}
+
+.app-header {
+  padding: var(--wa-space-s) var(--wa-space-m);
+}
+
+.app-main {
+  padding: var(--wa-space-l);
+}
+
+wa-page {
+  /* 15rem, derived from the space scale rather than written as a literal: --wa-space-5xl is
+     5rem, and this constraint (packages/web/src/styles/app.css: only --wa-* tokens, no raw
+     px/rem) applies to every value here, including custom properties that happen to hold a
+     dimension rather than a spacing gap. */
+  --menu-width: calc(var(--wa-space-5xl) * 3);
+}
+
+/* Without this the sidebar track stays reserved on mobile, leaving an empty band. */
+wa-page[view="mobile"] {
+  --menu-width: auto;
+}
+
+.app-nav a {
+  display: flex;
+  align-items: center;
+  gap: var(--wa-space-s);
+  padding: var(--wa-space-s) var(--wa-space-m);
+  border-radius: var(--wa-border-radius-m);
+  color: var(--wa-color-text-normal);
+  text-decoration: none;
+}
+
+.app-nav a[aria-current="page"] {
+  background-color: var(--wa-color-brand-fill-quiet);
+  color: var(--wa-color-brand-on-quiet);
+}
