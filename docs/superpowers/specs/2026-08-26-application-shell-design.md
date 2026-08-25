@@ -121,6 +121,25 @@ Choosing the **theme and palette** is deliberately not in this story; it is
 [#70](https://github.com/beyonddemise/matter-manager/issues/70), and belongs with the locale
 preference once M2-3 introduces a settings surface.
 
+### Components render into the light DOM
+
+`createRenderRoot()` returns `this`, so nothing in `packages/web` has a shadow root.
+
+This is load-bearing rather than a preference. Web Awesome's layout utilities — `wa-stack`,
+`wa-cluster`, `wa-split`, `wa-gap-*`, `wa-mobile-only` — are plain global selectors in
+`utilities/layout.css`, and `<wa-page>` reads `--menu-width` and its own `view` attribute from
+document CSS. Document stylesheets do not cross a shadow boundary, so inside a shadow root all
+of that is inert.
+
+The trap is that it half-works. `--wa-*` custom properties **do** inherit through shadow DOM,
+so the tokens resolve, the colours look right, and only the layout quietly fails to happen —
+which reads as a CSS mistake rather than an encapsulation one. ADR 0008 anticipated the general
+shape of this: "Shadow DOM encapsulates styling but complicates global theming."
+
+The cost is no style encapsulation within the web package, which is the correct trade when the
+entire design system is global CSS. Application CSS therefore lives in `src/styles/app.css`
+rather than in `static styles`, which Lit only adopts into shadow roots.
+
 ### Token discipline
 
 No raw hex, `px` or `rem` literals anywhere in the web package. Colour, spacing, radius, font
@@ -184,7 +203,7 @@ packages/web/
       device-list.ts            placeholder until M2-6
       not-found.ts
     styles/
-      tokens.css                the three theme classes and nothing else
+      app.css                   application CSS, global because the components are light-DOM
   test/
     router/match.test.ts        node
     app-shell.test.ts           browser
