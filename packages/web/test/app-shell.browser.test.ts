@@ -90,19 +90,33 @@ it('changes view when the hash changes, without remounting', async () => {
   expect(element.querySelector('wa-page')).toBe(pageBeforeNavigation)
 })
 
-it('gives the scheme toggle an accessible name', async () => {
+it('gives the scheme toggle an accessible name describing the next state', async () => {
   // label="…" is inert on the <wa-button> host (it renders no accessible-name mechanism
   // from it); the icon is the button's only content, so the label belongs on the
   // <wa-icon>, matching the hamburger four lines above it in app-shell.ts.
-  const element = await shell()
-  const icon = element.querySelector('wa-icon[name="circle-half-stroke"]')
-  expect(icon?.getAttribute('label')).toBe('Switch between light and dark')
+  const originalStored = localStorage.getItem(SCHEME_STORAGE_KEY)
+  try {
+    localStorage.setItem(SCHEME_STORAGE_KEY, 'light')
+    const element = await shell()
+    const icon = element.querySelector('wa-icon[name="sun"]')
+    // Currently showing "light" (sun); the next activation moves to "dark".
+    expect(icon?.getAttribute('label')).toBe('Switch to dark scheme')
+  } finally {
+    if (originalStored === null) {
+      localStorage.removeItem(SCHEME_STORAGE_KEY)
+    } else {
+      localStorage.setItem(SCHEME_STORAGE_KEY, originalStored)
+    }
+  }
 })
 
-it('toggles the scheme when its toggle button is tapped, and persists the choice', async () => {
+it('cycles light → dark → system → light, applying and persisting each step', async () => {
+  // The design specifies three reachable states, not two: a user must be able to return to
+  // "follow the system" through the header control, not just start there by default.
   const root = document.documentElement
   const originalClassName = root.className
   const originalStored = localStorage.getItem(SCHEME_STORAGE_KEY)
+  const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches
 
   try {
     // Start from a known, deterministic state rather than whatever the system prefers.
@@ -110,19 +124,28 @@ it('toggles the scheme when its toggle button is tapped, and persists the choice
     applyScheme(root, 'light')
 
     const element = await shell()
-    const toggle = element.querySelector('wa-icon[name="circle-half-stroke"]')?.closest('wa-button')
-    expect(toggle).not.toBeNull()
+    const click = async () => {
+      ;(element.querySelector('[data-scheme-toggle]') as HTMLElement).click()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    }
 
-    ;(toggle as HTMLElement).click()
-    await new Promise((resolve) => setTimeout(resolve, 0))
-
+    // light -> dark
+    await click()
+    expect(element.querySelector('wa-icon[name="moon"]')).not.toBeNull()
     expect(root.classList.contains('wa-dark')).toBe(true)
     expect(root.classList.contains('wa-light')).toBe(false)
     expect(localStorage.getItem(SCHEME_STORAGE_KEY)).toBe('dark')
 
-    ;(toggle as HTMLElement).click()
-    await new Promise((resolve) => setTimeout(resolve, 0))
+    // dark -> system
+    await click()
+    expect(element.querySelector('wa-icon[name="circle-half-stroke"]')).not.toBeNull()
+    expect(localStorage.getItem(SCHEME_STORAGE_KEY)).toBe('system')
+    expect(root.classList.contains('wa-dark')).toBe(prefersDark)
+    expect(root.classList.contains('wa-light')).toBe(!prefersDark)
 
+    // system -> light
+    await click()
+    expect(element.querySelector('wa-icon[name="sun"]')).not.toBeNull()
     expect(root.classList.contains('wa-light')).toBe(true)
     expect(root.classList.contains('wa-dark')).toBe(false)
     expect(localStorage.getItem(SCHEME_STORAGE_KEY)).toBe('light')

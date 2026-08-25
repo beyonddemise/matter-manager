@@ -24,7 +24,13 @@ import { applyScheme, readPreference, resolveScheme } from './scheme.js'
 // before any class is set and before this module runs.
 const media = window.matchMedia('(prefers-color-scheme: dark)')
 const apply = () =>
-  applyScheme(document.documentElement, resolveScheme(readPreference(localStorage), media.matches))
+  applyScheme(
+    document.documentElement,
+    resolveScheme(
+      readPreference(() => localStorage),
+      media.matches,
+    ),
+  )
 
 apply()
 media.addEventListener('change', apply)

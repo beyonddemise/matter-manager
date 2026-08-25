@@ -92,4 +92,15 @@ describe('matchRoute', () => {
   it('returns null for an empty route table', () => {
     expect(matchRoute('#/', [])).toBeNull()
   })
+
+  it.each([['#/devices/%E0'], ['#/devices/%']])(
+    'returns null rather than throwing for the malformed percent-escape %o',
+    (hash) => {
+      // decodeURIComponent throws URIError on an invalid escape sequence. A user can paste
+      // a hash like this into the address bar; the safe direction for unparseable input is
+      // "no match", not a crash that takes the whole render down.
+      expect(() => matchRoute(hash, ROUTES)).not.toThrow()
+      expect(matchRoute(hash, ROUTES)).toBeNull()
+    },
+  )
 })

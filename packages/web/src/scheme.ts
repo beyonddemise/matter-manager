@@ -32,28 +32,40 @@ export function resolveScheme(preference: SchemePreference, systemPrefersDark: b
  *
  * Anything unrecognised — written by an older build, or edited by hand — falls back rather
  * than being applied, because "system" is the one answer that is never wrong. `getItem`
- * throwing (Safari in private browsing) is handled the same way. The `localStorage` property
- * access itself can also throw in that mode, but that happens at this function's call sites
- * in `main.ts` and `app-shell.ts`, before `storage` reaches here - this `try` does not guard it.
+ * throwing (Safari in private browsing) is handled the same way.
+ *
+ * Takes a *supplier* rather than a storage object, and calls it inside this `try`, because
+ * the throwing site on a hostile origin is the `localStorage` property access itself, not
+ * just `getItem`. Accepting the object directly would move that access to the call site,
+ * outside any guard, and a `SecurityError` there would abort application startup before this
+ * function ever ran. Callers pass `() => localStorage` and the deferred access happens here,
+ * where the surrounding `try` already covers it.
  */
-export function readPreference(storage: Pick<Storage, 'getItem'>): SchemePreference {
+export function readPreference(getStorage: () => Pick<Storage, 'getItem'>): SchemePreference {
   try {
-    const stored = storage.getItem(SCHEME_STORAGE_KEY)
+    const stored = getStorage().getItem(SCHEME_STORAGE_KEY)
     return stored !== null && PREFERENCES.has(stored) ? (stored as SchemePreference) : 'system'
   } catch {
     return 'system'
   }
 }
 
-/** Stores the preference. A refused write is not worth breaking the page over. */
+/**
+ * Stores the preference. A refused write is not worth breaking the page over.
+ *
+ * As with {@link readPreference}, `getStorage` is called inside this `try` so that a
+ * `localStorage` access that throws on a hostile origin is guarded here rather than at the
+ * call site.
+ */
 export function writePreference(
-  storage: Pick<Storage, 'setItem'>,
+  getStorage: () => Pick<Storage, 'setItem'>,
   preference: SchemePreference,
 ): void {
   try {
-    storage.setItem(SCHEME_STORAGE_KEY, preference)
+    getStorage().setItem(SCHEME_STORAGE_KEY, preference)
   } catch {
-    // Private browsing, or a full quota. The preference simply does not persist.
+    // Private browsing, a full quota, or a hostile origin refusing `localStorage` access
+    // entirely. The preference simply does not persist.
   }
 }
 

@@ -2,7 +2,13 @@ import { msg } from '@lit/localize'
 import { html, LitElement, type TemplateResult } from 'lit'
 import { matchRoute } from './router/match.js'
 import { NAV_ROUTES, ROUTES } from './router/routes.js'
-import { applyScheme, readPreference, resolveScheme, writePreference } from './scheme.js'
+import {
+  applyScheme,
+  readPreference,
+  resolveScheme,
+  type SchemePreference,
+  writePreference,
+} from './scheme.js'
 import './views/device-list.js'
 import './views/not-found.js'
 
@@ -14,6 +20,23 @@ import './views/not-found.js'
  */
 const VIEWS: Readonly<Record<string, () => TemplateResult>> = {
   'device-list': () => html`<device-list-view></device-list-view>`,
+}
+
+/**
+ * The cycle order for the scheme toggle: light → dark → system → light.
+ *
+ * Three stops, not two - the design explicitly calls for "follow the system" to be a
+ * reachable choice from the header control, not just the unset default. Collapsing the
+ * button to a light/dark flip (as an earlier version did) makes "system" a state a user can
+ * fall out of but never choose again through the UI.
+ */
+const SCHEME_CYCLE: readonly SchemePreference[] = ['light', 'dark', 'system']
+
+/** Icon for each scheme preference, so the button's own icon shows what is currently applied. */
+const SCHEME_ICON: Readonly<Record<SchemePreference, string>> = {
+  light: 'sun',
+  dark: 'moon',
+  system: 'circle-half-stroke',
 }
 
 /**
@@ -38,9 +61,11 @@ export class AppShell extends LitElement {
 
   static override properties = {
     hash: { state: true },
+    schemePreference: { state: true },
   }
 
   declare hash: string
+  declare schemePreference: SchemePreference
 
   private readonly onHashChange = () => {
     this.hash = window.location.hash
@@ -49,6 +74,9 @@ export class AppShell extends LitElement {
   constructor() {
     super()
     this.hash = window.location.hash
+    // Read once at construction. The write side (`cycleScheme`) keeps this field and
+    // storage in sync itself, so there is no need to re-read on every render.
+    this.schemePreference = readPreference(() => localStorage)
   }
 
   override connectedCallback(): void {
@@ -61,13 +89,34 @@ export class AppShell extends LitElement {
     super.disconnectedCallback()
   }
 
-  /** Flips between light and dark, starting from whatever is currently applied. */
-  private toggleScheme(): void {
+  /** Advances the preference one step around light → dark → system → light. */
+  private cycleScheme(): void {
+    const currentIndex = SCHEME_CYCLE.indexOf(this.schemePreference)
+    const next = SCHEME_CYCLE[(currentIndex + 1) % SCHEME_CYCLE.length] as SchemePreference
+
+    writePreference(() => localStorage, next)
+    this.schemePreference = next
+
     const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches
-    const next =
-      resolveScheme(readPreference(localStorage), prefersDark) === 'dark' ? 'light' : 'dark'
-    writePreference(localStorage, next)
-    applyScheme(document.documentElement, next)
+    applyScheme(document.documentElement, resolveScheme(next, prefersDark))
+  }
+
+  /**
+   * The accessible label for the scheme toggle, describing what the *next* activation will
+   * select rather than the state it is in now - the icon already shows the current state, so
+   * naming it again in the label would be redundant, not additionally informative.
+   */
+  private schemeToggleLabel(): string {
+    const currentIndex = SCHEME_CYCLE.indexOf(this.schemePreference)
+    const next = SCHEME_CYCLE[(currentIndex + 1) % SCHEME_CYCLE.length] as SchemePreference
+    switch (next) {
+      case 'light':
+        return msg('Switch to light scheme')
+      case 'dark':
+        return msg('Switch to dark scheme')
+      case 'system':
+        return msg('Switch to system scheme')
+    }
   }
 
   override render() {
@@ -83,8 +132,8 @@ export class AppShell extends LitElement {
             </wa-button>
             <strong>${msg('Matter Manager')}</strong>
           </div>
-          <wa-button appearance="plain" @click=${this.toggleScheme}>
-            <wa-icon name="circle-half-stroke" label=${msg('Switch between light and dark')}></wa-icon>
+          <wa-button data-scheme-toggle appearance="plain" @click=${this.cycleScheme}>
+            <wa-icon name=${SCHEME_ICON[this.schemePreference]} label=${this.schemeToggleLabel()}></wa-icon>
           </wa-button>
         </header>
 

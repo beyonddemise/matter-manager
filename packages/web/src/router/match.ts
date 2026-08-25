@@ -89,7 +89,19 @@ export function matchRoute(hash: string, routes: readonly Route[]): RouteMatch |
           matched = false
           break
         }
-        params[part.slice(1)] = decodeURIComponent(value)
+        // A malformed percent-escape (e.g. `%E0` with no valid UTF-8 continuation) makes
+        // `decodeURIComponent` throw `URIError`. That is a fact about the input, not a
+        // reason to abort matching: the safe direction for unparseable input is "no match",
+        // the same rule this project already applies to entitlement gates - a route that
+        // throws takes rendering down instead of falling through to not-found. Do not
+        // "helpfully" rethrow this; treat the candidate route as unmatched and let the loop
+        // try the next one.
+        try {
+          params[part.slice(1)] = decodeURIComponent(value)
+        } catch {
+          matched = false
+          break
+        }
       } else if (part !== value) {
         matched = false
         break
