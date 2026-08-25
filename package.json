@@ -27,7 +27,8 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "e2e": "playwright test",
-    "verify": "npm run check:deps && npm run check:npmrc && npm run check && npm run typecheck && npm run test"
+    "verify": "npm run check:deps && npm run check:npmrc && npm run check:webawesome && npm run check && npm run typecheck && npm run test",
+    "check:webawesome": "node scripts/check-webawesome-pro.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.9",
