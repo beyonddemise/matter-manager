@@ -73,10 +73,24 @@ if (!existsSync(components)) {
 }
 
 // The lockfile is where a wrong registry shows up as data rather than as a runtime surprise.
+//
+// Reached only when the package is installed, so every branch here fails closed. `entry &&`
+// would have skipped the check silently whenever the entry was absent - which is precisely the
+// state a hand-edited lockfile or a stale node_modules produces, and precisely when the source
+// is worth checking. A check that quietly declines to check is worse than no check, because
+// its success line still gets printed.
 const lock = JSON.parse(readFileSync(join(root, 'package-lock.json'), 'utf8'))
 const entry = lock.packages?.['node_modules/@awesome.me/webawesome-pro']
-if (entry && !String(entry.resolved ?? '').startsWith('https://npm.webawesome.com/')) {
-  problems.push(`Resolved from ${entry.resolved}, which is not the Web Awesome registry.`)
+
+if (entry === undefined) {
+  problems.push(
+    'The package is installed but has no package-lock.json entry, so its source cannot be ' +
+      'verified. node_modules and the lockfile disagree; run `npm ci`.',
+  )
+} else if (!String(entry.resolved ?? '').startsWith('https://npm.webawesome.com/')) {
+  problems.push(
+    `Resolved from ${entry.resolved ?? '(no resolved field)'}, which is not the Web Awesome registry.`,
+  )
 }
 
 if (problems.length > 0) {
