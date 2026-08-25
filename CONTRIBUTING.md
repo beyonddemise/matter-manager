@@ -149,10 +149,28 @@ to. This repository is public, so a literal token there is a live credential the
 pushed — CI fails the build if it finds one, but the leak has already happened by then.
 Export the variable in your shell instead.
 
-If you are an outside contributor without a Web Awesome Pro licence, `npm ci` will fail and
-CI on your pull request will too, because GitHub does not give fork workflows access to
-secrets. Please open an issue describing the change rather than a PR you cannot build, and
-we will work out how to land it.
+### Web Awesome Pro is required
+
+This project builds its UI on Web Awesome **Pro**, and contributing to the front end needs
+your own Pro licence. Without one, `npm ci` fails, and so does CI on a pull request from a
+fork — GitHub does not give fork workflows access to secrets.
+
+**That is a decision, not an oversight.** The alternative was restricting the UI to components
+in the free build so that a fork could still compile. It was rejected: `data-grid`, `combobox`,
+`date-picker` and `file-input` are Pro-only and are the natural components for a device list,
+room selection with inline creation, an installation date and photo upload. Designing around
+their absence would cost more than the friction it saves.
+
+Two consequences worth stating plainly:
+
+- A failing `npm ci` on a fork is **expected**. It is not a bug to be worked around by
+  vendoring the package, adding a free-build code path, or removing the dependency.
+- **Never** use `pull_request_target` to give fork workflows access to the secret. It runs
+  untrusted code with credentials, trading an inconvenience for a credential compromise.
+
+Without a licence, please open an issue describing the change rather than a pull request you
+cannot build, and we will work out how to land it. Changes confined to `packages/core` — which
+is pure domain logic with no UI dependency — build and test without any of this.
 
 ## Handling Matter payloads
 
