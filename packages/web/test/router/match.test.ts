@@ -53,6 +53,17 @@ describe('matchRoute', () => {
     expect(matchRoute(hash, ROUTES)).toBeNull()
   })
 
+  it.each([['#devices/abc'], ['#devices'], ['devices/abc']])(
+    'deliberately does not treat %o as a route: no slash follows the hash',
+    (hash) => {
+      // Pinned decision, not an accident: a hash that isn't empty/root and doesn't start
+      // with `/` after the `#` (or has no `#` at all) is not a route in this scheme. It
+      // must fall through to not-found rather than being silently normalised onto
+      // `#/devices/abc`. See the comment at the hash-normalisation line in match.ts.
+      expect(matchRoute(hash, ROUTES)).toBeNull()
+    },
+  )
+
   it('returns the first matching route when two could match', () => {
     // Order is the tie-breaker, so a registry author can put a specific path
     // before a parameterised one and rely on it winning.

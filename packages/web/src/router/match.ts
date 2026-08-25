@@ -61,6 +61,13 @@ function segments(path: string): string[] {
  */
 export function matchRoute(hash: string, routes: readonly Route[]): RouteMatch | null {
   const withoutQuery = hash.split('?')[0] ?? ''
+  // Only the `#` is stripped here - deliberately no leading-slash strip. A hash that is
+  // empty or `#`/`#/`/`/` still normalises to the root via `segments`' own handling below,
+  // but a non-root hash that doesn't begin with `/` after the `#` (e.g. `#devices/abc`, or
+  // `devices/abc` with no `#` at all) is not a route in this scheme and must fall through
+  // to `null`. Do not "fix" that by re-adding a leading-slash strip: it would make such a
+  // hash silently resolve to a real view instead of not-found. See
+  // packages/web/test/router/match.test.ts for the tests that pin this.
   const path = withoutQuery.startsWith('#') ? withoutQuery.slice(1) : withoutQuery
   const actual = segments(path)
 
