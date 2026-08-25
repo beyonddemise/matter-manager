@@ -323,9 +323,16 @@ export interface RouteMatch {
   readonly params: Readonly<Record<string, string>>
 }
 
-/** Splits a path into non-empty segments, so `/` yields `[]` and a trailing slash is ignored. */
+/**
+ * Splits a path into segments, ignoring one trailing slash.
+ *
+ * Empty segments are KEPT. Filtering them out collapses `/devices//remarks` to two segments,
+ * which then matches `/devices/:id` and binds `id` to `remarks` — the exact case the tests
+ * below require to return `null`.
+ */
 function segments(path: string): string[] {
-  return path.split('/').filter((segment) => segment !== '')
+  const trimmed = path.endsWith('/') ? path.slice(0, -1) : path
+  return trimmed.split('/')
 }
 
 /**
@@ -352,6 +359,12 @@ export function matchRoute(hash: string, routes: readonly Route[]): RouteMatch |
     for (const [index, part] of expected.entries()) {
       const value = actual[index] as string
       if (part.startsWith(':')) {
+        // An empty segment (from a doubled `/`) is never a valid parameter value. Without
+        // this guard the length check alone cannot tell an empty capture from a real one.
+        if (value === '') {
+          matched = false
+          break
+        }
         params[part.slice(1)] = decodeURIComponent(value)
       } else if (part !== value) {
         matched = false
@@ -366,7 +379,7 @@ export function matchRoute(hash: string, routes: readonly Route[]): RouteMatch |
 }
 ```
 
-Note that `segments` filtering empty parts is what makes `#/devices//remarks` fail to match: it collapses to two segments and no three-segment route can accept it.
+**Corrected after implementation.** The first draft of this plan filtered empty segments out, which made `#/devices//remarks` collapse to two segments and match `/devices/:id` with `id='remarks'` — contradicting this task's own test. Keeping empty segments and rejecting an empty parameter capture is what actually satisfies it. Do not add a leading-slash strip either: `#devices/abc` must fall through to `null` rather than silently resolving to a real view.
 
 - [ ] **Step 5: Run the tests and watch them pass**
 
