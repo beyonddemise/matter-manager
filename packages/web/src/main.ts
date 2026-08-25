@@ -18,7 +18,10 @@ import './styles/app.css'
 import './app-shell.js'
 import { applyScheme, readPreference, resolveScheme } from './scheme.js'
 
-// Applied before first paint so the page never flashes the wrong scheme.
+// Applied from this deferred module, after the CSS and component imports above and after
+// `index.html` has already hard-coded `wa-light` on the root element. A page loading dark
+// can flash light first. Avoiding that would need the scheme decided inline in `index.html`,
+// before any class is set and before this module runs.
 const media = window.matchMedia('(prefers-color-scheme: dark)')
 const apply = () =>
   applyScheme(document.documentElement, resolveScheme(readPreference(localStorage), media.matches))

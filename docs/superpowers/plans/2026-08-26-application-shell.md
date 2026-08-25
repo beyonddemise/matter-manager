@@ -102,13 +102,18 @@ In `vitest.config.ts`, add a second entry to `test.projects` after the `core` en
           include: ['test/**/*.test.ts'],
           browser: {
             enabled: true,
-            provider: 'playwright',
+            provider: playwright(),
             headless: true,
             instances: [{ browser: 'chromium' }],
           },
         },
       },
 ```
+
+(`provider` needs the factory imported from `@vitest/browser-playwright`, e.g.
+`import { playwright } from '@vitest/browser-playwright'` — the string form `'playwright'`
+shown in earlier drafts of this plan does not work in Vitest 4.1: it fails startup with
+"provider was changed to accept a factory instead of a string".)
 
 and replace the `coverage.thresholds` block with per-glob gates:
 

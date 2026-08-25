@@ -17,6 +17,7 @@
     "@open-wc/testing-helpers": "^3.0.1",
     "@types/node": "^24.13.3",
     "@vitest/browser": "^4.1.11",
-    "playwright": "^1.62.1"
+    "playwright": "^1.62.1",
+    "vite": "^8.2.1"
   }
 }

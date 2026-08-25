@@ -6,7 +6,12 @@ import { applyScheme, readPreference, resolveScheme, writePreference } from './s
 import './views/device-list.js'
 import './views/not-found.js'
 
-/** View id to markup. Explicit rather than dynamic, so an unknown view is a type error. */
+/**
+ * View id to markup. `Record<string, …>` accepts any key, so a route whose `view` has no
+ * entry here is not a type error - it silently falls through to the not-found view at
+ * render time. The actual guard against that drift is the hand-maintained assertion in
+ * `routes.test.ts` that every registered route's view exists.
+ */
 const VIEWS: Readonly<Record<string, () => TemplateResult>> = {
   'device-list': () => html`<device-list-view></device-list-view>`,
 }
@@ -78,12 +83,8 @@ export class AppShell extends LitElement {
             </wa-button>
             <strong>${msg('Matter Manager')}</strong>
           </div>
-          <wa-button
-            appearance="plain"
-            @click=${this.toggleScheme}
-            label=${msg('Switch between light and dark')}
-          >
-            <wa-icon name="circle-half-stroke"></wa-icon>
+          <wa-button appearance="plain" @click=${this.toggleScheme}>
+            <wa-icon name="circle-half-stroke" label=${msg('Switch between light and dark')}></wa-icon>
           </wa-button>
         </header>
 
@@ -92,6 +93,7 @@ export class AppShell extends LitElement {
             (route) => html`
               <a
                 href="#${route.path}"
+                class="wa-cluster wa-gap-s"
                 data-drawer="close"
                 aria-current=${match?.route === route ? 'page' : 'false'}
               >

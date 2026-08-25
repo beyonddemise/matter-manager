@@ -36,10 +36,9 @@ wa-page[view="mobile"] {
   --menu-width: auto;
 }
 
+/* Flex layout and gap come from the wa-cluster/wa-gap-s utility classes on the <a> itself
+   (see app-shell.ts); only the styling that has no utility equivalent lives here. */
 .app-nav a {
-  display: flex;
-  align-items: center;
-  gap: var(--wa-space-s);
   padding: var(--wa-space-s) var(--wa-space-m);
   border-radius: var(--wa-border-radius-m);
   color: var(--wa-color-text-normal);

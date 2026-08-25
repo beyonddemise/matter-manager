@@ -31,8 +31,10 @@ export function resolveScheme(preference: SchemePreference, systemPrefersDark: b
  * Reads the stored preference, falling back to following the system.
  *
  * Anything unrecognised — written by an older build, or edited by hand — falls back rather
- * than being applied, because "system" is the one answer that is never wrong. Storage access
- * itself can throw (Safari in private browsing), which is treated the same way.
+ * than being applied, because "system" is the one answer that is never wrong. `getItem`
+ * throwing (Safari in private browsing) is handled the same way. The `localStorage` property
+ * access itself can also throw in that mode, but that happens at this function's call sites
+ * in `main.ts` and `app-shell.ts`, before `storage` reaches here - this `try` does not guard it.
  */
 export function readPreference(storage: Pick<Storage, 'getItem'>): SchemePreference {
   try {
