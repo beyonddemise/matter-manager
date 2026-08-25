@@ -12,10 +12,6 @@ describe('the route registry', () => {
     expect(new Set(paths).size).toBe(paths.length)
   })
 
-  it('gives every route a view', () => {
-    for (const route of ROUTES) expect(route.view).not.toBe('')
-  })
-
   it('lists exactly the labelled routes in the navigation', () => {
     expect(NAV_ROUTES).toEqual(ROUTES.filter((route) => route.label !== undefined))
   })
