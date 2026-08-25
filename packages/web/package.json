@@ -2,5 +2,8 @@
   "name": "@matter-manager/web",
   "version": "0.1.0",
   "private": true,
-  "type": "module"
+  "type": "module",
+  "dependencies": {
+    "@awesome.me/webawesome-pro": "^3.12.0"
+  }
 }
