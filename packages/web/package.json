@@ -3,6 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
   "dependencies": {
     "@awesome.me/webawesome-pro": "^3.12.0",
     "@lit/localize": "^0.12.2",
