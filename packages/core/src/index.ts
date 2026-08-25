@@ -12,6 +12,18 @@
  * @module
  */
 
+export {
+  ACTIONS,
+  type Action,
+  ALLOW,
+  can,
+  evaluate,
+  type Plan,
+  POLICIES,
+  type Policy,
+  type Principal,
+  type ProjectRef,
+} from './entitlements/can.js'
 export { BASE38_ALPHABET, Base38Error, decodeBase38, encodeBase38 } from './matter/base38.js'
 export {
   deriveManualCode,

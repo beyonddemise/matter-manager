@@ -43,6 +43,19 @@ const EXPECTED: ReadonlyArray<
   ['MAX_PASSCODE', 'number'],
   ['MIN_PASSCODE', 'number'],
   ['passcodeProblem', 'function'],
+  // conflict merge
+  ['UNASSIGNED_ROOM_PREFIX', 'string'],
+  ['compareRevisions', 'function'],
+  ['latestRevision', 'function'],
+  ['mergeDevice', 'function'],
+  ['mergeRemarks', 'function'],
+  ['mergeRoom', 'function'],
+  // entitlements
+  ['ACTIONS', 'object'],
+  ['ALLOW', 'function'],
+  ['can', 'function'],
+  ['evaluate', 'function'],
+  ['POLICIES', 'object'],
   // room paths
   ['ROOM_PATH_SEPARATOR', 'string'],
   ['RoomPathError', 'function'],
@@ -113,6 +126,16 @@ describe('the public entry point reaches the implementations', () => {
     expect(core.renameRoomPath('Floor 1/Kitchen', 'Floor 1', 'Ground Floor')).toBe(
       'Ground Floor/Kitchen',
     )
+  })
+
+  it('merges conflicting revisions', () => {
+    const a = { _id: 'device:1', _rev: '1-a', updatedAt: '2026-08-01T00:00:00.000Z', remarks: [] }
+    const b = { _id: 'device:1', _rev: '2-b', updatedAt: '2026-08-02T00:00:00.000Z', remarks: [] }
+    expect(core.mergeDevice(a, [b])._rev).toBe('2-b')
+  })
+
+  it('answers an entitlement question', () => {
+    expect(core.can({ sub: 'auth0|x', plan: 'free' }, 'pdf.export')).toBe(true)
   })
 
   it('exposes errors as constructible classes, not bare objects', () => {

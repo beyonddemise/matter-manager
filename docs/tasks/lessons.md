@@ -567,3 +567,43 @@ not success.
 **Related:** [[L16]] is the same principle for symmetric functions; [[L14]] is why the values
 in the table have to reach the boundaries.
 
+---
+
+## L19 · A surviving mutant means redundant code *or* a missing test — find out which
+
+**What happened:** the entitlement gate accumulated four guards while a review hardened it: an
+own-property check, a callable check, a strict `=== true`, and a try/catch. Twice, adding one
+made an earlier one survive mutation — the probe reported that deleting it broke nothing. The
+two cases looked identical and needed opposite fixes.
+
+**The callable check was genuinely redundant.** Once a `try/catch` existed, calling a
+non-function threw and was caught, so the explicit check produced the same refusal by a
+different route. No input could distinguish them. Deleted.
+
+**The own-property check was not.** Its mutant survived because the strict `=== true` already
+refused every *inherited* name — `constructor` returns an object, `valueOf` throws. What the
+tests never covered was the case it actually defends:
+
+```js
+Object.prototype['data.export'] = () => true    // classic prototype pollution
+withoutHasOwn(POLICIES, 'data.export')  // true  <- bypass
+withHasOwn(POLICIES, 'data.export')     // false
+```
+
+A polluted prototype supplies a policy returning *exactly* `true`, so every downstream guard is
+satisfied: callable, does not throw, returns the one permitting value. Only refusing to walk
+the prototype chain stops it. The mutant survived because a test was missing, not because the
+code was.
+
+**Deleting it would have removed a security control while pointing at a green suite as
+justification** — and the mutation probe, used carelessly, would have been the thing that
+recommended it.
+
+**Rule:** when a mutant survives, do not reach for the delete key. Ask what input would
+distinguish the two versions, and go looking for it. If a genuine search finds nothing, the
+code is redundant and should go. If it finds something, you have just discovered the test you
+were missing. Both outcomes are useful; only the first is a deletion.
+
+**Related:** [[L3]] and [[L14]] are about trusting the probe's verdict; this is about
+interpreting a verdict that is entirely correct.
+
