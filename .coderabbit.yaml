@@ -1,0 +1,15 @@
+# CodeRabbit configuration.
+#
+# `.agents/skills/**` and `.claude/skills/**` are VENDORED. They are copied verbatim out of
+# @awesome.me/webawesome-pro by the skill installer — skills-lock.json records the source path
+# under node_modules and a hash of each file. They are committed so the guidance travels with
+# the repository rather than depending on a post-install step.
+#
+# Reviewing them is pure noise: on the pull request that introduced them, 54 of 58 findings
+# were style nits in Web Awesome's own documentation. Worse, acting on any of them would be a
+# mistake — an edit makes the file drift from its source and invalidates the lock hash, which
+# is the only mechanism for detecting staleness when the package updates.
+reviews:
+  path_filters:
+    - '!.agents/skills/**'
+    - '!.claude/skills/**'
