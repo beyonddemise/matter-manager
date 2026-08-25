@@ -61,14 +61,33 @@ component rather than separately importable, which matters only for PDF embeddin
 
 **Fork pull requests cannot install.** GitHub does not expose secrets to workflows triggered
 by pull requests from forks, so an outside contributor's PR will fail at `npm ci`. This is
-inherent to a public repository with a private dependency. Options, to decide in M2:
-accept it and review fork PRs locally; or keep the UI's Pro usage isolated enough that a
-free-build fallback is viable. Not decided here because it depends on how much Pro is
-actually used.
+inherent to a public repository with a private dependency.
+
+> **Resolved 2026-08-26 (issue #18): accepted.** The UI uses Web Awesome Pro without
+> restriction, and a contributor to the front end needs their own Pro licence. The alternative
+> — confining the UI to the free build so a fork could compile — was rejected once M2-1
+> measured its cost: `data-grid`, `combobox`, `date-picker` and `file-input` are Pro-only, and
+> they are exactly the components a device list, inline room creation, an installation date and
+> photo upload would reach for. A failing `npm ci` on a fork is therefore expected rather than a
+> defect. `pull_request_target` remains forbidden: it runs untrusted code with credentials.
+>
+> Contributions confined to `packages/core` are unaffected, since it has no UI dependency.
 
 **Component coverage is still unverified.** The licence question is answered; whether the
 components needed (form validation, dialog, drawer, tab group, dark mode) behave as required
 is not. That remains the first task of M2.
+
+> **Resolved 2026-08-26 (issue #17): verified.** `@awesome.me/webawesome-pro@3.12.0` installs
+> from `npm.webawesome.com`, carries 87 components, and `<wa-data-grid>` renders headers and
+> cell values in a real browser under Vite while `<wa-qr-code>` paints a canvas. Three
+> corrections came out of it: there is no `menu` component (it is `dropdown` + `dropdown-item`,
+> renamed from Shoelace); deep component imports use bare specifiers and therefore need a
+> bundler; and the data-grid column API is `field`/`label`, not `key`/`header` — set the wrong
+> names and it renders its full structure with every cell empty.
+>
+> `scripts/check-webawesome-pro.mjs` keeps this true, asserting a Pro-**only** capability rather
+> than a version string. The two packages share a version number and the free one is on public
+> npm, so a bad token installs something entirely plausible with no error at all.
 
 The exposure stays contained: Web Awesome components are themselves Lit-based, so replacing
 the library would mean rewriting markup and styling, not rearchitecting the application.
