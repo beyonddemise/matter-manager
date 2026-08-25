@@ -25,7 +25,7 @@ export default defineConfig({
         test: {
           name: 'web',
           root: './packages/web',
-          include: ['test/**/*.test.ts'],
+          include: ['test/**/*.browser.test.ts'],
           browser: {
             enabled: true,
             // Vitest 4.1's browser.provider takes a factory, not a provider-name string;
@@ -36,6 +36,15 @@ export default defineConfig({
             headless: true,
             instances: [{ browser: 'chromium' }],
           },
+        },
+      },
+      {
+        test: {
+          name: 'web-node',
+          root: './packages/web',
+          environment: 'node',
+          include: ['test/**/*.test.ts'],
+          exclude: ['test/**/*.browser.test.ts'],
         },
       },
       // data (node + pouchdb-adapter-memory) and api (node) are added by the
