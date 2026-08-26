@@ -7,6 +7,10 @@ describe('the route registry', () => {
     expect(matchRoute('#/', ROUTES)?.route.view).toBe('device-list')
   })
 
+  it('routes /settings to the settings view', () => {
+    expect(matchRoute('#/settings', ROUTES)?.route.view).toBe('settings')
+  })
+
   it('gives every route a unique path', () => {
     const paths = ROUTES.map((route) => route.path)
     expect(new Set(paths).size).toBe(paths.length)
@@ -32,6 +36,6 @@ describe('the route registry', () => {
     // M2 registers only views that exist. Registering /devices/:id before M2-7 builds
     // its view would match a path and then fail to render, which is worse than not
     // matching it — an unregistered path correctly falls through to not-found.
-    expect(ROUTES.map((route) => route.view)).toEqual(['device-list'])
+    expect(ROUTES.map((route) => route.view)).toEqual(['device-list', 'settings'])
   })
 })

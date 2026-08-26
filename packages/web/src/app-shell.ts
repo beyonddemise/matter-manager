@@ -1,4 +1,4 @@
-import { msg } from '@lit/localize'
+import { msg, updateWhenLocaleChanges } from '@lit/localize'
 import { html, LitElement, type TemplateResult } from 'lit'
 import { matchRoute } from './router/match.js'
 import { NAV_ROUTES, ROUTES } from './router/routes.js'
@@ -11,6 +11,7 @@ import {
 } from './scheme.js'
 import './views/device-list.js'
 import './views/not-found.js'
+import './views/settings.js'
 
 /**
  * View id to markup. `Record<string, …>` accepts any key, so a route whose `view` has no
@@ -20,6 +21,7 @@ import './views/not-found.js'
  */
 const VIEWS: Readonly<Record<string, () => TemplateResult>> = {
   'device-list': () => html`<device-list-view></device-list-view>`,
+  settings: () => html`<settings-view></settings-view>`,
 }
 
 /**
@@ -73,6 +75,10 @@ export class AppShell extends LitElement {
 
   constructor() {
     super()
+    // Every component that renders a `msg()` needs this, and a component that forgets keeps
+    // its old strings while its neighbours change - a silent failure, hence the test in
+    // `i18n.browser.test.ts` that switches locale and checks each view's text.
+    updateWhenLocaleChanges(this)
     this.hash = window.location.hash
     // Read once at construction. The write side (`cycleScheme`) keeps this field and
     // storage in sync itself, so there is no need to re-read on every render.

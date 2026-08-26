@@ -16,6 +16,7 @@ import type { Route } from './match.js'
 
 export const ROUTES: readonly Route[] = [
   { path: '/', view: 'device-list', label: () => msg('Devices'), icon: 'lightbulb' },
+  { path: '/settings', view: 'settings', label: () => msg('Settings'), icon: 'gear' },
 ]
 
 /** The routes that appear in the navigation, in registry order. */

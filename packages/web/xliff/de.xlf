@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xliff version="1.2" xmlns="urn:oasis:names:tc:xliff:document:1.2">
+<file target-language="de" source-language="en" original="lit-localize-inputs" datatype="plaintext">
+<body>
+<trans-unit id="s7ded9f88edfb9be9">
+  <source>Switch to light scheme</source>
+  <target>Zum hellen Erscheinungsbild wechseln</target>
+</trans-unit>
+<trans-unit id="s21ef3efa969c9e81">
+  <source>Switch to dark scheme</source>
+  <target>Zum dunklen Erscheinungsbild wechseln</target>
+</trans-unit>
+<trans-unit id="sa84b425ff0e662de">
+  <source>Switch to system scheme</source>
+  <target>Dem Erscheinungsbild des Systems folgen</target>
+</trans-unit>
+<trans-unit id="s6d8c02aee480af7a">
+  <source>Menu</source>
+  <target>Menü</target>
+</trans-unit>
+<trans-unit id="s723b96896cf3ae07">
+  <source>Matter Manager</source>
+  <target>Matter Manager</target>
+</trans-unit>
+<trans-unit id="scfe39d24bc958960">
+  <source>Devices</source>
+  <target>Geräte</target>
+</trans-unit>
+<trans-unit id="s9df21cd186a68b5b">
+  <source>No devices yet.</source>
+  <target>Noch keine Geräte.</target>
+</trans-unit>
+<trans-unit id="sec77d4da6a57f2b7">
+  <source>Page not found</source>
+  <target>Seite nicht gefunden</target>
+</trans-unit>
+<trans-unit id="s9423b0ccccbd46d8">
+  <source>That address does not match anything in this application.</source>
+  <target>Zu dieser Adresse gibt es in dieser Anwendung nichts.</target>
+</trans-unit>
+<trans-unit id="s7aa73a226fe11914">
+  <source>Back to devices</source>
+  <target>Zurück zu den Geräten</target>
+</trans-unit>
+<trans-unit id="s9d8b8aa2b404c2c8">
+  <source>Settings</source>
+  <target>Einstellungen</target>
+</trans-unit>
+<trans-unit id="sefcf950b3cc4fc3b">
+  <source>Language</source>
+  <target>Sprache</target>
+</trans-unit>
+<trans-unit id="sd04ce4736fa745fd">
+  <source>Automatic (browser language)</source>
+  <target>Automatisch (Sprache des Browsers)</target>
+</trans-unit>
+</body>
+</file>
+</xliff>

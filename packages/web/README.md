@@ -15,16 +15,20 @@ Pages.
 
 ## House rules
 
-- **Every user-visible string goes through `msg()`.** From the first component, before any
-  German translation exists. Retrofitting i18n is never quite finished.
+- **Every user-visible string goes through `msg()`**, and every component that renders one
+  calls `updateWhenLocaleChanges(this)`. `npm run check:i18n` enforces the first and fails on
+  a catalogue that has gone stale; see CONTRIBUTING for what to run after adding a string.
 - Components render and handle input. Decisions belong in `core`; persistence in `data`.
 - Must work at phone, tablet and desktop widths. The scan-and-file flow is used one-handed,
   standing in front of a device, which is the case to design for first.
 
 ## Web Awesome
 
-Licensing and component maturity must be confirmed as the first task of M2. The components
-are Lit-based, so a swap is contained if it proves necessary.
+**Web Awesome Pro**, confirmed in M2-1 and settled: Pro-only components are in scope, and a
+contributor who forks the repository needs their own licence to install and build
+([issue #18](https://github.com/beyonddemise/matter-manager/issues/18)). Fork pull requests
+fail `npm ci` because GitHub does not expose secrets to them, and that is accepted rather
+than designed around.
 
 ## Dependencies and workers
 

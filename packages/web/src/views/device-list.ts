@@ -1,4 +1,4 @@
-import { msg } from '@lit/localize'
+import { msg, updateWhenLocaleChanges } from '@lit/localize'
 import { html, LitElement } from 'lit'
 
 /** The device list. M2-6 replaces the body; the shell does not change when it does. */
@@ -6,6 +6,13 @@ export class DeviceListView extends LitElement {
   // Light DOM: Web Awesome's utility classes are global CSS and do not cross a shadow
   // boundary. `static styles` is not used for the same reason — Lit only adopts it into
   // shadow roots. App CSS lives in styles/app.css.
+  constructor() {
+    super()
+    // Subscribes this component to locale changes; without it the view keeps rendering the
+    // strings that were active when it first rendered.
+    updateWhenLocaleChanges(this)
+  }
+
   protected override createRenderRoot(): HTMLElement {
     return this
   }

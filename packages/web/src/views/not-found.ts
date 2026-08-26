@@ -1,8 +1,15 @@
-import { msg } from '@lit/localize'
+import { msg, updateWhenLocaleChanges } from '@lit/localize'
 import { html, LitElement } from 'lit'
 
 /** Shown when no route matched. Offers a way back, per the story's second scenario. */
 export class NotFoundView extends LitElement {
+  constructor() {
+    super()
+    // Subscribes this component to locale changes; without it the view keeps rendering the
+    // strings that were active when it first rendered.
+    updateWhenLocaleChanges(this)
+  }
+
   protected override createRenderRoot(): HTMLElement {
     return this
   }

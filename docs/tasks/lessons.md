@@ -607,3 +607,41 @@ were missing. Both outcomes are useful; only the first is a deletion.
 **Related:** [[L3]] and [[L14]] are about trusting the probe's verdict; this is about
 interpreting a verdict that is entirely correct.
 
+
+---
+
+## L20 · A navigation to the same URL is not a reload, and a check that never re-ran is not a check
+
+**What happened:** verifying the i18n boot path, I cleared the stored preference, overrode
+`navigator.languages` to `['fr-FR', 'fr']`, navigated to `http://localhost:5173/#/`, and read
+back `lang="de"` with a German interface. Two conclusions were available:
+
+1. negotiation is broken — a French browser is getting German, and scenario 2 of the story fails
+2. the page never reloaded
+
+It was the second. The browser was **already** at `http://localhost:5173/#/`, so the navigation
+was same-document: no new document, no module re-execution, no boot. The German on screen was
+left over from a *previous* test where I had clicked "Deutsch". The override survived for the
+same reason — same document.
+
+The dangerous part is that the run *before* it looked like a pass for exactly the same reason.
+I had recorded "with no stored preference and a `de` browser language, the app boots in German"
+as verified. It had booted in German, but from a stored preference set by hand two steps
+earlier, and the boot in question had happened minutes before the languages were overridden.
+**A false pass and a false fail from one bug, and only the false fail was loud enough to
+notice.**
+
+`page.goto()` to the current URL is skipped by Playwright, and `addInitScript` accumulates
+across calls rather than replacing, so retrying harder made it worse. What finally worked was
+not forcing a reload but removing the shared state: a fresh `browser.newContext({ locale })`
+per case, which sets `navigator.languages` natively and starts with empty storage.
+
+**Rule:** when a manual browser check depends on start-up behaviour, assert that start-up
+*happened* rather than assuming a navigation caused one. Read back the input the code under
+test actually saw — here, `navigator.languages` — in the same breath as the output. If it does
+not match what was set up, the result is about the previous run. Where a run has start-up
+state at all, prefer a fresh context per case over resetting one; resetting is a list of things
+to remember, and the one forgotten is what produces a plausible wrong answer.
+
+**Related:** [[L16]] — a round trip proves neither direction. Same shape: agreement between two
+things that were never independent is not evidence.

@@ -8,7 +8,8 @@
       "!**/coverage",
       "!**/playwright-report",
       "!**/test-results",
-      "!infra/couchdb/design-docs"
+      "!infra/couchdb/design-docs",
+      "!packages/web/src/generated"
     ]
   },
   "formatter": {
