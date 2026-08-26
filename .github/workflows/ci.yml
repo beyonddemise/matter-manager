@@ -46,6 +46,35 @@ jobs:
         env:
           WEBAWESOME_NPM_TOKEN: ${{ secrets.WEBAWESOME_NPM_TOKEN }}
 
+      # npm ci --ignore-scripts (above) deliberately skips Playwright's postinstall, so the
+      # Chromium build the "web" Vitest project launches to run browser tests is never
+      # fetched. It has to be installed explicitly, and only for Chromium: the other engines
+      # are unused here.
+      - name: Read Playwright version
+        id: playwright-version
+        run: echo "version=$(node -p "require('playwright/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      # Caches the downloaded browser so it is fetched once per Playwright version instead of
+      # on every run. Keyed on the resolved version (not just runner.os) so a dependency bump
+      # busts the cache rather than silently reusing a mismatched Chromium build.
+      - name: Cache Playwright Chromium
+        id: playwright-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ runner.os }}-${{ steps.playwright-version.outputs.version }}
+
+      - name: Install Playwright Chromium
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: npx playwright install --with-deps chromium
+
+      # A cache hit restores the browser binary but not the OS-level shared libraries that
+      # --with-deps installs: those are runner packages, not files under
+      # ~/.cache/ms-playwright, so a fresh runner needs them reinstalled every run regardless.
+      - name: Install Playwright OS dependencies
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: npx playwright install-deps chromium
+
       # Runs before Biome: dependency creep is silent and cheap to catch, and the answer to
       # a violation is a design conversation, not a formatting fix.
       - name: Dependency policy

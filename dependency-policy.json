@@ -42,6 +42,11 @@
     "workbox-window": "The service worker is hand-written; see ADR 0013."
   },
   "allowedDev": {
-    "$comment": "Build-only tooling permitted as a devDependency in a package that ships a bundle. Anything here must be provably absent from the built output."
+    "$comment": "Build-only tooling permitted as a devDependency in a package that ships a bundle. Anything here must be provably absent from the built output.",
+    "@vitest/browser": "Runs packages/web's tests in a real browser instead of jsdom. Test-only, never imported by src.",
+    "playwright": "Browser automation driving @vitest/browser's Chromium instance. Test-only, never imported by src.",
+    "@open-wc/testing-helpers": "DOM/component test utilities (fixture, waitUntil) for web component tests. Test-only, never imported by src.",
+    "@types/node": "Type declarations only (import.meta.dirname in vite.config.ts). Erased at compile time, never imported by src.",
+    "vite": "The dev/build/preview bundler and vitest's browser-mode dependency. Provably absent from the built output: it produces dist/, it is not part of it - the bundled bundle never imports its own bundler."
   }
 }

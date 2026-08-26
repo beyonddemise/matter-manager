@@ -1,3 +1,4 @@
+import { playwright } from '@vitest/browser-playwright'
 import { defineConfig } from 'vitest/config'
 
 /**
@@ -20,8 +21,34 @@ export default defineConfig({
           include: ['test/**/*.test.ts'],
         },
       },
-      // data (node + pouchdb-adapter-memory), web (browser) and api (node) are added
-      // by the milestones that introduce them.
+      {
+        test: {
+          name: 'web',
+          root: './packages/web',
+          include: ['test/**/*.browser.test.ts'],
+          browser: {
+            enabled: true,
+            // Vitest 4.1's browser.provider takes a factory, not a provider-name string;
+            // the brief's literal `provider: 'playwright'` is from an earlier 4.x minor
+            // and fails startup against the installed 4.1.11 with "provider was changed
+            // to accept a factory instead of a string".
+            provider: playwright(),
+            headless: true,
+            instances: [{ browser: 'chromium' }],
+          },
+        },
+      },
+      {
+        test: {
+          name: 'web-node',
+          root: './packages/web',
+          environment: 'node',
+          include: ['test/**/*.test.ts'],
+          exclude: ['test/**/*.browser.test.ts'],
+        },
+      },
+      // data (node + pouchdb-adapter-memory) and api (node) are added by the
+      // milestones that introduce them.
     ],
     coverage: {
       provider: 'v8',
@@ -36,14 +63,22 @@ export default defineConfig({
       // fails silently: coverage falls back to loaded files only and still reports 100%.
       // Verified by adding an unimported module and confirming the total drops.
       include: ['packages/*/src/**/*.ts'],
-      // `core` is currently the only package, so the global gate is its gate. When data,
-      // web and api arrive they get their own lower per-project thresholds; core stays
-      // at 90 because it holds the logic that can actually be wrong.
+      // Per-glob rather than global: `core`'s 90% must not silently become the bar for UI
+      // code, and `web`'s lower bar must not silently weaken `core`'s. When data and api
+      // arrive they get their own entries here too.
       thresholds: {
-        statements: 90,
-        branches: 90,
-        functions: 90,
-        lines: 90,
+        'packages/core/src/**': {
+          statements: 90,
+          branches: 90,
+          functions: 90,
+          lines: 90,
+        },
+        'packages/web/src/**': {
+          statements: 70,
+          branches: 70,
+          functions: 70,
+          lines: 70,
+        },
       },
     },
   },
