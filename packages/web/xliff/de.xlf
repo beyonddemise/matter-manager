@@ -106,6 +106,30 @@
   <source>Cancel</source>
   <target>Abbrechen</target>
 </trans-unit>
+<trans-unit id="sfabdf1d04838350b">
+  <source>Without a room</source>
+  <target>Ohne Raum</target>
+</trans-unit>
+<trans-unit id="s66722bc2ea775e05">
+  <source>Disabled</source>
+  <target>Deaktiviert</target>
+</trans-unit>
+<trans-unit id="sdb2dca1d6b8119c0">
+  <source>Nothing matches “<x id="0" equiv-text="${query}"/>”.</source>
+  <target>Nichts passt zu „<x id="0" equiv-text="${query}"/>“.</target>
+</trans-unit>
+<trans-unit id="s5d929ff1619ac0c9">
+  <source>Search</source>
+  <target>Suchen</target>
+</trans-unit>
+<trans-unit id="s5b53408a9117f6bd">
+  <source>Name, room, serial or product</source>
+  <target>Name, Raum, Seriennummer oder Produkt</target>
+</trans-unit>
+<trans-unit id="s3421af832c06b697">
+  <source>Show disabled devices</source>
+  <target>Deaktivierte Geräte anzeigen</target>
+</trans-unit>
 </body>
 </file>
 </xliff>

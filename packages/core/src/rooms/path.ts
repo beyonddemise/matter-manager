@@ -20,6 +20,8 @@
  * @module
  */
 
+import { foldForComparison } from '../text/fold.js'
+
 /** Segments are separated by `/`. Chosen over `.` in ADR 0006, which collides with `No. 2`. */
 export const ROOM_PATH_SEPARATOR = '/'
 
@@ -82,43 +84,19 @@ export function isValidRoomPath(path: string): boolean {
  *
  * ADR 0006 accepts that `Ground Floor/Kitchen` and `ground floor/Kitchen` are different rooms,
  * and asks for a warning at creation time so nobody makes the second one by accident. This is
- * that comparison: case folded, runs of whitespace collapsed, and Unicode composed.
+ * that comparison: each segment folded by {@link foldForComparison}, which is where the reasoning
+ * about case, whitespace and Unicode now lives - it is shared with device search, so "the same
+ * room" and "matches what I typed" cannot drift apart.
  *
- * The Unicode step matters more than it looks. `ü` has two spellings — one code point, or `u`
- * followed by a combining diaeresis — which render identically. In a German-speaking house,
- * typing one and pasting the other would otherwise produce two rooms nobody can tell apart on
- * screen. Composing happens last, because case folding can decompose.
- *
- * Case is *folded*, not merely lowered. `toLowerCase` implements Unicode case **conversion**,
- * which preserves linguistic distinctions on purpose; folding erases them so two spellings of
- * one word compare equal. The difference is not academic here: `Straße`.toLowerCase() is
- * `straße` and `STRASSE`.toLowerCase() is `strasse`, so the same German room would fail to be
- * recognised as a duplicate of itself. Upper-casing collapses `ß` to `SS`, the Greek final
- * sigma to the medial form, and ligatures to their letters.
- *
- * Upper rather than lower, and nothing after it: lowering the result again was measured to
- * change no comparison, so it was removed. The key is never displayed - it exists only to be
- * equal or not.
+ * Segment by segment rather than over the whole path, so the separator is never folded and a
+ * path can still be split back apart afterwards.
  *
  * The folding is deliberately more aggressive than the comparison strictly needs. This drives
  * a *warning*, not a rejection, so an extra prompt costs a moment and a missed one costs a
  * duplicate room nobody can tell apart afterwards.
- *
- * **This is case conversion used as a fold, not Unicode `Case_Folding`.** The measured
- * difference is the Turkish dotless `ı`, which upper-cases to `I` and so matches `i` here,
- * where true folding keeps them apart. Accepted, for three reasons: the consequence is one
- * extra warning rather than a merge or any data loss; JavaScript exposes no `toCaseFold`, so
- * real folding means shipping the `CaseFolding.txt` table against ADR 0013; and the obvious
- * substitute is worse where it counts — `Intl.Collator` at `sensitivity: 'accent'` reports
- * `Straße` and `STRASSE` as *different*, failing the German case this fold exists for.
- *
- * Revisit if Turkish is ever a supported locale, where `ı` and `i` are separate letters. The
- * test pinning that pair will fail and force the decision rather than letting it drift.
  */
 export function roomPathKey(path: string): string {
-  return splitRoomPath(normaliseRoomPath(path))
-    .map((segment) => segment.replace(/\s+/g, ' ').toUpperCase().normalize('NFC'))
-    .join(ROOM_PATH_SEPARATOR)
+  return splitRoomPath(normaliseRoomPath(path)).map(foldForComparison).join(ROOM_PATH_SEPARATOR)
 }
 
 /** Whether two paths differ only in ways a person would not notice. See {@link roomPathKey}. */

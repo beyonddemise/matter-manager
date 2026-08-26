@@ -1,16 +1,24 @@
-import { msg, updateWhenLocaleChanges } from '@lit/localize'
-import type { DeviceDocument, RoomDocument } from '@matter-manager/core'
+import { msg, str, updateWhenLocaleChanges } from '@lit/localize'
+import {
+  browseDevices,
+  type DeviceDocument,
+  type DeviceGroup,
+  type RoomDocument,
+} from '@matter-manager/core'
 import type { ProjectRepositories } from '@matter-manager/data'
 import { html, LitElement } from 'lit'
 import { projectDatabase } from '../db/project-database.js'
+import { getLocale } from '../i18n/localization.js'
 
 /**
- * The device list.
+ * The device list: rooms, in order, with what is in them.
  *
- * Deliberately the smallest thing that makes a save observable: name, room, and nothing else.
- * Without it, "the device is saved" is a claim the application contradicts one screen later.
- * Search, filter, room grouping and ordering are M2-6, and the shell does not change when they
- * arrive.
+ * Every decision about *which* devices and *in what order* is `browseDevices` in `core` — a
+ * pure function over plain data, so "search matches the room path" is a millisecond-long test
+ * with no DOM. What is left here is genuinely a rendering job, plus the one thing `core`
+ * cannot know: the locale to order names in.
+ *
+ * M2-8 adds editing, moving and disabling from here; the shell does not change when it does.
  */
 export class DeviceListView extends LitElement {
   // Light DOM: Web Awesome's utility classes are global CSS and do not cross a shadow
@@ -25,9 +33,11 @@ export class DeviceListView extends LitElement {
     devices: { state: true },
     rooms: { state: true },
     loaded: { state: true },
+    query: { state: true },
+    includeDisabled: { state: true },
   }
 
-  /** Bound by a test to an in-memory pair; resolved to the real database otherwise. */
+  /** Bound by a test to a database of its own; resolved to the real one otherwise. */
   declare repositories?: ProjectRepositories
   declare devices: readonly DeviceDocument[]
   declare rooms: readonly RoomDocument[]
@@ -39,6 +49,8 @@ export class DeviceListView extends LitElement {
    * the read would tell a user with a full catalogue that it is gone.
    */
   declare loaded: boolean
+  declare query: string
+  declare includeDisabled: boolean
 
   constructor() {
     super()
@@ -48,6 +60,8 @@ export class DeviceListView extends LitElement {
     this.devices = []
     this.rooms = []
     this.loaded = false
+    this.query = ''
+    this.includeDisabled = false
   }
 
   protected override firstUpdated(): void {
@@ -80,12 +94,85 @@ export class DeviceListView extends LitElement {
     this.loaded = true
   }
 
-  /** A device's room path, or nothing when the room is missing — never an id on screen. */
-  private roomPath(device: DeviceDocument): string {
-    return this.rooms.find((room) => room._id === device.roomId)?.path ?? ''
+  /**
+   * What to show, decided in `core`.
+   *
+   * The collator is the one thing `core` cannot supply: ordering is locale-dependent, and that
+   * package holds no ambient locale on purpose. This view already knows which locale it is
+   * rendering in, so it passes one — which is what puts `Ärmelleuchte` before `Zuluft` in
+   * German rather than after it.
+   */
+  private groups(): readonly DeviceGroup[] {
+    return browseDevices(this.devices, this.rooms, {
+      query: this.query,
+      includeDisabled: this.includeDisabled,
+      compare: new Intl.Collator(getLocale()).compare,
+    })
+  }
+
+  private onSearch(event: Event): void {
+    const value = (event.target as { value?: unknown }).value
+    this.query = typeof value === 'string' ? value : ''
+  }
+
+  private onToggleDisabled(event: Event): void {
+    this.includeDisabled = (event.target as { checked?: unknown }).checked === true
+  }
+
+  /** The heading for a group, including the group with no room. */
+  private groupLabel(group: DeviceGroup): string {
+    // An empty path means the room is gone but its devices are not. Naming it rather than
+    // leaving a blank heading is what stops those devices looking like a rendering fault.
+    return group.path === '' ? msg('Without a room') : group.path
+  }
+
+  private renderDevice(device: DeviceDocument) {
+    return html`
+      <li
+        class="wa-split app-device"
+        data-device-id=${device._id}
+        ?data-disabled=${device.disabled}
+      >
+        <span class="wa-stack wa-gap-3xs">
+          <span>${device.name}</span>
+          ${device.spot === undefined ? '' : html`<small class="app-empty">${device.spot}</small>`}
+        </span>
+        ${device.disabled ? html`<wa-tag variant="neutral">${msg('Disabled')}</wa-tag>` : ''}
+      </li>
+    `
+  }
+
+  private renderGroup(group: DeviceGroup) {
+    const count = group.devices.length
+    return html`
+      <section class="wa-stack wa-gap-2xs" data-room=${group.path}>
+        <div class="wa-cluster wa-gap-s app-room-heading">
+          <h2>${this.groupLabel(group)}</h2>
+          <wa-badge variant="neutral">${count}</wa-badge>
+        </div>
+        <ul class="wa-stack wa-gap-2xs app-device-list">
+          ${group.devices.map((device) => this.renderDevice(device))}
+        </ul>
+      </section>
+    `
+  }
+
+  /**
+   * What to say when there is nothing to show.
+   *
+   * "No devices yet" and "nothing matched your search" are different facts, and telling a user
+   * with a full catalogue that it is empty because they mistyped a word is the kind of small
+   * lie that makes people distrust an application.
+   */
+  private renderEmpty() {
+    if (this.devices.length === 0) return html`<p class="app-empty">${msg('No devices yet.')}</p>`
+    const query = this.query.trim()
+    return html`<p class="app-empty">${msg(str`Nothing matches “${query}”.`)}</p>`
   }
 
   override render() {
+    const groups = this.groups()
+
     return html`
       <div class="wa-stack wa-gap-l">
         <div class="wa-split">
@@ -96,21 +183,27 @@ export class DeviceListView extends LitElement {
           </wa-button>
         </div>
 
+        <div class="wa-stack wa-gap-s">
+          <wa-input
+            data-search
+            type="search"
+            with-clear
+            label=${msg('Search')}
+            placeholder=${msg('Name, room, serial or product')}
+            .value=${this.query}
+            @input=${this.onSearch}
+          ></wa-input>
+          <wa-checkbox data-include-disabled @change=${this.onToggleDisabled}>
+            ${msg('Show disabled devices')}
+          </wa-checkbox>
+        </div>
+
         ${
-          this.loaded && this.devices.length === 0
-            ? html`<p class="app-empty">${msg('No devices yet.')}</p>`
-            : html`
-                <ul class="wa-stack wa-gap-2xs app-device-list" data-device-list>
-                  ${this.devices.map(
-                    (device) => html`
-                      <li class="wa-split app-device" data-device-id=${device._id}>
-                        <span>${device.name}</span>
-                        <span class="app-empty">${this.roomPath(device)}</span>
-                      </li>
-                    `,
-                  )}
-                </ul>
-              `
+          this.loaded && groups.length === 0
+            ? this.renderEmpty()
+            : html`<div class="wa-stack wa-gap-l">
+                ${groups.map((group) => this.renderGroup(group))}
+              </div>`
         }
       </div>
     `
