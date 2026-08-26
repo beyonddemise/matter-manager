@@ -19,7 +19,7 @@
   },
   "devDependencies": {
     "@open-wc/testing-helpers": "^3.0.1",
-    "@types/node": "^24.13.3",
+    "@types/node": "^26.2.0",
     "@types/pouchdb-browser": "^6.1.5",
     "@vitest/browser": "^4.1.11",
     "@zxing/browser": "^0.1.5",
