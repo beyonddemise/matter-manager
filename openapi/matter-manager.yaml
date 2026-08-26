@@ -116,6 +116,34 @@ paths:
               schema: { $ref: '#/components/schemas/Profile' }
         '401': { $ref: '#/components/responses/Unauthorized' }
 
+    put:
+      tags: [profile]
+      summary: Update the signed-in user's own settings
+      description: |
+        Only the fields a user may change about themselves. `sub` and `email` come from the
+        identity provider and are not writable here — a profile endpoint that accepted an
+        arbitrary `sub` would be an account-takeover primitive.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [locale]
+              properties:
+                locale:
+                  type: string
+                  enum: [auto, en, de]
+                displayName: { type: string }
+      responses:
+        '200':
+          description: The updated profile
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Profile' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
   /projects:
     get:
       tags: [projects]
@@ -302,6 +330,11 @@ components:
         detail: { type: string }
 
   responses:
+    BadRequest:
+      description: The request body is not one this operation accepts
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
     Unauthorized:
       description: Missing or invalid credentials
       content:

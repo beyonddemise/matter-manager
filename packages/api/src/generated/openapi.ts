@@ -195,7 +195,42 @@ export interface paths {
         401: components['responses']['Unauthorized']
       }
     }
-    put?: never
+    /**
+     * Update the signed-in user's own settings
+     * @description Only the fields a user may change about themselves. `sub` and `email` come from the
+     *     identity provider and are not writable here — a profile endpoint that accepted an
+     *     arbitrary `sub` would be an account-takeover primitive.
+     */
+    put: {
+      parameters: {
+        query?: never
+        header?: never
+        path?: never
+        cookie?: never
+      }
+      requestBody: {
+        content: {
+          'application/json': {
+            /** @enum {string} */
+            locale: 'auto' | 'en' | 'de'
+            displayName?: string
+          }
+        }
+      }
+      responses: {
+        /** @description The updated profile */
+        200: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/json': components['schemas']['Profile']
+          }
+        }
+        400: components['responses']['BadRequest']
+        401: components['responses']['Unauthorized']
+      }
+    }
     post?: never
     delete?: never
     options?: never
@@ -473,6 +508,15 @@ export interface components {
     }
   }
   responses: {
+    /** @description The request body is not one this operation accepts */
+    BadRequest: {
+      headers: {
+        [name: string]: unknown
+      }
+      content: {
+        'application/problem+json': components['schemas']['Problem']
+      }
+    }
     /** @description Missing or invalid credentials */
     Unauthorized: {
       headers: {

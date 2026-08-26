@@ -18,6 +18,7 @@ import Fastify, { type FastifyInstance } from 'fastify'
 import { type AuthDependencies, registerAuthRoutes } from './auth/routes.js'
 import type { paths } from './generated/openapi.js'
 import { redactionOptions } from './logging.js'
+import { type ProfileDependencies, registerProfileRoutes } from './profile/routes.js'
 
 /** The response body for an operation, straight from the contract. */
 type Response<
@@ -43,6 +44,14 @@ export interface ServerOptions {
    * the contract-drift check treats the routes as unimplemented, which is true.
    */
   readonly auth?: AuthDependencies
+  /**
+   * The profile store, when there is one.
+   *
+   * Separate from `auth` because they need different things — sign-in needs a provider, the
+   * profile needs CouchDB — and a deployment can have one configured and not the other while it
+   * is being brought up.
+   */
+  readonly profile?: ProfileDependencies
 }
 
 /**
@@ -117,6 +126,7 @@ export function buildServer(options: ServerOptions = {}): Server {
   })
 
   if (options.auth !== undefined) registerAuthRoutes(app, options.auth)
+  if (options.profile !== undefined) registerProfileRoutes(app, options.profile)
 
   return Object.assign(app, { registeredRoutes: () => [...routes] })
 }
