@@ -158,15 +158,27 @@ export class DeviceListView extends LitElement {
   }
 
   /**
-   * What to say when there is nothing to show.
+   * What to say when there is nothing to show. Three different facts, three sentences.
    *
-   * "No devices yet" and "nothing matched your search" are different facts, and telling a user
-   * with a full catalogue that it is empty because they mistyped a word is the kind of small
-   * lie that makes people distrust an application.
+   * Telling a user with a full catalogue that it is empty because they mistyped a word is the
+   * kind of small lie that makes people distrust an application. The third case is the one
+   * that is easy to miss and was: with every device disabled and the box unticked, there is
+   * nothing to show and *nothing was searched for*, so the search sentence would appear with an
+   * empty pair of quotes in it - blaming the user for a filter they did not notice they had on.
    */
   private renderEmpty() {
     if (this.devices.length === 0) return html`<p class="app-empty">${msg('No devices yet.')}</p>`
+
     const query = this.query.trim()
+    if (query === '') {
+      // Reached only when the disabled filter hid everything: `browseDevices` returns nothing,
+      // yet there are devices and no search. Naming the control is the point - the remedy is
+      // one tick away and the message has to say which one.
+      return html`<p class="app-empty">
+        ${msg('Every device you have is disabled. Tick "Show disabled devices" to see them.')}
+      </p>`
+    }
+
     return html`<p class="app-empty">${msg(str`Nothing matches “${query}”.`)}</p>`
   }
 
