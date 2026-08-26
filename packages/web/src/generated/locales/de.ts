@@ -24,6 +24,7 @@
 's7aa73a226fe11914': `Zurück zu den Geräten`,
 's7ded9f88edfb9be9': `Zum hellen Erscheinungsbild wechseln`,
 's85702ada2511b9fa': `Der MT:-Code vom QR-Etikett oder der Zahlencode darunter.`,
+'s93cbb1eaad49e46c': `Alle Ihre Geräte sind deaktiviert. Aktivieren Sie „Deaktivierte Geräte anzeigen“, um sie zu sehen.`,
 's9423b0ccccbd46d8': `Zu dieser Adresse gibt es in dieser Anwendung nichts.`,
 's974564539ea1cafa': `Seriennummer`,
 's9d8b8aa2b404c2c8': `Einstellungen`,

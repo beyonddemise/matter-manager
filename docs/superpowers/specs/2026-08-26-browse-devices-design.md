@@ -71,11 +71,19 @@ deterministic, fine for ASCII. `device-list.ts` passes `new Intl.Collator(getLoc
 because the view already knows which locale it is rendering in. Two lines, and the alternative
 was either a wrong default or an ambient read.
 
-## Two facts the list must not confuse
+## Three facts the list must not confuse
 
-**"No devices yet" and "nothing matched".** Telling someone with a full catalogue that it is
-empty because they mistyped a word is the kind of small lie that makes people stop trusting an
-application. The empty state checks `devices.length` and not the number of *results*.
+**"No devices yet", "nothing matched", and "the filter hid everything".** Telling someone with a
+full catalogue that it is empty because they mistyped a word is the kind of small lie that makes
+people stop trusting an application. The empty state checks `devices.length` and not the number
+of *results*.
+
+The third case is the one that is easy to miss, and this design missed it first time round: with
+every device disabled and the box unticked there is nothing to show and *nothing was searched
+for*, so the search sentence rendered with an empty pair of quotes — blaming the user for a
+filter they had not noticed was on. It gets its own sentence, and that sentence names the
+control, because the remedy is one tick away and a message that does not say which tick is not
+much of a remedy.
 
 **A device whose room is gone.** `roomId` may name a room deleted on another replica. Those
 devices are grouped under `''`, sorted last, and headed "Without a room" — never dropped, and
