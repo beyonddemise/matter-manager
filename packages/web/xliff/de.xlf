@@ -290,6 +290,18 @@
   <source>Type the code instead</source>
   <target>Code stattdessen eingeben</target>
 </trans-unit>
+<trans-unit id="scde3342a428aaee8">
+  <source>Offline</source>
+  <target>Offline</target>
+</trans-unit>
+<trans-unit id="s83af31f4d5a98f78">
+  <source>A new version of Matter Manager is ready.</source>
+  <target>Eine neue Version von Matter Manager steht bereit.</target>
+</trans-unit>
+<trans-unit id="sd5b6130b4937488c">
+  <source>Reload</source>
+  <target>Neu laden</target>
+</trans-unit>
 </body>
 </file>
 </xliff>

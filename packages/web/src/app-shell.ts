@@ -1,5 +1,6 @@
 import { msg, updateWhenLocaleChanges } from '@lit/localize'
 import { html, LitElement, type TemplateResult } from 'lit'
+import { type ConnectivitySource, watchConnectivity } from './connectivity.js'
 import { matchRoute } from './router/match.js'
 import { NAV_ROUTES, ROUTES } from './router/routes.js'
 import {
@@ -9,6 +10,7 @@ import {
   type SchemePreference,
   writePreference,
 } from './scheme.js'
+import { applyUpdate } from './updates.js'
 import './views/add-device.js'
 import './views/device-list.js'
 import './views/device.js'
@@ -77,10 +79,36 @@ export class AppShell extends LitElement {
   static override properties = {
     hash: { state: true },
     schemePreference: { state: true },
+    online: { state: true },
+    updateReady: { attribute: false },
+    connectivity: { attribute: false },
+    takeUpdate: { attribute: false },
   }
 
   declare hash: string
   declare schemePreference: SchemePreference
+  /** What the browser last said about the network. See `connectivity.ts` on trusting it. */
+  declare online: boolean
+  /**
+   * The worker waiting to take over, once there is one.
+   *
+   * Set from outside — `main.ts` owns the registration and watches it — rather than watched
+   * from in here. The shell is where the update is *announced*; noticing one is a different
+   * concern with different tests, and one that has to keep working if this component is ever
+   * replaced.
+   */
+  declare updateReady: ServiceWorker | undefined
+  /** Bound by a test to a network it controls; `window` otherwise. */
+  declare connectivity?: ConnectivitySource
+  /**
+   * What accepting the update does.
+   *
+   * A seam, and a necessary one rather than a tidy one: the real thing schedules a reload of
+   * the page it is running in. A test that called it would reload the test browser three
+   * seconds later, out of the middle of whatever was running by then — a failure appearing in
+   * an unrelated file, which is the worst kind to chase.
+   */
+  declare takeUpdate?: (waiting: ServiceWorker) => void
 
   private readonly onHashChange = () => {
     this.hash = window.location.hash
@@ -96,16 +124,45 @@ export class AppShell extends LitElement {
     // Read once at construction. The write side (`cycleScheme`) keeps this field and
     // storage in sync itself, so there is no need to re-read on every render.
     this.schemePreference = readPreference(() => localStorage)
+    this.online = true
+    this.updateReady = undefined
   }
+
+  private stopWatchingNetwork: (() => void) | undefined
 
   override connectedCallback(): void {
     super.connectedCallback()
     window.addEventListener('hashchange', this.onHashChange)
+    this.stopWatchingNetwork = watchConnectivity(this.connectivity ?? window, (online) => {
+      this.online = online
+    })
   }
 
   override disconnectedCallback(): void {
     window.removeEventListener('hashchange', this.onHashChange)
+    this.stopWatchingNetwork?.()
+    this.stopWatchingNetwork = undefined
     super.disconnectedCallback()
+  }
+
+  /**
+   * Takes the waiting update.
+   *
+   * The reload is the point: a new worker controlling an old page does not change the
+   * JavaScript already running in it. `updates.ts` owns the sequencing, including the case
+   * where the worker never answers.
+   */
+  private onTakeUpdate(): void {
+    const waiting = this.updateReady
+    if (waiting === undefined) return
+
+    const take =
+      this.takeUpdate ??
+      ((worker: ServiceWorker) =>
+        applyUpdate(worker, navigator.serviceWorker, () => {
+          window.location.reload()
+        }))
+    take(waiting)
   }
 
   /** Advances the preference one step around light → dark → system → light. */
@@ -151,9 +208,22 @@ export class AppShell extends LitElement {
             </wa-button>
             <strong>${msg('Matter Manager')}</strong>
           </div>
-          <wa-button data-scheme-toggle appearance="plain" @click=${this.cycleScheme}>
-            <wa-icon name=${SCHEME_ICON[this.schemePreference]} label=${this.schemeToggleLabel()}></wa-icon>
-          </wa-button>
+          <div class="wa-cluster wa-gap-s">
+            <!-- Unobtrusive on purpose. Nothing in this application is blocked by being
+                 offline: every write goes to a local database first, so this explains a delay
+                 in sharing rather than a loss of function. A banner would overstate it. -->
+            ${
+              this.online
+                ? ''
+                : html`<wa-tag data-offline variant="neutral" size="small">
+                    <wa-icon slot="start" name="cloud-slash"></wa-icon>
+                    ${msg('Offline')}
+                  </wa-tag>`
+            }
+            <wa-button data-scheme-toggle appearance="plain" @click=${this.cycleScheme}>
+              <wa-icon name=${SCHEME_ICON[this.schemePreference]} label=${this.schemeToggleLabel()}></wa-icon>
+            </wa-button>
+          </div>
         </header>
 
         <nav slot="navigation" class="wa-stack wa-gap-2xs app-nav">
@@ -172,7 +242,24 @@ export class AppShell extends LitElement {
           )}
         </nav>
 
-        <main class="app-main">
+        <main class="wa-stack wa-gap-m app-main">
+          <!-- Offered, never applied by itself. Reloading out from under someone mid-form is
+               how an update becomes something that happened to them. -->
+          ${
+            this.updateReady === undefined
+              ? ''
+              : html`
+                  <wa-callout variant="brand" data-update-available>
+                    <wa-icon slot="icon" name="arrows-rotate"></wa-icon>
+                    <div class="wa-split wa-gap-m">
+                      <span>${msg('A new version of Matter Manager is ready.')}</span>
+                      <wa-button data-take-update size="small" @click=${this.onTakeUpdate}>
+                        ${msg('Reload')}
+                      </wa-button>
+                    </div>
+                  </wa-callout>
+                `
+          }
           ${view && match ? view(match.params) : html`<not-found-view></not-found-view>`}
         </main>
       </wa-page>

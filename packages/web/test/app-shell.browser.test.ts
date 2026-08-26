@@ -1,6 +1,8 @@
 import '@awesome.me/webawesome-pro/dist/components/page/page.js'
 import '@awesome.me/webawesome-pro/dist/components/button/button.js'
+import '@awesome.me/webawesome-pro/dist/components/callout/callout.js'
 import '@awesome.me/webawesome-pro/dist/components/icon/icon.js'
+import '@awesome.me/webawesome-pro/dist/components/tag/tag.js'
 import { fixture, html } from '@open-wc/testing-helpers'
 import { afterEach, beforeEach, expect, it } from 'vitest'
 import '../src/app-shell.js'
@@ -200,4 +202,120 @@ it("projects the navigation into wa-page's own navigation slot, and only once", 
   const assigned = slot?.assignedElements() ?? []
   expect(assigned).toHaveLength(1)
   expect(assigned[0]).toBe(nav)
+})
+
+/** A network a test can take away. */
+function fakeNetwork(onLine = true) {
+  const listeners = new Map<string, Set<() => void>>()
+  return {
+    onLine,
+    addEventListener(type: string, listener: () => void) {
+      const set = listeners.get(type) ?? new Set()
+      set.add(listener)
+      listeners.set(type, set)
+    },
+    removeEventListener(type: string, listener: () => void) {
+      listeners.get(type)?.delete(listener)
+    },
+    go(online: boolean) {
+      this.onLine = online
+      for (const listener of listeners.get(online ? 'online' : 'offline') ?? []) listener()
+    },
+  }
+}
+
+/** The shell, with a network it does not own. */
+async function shellWith(network: ReturnType<typeof fakeNetwork>) {
+  await Promise.all([
+    customElements.whenDefined('wa-page'),
+    customElements.whenDefined('wa-tag'),
+    customElements.whenDefined('wa-callout'),
+  ])
+  const element = await fixture(html`<app-shell .connectivity=${network}></app-shell>`)
+  const page = element.querySelector('wa-page') as (HTMLElement & Updatable) | null
+  await page?.updateComplete
+  return element
+}
+
+it('says nothing about the network while there is one', async () => {
+  const element = await shellWith(fakeNetwork(true))
+  expect(element.querySelector('[data-offline]')).toBeNull()
+})
+
+it('shows an unobtrusive indicator when the network goes', async () => {
+  const network = fakeNetwork(true)
+  const element = await shellWith(network)
+
+  network.go(false)
+  await (element as HTMLElement & Updatable).updateComplete
+
+  expect(element.querySelector('[data-offline]')).not.toBeNull()
+})
+
+it('shows the indicator on a page that was loaded offline in the first place', async () => {
+  // No event fires in that case. An indicator that appeared only on a transition would be
+  // missing exactly when it is most true.
+  const element = await shellWith(fakeNetwork(false))
+  expect(element.querySelector('[data-offline]')).not.toBeNull()
+})
+
+it('blocks nothing while offline', async () => {
+  // "No action is blocked except those genuinely requiring a server", and at M2b none do:
+  // every write goes to a local database first. So the device list is still there, and so is
+  // the way to add one.
+  const element = await shellWith(fakeNetwork(false))
+
+  expect(element.querySelector('device-list-view')).not.toBeNull()
+  expect(element.querySelector('[data-offline]')?.hasAttribute('disabled')).toBeFalsy()
+})
+
+it('takes the indicator away when the network comes back', async () => {
+  const network = fakeNetwork(false)
+  const element = await shellWith(network)
+
+  network.go(true)
+  await (element as HTMLElement & Updatable).updateComplete
+
+  expect(element.querySelector('[data-offline]')).toBeNull()
+})
+
+it('says nothing about updates until there is one', async () => {
+  const element = await shellWith(fakeNetwork(true))
+  expect(element.querySelector('[data-update-available]')).toBeNull()
+})
+
+it('offers a waiting update rather than applying it', async () => {
+  // Offered, never taken by itself. Reloading out from under someone mid-form is how an
+  // update stops being something they did and becomes something that happened to them.
+  const element = (await shellWith(fakeNetwork(true))) as HTMLElement &
+    Updatable & { updateReady?: unknown; takeUpdate?: unknown }
+  let reloaded = false
+
+  element.takeUpdate = () => {
+    reloaded = true
+  }
+  element.updateReady = { postMessage: () => {} }
+  await element.updateComplete
+
+  expect(element.querySelector('[data-update-available]')).not.toBeNull()
+  expect(element.querySelector('[data-take-update]')).not.toBeNull()
+  expect(reloaded).toBe(false)
+})
+
+it('hands the waiting worker over when the user accepts', async () => {
+  // Through the seam, not through the real `applyUpdate`. That one schedules a reload of the
+  // page it runs in, so calling it here would reload the test browser three seconds later,
+  // out of the middle of whatever was running by then. What it does with the worker is
+  // `updates.test.ts`'s business; what this asserts is that the button reaches it.
+  const element = (await shellWith(fakeNetwork(true))) as HTMLElement &
+    Updatable & { updateReady?: unknown; takeUpdate?: unknown }
+  const taken: unknown[] = []
+  const waiting = { postMessage: () => {} }
+
+  element.takeUpdate = (worker: unknown) => taken.push(worker)
+  element.updateReady = waiting
+  await element.updateComplete
+  ;(element.querySelector('[data-take-update]') as HTMLElement).click()
+
+  expect(taken).toEqual([waiting])
 })

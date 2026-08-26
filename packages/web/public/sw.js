@@ -65,6 +65,22 @@ self.addEventListener('install', (event) => {
   )
 })
 
+/**
+ * The one thing the page can ask this worker to do: step aside for a new version.
+ *
+ * `skipWaiting()` is called **only** from here, never on install. That is the difference
+ * between an update the user took and an update that happened to them: a worker that skips
+ * waiting on its own replaces the code behind a page that is already running, which is how a
+ * half-submitted form meets a bundle that disagrees with it.
+ *
+ * The message is checked rather than assumed. A service worker receives messages from every
+ * client in its scope, and "any message means activate" is an instruction from anything that
+ * can reach `postMessage`.
+ */
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'matter-manager:skip-waiting') self.skipWaiting()
+})
+
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches
