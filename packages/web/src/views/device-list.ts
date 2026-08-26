@@ -4,6 +4,7 @@ import {
   type DeviceDocument,
   type DeviceGroup,
   type RoomDocument,
+  uuidOf,
 } from '@matter-manager/core'
 import type { ProjectRepositories } from '@matter-manager/data'
 import { html, LitElement } from 'lit'
@@ -128,16 +129,16 @@ export class DeviceListView extends LitElement {
 
   private renderDevice(device: DeviceDocument) {
     return html`
-      <li
-        class="wa-split app-device"
-        data-device-id=${device._id}
-        ?data-disabled=${device.disabled}
-      >
-        <span class="wa-stack wa-gap-3xs">
-          <span>${device.name}</span>
-          ${device.spot === undefined ? '' : html`<small class="app-empty">${device.spot}</small>`}
-        </span>
-        ${device.disabled ? html`<wa-tag variant="neutral">${msg('Disabled')}</wa-tag>` : ''}
+      <li ?data-disabled=${device.disabled} data-device-id=${device._id}>
+        <!-- The whole row is the link, not just the name: a target the width of the list is
+             what makes this usable on a phone, which is where a device gets looked up. -->
+        <a class="wa-split app-device" href="#/devices/${uuidOf(device._id) ?? ''}">
+          <span class="wa-stack wa-gap-3xs">
+            <span>${device.name}</span>
+            ${device.spot === undefined ? '' : html`<small class="app-empty">${device.spot}</small>`}
+          </span>
+          ${device.disabled ? html`<wa-tag variant="neutral">${msg('Disabled')}</wa-tag>` : ''}
+        </a>
       </li>
     `
   }

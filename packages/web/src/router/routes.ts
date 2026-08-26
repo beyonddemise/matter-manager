@@ -20,6 +20,10 @@ export const ROUTES: readonly Route[] = [
   // list, and a permanent "Add a device" nav entry beside "Devices" would be one section for
   // what is one section's action.
   { path: '/devices/new', view: 'add-device' },
+  // After `/devices/new`, and that order is load-bearing: `:id` would otherwise capture the
+  // literal segment `new` and route the add form to a device that does not exist. `matchRoute`
+  // returns the first match, so the specific path has to come first.
+  { path: '/devices/:id', view: 'device' },
   { path: '/settings', view: 'settings', label: () => msg('Settings'), icon: 'gear' },
 ]
 

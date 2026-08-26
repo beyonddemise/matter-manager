@@ -134,6 +134,42 @@
   <source>Every device you have is disabled. Tick "Show disabled devices" to see them.</source>
   <target>Alle Ihre Geräte sind deaktiviert. Aktivieren Sie „Deaktivierte Geräte anzeigen“, um sie zu sehen.</target>
 </trans-unit>
+<trans-unit id="s707c598005cdf20d">
+  <source>QR code for commissioning this device</source>
+  <target>QR-Code zur Inbetriebnahme dieses Geräts</target>
+</trans-unit>
+<trans-unit id="s1a83c7173fcfaea0">
+  <source>This device was filed from a pairing code, so there is no QR code to show. The pairing code below commissions it just the same.</source>
+  <target>Dieses Gerät wurde über einen Kopplungscode erfasst, daher gibt es keinen QR-Code. Der Kopplungscode unten nimmt es genauso in Betrieb.</target>
+</trans-unit>
+<trans-unit id="s75a9cb5fe18cff15">
+  <source>Enlarge</source>
+  <target>Vergrößern</target>
+</trans-unit>
+<trans-unit id="sa4829cebe7a04d3c">
+  <source>Pairing code</source>
+  <target>Kopplungscode</target>
+</trans-unit>
+<trans-unit id="s67c17778dee452e4">
+  <source>Copy the pairing code</source>
+  <target>Kopplungscode kopieren</target>
+</trans-unit>
+<trans-unit id="sd21a971eea208533">
+  <source>Vendor</source>
+  <target>Hersteller</target>
+</trans-unit>
+<trans-unit id="sde1f02481331134c">
+  <source>Product</source>
+  <target>Produkt</target>
+</trans-unit>
+<trans-unit id="s44ce6914c84b8a16">
+  <source>Device not found</source>
+  <target>Gerät nicht gefunden</target>
+</trans-unit>
+<trans-unit id="s8f45d06273f3ad9d">
+  <source>There is no device with that address in this catalogue.</source>
+  <target>Zu dieser Adresse gibt es in diesem Katalog kein Gerät.</target>
+</trans-unit>
 </body>
 </file>
 </xliff>
