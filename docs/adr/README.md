@@ -23,6 +23,7 @@ decision to be wrong. That is the part people need eighteen months later.
 | [0012](0012-central-project-registry.md) | Central project registry + local cache | Accepted (amends 0003) |
 | [0013](0013-minimal-runtime-dependencies.md) | Minimal runtime dependencies | Accepted |
 | [0014](0014-cloudflare-pages-deployment.md) | Cloudflare Pages by direct upload, caching contract pinned | Accepted |
+| [0015](0015-openapi-checked-not-executed.md) | The OpenAPI contract is checked against, not executed from | Accepted (amends 0004) |
 
 ## Writing one
 
