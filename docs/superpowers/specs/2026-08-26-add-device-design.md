@@ -174,7 +174,7 @@ reachable here — the advisory covers v3, v5 and v6, and PouchDB uses only v4; 
 only when the caller supplies its own buffer, which PouchDB never does. Checked in the shipped
 bundle rather than inferred:
 
-```
+```console
 $ grep -n 'uuid' node_modules/pouchdb-browser/lib/index.js
 6:var uuid = require('uuid');
 949:    return uuid.v4().replace(/-/g, '').toLowerCase();

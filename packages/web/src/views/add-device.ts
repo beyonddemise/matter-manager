@@ -152,28 +152,45 @@ export class AddDeviceView extends LitElement {
   private async onSubmit(event: Event): Promise<void> {
     event.preventDefault()
     if (this.saving) return
-
-    let creation: ReturnType<typeof planNewDevice>
-    try {
-      creation = planNewDevice(this.draft(), this.rooms, {
-        uuid: () => crypto.randomUUID(),
-        now: () => new Date().toISOString(),
-      })
-    } catch (problem) {
-      if (problem instanceof DraftError) {
-        this.error = problem
-        return
-      }
-      // Anything else is a bug rather than a statement about the form, and swallowing it here
-      // would show the user a validation message for a fault that is not theirs. Unreachable
-      // from the form and deliberately left uncovered; see the matching note in
-      // `core/src/documents/new-device.ts`.
-      throw problem
-    }
-
-    this.error = undefined
+    // Set before the first `await`, not after the planning: two quick clicks would otherwise
+    // both get past the guard while the room read below was still in flight.
     this.saving = true
+
     try {
+      // Re-read the rooms rather than planning against `this.rooms`.
+      //
+      // `firstUpdated` starts that read asynchronously, so a user who types the name of an
+      // existing room and saves before it lands would be planned against an empty list - and
+      // `planNewDevice`, seeing no match, would create a *second* room with the same path.
+      // That is precisely the duplicate this flow exists to prevent, and it would appear only
+      // on a slow device or a large catalogue, which is where nobody is watching for it.
+      //
+      // Re-reading closes the window completely rather than narrowing it, and it costs one
+      // ranged `_all_docs` on a deliberate action. It also picks up a room another tab created
+      // since this form was opened.
+      const rooms = await this.repos().rooms.list()
+      this.rooms = rooms
+
+      let creation: ReturnType<typeof planNewDevice>
+      try {
+        creation = planNewDevice(this.draft(), rooms, {
+          uuid: () => crypto.randomUUID(),
+          now: () => new Date().toISOString(),
+        })
+      } catch (problem) {
+        if (problem instanceof DraftError) {
+          this.error = problem
+          return
+        }
+        // Anything else is a bug rather than a statement about the form, and swallowing it
+        // here would show the user a validation message for a fault that is not theirs.
+        // Unreachable from the form and deliberately left uncovered; see the matching note in
+        // `core/src/documents/new-device.ts`.
+        throw problem
+      }
+
+      this.error = undefined
+
       // The room first. PouchDB has no transactions, so a failure between the two writes
       // leaves either nothing or an empty room - and an empty room is harmless and reusable,
       // whereas a device pointing at a room that does not exist is a broken record.

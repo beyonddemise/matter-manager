@@ -28,10 +28,9 @@ afterEach(async () => {
 /**
  * Builds the form with a database of its own.
  *
- * A test that pre-seeds a room waits for `element.rooms` itself, and must: `planNewDevice`
- * matches against the rooms the view is holding, so submitting before that read finished
- * would create a second copy of a room that already exists — and the test would pass while
- * doing exactly the thing the feature exists to prevent.
+ * Deliberately does not wait for the room list. Submitting re-reads the rooms, so a test does
+ * not have to synchronise with a read it cannot see — and the test below that submits with no
+ * wait at all is the one pinning that.
  */
 async function form(): Promise<AddDeviceView> {
   await Promise.all([
@@ -176,6 +175,30 @@ describe('the room', () => {
 
     fill(element, 'credential', PAYLOAD)
     fill(element, 'name', 'Kitchen ceiling light')
+    await submit(element, async () => (await devices()).length === 1)
+
+    expect(await rooms()).toHaveLength(1)
+    expect((await devices())[0]?.roomId).toBe('room:kitchen')
+  })
+
+  it('reuses an existing room even when submitted before the first read lands', async () => {
+    // The race CodeRabbit found on #74. `firstUpdated` starts the room read asynchronously; a
+    // user who types the name of an existing room and saves before it arrives would, if the
+    // form planned against the rooms it was holding, get a *second* room with the same path -
+    // the exact duplicate this flow exists to prevent, visible only on a slow device where
+    // nobody is watching. Submitting with no wait at all is what pins the re-read.
+    await database.repositories.rooms.save({
+      _id: 'room:kitchen',
+      type: 'room',
+      path: 'Ground Floor/Kitchen',
+    })
+
+    const element = await form()
+    expect(element.rooms).toHaveLength(0)
+
+    fill(element, 'credential', PAYLOAD)
+    fill(element, 'name', 'Kitchen ceiling light')
+    typeRoom(element, 'Ground Floor/Kitchen')
     await submit(element, async () => (await devices()).length === 1)
 
     expect(await rooms()).toHaveLength(1)
