@@ -346,6 +346,42 @@
   <source>Export <x id="0" equiv-text="${countSelected(this.groups(), { kind: 'devices', ids: this.selected })}"/> selected</source>
   <target><x id="0" equiv-text="${countSelected(this.groups(), { kind: 'devices', ids: this.selected })}"/> ausgewählte exportieren</target>
 </trans-unit>
+<trans-unit id="sbd65c5758efd65aa">
+  <source>Matter Manager labels</source>
+  <target>Matter-Manager-Etiketten</target>
+</trans-unit>
+<trans-unit id="s35baa5639f913c8f">
+  <source>Print labels</source>
+  <target>Etiketten drucken</target>
+</trans-unit>
+<trans-unit id="s3d1899df15537b0a">
+  <source>Label sheet</source>
+  <target>Etikettenbogen</target>
+</trans-unit>
+<trans-unit id="s5281e5ce79c867cb">
+  <source><x id="0" equiv-text="${candidate.code}"/> — <x id="1" equiv-text="${candidate.columns * candidate.rows}"/> per sheet</source>
+  <target><x id="0" equiv-text="${candidate.code}"/> — <x id="1" equiv-text="${candidate.columns * candidate.rows}"/> pro Bogen</target>
+</trans-unit>
+<trans-unit id="sd962db8c879e0bb4">
+  <source>Start at row</source>
+  <target>Beginnen in Zeile</target>
+</trans-unit>
+<trans-unit id="sfaf416c8e2304e20">
+  <source>and column</source>
+  <target>und Spalte</target>
+</trans-unit>
+<trans-unit id="sd57928c6004331d4">
+  <source>Print at 100% — not "fit to page" — or the labels will not line up with the sheet.</source>
+  <target>Mit 100 % drucken – nicht „an Seite anpassen“ –, sonst passen die Etiketten nicht zum Bogen.</target>
+</trans-unit>
+<trans-unit id="s49973ce2831b25f1">
+  <source>Create the sheet</source>
+  <target>Bogen erstellen</target>
+</trans-unit>
+<trans-unit id="s8a9eb438abac7c6a">
+  <source>Labels</source>
+  <target>Etiketten</target>
+</trans-unit>
 </body>
 </file>
 </xliff>

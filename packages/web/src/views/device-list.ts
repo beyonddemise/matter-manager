@@ -5,6 +5,9 @@ import {
   type DeviceDocument,
   type DeviceGroup,
   type ExportSelection,
+  FIRST_LABEL,
+  LABEL_STOCKS,
+  type LabelStock,
   type RoomDocument,
   selectForExport,
   uuidOf,
@@ -13,8 +16,15 @@ import type { ProjectRepositories } from '@matter-manager/data'
 import { html, LitElement } from 'lit'
 import { projectDatabase } from '../db/project-database.js'
 import { getLocale } from '../i18n/localization.js'
-import { inventoryFilename, inventoryLabels, offerDownload } from '../pdf/download.js'
+import {
+  inventoryFilename,
+  inventoryLabels,
+  labelsFilename,
+  offerDownload,
+} from '../pdf/download.js'
 import { buildInventoryPdf, ExportCancelled, type InventoryProgress } from '../pdf/inventory.js'
+import { buildLabelPdf } from '../pdf/labels.js'
+import { fieldValue } from './device-form.js'
 
 /**
  * The device list: rooms, in order, with what is in them.
@@ -45,6 +55,8 @@ export class DeviceListView extends LitElement {
     exportProgress: { state: true },
     exportFailed: { state: true },
     selected: { state: true },
+    labelsOpen: { state: true },
+    labelStock: { state: true },
     download: { attribute: false },
   }
 
@@ -75,6 +87,10 @@ export class DeviceListView extends LitElement {
    * and the selection has to outlive a search the user types while choosing.
    */
   declare selected: ReadonlySet<string>
+  /** Whether the label-sheet options are showing. */
+  declare labelsOpen: boolean
+  /** Which stock the sheet is laid out for. Defaults to the common European address label. */
+  declare labelStock: LabelStock
   /**
    * How the finished bytes reach the user. Bound by a test.
    *
@@ -93,6 +109,8 @@ export class DeviceListView extends LitElement {
     this.exportProgress = undefined
     this.exportFailed = false
     this.selected = new Set()
+    this.labelsOpen = false
+    this.labelStock = LABEL_STOCKS[0] as LabelStock
     this.devices = []
     this.rooms = []
     this.loaded = false
@@ -209,7 +227,7 @@ export class DeviceListView extends LitElement {
               ? ''
               : html`<wa-button
                   data-export-room=${group.path}
-                  size="small"
+                  size="s"
                   appearance="plain"
                   ?disabled=${this.exporting}
                   @click=${() => void this.onExport({ kind: 'room', path: group.path })}
@@ -310,6 +328,129 @@ export class DeviceListView extends LitElement {
     }
   }
 
+  /**
+   * Exports labels for whatever is selected, or for everything when nothing is.
+   *
+   * Sharing `exporting`, the progress callout and the cancel button with the inventory export,
+   * because from the user's side there is one export running or none — two independent
+   * "exporting" states would let both start at once and both write a file.
+   */
+  private async onExportLabels(): Promise<void> {
+    if (this.exporting) return
+    const token = ++this.exportToken
+    this.exporting = true
+    this.exportFailed = false
+    this.exportProgress = { done: 0, total: 0 }
+    this.labelsOpen = false
+
+    const start = {
+      row: Number(fieldValue(this, '[data-label-row]')) || FIRST_LABEL.row,
+      column: Number(fieldValue(this, '[data-label-column]')) || FIRST_LABEL.column,
+    }
+
+    try {
+      const chosen = selectForExport(
+        this.groups(),
+        this.selected.size === 0 ? { kind: 'all' } : { kind: 'devices', ids: this.selected },
+      )
+      const bytes = await buildLabelPdf(chosen, {
+        stock: this.labelStock,
+        start,
+        title: msg('Matter Manager labels'),
+        noQrCode: msg('Filed from a pairing code'),
+        withoutRoom: msg('Without a room'),
+        onProgress: (progress) => {
+          if (token === this.exportToken) this.exportProgress = progress
+        },
+        cancelled: () => token !== this.exportToken,
+      })
+      if (token !== this.exportToken) return
+      ;(this.download ?? offerDownload)(bytes, labelsFilename())
+    } catch (error) {
+      if (error instanceof ExportCancelled) return
+      if (token === this.exportToken) this.exportFailed = true
+    } finally {
+      if (token === this.exportToken) {
+        this.exporting = false
+        this.exportProgress = undefined
+      }
+    }
+  }
+
+  /** The label-sheet options: which stock, and where on a part-used sheet to begin. */
+  private renderLabelDialog() {
+    const stock = this.labelStock
+    return html`
+      <wa-dialog
+        data-label-dialog
+        label=${msg('Print labels')}
+        ?open=${this.labelsOpen}
+        @wa-after-hide=${() => {
+          this.labelsOpen = false
+        }}
+      >
+        <div class="wa-stack wa-gap-m">
+          <wa-select
+            data-label-stock
+            label=${msg('Label sheet')}
+            value=${stock.code}
+            @change=${(event: Event) => {
+              const code = (event.target as { value?: string }).value
+              this.labelStock =
+                LABEL_STOCKS.find((candidate) => candidate.code === code) ?? this.labelStock
+            }}
+          >
+            ${LABEL_STOCKS.map(
+              (candidate) => html`
+                <wa-option value=${candidate.code}>
+                  ${msg(str`${candidate.code} — ${candidate.columns * candidate.rows} per sheet`)}
+                </wa-option>
+              `,
+            )}
+          </wa-select>
+
+          <!-- The small feature the issue calls disproportionately appreciated, and it is:
+               nobody wants to waste most of a sheet to print four labels. -->
+          <div class="wa-cluster wa-gap-s">
+            <wa-input
+              data-label-row
+              type="number"
+              min="1"
+              max=${stock.rows}
+              value="1"
+              label=${msg('Start at row')}
+            ></wa-input>
+            <wa-input
+              data-label-column
+              type="number"
+              min="1"
+              max=${stock.columns}
+              value="1"
+              label=${msg('and column')}
+            ></wa-input>
+          </div>
+
+          <wa-callout variant="neutral">
+            <wa-icon slot="icon" name="circle-info"></wa-icon>
+            <!-- Not a nicety. The label positions are absolute on the physical sheet, so a
+                 printer scaling the page to fit puts every label over its die-cut. -->
+            ${msg('Print at 100% — not "fit to page" — or the labels will not line up with the sheet.')}
+          </wa-callout>
+        </div>
+
+        <wa-button slot="footer" data-dialog="close" appearance="plain">${msg('Cancel')}</wa-button>
+        <wa-button
+          slot="footer"
+          data-print-labels
+          variant="brand"
+          @click=${() => void this.onExportLabels()}
+        >
+          ${msg('Create the sheet')}
+        </wa-button>
+      </wa-dialog>
+    `
+  }
+
   override render() {
     const groups = this.groups()
 
@@ -335,6 +476,17 @@ export class DeviceListView extends LitElement {
                     )}
                   </wa-button>`
             }
+            <wa-button
+              data-labels
+              appearance="outlined"
+              ?disabled=${this.exporting}
+              @click=${() => {
+                this.labelsOpen = true
+              }}
+            >
+              <wa-icon slot="start" name="tags"></wa-icon>
+              ${msg('Labels')}
+            </wa-button>
             <wa-button data-export appearance="outlined" @click=${() => void this.onExport()} ?disabled=${this.exporting}>
               <wa-icon slot="start" name="file-pdf"></wa-icon>
               ${msg('Export PDF')}
@@ -357,7 +509,7 @@ export class DeviceListView extends LitElement {
                         str`Building the PDF: ${this.exportProgress?.done ?? 0} of ${this.exportProgress?.total ?? 0} devices.`,
                       )}
                     </span>
-                    <wa-button data-cancel-export size="small" appearance="plain" @click=${this.cancelExport}>
+                    <wa-button data-cancel-export size="s" appearance="plain" @click=${this.cancelExport}>
                       ${msg('Cancel')}
                     </wa-button>
                   </div>
@@ -398,6 +550,8 @@ export class DeviceListView extends LitElement {
                 ${groups.map((group) => this.renderGroup(group))}
               </div>`
         }
+
+        ${this.renderLabelDialog()}
       </div>
     `
   }

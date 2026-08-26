@@ -92,6 +92,21 @@ export {
 } from './matter/payload.js'
 export { isVerhoeffValid, VerhoeffError, verhoeffCheckDigit } from './matter/verhoeff.js'
 export {
+  AVERY_5160,
+  AVERY_L7160,
+  AVERY_L7163,
+  FIRST_LABEL,
+  LABEL_SAFE_INSET,
+  LABEL_STOCKS,
+  type LabelPage,
+  type LabelStart,
+  type LabelStock,
+  type LabelSubject,
+  layoutLabels,
+  MM,
+  type PlacedLabel,
+} from './pdf/labels.js'
+export {
   A4,
   type Block,
   type EntryBlock,

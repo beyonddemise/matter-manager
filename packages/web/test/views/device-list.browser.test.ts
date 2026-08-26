@@ -3,7 +3,10 @@ import '@awesome.me/webawesome-pro/dist/components/button/button.js'
 import '@awesome.me/webawesome-pro/dist/components/checkbox/checkbox.js'
 import '@awesome.me/webawesome-pro/dist/components/callout/callout.js'
 import '@awesome.me/webawesome-pro/dist/components/icon/icon.js'
+import '@awesome.me/webawesome-pro/dist/components/dialog/dialog.js'
+import '@awesome.me/webawesome-pro/dist/components/option/option.js'
 import '@awesome.me/webawesome-pro/dist/components/qr-code/qr-code.js'
+import '@awesome.me/webawesome-pro/dist/components/select/select.js'
 import '@awesome.me/webawesome-pro/dist/components/input/input.js'
 import '@awesome.me/webawesome-pro/dist/components/tag/tag.js'
 import type { DeviceDocument, Unsaved } from '@matter-manager/core'
@@ -455,5 +458,115 @@ describe('exporting a selection', () => {
     const element = await list()
 
     expect(element.querySelector('[data-device-id="device:old"] [data-select]')).toBeNull()
+  })
+})
+
+describe('printing labels', () => {
+  /** The list, with the download intercepted. */
+  async function sheetList(): Promise<{ element: DeviceListView; saved: Uint8Array[] }> {
+    const saved: Uint8Array[] = []
+    await Promise.all([
+      customElements.whenDefined('wa-dialog'),
+      customElements.whenDefined('wa-select'),
+    ])
+    const element = await list()
+    ;(element as DeviceListView & { download?: unknown }).download = (bytes: Uint8Array) =>
+      saved.push(bytes)
+    return { element, saved }
+  }
+
+  it('asks which sheet and where to start before printing anything', async () => {
+    // Not a one-click export. A label sheet is physical stock: printing one without asking
+    // where to start wastes whatever is left of a part-used sheet.
+    await seed()
+    const { element, saved } = await sheetList()
+
+    ;(element.querySelector('[data-labels]') as HTMLElement).click()
+    await element.updateComplete
+
+    expect(element.labelsOpen).toBe(true)
+    expect(element.querySelector('[data-label-stock]')).not.toBeNull()
+    expect(element.querySelector('[data-label-row]')).not.toBeNull()
+    expect(saved).toHaveLength(0)
+  })
+
+  it('says to print at 100%', async () => {
+    // The label positions are absolute on the physical sheet, so a printer scaling the page to
+    // fit puts every label over its die-cut. The user is the only one who can prevent that,
+    // which means they have to be told.
+    await seed()
+    const { element } = await sheetList()
+
+    ;(element.querySelector('[data-labels]') as HTMLElement).click()
+    await element.updateComplete
+
+    expect(element.querySelector('[data-label-dialog]')?.textContent).toContain('100%')
+  })
+
+  it('produces a sheet', async () => {
+    await seed()
+    const { element, saved } = await sheetList()
+
+    ;(element.querySelector('[data-labels]') as HTMLElement).click()
+    await element.updateComplete
+    ;(element.querySelector('[data-print-labels]') as HTMLElement).click()
+    await waitUntil(() => saved.length === 1, 'the label sheet never finished', { timeout: 10000 })
+
+    expect(new TextDecoder('latin1').decode(saved[0]).startsWith('%PDF-')).toBe(true)
+  })
+
+  it('names the file so a folder of them sorts', async () => {
+    await seed()
+    const saved: Array<{ filename: string }> = []
+    await Promise.all([
+      customElements.whenDefined('wa-dialog'),
+      customElements.whenDefined('wa-select'),
+    ])
+    const element = await list()
+    ;(element as DeviceListView & { download?: unknown }).download = (
+      _bytes: Uint8Array,
+      filename: string,
+    ) => saved.push({ filename })
+
+    ;(element.querySelector('[data-labels]') as HTMLElement).click()
+    await element.updateComplete
+    ;(element.querySelector('[data-print-labels]') as HTMLElement).click()
+    await waitUntil(() => saved.length === 1, 'the label sheet never finished', { timeout: 10000 })
+
+    expect(saved[0]?.filename).toMatch(/^matter-manager-labels-\d{4}-\d{2}-\d{2}\.pdf$/)
+  })
+
+  it('prints only the selection when there is one', async () => {
+    await seed()
+    const { element, saved } = await sheetList()
+
+    const box = element.querySelector('[data-device-id="device:ceiling"] [data-select]') as
+      | (HTMLElement & { checked?: boolean })
+      | null
+    if (box === null) throw new Error('no checkbox')
+    box.checked = true
+    box.dispatchEvent(new Event('change', { bubbles: true }))
+    await element.updateComplete
+
+    ;(element.querySelector('[data-labels]') as HTMLElement).click()
+    await element.updateComplete
+    ;(element.querySelector('[data-print-labels]') as HTMLElement).click()
+    await waitUntil(() => saved.length === 1, 'the label sheet never finished', { timeout: 10000 })
+
+    expect(new TextDecoder('latin1').decode(saved[0]).startsWith('%PDF-')).toBe(true)
+  })
+
+  it('closes the dialog once it starts', async () => {
+    // Leaving it open over a progress bar would let a second sheet be started on top of the
+    // first, and both would write a file.
+    await seed()
+    const { element } = await sheetList()
+
+    ;(element.querySelector('[data-labels]') as HTMLElement).click()
+    await element.updateComplete
+    ;(element.querySelector('[data-print-labels]') as HTMLElement).click()
+    await element.updateComplete
+
+    expect(element.labelsOpen).toBe(false)
   })
 })
