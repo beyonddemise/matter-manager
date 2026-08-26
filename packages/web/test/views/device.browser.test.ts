@@ -92,6 +92,60 @@ async function page(uuid = UUID, repositories = database.repositories): Promise<
   return element
 }
 
+/** Presses a control the way a user does, through the element the view rendered. */
+function click(element: DeviceView, selector: string): void {
+  const control = element.querySelector(selector) as HTMLElement | null
+  if (control === null) throw new Error(`no control matching ${selector}`)
+  control.click()
+}
+
+/** A second device, for the tests that navigate between two. */
+const SECOND_UUID = '3fa85f64-5717-4562-b3fc-2c963f66afa6'
+
+/**
+ * The real repositories, with one device's writes held back.
+ *
+ * The mirror image of {@link slowFor}: a write that outlives the route it was issued from is
+ * the same wrong-device failure as a stale read, arriving through the other door.
+ */
+function slowWrites(id: string, ms: number): ProjectRepositories {
+  const real = database.repositories
+  const wait = async (wanted: string) => {
+    if (wanted === id) await new Promise((resolve) => setTimeout(resolve, ms))
+  }
+  return {
+    ...real,
+    devices: {
+      ...real.devices,
+      save: async (document) => {
+        await wait(document._id)
+        return real.devices.save(document)
+      },
+      remove: async (document) => {
+        await wait(document._id)
+        return real.devices.remove(document)
+      },
+    },
+  }
+}
+
+/** The real repositories, with every device write refused — a full disk, a locked database. */
+function refusingWrites(): ProjectRepositories {
+  const real = database.repositories
+  const refuse = async () => {
+    throw new Error('storage refused the write')
+  }
+  return { ...real, devices: { ...real.devices, save: refuse, remove: refuse } }
+}
+
+/** Seeds a second device so a test can navigate away from the first one. */
+async function seedSecond(): Promise<void> {
+  await database.repositories.rooms.save({ _id: 'room:hall', type: 'room', path: 'Hall' })
+  await database.repositories.devices.save(
+    lamp({ _id: `device:${SECOND_UUID}`, name: 'Hall sensor', roomId: 'room:hall' }),
+  )
+}
+
 /**
  * Reads the text back out of a rendered `<wa-qr-code>`, through its canvas.
  *
@@ -323,5 +377,269 @@ describe('an address that names no device', () => {
     const element = await page('device:not-a-uuid')
 
     expect(element.textContent).toContain('not found')
+  })
+})
+
+describe('taking a device out of service', () => {
+  it('disables it, keeps it, and stamps when', async () => {
+    await seed()
+    const element = await page()
+
+    click(element, '[data-toggle-disabled]')
+    await waitUntil(() => element.device?.disabled === true, 'the device was never disabled')
+
+    const stored = await database.repositories.devices.get(DEVICE_ID)
+    expect(stored?.disabled).toBe(true)
+    expect(stored?.disabledAt).toMatch(/^\d{4}-\d{2}-\d{2}T/)
+  })
+
+  it('keeps the QR reproducible, which is the whole reason this is not a delete', async () => {
+    await seed()
+    const element = await page()
+
+    click(element, '[data-toggle-disabled]')
+    await waitUntil(() => element.device?.disabled === true, 'the device was never disabled')
+    await element.updateComplete
+
+    // The code has to survive on screen, not merely in storage: a device that comes off a wall
+    // is exactly the one someone will need to re-commission somewhere else.
+    expect((await database.repositories.devices.get(DEVICE_ID))?.payload).toBe(PAYLOAD)
+    expect(element.querySelector('wa-qr-code')).not.toBeNull()
+  })
+
+  it('puts it back into service, dropping the timestamp', async () => {
+    await seed(lamp({ disabled: true, disabledAt: '2026-08-20T09:00:00.000Z' }))
+    const element = await page()
+
+    click(element, '[data-toggle-disabled]')
+    await waitUntil(() => element.device?.disabled === false, 'the device was never re-enabled')
+
+    const stored = await database.repositories.devices.get(DEVICE_ID)
+    expect(stored?.disabled).toBe(false)
+    expect(stored).not.toHaveProperty('disabledAt')
+  })
+
+  it('leaves a revision the next action can use', async () => {
+    // The write returns the stored document; keeping the stale one in hand would make the
+    // *second* action fail as a conflict, for no reason the user did anything to cause.
+    await seed()
+    const element = await page()
+
+    click(element, '[data-toggle-disabled]')
+    await waitUntil(() => element.device?.disabled === true, 'the device was never disabled')
+    await element.updateComplete
+    click(element, '[data-toggle-disabled]')
+    await waitUntil(() => element.device?.disabled === false, 'the second action never landed')
+
+    expect((await database.repositories.devices.get(DEVICE_ID))?.disabled).toBe(false)
+  })
+})
+
+describe('deleting a device', () => {
+  it('asks first, and does not delete while it is asking', async () => {
+    await seed()
+    const element = await page()
+
+    click(element, '[data-delete]')
+    await element.updateComplete
+
+    expect(element.confirmingDelete).toBe(true)
+    expect(await database.repositories.devices.get(DEVICE_ID)).toBeDefined()
+  })
+
+  it('warns that the commissioning code goes with it', async () => {
+    // "Are you sure?" is a question people learn to click past. The one fact that makes
+    // someone stop is that the code cannot be recovered, so the dialog has to say it.
+    await seed()
+    const element = await page()
+
+    click(element, '[data-delete]')
+    await element.updateComplete
+
+    const dialog = element.querySelector('[data-delete-dialog]')
+    expect(dialog?.textContent).toContain('cannot be recovered')
+    expect(dialog?.textContent).toContain('disable it instead')
+  })
+
+  it('deletes it once confirmed', async () => {
+    await seed()
+    const element = await page()
+
+    click(element, '[data-delete]')
+    await element.updateComplete
+    click(element, '[data-confirm-delete]')
+
+    await waitUntil(
+      async () => (await database.repositories.devices.get(DEVICE_ID)) === undefined,
+      'the device was never deleted',
+      { timeout: 3000 },
+    )
+  })
+
+  it('closes an open confirmation when the route moves to another device', async () => {
+    await seed()
+    await database.repositories.devices.save(
+      lamp({ _id: `device:${SECOND_UUID}`, name: 'Hall sensor', roomId: 'room:hall' }),
+    )
+    const element = await page()
+
+    click(element, '[data-delete]')
+    await element.updateComplete
+    element.uuid = SECOND_UUID
+    await waitUntil(() => element.device?.name === 'Hall sensor')
+
+    // A dialog left open over a different device is a confirmation aimed at the wrong record.
+    expect(element.confirmingDelete).toBe(false)
+  })
+})
+
+describe('a write that outlives the route it came from', () => {
+  it('does not put the previous device back on screen when a disable lands late', async () => {
+    // `load()` has a request token; the writes did not. Press Disable on A, navigate to B
+    // before the write settles, and the resolved save assigns A's document to the view - so
+    // the URL names B while the name, the QR and the pairing code are A's. That is the
+    // wrong-device rendering this class exists to prevent, and it puts one device's setup
+    // code on another device's page.
+    await seed()
+    await seedSecond()
+    const element = await page(UUID, slowWrites(DEVICE_ID, 150))
+
+    click(element, '[data-toggle-disabled]')
+    element.uuid = SECOND_UUID
+    await waitUntil(() => element.device?.name === 'Hall sensor', 'never reached the second device')
+
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    await element.updateComplete
+
+    expect(element.device?.name).toBe('Hall sensor')
+    expect(element.querySelector('[data-manual-code]')?.textContent?.trim()).toBe(LONG_CODE)
+    // The write itself still had to happen: dropping the result is not dropping the action.
+    expect((await database.repositories.devices.get(DEVICE_ID))?.disabled).toBe(true)
+  })
+
+  it('does not navigate away when a delete lands after the route moved on', async () => {
+    await seed()
+    await seedSecond()
+    const element = await page(UUID, slowWrites(DEVICE_ID, 150))
+
+    click(element, '[data-delete]')
+    await element.updateComplete
+    click(element, '[data-confirm-delete]')
+    element.uuid = SECOND_UUID
+    await waitUntil(() => element.device?.name === 'Hall sensor', 'never reached the second device')
+
+    window.location.hash = '#/sentinel'
+    await new Promise((resolve) => setTimeout(resolve, 300))
+
+    // Leaving is right for the page that was deleted, and wrong for the one the user is on now.
+    expect(window.location.hash).toBe('#/sentinel')
+    expect(await database.repositories.devices.get(DEVICE_ID)).toBeUndefined()
+  })
+})
+
+describe('a write storage refuses', () => {
+  it('says the disable did not happen instead of doing nothing visible', async () => {
+    // Left to propagate, a rejected write is an unhandled rejection: the button un-busies and
+    // the screen is unchanged, which looks exactly like a button that does nothing.
+    await seed()
+    const element = await page(UUID, refusingWrites())
+
+    click(element, '[data-toggle-disabled]')
+    await waitUntil(
+      () => element.querySelector('[data-action-failed]') !== null,
+      'the refused write was never reported',
+    )
+
+    expect(element.device?.disabled).toBe(false)
+    expect(element.querySelector('[data-action-failed]')?.textContent).toContain('unchanged')
+  })
+
+  it('keeps the confirmation open and says why when a delete is refused', async () => {
+    // Closing the dialog would look like the delete had happened, which for the one
+    // irreversible action on this page is the wrong way to be wrong.
+    await seed()
+    const element = await page(UUID, refusingWrites())
+
+    click(element, '[data-delete]')
+    await element.updateComplete
+    click(element, '[data-confirm-delete]')
+    await waitUntil(
+      () => element.querySelector('[data-delete-failed]') !== null,
+      'the refused delete was never reported',
+    )
+
+    expect(element.confirmingDelete).toBe(true)
+    expect(await database.repositories.devices.get(DEVICE_ID)).toBeDefined()
+  })
+
+  it('lets the action be retried once storage recovers', async () => {
+    await seed()
+    let refuse = true
+    const real = database.repositories
+    const flaky: ProjectRepositories = {
+      ...real,
+      devices: {
+        ...real.devices,
+        save: async (document) => {
+          if (refuse) throw new Error('storage refused the write')
+          return real.devices.save(document)
+        },
+      },
+    }
+    const element = await page(UUID, flaky)
+
+    click(element, '[data-toggle-disabled]')
+    await waitUntil(() => element.querySelector('[data-action-failed]') !== null)
+
+    refuse = false
+    click(element, '[data-toggle-disabled]')
+    await waitUntil(() => element.device?.disabled === true, 'the retry never landed')
+    await element.updateComplete
+
+    expect(element.querySelector('[data-action-failed]')).toBeNull()
+  })
+})
+
+describe('the busy guard belongs to the route that set it', () => {
+  it('is not cleared by a write issued from the device the user has left', async () => {
+    // Disable A (slow), navigate to B, disable B (slower). When A's write finally settles, an
+    // unguarded `finally` clears `busy` — unlocking B's own guard while B's write is still in
+    // flight, so a second press writes B again against the `_rev` the first press is still
+    // using. The retry then fails as a conflict and reports an error for an action that worked.
+    await seed()
+    await seedSecond()
+
+    const real = database.repositories
+    const attempted: string[] = []
+    const delays: Readonly<Record<string, number>> = {
+      [DEVICE_ID]: 100,
+      [`device:${SECOND_UUID}`]: 500,
+    }
+    const repositories: ProjectRepositories = {
+      ...real,
+      devices: {
+        ...real.devices,
+        save: async (document) => {
+          attempted.push(document._id)
+          await new Promise((resolve) => setTimeout(resolve, delays[document._id] ?? 0))
+          return real.devices.save(document)
+        },
+      },
+    }
+
+    const element = await page(UUID, repositories)
+    click(element, '[data-toggle-disabled]')
+
+    element.uuid = SECOND_UUID
+    await waitUntil(() => element.device?.name === 'Hall sensor', 'never reached the second device')
+    await element.updateComplete
+    click(element, '[data-toggle-disabled]')
+
+    // Long enough for the first device's write to settle, and not for the second's.
+    await new Promise((resolve) => setTimeout(resolve, 250))
+    click(element, '[data-toggle-disabled]')
+    await new Promise((resolve) => setTimeout(resolve, 600))
+
+    expect(attempted.filter((id) => id === `device:${SECOND_UUID}`)).toHaveLength(1)
   })
 })

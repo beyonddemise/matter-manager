@@ -30,6 +30,8 @@ const EXPECTED: ReadonlyArray<
   ['uuidOf', 'function'],
   ['DraftError', 'function'],
   ['planNewDevice', 'function'],
+  ['planDeviceEdit', 'function'],
+  ['setDeviceDisabled', 'function'],
   ['browseDevices', 'function'],
   // base38
   ['BASE38_ALPHABET', 'string'],

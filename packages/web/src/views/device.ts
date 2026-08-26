@@ -1,5 +1,11 @@
-import { msg, updateWhenLocaleChanges } from '@lit/localize'
-import { type DeviceDocument, documentId, type RoomDocument } from '@matter-manager/core'
+import { msg, str, updateWhenLocaleChanges } from '@lit/localize'
+import {
+  type DeviceDocument,
+  documentId,
+  type RoomDocument,
+  setDeviceDisabled,
+  uuidOf,
+} from '@matter-manager/core'
 import type { ProjectRepositories } from '@matter-manager/data'
 import { html, LitElement, type PropertyValues, type TemplateResult } from 'lit'
 import { projectDatabase } from '../db/project-database.js'
@@ -70,6 +76,9 @@ export class DeviceView extends LitElement {
     room: { state: true },
     loaded: { state: true },
     enlarged: { state: true },
+    confirmingDelete: { state: true },
+    busy: { state: true },
+    failure: { state: true },
   }
 
   /**
@@ -86,6 +95,17 @@ export class DeviceView extends LitElement {
   declare room: RoomDocument | undefined
   declare loaded: boolean
   declare enlarged: boolean
+  declare confirmingDelete: boolean
+  /** A write is in flight. Guards the actions against a second click landing on a stale `_rev`. */
+  declare busy: boolean
+  /**
+   * Which action storage refused, if any.
+   *
+   * Two values rather than a boolean, because the two failures need different sentences in
+   * different places: a refused disable belongs beside the buttons, a refused delete belongs
+   * inside the dialog that is still open asking for it.
+   */
+  declare failure: 'toggle' | 'delete' | undefined
 
   constructor() {
     super()
@@ -93,6 +113,9 @@ export class DeviceView extends LitElement {
     this.uuid = ''
     this.loaded = false
     this.enlarged = false
+    this.confirmingDelete = false
+    this.busy = false
+    this.failure = undefined
   }
 
   /**
@@ -110,8 +133,12 @@ export class DeviceView extends LitElement {
     this.room = undefined
     this.loaded = false
     // An enlargement of the previous device's code has no business staying open over the new
-    // one, and closing it is what makes the dialog's contents and its title agree.
+    // one, and closing it is what makes the dialog's contents and its title agree. The same
+    // goes for a delete confirmation: an open one would now be pointing at a different device.
     this.enlarged = false
+    this.confirmingDelete = false
+    this.busy = false
+    this.failure = undefined
     void this.load()
   }
 
@@ -251,6 +278,174 @@ export class DeviceView extends LitElement {
     `
   }
 
+  /**
+   * Takes the device out of service, or puts it back.
+   *
+   * The write returns the stored document, `_rev` included, and that is what replaces the one
+   * in hand: keeping the stale copy would make the *next* action a conflict, which shows up as
+   * a save that fails for no reason the user did anything to cause.
+   *
+   * Guarded by the same {@link request} token as {@link load}, because a write outliving its
+   * route is the same wrong-device failure as a stale read arriving through the other door.
+   * Press Disable on one device, navigate to another before the write settles, and an
+   * unguarded assignment puts the first device's name, QR and pairing code on the second
+   * device's page — which is one device's setup code shown under another device's title.
+   *
+   * The action itself is never abandoned. Only its *result* is dropped; the device is still
+   * disabled, and the page the user has moved to is left alone.
+   */
+  private async onToggleDisabled(): Promise<void> {
+    const device = this.device
+    if (device === undefined || this.busy) return
+    this.busy = true
+    const token = this.request
+    try {
+      const saved = await this.repos().devices.save(
+        setDeviceDisabled(device, !device.disabled, () => new Date().toISOString()),
+      )
+      if (token !== this.request) return
+      this.device = saved
+      this.failure = undefined
+    } catch {
+      // Reported rather than rethrown: an unhandled rejection out of a click handler leaves
+      // the button un-busied and the screen unchanged, which is indistinguishable from a
+      // button that does nothing. Not logged - the document carries the setup passcode.
+      if (token === this.request) this.failure = 'toggle'
+    } finally {
+      // `busy` belongs to whichever route owns the page now. `willUpdate` already cleared it
+      // on navigation, and a later device may have set it again for a write of its own -
+      // clearing it unconditionally here would unlock that one's guard from under it.
+      if (token === this.request) this.busy = false
+    }
+  }
+
+  /**
+   * Deletes the device, and then leaves — the page it was showing no longer exists.
+   *
+   * Reached only from the confirmation dialog. The warning there names the irreversible part
+   * rather than asking "are you sure": a device can be bought again, and its setup code cannot.
+   */
+  private async onDelete(): Promise<void> {
+    const device = this.device
+    if (device === undefined || this.busy) return
+    this.busy = true
+    const token = this.request
+    try {
+      await this.repos().devices.remove(device)
+    } catch {
+      // The dialog stays open, now saying why. Closing it would look like the delete had
+      // happened, which for the one irreversible action here is the wrong way to be wrong.
+      if (token === this.request) this.failure = 'delete'
+      return
+    } finally {
+      if (token === this.request) this.busy = false
+    }
+
+    // Leaving is right for the page that was deleted and wrong for the one the user is on
+    // now. A delete that finishes after the route moved on has nothing left to navigate away
+    // from, so it navigates nowhere; see {@link onToggleDisabled}.
+    if (token !== this.request) return
+    this.confirmingDelete = false
+    this.failure = undefined
+    window.location.hash = '#/'
+  }
+
+  /**
+   * Edit, disable and delete, where the user already is when they decide.
+   *
+   * Deliberately not on the device list: a destructive control on every row is a control that
+   * gets hit by accident on a phone, which is the device this application is used from.
+   */
+  private renderActions(device: DeviceDocument): TemplateResult {
+    return html`
+      <div class="wa-stack wa-gap-s">
+        ${
+          this.failure === 'toggle'
+            ? html`
+                <wa-callout variant="danger" data-action-failed>
+                  <wa-icon slot="icon" name="triangle-exclamation"></wa-icon>
+                  ${msg('Could not save that change. The device is unchanged; try again.')}
+                </wa-callout>
+              `
+            : ''
+        }
+        <div class="wa-cluster wa-gap-s">
+        <wa-button data-edit href="#/devices/${uuidOf(device._id) ?? ''}/edit" appearance="outlined">
+          <wa-icon slot="start" name="pen"></wa-icon>
+          ${msg('Edit')}
+        </wa-button>
+
+        <wa-button data-toggle-disabled appearance="outlined" ?disabled=${this.busy} @click=${this.onToggleDisabled}>
+          <wa-icon slot="start" name=${device.disabled ? 'play' : 'pause'}></wa-icon>
+          ${device.disabled ? msg('Put back into service') : msg('Disable')}
+        </wa-button>
+
+        <wa-button
+          data-delete
+          variant="danger"
+          appearance="outlined"
+          ?disabled=${this.busy}
+          @click=${() => {
+            this.confirmingDelete = true
+          }}
+        >
+          <wa-icon slot="start" name="trash"></wa-icon>
+          ${msg('Delete')}
+        </wa-button>
+        </div>
+      </div>
+    `
+  }
+
+  /**
+   * The delete confirmation.
+   *
+   * It names what cannot be recovered instead of asking whether the user is sure. "Are you
+   * sure?" is a question people learn to click past; "the setup code goes with it" is the one
+   * fact that makes someone stop, and it is the reason this application exists.
+   */
+  private renderDeleteDialog(device: DeviceDocument): TemplateResult {
+    return html`
+      <wa-dialog
+        data-delete-dialog
+        label=${msg(str`Delete “${device.name}”?`)}
+        ?open=${this.confirmingDelete}
+        @wa-after-hide=${() => {
+          this.confirmingDelete = false
+        }}
+      >
+        <div class="wa-stack wa-gap-m">
+          <wa-callout variant="danger">
+            <wa-icon slot="icon" name="triangle-exclamation"></wa-icon>
+            ${msg('Deleting a device deletes its commissioning code with it. That code cannot be recovered, and without it the device can only be re-commissioned after a factory reset.')}
+          </wa-callout>
+          <p>${msg('To take it out of service but keep the code, disable it instead.')}</p>
+          ${
+            this.failure === 'delete'
+              ? html`
+                  <wa-callout variant="warning" data-delete-failed>
+                    <wa-icon slot="icon" name="circle-exclamation"></wa-icon>
+                    ${msg('Could not delete this device. It is still in the catalogue; try again.')}
+                  </wa-callout>
+                `
+              : ''
+          }
+        </div>
+
+        <wa-button slot="footer" data-dialog="close" appearance="plain">${msg('Cancel')}</wa-button>
+        <wa-button
+          slot="footer"
+          data-confirm-delete
+          variant="danger"
+          ?disabled=${this.busy}
+          @click=${this.onDelete}
+        >
+          ${msg('Delete permanently')}
+        </wa-button>
+      </wa-dialog>
+    `
+  }
+
   /** One labelled fact, or nothing when there is no fact to state. */
   private field(label: string, value: string | undefined): TemplateResult | '' {
     if (value === undefined || value === '') return ''
@@ -305,9 +500,11 @@ export class DeviceView extends LitElement {
           ${device.disabled ? html`<wa-tag variant="neutral">${msg('Disabled')}</wa-tag>` : ''}
         </div>
 
-        ${this.renderCode(device)} ${this.renderDetails(device)}
+        ${this.renderCode(device)} ${this.renderActions(device)} ${this.renderDetails(device)}
 
         <a class="app-back" href="#/">${msg('Back to devices')}</a>
+
+        ${this.renderDeleteDialog(device)}
 
         <wa-dialog
           data-enlarged

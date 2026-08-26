@@ -1,10 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import {
-  type DeviceDraft,
-  type DraftClock,
-  type DraftError,
-  planNewDevice,
-} from '../../src/documents/new-device.js'
+import type { DraftClock, DraftError } from '../../src/documents/draft.js'
+import { type DeviceDraft, planNewDevice } from '../../src/documents/new-device.js'
 import type { RoomDocument } from '../../src/documents/types.js'
 
 /** The verified reference device; see `matter/credential.test.ts`. */

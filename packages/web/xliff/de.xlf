@@ -170,6 +170,62 @@
   <source>There is no device with that address in this catalogue.</source>
   <target>Zu dieser Adresse gibt es in diesem Katalog kein Gerät.</target>
 </trans-unit>
+<trans-unit id="s64ef2a6c2dd1d3d1">
+  <source>Edit</source>
+  <target>Bearbeiten</target>
+</trans-unit>
+<trans-unit id="s6fef130b02b82676">
+  <source>Put back into service</source>
+  <target>Wieder in Betrieb nehmen</target>
+</trans-unit>
+<trans-unit id="s10c8e4cae4e11503">
+  <source>Disable</source>
+  <target>Deaktivieren</target>
+</trans-unit>
+<trans-unit id="sdc673e73b5c13aea">
+  <source>Delete</source>
+  <target>Löschen</target>
+</trans-unit>
+<trans-unit id="s8b491ccba1cefcb0">
+  <source>Delete “<x id="0" equiv-text="${device.name}"/>”?</source>
+  <target>„<x id="0" equiv-text="${device.name}"/>“ löschen?</target>
+</trans-unit>
+<trans-unit id="sb9dbda9514666e22">
+  <source>Deleting a device deletes its commissioning code with it. That code cannot be recovered, and without it the device can only be re-commissioned after a factory reset.</source>
+  <target>Wenn Sie ein Gerät löschen, wird sein Inbetriebnahme-Code mitgelöscht. Dieser Code lässt sich nicht wiederherstellen, und ohne ihn kann das Gerät nur nach einem Zurücksetzen auf Werkseinstellungen erneut in Betrieb genommen werden.</target>
+</trans-unit>
+<trans-unit id="seb22faf93a15792d">
+  <source>To take it out of service but keep the code, disable it instead.</source>
+  <target>Wenn Sie das Gerät außer Betrieb nehmen, den Code aber behalten möchten, deaktivieren Sie es stattdessen.</target>
+</trans-unit>
+<trans-unit id="sf0ef7644098b8a63">
+  <source>Delete permanently</source>
+  <target>Endgültig löschen</target>
+</trans-unit>
+<trans-unit id="s64de9eceb8172269">
+  <source>Edit device</source>
+  <target>Gerät bearbeiten</target>
+</trans-unit>
+<trans-unit id="s8dffe52a08dc45db">
+  <source>The setup code cannot be changed. If it is wrong, delete this device and add it again.</source>
+  <target>Der Setup-Code kann nicht geändert werden. Falls er falsch ist, löschen Sie dieses Gerät und legen Sie es neu an.</target>
+</trans-unit>
+<trans-unit id="s870f7b2f8c27e219">
+  <source>Save changes</source>
+  <target>Änderungen speichern</target>
+</trans-unit>
+<trans-unit id="sdbab4f1561d03328">
+  <source>Could not save to this browser’s storage. Everything you entered is still here — try again. If it keeps failing, the browser may be out of space.</source>
+  <target>Speichern im Browser-Speicher nicht möglich. Alle Eingaben sind noch vorhanden – bitte erneut versuchen. Falls es weiterhin fehlschlägt, ist der Speicherplatz des Browsers womöglich erschöpft.</target>
+</trans-unit>
+<trans-unit id="sa9c46478165d17ed">
+  <source>Could not save that change. The device is unchanged; try again.</source>
+  <target>Diese Änderung konnte nicht gespeichert werden. Das Gerät ist unverändert; bitte erneut versuchen.</target>
+</trans-unit>
+<trans-unit id="s89cb1cead7c8b542">
+  <source>Could not delete this device. It is still in the catalogue; try again.</source>
+  <target>Dieses Gerät konnte nicht gelöscht werden. Es ist weiterhin im Katalog; bitte erneut versuchen.</target>
+</trans-unit>
 </body>
 </file>
 </xliff>

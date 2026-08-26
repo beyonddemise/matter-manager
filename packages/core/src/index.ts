@@ -17,6 +17,21 @@ export {
   browseDevices,
   type DeviceGroup,
 } from './documents/browse.js'
+// Only the types and the error reach the entry point. `readName`, `chooseRoom` and the rest
+// are how `planNewDevice` and `planDeviceEdit` agree with each other, not an API for callers:
+// a view that validated a name itself would be a second answer to a question `core` already
+// answers, which is the whole failure this module was extracted to prevent.
+export {
+  type DeviceFields,
+  type DraftClock,
+  DraftError,
+  type DraftField,
+} from './documents/draft.js'
+export {
+  type DeviceUpdate,
+  planDeviceEdit,
+  setDeviceDisabled,
+} from './documents/edit-device.js'
 export {
   DOCUMENT_PREFIX,
   type DocumentType,
@@ -30,9 +45,6 @@ export {
 export {
   type DeviceCreation,
   type DeviceDraft,
-  type DraftClock,
-  DraftError,
-  type DraftField,
   planNewDevice,
 } from './documents/new-device.js'
 export type { DeviceDocument, RoomDocument, Unsaved } from './documents/types.js'
