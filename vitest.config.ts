@@ -47,8 +47,16 @@ export default defineConfig({
           exclude: ['test/**/*.browser.test.ts'],
         },
       },
-      // data (node + pouchdb-adapter-memory) and api (node) are added by the
-      // milestones that introduce them.
+      {
+        test: {
+          name: 'data',
+          root: './packages/data',
+          environment: 'node',
+          include: ['test/**/*.test.ts'],
+        },
+      },
+      // api (node, against the devcontainer's CouchDB) is added by the milestone that
+      // introduces it.
     ],
     coverage: {
       provider: 'v8',
@@ -82,6 +90,14 @@ export default defineConfig({
           branches: 70,
           functions: 70,
           lines: 70,
+        },
+        // `data` is a thin layer over a database and every line of it is exercised through a
+        // real (in-memory) PouchDB, so it is held to `core`'s bar rather than the UI's.
+        'packages/data/src/**': {
+          statements: 90,
+          branches: 90,
+          functions: 90,
+          lines: 90,
         },
       },
     },

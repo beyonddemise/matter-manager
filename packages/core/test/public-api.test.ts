@@ -20,6 +20,14 @@ import * as core from '../src/index.js'
 const EXPECTED: ReadonlyArray<
   readonly [keyof typeof core, 'function' | 'string' | 'number' | 'object']
 > = [
+  // documents
+  ['DOCUMENT_PREFIX', 'object'],
+  ['documentId', 'function'],
+  ['documentTypeOf', 'function'],
+  ['HIGHEST_ID_CHARACTER', 'string'],
+  ['ID_SEPARATOR', 'string'],
+  ['idRange', 'function'],
+  ['uuidOf', 'function'],
   // base38
   ['BASE38_ALPHABET', 'string'],
   ['Base38Error', 'function'],

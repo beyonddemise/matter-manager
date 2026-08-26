@@ -20,7 +20,8 @@
     "fastify": "HTTP server for the API (ADR 0004). Predates this policy; ADR 0013 notes node:http as the alternative if the API stays thin.",
     "@noble/hashes": "Identical hashing in Node and the browser. node:crypto and WebCrypto diverge in the fine print, and code shared between packages/api and packages/web must not depend on which runtime it lands in. Audited, zero dependencies.",
     "@noble/curves": "As @noble/hashes, for elliptic curve operations. Depends only on @noble/hashes.",
-    "@noble/ciphers": "As @noble/hashes, for symmetric encryption. Zero dependencies."
+    "@noble/ciphers": "As @noble/hashes, for symmetric encryption. Zero dependencies.",
+    "@matter-manager/core": "The workspace domain package. Pure, no dependencies of its own."
   },
   "banned": {
     "axios": "Use native fetch.",
@@ -46,7 +47,11 @@
     "@vitest/browser": "Runs packages/web's tests in a real browser instead of jsdom. Test-only, never imported by src.",
     "playwright": "Browser automation driving @vitest/browser's Chromium instance. Test-only, never imported by src.",
     "@open-wc/testing-helpers": "DOM/component test utilities (fixture, waitUntil) for web component tests. Test-only, never imported by src.",
-    "@types/node": "Type declarations only (import.meta.dirname in vite.config.ts). Erased at compile time, never imported by src.",
-    "vite": "The dev/build/preview bundler and vitest's browser-mode dependency. Provably absent from the built output: it produces dist/, it is not part of it - the bundled bundle never imports its own bundler."
+    "@types/node": "Type declarations only (import.meta.dirname, node:fs in tests). Erased at compile time, never imported by src.",
+    "vite": "The dev/build/preview bundler and vitest's browser-mode dependency. Provably absent from the built output: it produces dist/, it is not part of it - the bundled bundle never imports its own bundler.",
+    "pouchdb-core": "PouchDB without any adapter, used only by packages/data's tests. The shipping build is pouchdb-browser, which packages/web supplies; pouchdb-browser references `self` at module scope and cannot be imported in Node at all, which is why the tests use core plus the memory adapter. Proven absent from src by packages/data/test/no-pouchdb-import.test.ts.",
+    "pouchdb-adapter-memory": "The in-memory storage adapter the data tests run against, so no test ever touches a real CouchDB. Same proof as pouchdb-core.",
+    "@types/pouchdb-core": "Type declarations for PouchDB.Database, the only PouchDB name packages/data/src mentions. Erased at compile time.",
+    "@types/pouchdb-adapter-memory": "Type declarations that add the memory adapter to PouchDB.Configuration. Test-only, erased at compile time."
   }
 }

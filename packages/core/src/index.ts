@@ -13,6 +13,17 @@
  */
 
 export {
+  DOCUMENT_PREFIX,
+  type DocumentType,
+  documentId,
+  documentTypeOf,
+  HIGHEST_ID_CHARACTER,
+  ID_SEPARATOR,
+  idRange,
+  uuidOf,
+} from './documents/ids.js'
+export type { DeviceDocument, RoomDocument, Unsaved } from './documents/types.js'
+export {
   ACTIONS,
   type Action,
   ALLOW,

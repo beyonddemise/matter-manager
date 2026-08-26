@@ -40,8 +40,15 @@ function manifests() {
 /** Fields whose contents can reach a production install. */
 const SHIPPING_FIELDS = ['dependencies', 'optionalDependencies', 'peerDependencies']
 
-/** Packages that produce a browser bundle: a devDependency imported by source ships too. */
-const BUNDLED_PACKAGES = new Set(['packages/web'])
+/**
+ * Packages whose code reaches the browser: a devDependency imported by their source ships too.
+ *
+ * `packages/data` is here even though it emits no bundle of its own, because `packages/web`
+ * bundles it. "It is a devDependency of a library" is not evidence it stays out of the
+ * download; only not being imported is, and that is asserted by
+ * packages/data/test/no-pouchdb-import.test.ts.
+ */
+const BUNDLED_PACKAGES = new Set(['packages/web', 'packages/data'])
 
 const problems = []
 
