@@ -44,16 +44,35 @@ export interface DeviceDocument extends RemarkBearing {
   readonly spot?: string
 
   /**
-   * The `MT:` onboarding payload.
+   * The manual pairing code, digits only.
+   *
+   * Required, because it is the one form that is always available: derivable from a payload,
+   * and self-evident when the user typed one. It is also on its own sufficient to commission
+   * the device, which is what makes a manual-code-only record a complete record rather than a
+   * degraded one.
    *
    * **A secret.** It contains the setup passcode. Never log it, never send it to a third party
    * (the DCL lookup sends vendor and product ids only), never put it in a bug report.
    */
-  readonly payload: string
   readonly manualCode: string
-  readonly vendorId: number
-  readonly productId: number
-  readonly discriminator: number
+
+  /**
+   * The `MT:` onboarding payload, when one was captured.
+   *
+   * **A secret**, for the same reason as {@link manualCode}.
+   *
+   * Optional, and this is not a convenience. A manual pairing code carries only the top four
+   * bits of the discriminator, so a payload cannot be reconstructed from one; a payload built
+   * by guessing the other eight would encode cleanly and produce a QR code that silently fails
+   * to commission. An absent field says "we do not have this", which is true. See
+   * `matter/credential.ts` for the full comparison of the two forms.
+   */
+  readonly payload?: string
+  /** From a payload or a 21-digit manual code; an 11-digit code carries neither. */
+  readonly vendorId?: number
+  readonly productId?: number
+  /** All twelve bits, so only from a payload. See {@link payload}. */
+  readonly discriminator?: number
 
   readonly vendorName?: string
   readonly productName?: string

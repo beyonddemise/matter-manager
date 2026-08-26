@@ -49,3 +49,27 @@ wa-page[view="mobile"] {
   background-color: var(--wa-color-brand-fill-quiet);
   color: var(--wa-color-brand-on-quiet);
 }
+
+/* The add-device form and the device list. Only what has no utility-class equivalent:
+   arrangement comes from wa-stack / wa-split / wa-cluster on the elements themselves. */
+add-device-view,
+settings-view {
+  display: block;
+}
+
+.app-form {
+  /* 40rem, from the space scale rather than a literal - the same rule as --menu-width above.
+     A form whose fields run the full width of a desktop window is harder to read, not easier. */
+  max-width: calc(var(--wa-space-5xl) * 8);
+}
+
+.app-device-list {
+  padding: 0;
+  list-style: none;
+}
+
+.app-device {
+  padding: var(--wa-space-s) var(--wa-space-m);
+  border-radius: var(--wa-border-radius-m);
+  background-color: var(--wa-color-surface-lowered);
+}

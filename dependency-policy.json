@@ -21,7 +21,9 @@
     "@noble/hashes": "Identical hashing in Node and the browser. node:crypto and WebCrypto diverge in the fine print, and code shared between packages/api and packages/web must not depend on which runtime it lands in. Audited, zero dependencies.",
     "@noble/curves": "As @noble/hashes, for elliptic curve operations. Depends only on @noble/hashes.",
     "@noble/ciphers": "As @noble/hashes, for symmetric encryption. Zero dependencies.",
-    "@matter-manager/core": "The workspace domain package. Pure, no dependencies of its own."
+    "@matter-manager/core": "The workspace domain package. Pure, no dependencies of its own.",
+    "@matter-manager/data": "The workspace persistence package. Depends only on core; imports no PouchDB implementation itself.",
+    "events": "Node's EventEmitter, as a browser shim. Not a choice: pouchdb-browser@9 imports `events` at module scope and does not declare it, so without this the bundle fails to evaluate with \"Class extends value [object Object]\". The browser has no EventEmitter of its own. Zero dependencies, MIT; remove when PouchDB stops needing it."
   },
   "banned": {
     "axios": "Use native fetch.",
@@ -52,6 +54,7 @@
     "pouchdb-core": "PouchDB without any adapter, used only by packages/data's tests. The shipping build is pouchdb-browser, which packages/web supplies; pouchdb-browser references `self` at module scope and cannot be imported in Node at all, which is why the tests use core plus the memory adapter. Proven absent from src by packages/data/test/no-pouchdb-import.test.ts.",
     "pouchdb-adapter-memory": "The in-memory storage adapter the data tests run against, so no test ever touches a real CouchDB. Same proof as pouchdb-core.",
     "@types/pouchdb-core": "Type declarations for PouchDB.Database, the only PouchDB name packages/data/src mentions. Erased at compile time.",
-    "@types/pouchdb-adapter-memory": "Type declarations that add the memory adapter to PouchDB.Configuration. Test-only, erased at compile time."
+    "@types/pouchdb-adapter-memory": "Type declarations that add the memory adapter to PouchDB.Configuration. Test-only, erased at compile time.",
+    "@types/pouchdb-browser": "Type declarations for the browser PouchDB build that packages/web opens. Erased at compile time."
   }
 }

@@ -79,6 +79,14 @@ describe('German reaches the screen', () => {
     await (element.querySelector('device-list-view') as (HTMLElement & Updatable) | null)
       ?.updateComplete
 
+    // The empty state only renders once the list has read the database, and it is that
+    // sentence - a child component's own string - which this test is really about.
+    const list = element.querySelector('device-list-view') as
+      | (HTMLElement & { loaded?: boolean })
+      | null
+    await waitUntil(() => list?.loaded === true, 'the device list never finished its first read')
+    await (list as (HTMLElement & Updatable) | null)?.updateComplete
+
     // Both at once: the navigation link is the shell's own template, the empty-state sentence
     // belongs to a child component with its own subscription. One passing while the other
     // fails is precisely the "a component forgot updateWhenLocaleChanges" bug.

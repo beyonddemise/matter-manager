@@ -16,6 +16,10 @@ import type { Route } from './match.js'
 
 export const ROUTES: readonly Route[] = [
   { path: '/', view: 'device-list', label: () => msg('Devices'), icon: 'lightbulb' },
+  // No label, so it stays out of the navigation: it is reached from the button on the device
+  // list, and a permanent "Add a device" nav entry beside "Devices" would be one section for
+  // what is one section's action.
+  { path: '/devices/new', view: 'add-device' },
   { path: '/settings', view: 'settings', label: () => msg('Settings'), icon: 'gear' },
 ]
 

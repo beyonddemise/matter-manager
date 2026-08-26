@@ -54,6 +54,58 @@
   <source>Automatic (browser language)</source>
   <target>Automatisch (Sprache des Browsers)</target>
 </trans-unit>
+<trans-unit id="scc022b0740943e53">
+  <source>Add a device</source>
+  <target>Gerät hinzufügen</target>
+</trans-unit>
+<trans-unit id="sc57ea0983bcd594f">
+  <source>Setup code</source>
+  <target>Setup-Code</target>
+</trans-unit>
+<trans-unit id="s85702ada2511b9fa">
+  <source>The MT: code from the QR label, or the numeric pairing code beneath it.</source>
+  <target>Der MT:-Code vom QR-Etikett oder der Zahlencode darunter.</target>
+</trans-unit>
+<trans-unit id="sef49aec68fd1dc66">
+  <source>Name</source>
+  <target>Name</target>
+</trans-unit>
+<trans-unit id="s0384e1e586dd5707">
+  <source>What you would call it out loud: "kitchen ceiling light".</source>
+  <target>Wie Sie es im Alltag nennen würden: „Deckenlampe Küche“.</target>
+</trans-unit>
+<trans-unit id="sca7d152bef51d9ba">
+  <source>Room</source>
+  <target>Raum</target>
+</trans-unit>
+<trans-unit id="sba74e4cee79a147a">
+  <source>Pick a room, or type a new one to create it. Use "/" for floors: "Ground Floor/Kitchen".</source>
+  <target>Einen Raum auswählen oder einen neuen eintippen, um ihn anzulegen. „/“ trennt die Ebenen: „Erdgeschoss/Küche“.</target>
+</trans-unit>
+<trans-unit id="sb612bb250ab3593d">
+  <source>Spot</source>
+  <target>Ort im Raum</target>
+</trans-unit>
+<trans-unit id="s2c188ac763f8e84c">
+  <source>Where in the room, if that helps: "ceiling, north end".</source>
+  <target>Wo genau im Raum, falls das hilft: „Decke, Nordseite“.</target>
+</trans-unit>
+<trans-unit id="s974564539ea1cafa">
+  <source>Serial number</source>
+  <target>Seriennummer</target>
+</trans-unit>
+<trans-unit id="s10e80d4c01c3cc21">
+  <source>Installed</source>
+  <target>Eingebaut am</target>
+</trans-unit>
+<trans-unit id="s54e0bdd4092ccf52">
+  <source>Save device</source>
+  <target>Gerät speichern</target>
+</trans-unit>
+<trans-unit id="s2ceb11be2290bb1b">
+  <source>Cancel</source>
+  <target>Abbrechen</target>
+</trans-unit>
 </body>
 </file>
 </xliff>
