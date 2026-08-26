@@ -718,3 +718,47 @@ its output; a timeout on its own names the symptom and not one of the six things
 **Related:** [[L20]] — assert that the thing you set up actually reached the code, rather than
 that a step ran. Same failure wearing different clothes: here the test set a property the
 component threw away.
+
+---
+
+## L23 · A passing test can be blind to the failure by construction, not by oversight
+
+**What happened:** the device page renders a QR from the stored payload. The test decodes the
+rendered `<canvas>` with zxing and asserts it comes back as identical field values — a genuinely
+end-to-end check, and the one the whole milestone rests on. It passed.
+
+Then I opened the page at 360px wide. The enlarged QR was **clipped**, missing its right-hand
+columns. A QR missing columns does not scan. The feature was broken on every phone, and the
+test could not have caught it: `decodeFromCanvas` reads the canvas *bitmap*, and CSS clipping
+never touches a bitmap. The test was not weak. It was measuring a different thing than the one
+that was broken, and no amount of strengthening it would have helped.
+
+The first fix made it worse. I reasoned from the component's stylesheet — `canvas { width:
+100%; height: 100% }` inside a host with `aspect-ratio: 1` — and concluded that constraining
+the host would scale the code down. It did not, and at 360px the code was then clipped on
+*both* sides. Reading the component's `render()` explained why in one line:
+
+```js
+style=${styleMap({ maxWidth: `${this.size}px`, minWidth: `${this.size}px`, ... })}
+```
+
+An inline `min-width` on an element inside the shadow root. No `max-width` I can write from
+outside beats it, so the code cannot shrink — it can only overflow. The size has to be correct
+at the moment it is set, which meant computing it in TypeScript from the viewport.
+
+Two rules out of one bug:
+
+**Rule (tests):** when a test asserts on data extracted from a rendering — a canvas, a
+serialised DOM, an accessibility tree — write down what layer it *cannot* see, next to the
+test. Then check that layer by hand at least once, at the sizes that matter. "The test passes"
+answers only the question the test asks.
+
+**Rule (shadow DOM):** before writing CSS to reshape a custom element from outside, read its
+`render()` for inline styles. A component that writes `min-width` inline has made a decision
+you cannot override from the light DOM, and the fix belongs wherever that value is chosen.
+Reasoning from its stylesheet alone tells you half the story and the half that is missing is
+the half that wins.
+
+**Related:** [[L21]] — a coverage hole was a false belief, not a missing test. Same family: the
+number that looked like the answer was answering a different question. [[L22]] — check what the
+component actually does before concluding what it must be doing.

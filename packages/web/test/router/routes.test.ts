@@ -36,6 +36,22 @@ describe('the route registry', () => {
     expect(matchRoute('#/devices/new', ROUTES)?.route.view).toBe('add-device')
   })
 
+  it('routes /devices/<uuid> to the device view, capturing the uuid', () => {
+    const match = matchRoute('#/devices/6ba7b810-9dad-11d1-80b4-00c04fd430c8', ROUTES)
+    expect(match?.route.view).toBe('device')
+    expect(match?.params.id).toBe('6ba7b810-9dad-11d1-80b4-00c04fd430c8')
+  })
+
+  it('keeps /devices/new out of the reach of /devices/:id', () => {
+    // Registry order decides this: `matchRoute` returns the first match, and `:id` would
+    // happily capture the literal segment `new`. Reordering the two entries would send the add
+    // form to a device page for a device that does not exist, with nothing else looking wrong.
+    expect(ROUTES.findIndex((route) => route.path === '/devices/new')).toBeLessThan(
+      ROUTES.findIndex((route) => route.path === '/devices/:id'),
+    )
+    expect(matchRoute('#/devices/new', ROUTES)?.route.view).toBe('add-device')
+  })
+
   it('keeps the add-device route out of the navigation', () => {
     // Reached from the button on the device list. A permanent nav entry beside "Devices"
     // would list one section's action as though it were a section.
@@ -46,6 +62,11 @@ describe('the route registry', () => {
     // M2 registers only views that exist. Registering /devices/:id before M2-7 builds
     // its view would match a path and then fail to render, which is worse than not
     // matching it — an unregistered path correctly falls through to not-found.
-    expect(ROUTES.map((route) => route.view)).toEqual(['device-list', 'add-device', 'settings'])
+    expect(ROUTES.map((route) => route.view)).toEqual([
+      'device-list',
+      'add-device',
+      'device',
+      'settings',
+    ])
   })
 })

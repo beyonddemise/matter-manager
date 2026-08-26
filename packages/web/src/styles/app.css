@@ -82,11 +82,58 @@ settings-view {
 /* Disabled devices stay legible rather than being hidden behind the filter alone: the issue
    asks for "visually distinct", and a device someone can no longer read is one they cannot
    decide about. Reduced emphasis, not reduced contrast. */
-.app-device[data-disabled] {
+[data-disabled] > .app-device {
   background-color: transparent;
   border: var(--wa-border-width-s) dashed var(--wa-color-neutral-border-quiet);
 }
 
-.app-device[data-disabled] > span:first-child {
+[data-disabled] > .app-device span:first-child {
   color: var(--wa-color-text-quiet);
+}
+
+device-view {
+  display: block;
+}
+
+/* The row is a link, so it needs the link colour removed and the pointer kept. */
+a.app-device {
+  color: inherit;
+  text-decoration: none;
+}
+
+a.app-device:hover {
+  background-color: var(--wa-color-neutral-fill-quiet);
+}
+
+.app-details {
+  --min-column-size: calc(var(--wa-space-5xl) * 2.4);
+}
+
+/* The QR's quiet zone. White regardless of the colour scheme, because an inverted QR is one
+   many scanners will not read at all - see the note in views/device.ts. This and the fill
+   passed to <wa-qr-code> are the only colours in the application that are not --wa-* tokens,
+   and the reason is that they are not decoration: they are what makes the code scan. */
+.app-qr-plate {
+  display: inline-flex;
+  max-width: 100%;
+  padding: var(--wa-space-m);
+  border-radius: var(--wa-border-radius-m);
+  background-color: white;
+}
+
+/* Do NOT try to solve the enlarged QR's width from here. <wa-qr-code> writes
+   `min-width: <size>px` onto its canvas as an inline style, and a min-width beats any
+   max-width we can set from outside its shadow root - a code too big for the dialog is
+   CLIPPED, not scaled, and a QR missing its right-hand columns does not scan. Tried, measured
+   at 360px, and it made things worse rather than better. The size is chosen in
+   views/device.ts, where the pixel count already lives, and that is the only place it works.
+
+   Also worth knowing before deleting anything here: the browser test decodes the canvas
+   bitmap, which CSS never touches, so no test in this repository can catch the clipping. It
+   was found by opening the page at 360px wide, and that is how it will be found again. */
+
+.app-pairing-code {
+  font-family: var(--wa-font-family-code);
+  font-size: var(--wa-font-size-l);
+  letter-spacing: var(--wa-letter-spacing-wider);
 }
