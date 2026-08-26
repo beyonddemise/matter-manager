@@ -6,6 +6,7 @@ import '@awesome.me/webawesome-pro/dist/components/icon/icon.js'
 import '@awesome.me/webawesome-pro/dist/components/qr-code/qr-code.js'
 import '@awesome.me/webawesome-pro/dist/components/tag/tag.js'
 import { type DeviceDocument, decodePayload, type Unsaved } from '@matter-manager/core'
+import type { ProjectRepositories } from '@matter-manager/data'
 import { fixture, html, waitUntil } from '@open-wc/testing-helpers'
 import { BrowserQRCodeReader } from '@zxing/browser'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -57,13 +58,34 @@ async function seed(device: Unsaved<DeviceDocument> = lamp()): Promise<void> {
   await database.repositories.devices.save(device)
 }
 
-async function page(uuid = UUID): Promise<DeviceView> {
+/**
+ * The real repositories, with `devices.get` held back for one id.
+ *
+ * Injected at the seam the view already has for tests. Forcing the order two reads finish in
+ * is the only way to exercise the stale-result guard: left to a real IndexedDB they resolve in
+ * the order they were issued, and a test that cannot reverse them proves nothing.
+ */
+function slowFor(id: string, ms: number): ProjectRepositories {
+  const real = database.repositories
+  return {
+    ...real,
+    devices: {
+      ...real.devices,
+      get: async (wanted: string) => {
+        if (wanted === id) await new Promise((resolve) => setTimeout(resolve, ms))
+        return real.devices.get(wanted)
+      },
+    },
+  }
+}
+
+async function page(uuid = UUID, repositories = database.repositories): Promise<DeviceView> {
   await Promise.all([
     customElements.whenDefined('wa-qr-code'),
     customElements.whenDefined('wa-dialog'),
   ])
   const element = (await fixture(
-    html`<device-view uuid=${uuid} .repositories=${database.repositories}></device-view>`,
+    html`<device-view uuid=${uuid} .repositories=${repositories}></device-view>`,
   )) as DeviceView
   await waitUntil(() => element.loaded, 'the device page never finished its read')
   await element.updateComplete
@@ -198,6 +220,91 @@ describe('a device filed from a pairing code', () => {
     const element = await page()
 
     expect(element.querySelector('[data-manual-code]')?.textContent?.trim()).toBe('34970112332')
+  })
+})
+
+describe('navigating from one device to another', () => {
+  // The shell reuses a single `<device-view>` and updates its `uuid`, rather than building a
+  // new element per route. Setting `uuid` on a mounted view is exactly what that navigation
+  // does, so this reproduces it without the shell.
+  const OTHER_UUID = '3fa85f64-5717-4562-b3fc-2c963f66afa6'
+  const OTHER_PAYLOAD = 'MT:Y.K9042C00KA0648G00'
+
+  async function seedTwo(): Promise<void> {
+    await seed()
+    await database.repositories.devices.save({
+      _id: `device:${OTHER_UUID}`,
+      type: 'device',
+      name: 'Hall sensor',
+      roomId: 'room:kitchen',
+      payload: OTHER_PAYLOAD,
+      manualCode: '34970112332',
+      installedAt: '2026-08-19',
+      addedAt: '2026-08-19T08:00:00.000Z',
+      disabled: false,
+      remarks: [],
+    })
+  }
+
+  it('shows the device it navigated to, not the one it came from', async () => {
+    await seedTwo()
+    const element = await page()
+    expect(element.textContent).toContain('Kitchen ceiling light')
+
+    element.uuid = OTHER_UUID
+    await waitUntil(
+      () => element.textContent?.includes('Hall sensor') === true,
+      'the view kept showing the device it came from',
+    )
+
+    expect(element.textContent).not.toContain('Kitchen ceiling light')
+    expect(element.querySelector('[data-manual-code]')?.textContent?.trim()).toBe('34970112332')
+  })
+
+  it('does not let a slower earlier read overwrite the current device', async () => {
+    // Navigating twice in quick succession issues two reads, and the network or disk decides
+    // which finishes first. If the earlier one lands last, the page settles on the device the
+    // user has already navigated away from - and nothing on screen looks wrong.
+    //
+    // The delay is on the FIRST navigation's read, so it resolves after the second's. Without
+    // it the two reads would finish in order and the test would pass against a view with no
+    // guard at all, proving nothing.
+    await seedTwo()
+    // Bound at construction, because the view resolves its repositories once and caches them:
+    // assigning afterwards is ignored, which is how an earlier version of this test managed to
+    // pass against a view with no guard at all.
+    const element = await page(UUID, slowFor(`device:${OTHER_UUID}`, 120))
+
+    element.uuid = OTHER_UUID
+    // Awaited, and this is the point: two assignments in one turn collapse into a single Lit
+    // update and a single read, which is no race at all. Letting the first update run is what
+    // puts two reads in flight at once.
+    await element.updateComplete
+    element.uuid = UUID
+
+    await waitUntil(
+      () => element.loaded && element.device?._id === DEVICE_ID,
+      'the view never settled on the device it was last asked for',
+    )
+    // Long enough for the delayed read to have landed if nothing were discarding it.
+    await new Promise((resolve) => setTimeout(resolve, 250))
+
+    expect(element.device?._id).toBe(DEVICE_ID)
+    expect(element.textContent).toContain('Kitchen ceiling light')
+    expect(element.textContent).not.toContain('Hall sensor')
+  })
+
+  it('closes an open enlargement when the device changes underneath it', async () => {
+    await seedTwo()
+    const element = await page()
+    ;(element.querySelector('[data-enlarge]') as HTMLElement).click()
+    await element.updateComplete
+    expect(element.enlarged).toBe(true)
+
+    element.uuid = OTHER_UUID
+    await waitUntil(() => element.device?.name === 'Hall sensor')
+
+    expect(element.enlarged).toBe(false)
   })
 })
 

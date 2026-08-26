@@ -1,7 +1,7 @@
 import { msg, updateWhenLocaleChanges } from '@lit/localize'
 import { type DeviceDocument, documentId, type RoomDocument } from '@matter-manager/core'
 import type { ProjectRepositories } from '@matter-manager/data'
-import { html, LitElement, type TemplateResult } from 'lit'
+import { html, LitElement, type PropertyValues, type TemplateResult } from 'lit'
 import { projectDatabase } from '../db/project-database.js'
 
 /**
@@ -27,19 +27,26 @@ const QR_SIZE_LARGE = 420
  */
 const DIALOG_ALLOWANCE = 128
 
-/** Below this the code is too dense to scan off a screen at all; better to overflow than lie. */
-const QR_SIZE_MIN = 180
-
 /**
- * The enlarged QR's size for this viewport.
+ * The enlarged QR's size for this viewport: as big as it can be without exceeding the space.
  *
- * Read at the moment the dialog opens. It does not follow a resize while open, which is the
- * one case this leaves: rotating a phone with the dialog up gives a code smaller than it could
- * be, never one that is clipped, so the failure is cosmetic rather than unscannable.
+ * There is deliberately **no lower bound**. An earlier version had one, on the reasoning that
+ * below some size the code is too dense to scan and overflowing was the lesser evil. That was
+ * simply wrong, and it inverted the trade-off it was trying to make: a floor above `available`
+ * is a code wider than its container, which `<wa-qr-code>` clips rather than scales, and a
+ * clipped QR does not scan at all — whereas a small complete one usually still does. The floor
+ * only ever fired in the case where it did the most damage.
+ *
+ * `Math.max(1, …)` is not a floor in that sense; it keeps the size attribute a positive number
+ * on a viewport narrower than the dialog chrome itself, where no code can be shown either way.
+ *
+ * Read at the moment the dialog opens. It does not follow a resize while open, which leaves one
+ * case: rotating a phone with the dialog up gives a code smaller than it could be, never one
+ * that is clipped, so the failure there is cosmetic rather than unscannable.
  */
 function enlargedSize(): number {
   const available = window.innerWidth - DIALOG_ALLOWANCE
-  return Math.max(QR_SIZE_MIN, Math.min(QR_SIZE_LARGE, available))
+  return Math.max(1, Math.min(QR_SIZE_LARGE, available))
 }
 
 /**
@@ -88,7 +95,23 @@ export class DeviceView extends LitElement {
     this.enlarged = false
   }
 
-  protected override firstUpdated(): void {
+  /**
+   * Reloads whenever the route changes, not only on the first render.
+   *
+   * The shell renders one `<device-view>` and updates its `uuid`; Lit reuses the element rather
+   * than building a new one, so `firstUpdated` alone would leave the page showing the device
+   * the user navigated *away* from — with a QR that belongs to a different device and nothing
+   * on screen looking wrong. `willUpdate` rather than `updated` so the stale device is cleared
+   * before it is rendered again.
+   */
+  protected override willUpdate(changed: PropertyValues<this>): void {
+    if (!changed.has('uuid')) return
+    this.device = undefined
+    this.room = undefined
+    this.loaded = false
+    // An enlargement of the previous device's code has no business staying open over the new
+    // one, and closing it is what makes the dialog's contents and its title agree.
+    this.enlarged = false
     void this.load()
   }
 
@@ -113,12 +136,27 @@ export class DeviceView extends LitElement {
     }
   }
 
+  /**
+   * Which read is the current one.
+   *
+   * Two navigations in quick succession issue two reads, and the disk decides which finishes
+   * first. Without this, an earlier read landing last would settle the page on the device the
+   * user has already left - the same wrong-device bug as above, arriving by a different route
+   * and just as invisible.
+   */
+  private request = 0
+
   private async load(): Promise<void> {
+    const token = ++this.request
     const id = this.documentId()
     const device = id === undefined ? undefined : await this.repos().devices.get(id)
     // Only when there is a device, and only its own room: reading every room to show one
     // path would grow with the project for no gain.
-    this.room = device === undefined ? undefined : await this.repos().rooms.get(device.roomId)
+    const room = device === undefined ? undefined : await this.repos().rooms.get(device.roomId)
+
+    if (token !== this.request) return
+
+    this.room = room
     this.device = device
     this.loaded = true
   }

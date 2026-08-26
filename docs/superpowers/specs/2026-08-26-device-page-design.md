@@ -56,10 +56,37 @@ where the pixel count already lives. It does not follow a resize while the dialo
 leaves a code smaller than it could be, never a clipped one, so the residual failure is
 cosmetic.
 
+**There is no lower bound on that size, and that is deliberate.** The first version had one, on
+the reasoning that below some size a code is too dense to scan and overflowing was the lesser
+evil. That inverted the trade-off it was trying to make: a floor above the available width is a
+code wider than its container, which is clipped and therefore unscannable, whereas a small
+complete code usually still scans. The floor only ever fired in the case where it did the most
+damage — below roughly 308 CSS pixels, which browser zoom reaches long before any phone does.
+
 **No test in this repository can catch that clipping**, because the decode test reads the
 canvas bitmap and CSS never touches a bitmap. It was found by opening the page at 360px, and
 that is how it will be found again. Both the CSS and the design note say so, in the places
 someone would go to "simplify" it.
+
+## Reloading when the route changes
+
+The shell renders **one** `<device-view>` and updates its `uuid`; Lit reuses the element rather
+than constructing a new one per route. So loading in `firstUpdated` alone leaves the page
+showing the device the user navigated *away* from — with a QR belonging to a different device,
+and nothing on screen looking wrong. The read is driven from `willUpdate` on a `uuid` change
+instead, which also clears the previous device before it can be rendered again, and closes an
+open enlargement so the dialog's contents and its title cannot disagree.
+
+Two navigations in quick succession put two reads in flight, and the disk decides which lands
+first. A monotonic request token discards all but the current one; without it, an earlier read
+arriving last settles the page on the device the user has already left — the same wrong-device
+failure by a different route, and just as invisible.
+
+Testing that guard needs the reads to finish out of order, which a real IndexedDB will not do
+on its own. The test injects repositories that hold one id back, through the seam the view
+already has — and it must be injected at construction, because the view resolves its
+repositories once and caches them. An earlier version of that test assigned afterwards and
+passed against a view with no guard at all.
 
 ## A device with no payload
 
