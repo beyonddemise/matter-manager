@@ -24,6 +24,6 @@
     "@vitest/browser": "^4.1.11",
     "@zxing/browser": "^0.1.5",
     "playwright": "^1.62.1",
-    "vite": "^8.2.1"
+    "vite": "^8.2.2"
   }
 }
