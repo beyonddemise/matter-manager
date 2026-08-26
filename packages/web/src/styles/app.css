@@ -73,3 +73,20 @@ settings-view {
   border-radius: var(--wa-border-radius-m);
   background-color: var(--wa-color-surface-lowered);
 }
+
+.app-room-heading h2 {
+  margin: 0;
+  font-size: var(--wa-font-size-l);
+}
+
+/* Disabled devices stay legible rather than being hidden behind the filter alone: the issue
+   asks for "visually distinct", and a device someone can no longer read is one they cannot
+   decide about. Reduced emphasis, not reduced contrast. */
+.app-device[data-disabled] {
+  background-color: transparent;
+  border: var(--wa-border-width-s) dashed var(--wa-color-neutral-border-quiet);
+}
+
+.app-device[data-disabled] > span:first-child {
+  color: var(--wa-color-text-quiet);
+}

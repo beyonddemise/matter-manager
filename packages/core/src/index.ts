@@ -13,6 +13,11 @@
  */
 
 export {
+  type BrowseOptions,
+  browseDevices,
+  type DeviceGroup,
+} from './documents/browse.js'
+export {
   DOCUMENT_PREFIX,
   type DocumentType,
   documentId,
@@ -93,3 +98,4 @@ export {
   type RoomRevision,
   UNASSIGNED_ROOM_PREFIX,
 } from './sync/merge.js'
+export { foldForComparison } from './text/fold.js'

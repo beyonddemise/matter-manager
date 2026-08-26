@@ -3,7 +3,7 @@
     // Re-generate this file by running lit-localize
 
     
-    
+    import {str} from '@lit/localize';
 
     /* eslint-disable no-irregular-whitespace */
     /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -14,7 +14,11 @@
 's21ef3efa969c9e81': `Zum dunklen Erscheinungsbild wechseln`,
 's2c188ac763f8e84c': `Wo genau im Raum, falls das hilft: „Decke, Nordseite“.`,
 's2ceb11be2290bb1b': `Abbrechen`,
+'s3421af832c06b697': `Deaktivierte Geräte anzeigen`,
 's54e0bdd4092ccf52': `Gerät speichern`,
+'s5b53408a9117f6bd': `Name, Raum, Seriennummer oder Produkt`,
+'s5d929ff1619ac0c9': `Suchen`,
+'s66722bc2ea775e05': `Deaktiviert`,
 's6d8c02aee480af7a': `Menü`,
 's723b96896cf3ae07': `Matter Manager`,
 's7aa73a226fe11914': `Zurück zu den Geräten`,
@@ -32,8 +36,10 @@
 'scc022b0740943e53': `Gerät hinzufügen`,
 'scfe39d24bc958960': `Geräte`,
 'sd04ce4736fa745fd': `Automatisch (Sprache des Browsers)`,
+'sdb2dca1d6b8119c0': str`Nichts passt zu „${0}“.`,
 'sec77d4da6a57f2b7': `Seite nicht gefunden`,
 'sef49aec68fd1dc66': `Name`,
 'sefcf950b3cc4fc3b': `Sprache`,
+'sfabdf1d04838350b': `Ohne Raum`,
     };
   

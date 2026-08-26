@@ -30,6 +30,7 @@ const EXPECTED: ReadonlyArray<
   ['uuidOf', 'function'],
   ['DraftError', 'function'],
   ['planNewDevice', 'function'],
+  ['browseDevices', 'function'],
   // base38
   ['BASE38_ALPHABET', 'string'],
   ['Base38Error', 'function'],
@@ -55,6 +56,8 @@ const EXPECTED: ReadonlyArray<
   ['MAX_PASSCODE', 'number'],
   ['MIN_PASSCODE', 'number'],
   ['passcodeProblem', 'function'],
+  // text
+  ['foldForComparison', 'function'],
   // conflict merge
   ['UNASSIGNED_ROOM_PREFIX', 'string'],
   ['compareRevisions', 'function'],
