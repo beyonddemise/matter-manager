@@ -12,6 +12,7 @@ import {
 import './views/add-device.js'
 import './views/device-list.js'
 import './views/device.js'
+import './views/edit-device.js'
 import './views/not-found.js'
 import './views/settings.js'
 
@@ -32,6 +33,7 @@ const VIEWS: Readonly<Record<string, (params: ViewParams) => TemplateResult>> = 
   'add-device': () => html`<add-device-view></add-device-view>`,
   device: (params) => html`<device-view uuid=${params.id ?? ''}></device-view>`,
   'device-list': () => html`<device-list-view></device-list-view>`,
+  'edit-device': (params) => html`<edit-device-view uuid=${params.id ?? ''}></edit-device-view>`,
   settings: () => html`<settings-view></settings-view>`,
 }
 

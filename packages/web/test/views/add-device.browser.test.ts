@@ -64,6 +64,13 @@ function typeRoom(element: HTMLElement, path: string): void {
   combobox.inputValue = path
 }
 
+/** Picks an option from the list, which is `value` — the other half of the pair above. */
+function selectRoom(element: HTMLElement, path: string): void {
+  const combobox = element.querySelector('[data-field="room"]') as { value?: string } | null
+  if (combobox === null) throw new Error('no room combobox')
+  combobox.value = path
+}
+
 /** Submits the form and waits for whatever the caller says settles it. */
 async function submit(element: HTMLElement, settled: () => boolean | Promise<boolean>) {
   const target = element.querySelector('form')
@@ -225,6 +232,36 @@ describe('the room', () => {
 
     expect(await rooms()).toHaveLength(1)
     expect((await devices())[0]?.roomId).toBe('room:kitchen')
+  })
+
+  it('follows a change of mind after a room was already picked', async () => {
+    // Picking an option syncs the combobox's `inputValue` to that option's label, but typing
+    // afterwards leaves `value` on the old selection. Reading `value` whenever it is set — as
+    // this form used to — files the device in the room the user just changed their mind about,
+    // and nothing on screen says so.
+    await database.repositories.rooms.save({
+      _id: 'room:kitchen',
+      type: 'room',
+      path: 'Ground Floor/Kitchen',
+    })
+    await database.repositories.rooms.save({
+      _id: 'room:hall',
+      type: 'room',
+      path: 'Ground Floor/Hall',
+    })
+
+    const element = await form()
+    await waitUntil(() => element.rooms.length === 2, 'the view never read the existing rooms')
+
+    fill(element, 'credential', PAYLOAD)
+    fill(element, 'name', 'Hall sensor')
+    selectRoom(element, 'Ground Floor/Kitchen')
+    await element.updateComplete
+    typeRoom(element, 'Ground Floor/Hall')
+
+    await submit(element, async () => (await devices()).length === 1)
+
+    expect((await devices())[0]?.roomId).toBe('room:hall')
   })
 })
 

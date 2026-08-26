@@ -92,6 +92,16 @@ async function page(uuid = UUID, repositories = database.repositories): Promise<
   return element
 }
 
+/** Presses a control the way a user does, through the element the view rendered. */
+function click(element: DeviceView, selector: string): void {
+  const control = element.querySelector(selector) as HTMLElement | null
+  if (control === null) throw new Error(`no control matching ${selector}`)
+  control.click()
+}
+
+/** A second device, for the tests that navigate between two. */
+const SECOND_UUID = '3fa85f64-5717-4562-b3fc-2c963f66afa6'
+
 /**
  * Reads the text back out of a rendered `<wa-qr-code>`, through its canvas.
  *
@@ -323,5 +333,118 @@ describe('an address that names no device', () => {
     const element = await page('device:not-a-uuid')
 
     expect(element.textContent).toContain('not found')
+  })
+})
+
+describe('taking a device out of service', () => {
+  it('disables it, keeps it, and stamps when', async () => {
+    await seed()
+    const element = await page()
+
+    click(element, '[data-toggle-disabled]')
+    await waitUntil(() => element.device?.disabled === true, 'the device was never disabled')
+
+    const stored = await database.repositories.devices.get(DEVICE_ID)
+    expect(stored?.disabled).toBe(true)
+    expect(stored?.disabledAt).toMatch(/^\d{4}-\d{2}-\d{2}T/)
+  })
+
+  it('keeps the QR reproducible, which is the whole reason this is not a delete', async () => {
+    await seed()
+    const element = await page()
+
+    click(element, '[data-toggle-disabled]')
+    await waitUntil(() => element.device?.disabled === true, 'the device was never disabled')
+    await element.updateComplete
+
+    // The code has to survive on screen, not merely in storage: a device that comes off a wall
+    // is exactly the one someone will need to re-commission somewhere else.
+    expect((await database.repositories.devices.get(DEVICE_ID))?.payload).toBe(PAYLOAD)
+    expect(element.querySelector('wa-qr-code')).not.toBeNull()
+  })
+
+  it('puts it back into service, dropping the timestamp', async () => {
+    await seed(lamp({ disabled: true, disabledAt: '2026-08-20T09:00:00.000Z' }))
+    const element = await page()
+
+    click(element, '[data-toggle-disabled]')
+    await waitUntil(() => element.device?.disabled === false, 'the device was never re-enabled')
+
+    const stored = await database.repositories.devices.get(DEVICE_ID)
+    expect(stored?.disabled).toBe(false)
+    expect(stored).not.toHaveProperty('disabledAt')
+  })
+
+  it('leaves a revision the next action can use', async () => {
+    // The write returns the stored document; keeping the stale one in hand would make the
+    // *second* action fail as a conflict, for no reason the user did anything to cause.
+    await seed()
+    const element = await page()
+
+    click(element, '[data-toggle-disabled]')
+    await waitUntil(() => element.device?.disabled === true, 'the device was never disabled')
+    await element.updateComplete
+    click(element, '[data-toggle-disabled]')
+    await waitUntil(() => element.device?.disabled === false, 'the second action never landed')
+
+    expect((await database.repositories.devices.get(DEVICE_ID))?.disabled).toBe(false)
+  })
+})
+
+describe('deleting a device', () => {
+  it('asks first, and does not delete while it is asking', async () => {
+    await seed()
+    const element = await page()
+
+    click(element, '[data-delete]')
+    await element.updateComplete
+
+    expect(element.confirmingDelete).toBe(true)
+    expect(await database.repositories.devices.get(DEVICE_ID)).toBeDefined()
+  })
+
+  it('warns that the commissioning code goes with it', async () => {
+    // "Are you sure?" is a question people learn to click past. The one fact that makes
+    // someone stop is that the code cannot be recovered, so the dialog has to say it.
+    await seed()
+    const element = await page()
+
+    click(element, '[data-delete]')
+    await element.updateComplete
+
+    const dialog = element.querySelector('[data-delete-dialog]')
+    expect(dialog?.textContent).toContain('cannot be recovered')
+    expect(dialog?.textContent).toContain('disable it instead')
+  })
+
+  it('deletes it once confirmed', async () => {
+    await seed()
+    const element = await page()
+
+    click(element, '[data-delete]')
+    await element.updateComplete
+    click(element, '[data-confirm-delete]')
+
+    await waitUntil(
+      async () => (await database.repositories.devices.get(DEVICE_ID)) === undefined,
+      'the device was never deleted',
+      { timeout: 3000 },
+    )
+  })
+
+  it('closes an open confirmation when the route moves to another device', async () => {
+    await seed()
+    await database.repositories.devices.save(
+      lamp({ _id: `device:${SECOND_UUID}`, name: 'Hall sensor', roomId: 'room:hall' }),
+    )
+    const element = await page()
+
+    click(element, '[data-delete]')
+    await element.updateComplete
+    element.uuid = SECOND_UUID
+    await waitUntil(() => element.device?.name === 'Hall sensor')
+
+    // A dialog left open over a different device is a confirmation aimed at the wrong record.
+    expect(element.confirmingDelete).toBe(false)
   })
 })

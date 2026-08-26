@@ -762,3 +762,38 @@ the half that wins.
 **Related:** [[L21]] — a coverage hole was a false belief, not a missing test. Same family: the
 number that looked like the answer was answering a different question. [[L22]] — check what the
 component actually does before concluding what it must be doing.
+
+---
+
+## L24 · Extracting shared code exposes assumptions that were only true for the first caller
+
+**Context:** M2-8. The add form and the edit form differ in one field, so the shared half moved
+to a `DeviceFormView` base class. One of the methods that moved was this:
+
+```ts
+return selected === '' ? typed : selected   // combobox: value vs inputValue
+```
+
+Correct in the add form, and provably so — its tests had been green for two milestones. Wrong
+the moment the edit form called it, because it encodes an assumption the add form happened to
+satisfy: *there is never a prior selection*. On the edit form the room is preselected from the
+stored device, so `value` is always set, and typing a different room leaves `value` on the old
+one. The result was a **move that did not move** — save, navigate back, and the device is still
+in the room the user had just changed away from, with nothing on screen saying so.
+
+The tests I had written for the move caught it, but only because they typed rather than
+selected. It would have been just as easy to write them the other way and ship the bug.
+
+**Rule:** when a method moves into a shared base, do not carry its tests' green status with it.
+For each branch in the moved code, ask what the *original* caller made true that the new caller
+does not — a state that was unreachable, a field that was always empty, an order that was
+guaranteed. That list is the new caller's test plan. "It worked before" is a statement about
+one call site, and extraction is precisely the act of adding another.
+
+**Corollary, and it is [[L22]] again:** the fix rested on what `<wa-combobox>` does to
+`inputValue` when `value` is set programmatically. I did not reason about it — I wrote a
+throwaway test that dumped both properties before and after, learned that selecting *syncs*
+`inputValue` to the option's label while typing leaves `value` stale, and only then chose the
+condition. That one fact is what makes `typed !== '' && typed !== selected` safe rather than a
+different guess. Three minutes of probe, and the alternative was a second silent bug where the
+first one had been.

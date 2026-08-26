@@ -52,6 +52,21 @@ describe('the route registry', () => {
     expect(matchRoute('#/devices/new', ROUTES)?.route.view).toBe('add-device')
   })
 
+  it('routes /devices/<uuid>/edit to the edit view, capturing the uuid', () => {
+    const match = matchRoute('#/devices/6ba7b810-9dad-11d1-80b4-00c04fd430c8/edit', ROUTES)
+    expect(match?.route.view).toBe('edit-device')
+    expect(match?.params.id).toBe('6ba7b810-9dad-11d1-80b4-00c04fd430c8')
+  })
+
+  it('does not let /devices/:id swallow the edit route, whatever the order', () => {
+    // Unlike `/devices/new`, this pair cannot shadow each other: `matchRoute` compares segment
+    // counts before comparing anything else. Asserted rather than assumed, because the
+    // consequence of being wrong is the edit form silently rendering as a device page.
+    const reversed = [...ROUTES].reverse()
+    expect(matchRoute('#/devices/abc/edit', reversed)?.route.view).toBe('edit-device')
+    expect(matchRoute('#/devices/abc', reversed)?.route.view).toBe('device')
+  })
+
   it('keeps the add-device route out of the navigation', () => {
     // Reached from the button on the device list. A permanent nav entry beside "Devices"
     // would list one section's action as though it were a section.
@@ -66,6 +81,7 @@ describe('the route registry', () => {
       'device-list',
       'add-device',
       'device',
+      'edit-device',
       'settings',
     ])
   })
