@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "devDependencies": {
-    "@types/node": "^24.13.3",
+    "@types/node": "^26.2.0",
     "@types/pouchdb-adapter-memory": "^6.1.6",
     "@types/pouchdb-core": "^7.0.15",
     "pouchdb-adapter-memory": "^9.0.0",
