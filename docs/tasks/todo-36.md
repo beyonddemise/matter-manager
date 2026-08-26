@@ -87,3 +87,24 @@ The tests use 200 rather than the issue's 500, because 500 devices is roughly a 
 and the failure mode is not device-count-dependent — a block that exists at 200 exists at 500,
 proportionally larger. The per-device cost is now flat, so 500 devices is 2.5× the duration and
 the same responsiveness.
+
+### The threshold was wrong twice before it was right
+
+Worth recording, because both wrong versions looked reasonable and one of them passed locally
+while failing CI.
+
+1. **An absolute millisecond budget (250ms).** It measures the *machine*. A single device costs
+   about 40ms on a developer laptop and about 675ms on CI — seventeen times slower — so a fixed
+   ceiling asserts "this runner is fast" rather than "this loop yields". It passed locally and
+   timed out on CI at two minutes.
+2. **A multiple of the per-device average.** It measures the *device count*. The export has
+   fixed costs that do not scale with it — embedding fonts at the start, saving at the end — so
+   the ratio worsens as the test is made cheaper, and the threshold needs retuning whenever the
+   count changes.
+3. **A share of the total.** Independent of both, and it asks exactly the question the criterion
+   asks: is the work spread across the export, or does it pile into one block? One block was
+   **98%** of the export before the fix and about **12%** after.
+
+The device count came down from 200 to 40 at the same time. The number was never the point —
+accumulation shows at forty devices exactly as it shows at five hundred, proportionally — and
+what a large count bought was a test slow enough to time out on the machine that runs it.
