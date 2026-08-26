@@ -23,6 +23,6 @@
     "@types/pouchdb-browser": "^6.1.5",
     "@vitest/browser": "^4.1.11",
     "playwright": "^1.62.1",
-    "vite": "^8.2.1"
+    "vite": "^8.2.2"
   }
 }
