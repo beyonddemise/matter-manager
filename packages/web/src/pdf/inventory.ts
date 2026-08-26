@@ -21,6 +21,7 @@ import {
 } from '@matter-manager/core'
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib'
 import { renderQrPng } from './qr-image.js'
+import { winAnsiSafe } from './win-ansi.js'
 
 /** How large the code is drawn, in points. About 34mm — comfortably scannable off paper. */
 const QR_SIZE = 96
@@ -127,7 +128,7 @@ export async function buildInventoryPdf(
     }
 
     if (laid.blocks.length === 0) {
-      page.drawText(labels.nothingToExport, {
+      page.drawText(winAnsiSafe(labels.nothingToExport), {
         x: geometry.margin,
         y: yOf(0),
         size: NAME_SIZE,
@@ -137,7 +138,7 @@ export async function buildInventoryPdf(
     }
 
     // The footer sits below the usable area, which is exactly what `footerHeight` reserved.
-    const footer = labels.pageNumber(laid.number, pages.length)
+    const footer = winAnsiSafe(labels.pageNumber(laid.number, pages.length))
     page.drawText(footer, {
       x: geometry.width - geometry.margin - regular.widthOfTextAtSize(footer, DETAIL_SIZE),
       y: geometry.margin - DETAIL_SIZE,
@@ -169,7 +170,10 @@ function drawHeading(
   const path = block.path === '' ? labels.withoutRoom : block.path
   const text = block.continued ? labels.continued(path) : path
 
-  page.drawText(text, {
+  // Every string that reaches `drawText` goes through this. Missing one is not a rendering
+  // glitch: `pdf-lib` throws on a character WinAnsi cannot encode, so one Polish room name
+  // would lose the whole export. See `win-ansi.ts`.
+  page.drawText(winAnsiSafe(text), {
     x: geometry.margin,
     y: yOf(block.top + HEADING_SIZE),
     size: HEADING_SIZE,
@@ -220,7 +224,7 @@ async function drawEntry(
       borderColor: rgb(0.8, 0.82, 0.84),
       borderWidth: 0.5,
     })
-    page.drawText(labels.noQrCode, {
+    page.drawText(winAnsiSafe(labels.noQrCode), {
       x: left + 8,
       y: yOf(block.top + QR_SIZE / 2),
       size: DETAIL_SIZE,
@@ -235,7 +239,7 @@ async function drawEntry(
   const width = geometry.width - geometry.margin - textLeft
   let line = block.top + NAME_SIZE
 
-  page.drawText(device.name, {
+  page.drawText(winAnsiSafe(device.name), {
     x: textLeft,
     y: yOf(line),
     size: NAME_SIZE,
@@ -253,7 +257,7 @@ async function drawEntry(
 
   for (const detail of details) {
     line += DETAIL_SIZE + 4
-    page.drawText(detail, {
+    page.drawText(winAnsiSafe(detail), {
       x: textLeft,
       y: yOf(line),
       size: DETAIL_SIZE,
@@ -266,7 +270,7 @@ async function drawEntry(
   // The pairing code last and in bold: it is the one thing on the entry that still works when
   // the QR has been rained on, and the reason a code-only device is a complete record.
   line += DETAIL_SIZE + 8
-  page.drawText(`${labels.pairingCode}: ${device.manualCode}`, {
+  page.drawText(winAnsiSafe(`${labels.pairingCode}: ${device.manualCode}`), {
     x: textLeft,
     y: yOf(line),
     size: DETAIL_SIZE + 1,
