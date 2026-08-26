@@ -49,12 +49,13 @@
     "@vitest/browser": "Runs packages/web's tests in a real browser instead of jsdom. Test-only, never imported by src.",
     "playwright": "Browser automation driving @vitest/browser's Chromium instance. Test-only, never imported by src.",
     "@open-wc/testing-helpers": "DOM/component test utilities (fixture, waitUntil) for web component tests. Test-only, never imported by src.",
-    "@types/node": "Type declarations only (import.meta.dirname, node:fs in tests). Erased at compile time, never imported by src.",
+    "@types/node": "Type declarations only (import.meta.dirname, node:fs in tests, and the Node globals packages/api runs on). Erased at compile time, never imported by src.",
     "vite": "The dev/build/preview bundler and vitest's browser-mode dependency. Provably absent from the built output: it produces dist/, it is not part of it - the bundled bundle never imports its own bundler.",
     "pouchdb-core": "PouchDB without any adapter, used only by packages/data's tests. The shipping build is pouchdb-browser, which packages/web supplies; pouchdb-browser references `self` at module scope and cannot be imported in Node at all, which is why the tests use core plus the memory adapter. Proven absent from src by packages/data/test/no-pouchdb-import.test.ts.",
     "pouchdb-adapter-memory": "The in-memory storage adapter the data tests run against, so no test ever touches a real CouchDB. Same proof as pouchdb-core.",
     "@types/pouchdb-core": "Type declarations for PouchDB.Database, the only PouchDB name packages/data/src mentions. Erased at compile time.",
     "@types/pouchdb-adapter-memory": "Type declarations that add the memory adapter to PouchDB.Configuration. Test-only, erased at compile time.",
-    "@types/pouchdb-browser": "Type declarations for the browser PouchDB build that packages/web opens. Erased at compile time."
+    "@types/pouchdb-browser": "Type declarations for the browser PouchDB build that packages/web opens. Erased at compile time.",
+    "openapi-typescript": "Generates TypeScript types from openapi/matter-manager.yaml at development time (ADR 0015). A devDependency by design: the generated file is committed, so a fresh clone builds without it, and nothing it produces reaches the runtime \u2014 types are erased."
   }
 }

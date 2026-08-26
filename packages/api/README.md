@@ -2,7 +2,7 @@
 
 The Fastify backend. Deliberately thin.
 
-**Created in M4.**
+**Created in M4.** The skeleton, the CouchDB client and the logging redaction are M4-1.
 
 ## What belongs here
 
@@ -47,3 +47,53 @@ Both verified working, along with rejection of expired and wrongly-signed tokens
 
 Prefer a small typed CouchDB client here (`getDoc`, `putDoc`, `putSecurity`, `view`,
 `createDb`) over scattered `fetch` calls — a thin wrapper we own and test, not a dependency.
+
+## Running it
+
+```bash
+npm run typecheck                       # builds dist/
+npm --workspace @matter-manager/api start
+curl localhost:3000/healthz             # {"status":"ok"}
+```
+
+`buildServer()` returns an instance that **does not listen**, which is what makes every route
+testable through Fastify's `.inject()` — no port, no socket, no teardown race. `main.ts` is the
+only thing that binds, and is deliberately short enough that nothing hides in it.
+
+## Types from the contract
+
+```bash
+npm --workspace @matter-manager/api run openapi:types
+```
+
+`src/generated/openapi.ts` is produced from `openapi/matter-manager.yaml` by
+`openapi-typescript` and **committed**, so a fresh clone builds without a code-generation step —
+the same reasoning the translation catalogue follows. A handler returning a shape the contract
+does not declare is a compile error.
+
+What a compiler cannot check — that the registered routes are exactly the operations the
+contract describes — is M4-2's CI check. [ADR 0015](../../docs/adr/0015-openapi-checked-not-executed.md)
+is explicit that this is not optional infrastructure but the other half of the decision to check
+the contract rather than execute it.
+
+## Logging
+
+`src/logging.ts` holds the redaction list, and it was written **before there was anything to
+redact** — which is the point. A list added after an incident is written by someone reading a
+log that already contains the thing.
+
+Besides the usual credential names it redacts `payload`, `manualCode`, `passcode` and
+`discriminator`: a Matter payload encodes a setup passcode and a manual pairing code *is* one,
+and neither looks like a secret to a library's defaults.
+
+## The CouchDB client
+
+`src/couch/client.ts` — `getDoc`, `putDoc`, `createDb`, `putSecurity`, `getSecurity`, `view`,
+over native `fetch`. Written rather than installed (ADR 0013): `nano` and friends predate global
+`fetch` and carry an HTTP stack for what is a few lines here.
+
+It is a wrapper rather than scattered `fetch` calls chiefly so that **authentication and error
+handling happen in one place**. A `fetch` at a call site is one where somebody eventually forgets
+the credentials header, treats a 409 as a failure, or logs the response body — and the response
+body of a project database contains setup passcodes. No error message from this client ever
+echoes a response body; there is a test for that.
