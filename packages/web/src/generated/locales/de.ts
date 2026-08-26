@@ -11,6 +11,7 @@
     export const templates = {
       's01924e0434d0960b': str`${0} auswählen`,
 's0384e1e586dd5707': `Wie Sie es im Alltag nennen würden: „Deckenlampe Küche“.`,
+'s04bffb7fd8963811': `Ihre Geräte konnten nicht aus dem Speicher dieses Browsers gelesen werden. Es ist nichts verloren gegangen – laden Sie die Seite neu, um es erneut zu versuchen.`,
 's0d7644c23c3661d1': `PDF exportieren`,
 's10c8e4cae4e11503': `Deaktivieren`,
 's10e80d4c01c3cc21': `Eingebaut am`,
@@ -23,6 +24,7 @@
 's3008e7051bd90a59': `Zu diesem Gerät wurde noch nichts erfasst.`,
 's3421af832c06b697': `Deaktivierte Geräte anzeigen`,
 's35baa5639f913c8f': `Etiketten drucken`,
+'s381e1afa47b9490e': `Dieses Gerät konnte nicht gelesen werden`,
 's390cf7ed2baf42c1': `Suche läuft — halten Sie den QR-Code des Geräts ins Bild.`,
 's3aae8e30897caca0': `Code scannen`,
 's3d1899df15537b0a': `Etikettenbogen`,
@@ -69,6 +71,7 @@
 'sa4829cebe7a04d3c': `Kopplungscode`,
 'sa84b425ff0e662de': `Dem Erscheinungsbild des Systems folgen`,
 'sa9c46478165d17ed': `Diese Änderung konnte nicht gespeichert werden. Das Gerät ist unverändert; bitte erneut versuchen.`,
+'sb4d5a690c084aca3': `Die bereits vorhandenen Räume konnten nicht gelesen werden, daher werden unten keine vorgeschlagen. Sie können einen Raumnamen trotzdem eingeben.`,
 'sb612bb250ab3593d': `Ort im Raum`,
 'sb9dbda9514666e22': `Wenn Sie ein Gerät löschen, wird sein Inbetriebnahme-Code mitgelöscht. Dieser Code lässt sich nicht wiederherstellen, und ohne ihn kann das Gerät nur nach einem Zurücksetzen auf Werkseinstellungen erneut in Betrieb genommen werden.`,
 'sba74e4cee79a147a': `Einen Raum auswählen oder einen neuen eintippen, um ihn anzulegen. „/“ trennt die Ebenen: „Erdgeschoss/Küche“.`,
