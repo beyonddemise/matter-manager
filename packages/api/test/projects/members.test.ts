@@ -365,3 +365,91 @@ describe('listing members', () => {
     expect(members[0]?.email).toBe('moved@example.test')
   })
 })
+
+describe('inviting somebody who has no account', () => {
+  /** Dependencies that can invite, recording what was offered. */
+  function inviting() {
+    const built = project()
+    const invitations: Array<{ email: string; role: string; invitedBy: string }> = []
+    return {
+      ...built,
+      invitations,
+      deps: {
+        ...built.deps,
+        now: () => Date.parse('2026-08-27T09:00:00.000Z'),
+        invite: async (invitation: { email: string; role: string; invitedBy: string }) => {
+          invitations.push(invitation)
+        },
+      },
+    }
+  }
+
+  it('records an invitation instead of refusing', async () => {
+    const { deps, invitations } = inviting()
+    await changeMembership(deps, PROJECT_ID, ADA, 'stranger@example.test', 'read')
+
+    expect(invitations).toEqual([
+      expect.objectContaining({ email: 'stranger@example.test', role: 'read', invitedBy: ADA }),
+    ])
+  })
+
+  it('adds nobody to the project yet', async () => {
+    // They have no account, so there is no subject to put in `_security` — and inventing one
+    // would mean a name in a members list that belongs to nobody.
+    const { deps, fake, participantsNow } = inviting()
+    await changeMembership(deps, PROJECT_ID, ADA, 'stranger@example.test', 'read')
+
+    expect(participantsNow()).toEqual([{ role: 'owner', userid: ADA }])
+    expect(operations(fake)).not.toContain('putSecurity')
+  })
+
+  it('refuses when the caller may not share the project', async () => {
+    // **Checked before anything is stored.** An invitation that outlived the inviter's
+    // permission would be a grant nobody is entitled to make, applied at a later sign-in when
+    // nobody is watching.
+    const built = inviting()
+    const asReader = { ...built.deps }
+    await expect(
+      changeMembership(asReader, PROJECT_ID, 'google|stranger', 'other@example.test', 'read'),
+    ).rejects.toThrow(MembershipRefused)
+
+    expect(built.invitations).toEqual([])
+  })
+
+  it('refuses to invite an owner', async () => {
+    // Ownership is transferred, not granted. An invitation that could make a stranger an owner
+    // on sign-in would be a way to give a project away to somebody who has not appeared yet.
+    const { deps } = inviting()
+
+    await expect(
+      changeMembership(deps, PROJECT_ID, ADA, 'stranger@example.test', 'owner'),
+    ).rejects.toThrow(/transfer/i)
+  })
+
+  it('refuses something that is not an address', async () => {
+    const { deps } = inviting()
+
+    await expect(changeMembership(deps, PROJECT_ID, ADA, 'not-an-address', 'read')).rejects.toThrow(
+      /email address/i,
+    )
+  })
+
+  it('still refuses when the deployment cannot send anything', async () => {
+    // No sender configured. Recording an invitation nobody could deliver would be worse than
+    // refusing: it would look like the share had worked.
+    const { deps } = project()
+
+    await expect(
+      changeMembership(deps, PROJECT_ID, ADA, 'stranger@example.test', 'read'),
+    ).rejects.toThrow(/has an account yet/i)
+  })
+
+  it('does not invite somebody in order to revoke access they never had', async () => {
+    const { deps, invitations } = inviting()
+
+    await expect(
+      changeMembership(deps, PROJECT_ID, ADA, 'stranger@example.test', undefined),
+    ).rejects.toThrow(/has an account yet/i)
+    expect(invitations).toEqual([])
+  })
+})

@@ -122,6 +122,16 @@ export {
   selectForExport,
 } from './pdf/selection.js'
 export {
+  foldEmail,
+  INVITATION_LIFETIME,
+  type Invitation,
+  InvitationError,
+  type InvitationProblem,
+  isOpen,
+  planInvitation,
+  redeemable,
+} from './projects/invitation.js'
+export {
   canManageMembers,
   canWrite,
   grantRole,

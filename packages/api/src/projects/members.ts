@@ -17,10 +17,12 @@
 import {
   canManageMembers,
   grantRole,
+  InvitationError,
   MembershipError,
   narrowsAccess,
   type Participant,
   type ProjectRole,
+  planInvitation,
   revokeAccess,
   roleOf,
   securityFor,
@@ -55,6 +57,21 @@ export interface MembershipDependencies {
   readonly couch: CouchClient
   /** Finds a user by email address. See `users.ts`. */
   readonly findUser: (email: string) => Promise<{ sub: string; email: string } | undefined>
+  /**
+   * Invites somebody who has no account, when the deployment can (M5-4).
+   *
+   * Absent means invitations are not configured — there is no sender — and an unknown address
+   * is refused exactly as it was before, which is true and actionable. A default that recorded
+   * an invitation nobody could deliver would be worse than none.
+   */
+  readonly invite?: (invitation: {
+    readonly projectId: string
+    readonly email: string
+    readonly role: ProjectRole
+    readonly invitedBy: string
+  }) => Promise<void>
+  /** The clock in milliseconds, for an invitation's lifetime. */
+  readonly now?: () => number
 }
 
 /** Reads a pointer, or refuses. */
@@ -122,9 +139,30 @@ export async function changeMembership(
 ): Promise<void> {
   const found = await deps.findUser(email)
   if (found === undefined) {
-    // Distinguished from "not allowed" deliberately: this is the one refusal the caller can act
-    // on, and M5-4 turns it into an invitation rather than a dead end.
-    throw new MembershipRefused(404, 'Nobody with that address has an account yet.')
+    if (role === undefined || deps.invite === undefined) {
+      // No account and nothing to offer: either the caller is revoking access somebody never
+      // had, or this deployment has no way to send an invitation.
+      throw new MembershipRefused(404, 'Nobody with that address has an account yet.')
+    }
+
+    // **Checked before anything is stored**, and by the caller's own right to grant. Somebody
+    // who may not share this project may not send an invitation to it either — an invitation
+    // that outlived the inviter's permission would be a grant nobody is entitled to make.
+    const pointer = await pointerFor(deps.couch, projectId)
+    assertMayManage(pointer, caller)
+
+    try {
+      await deps.invite(
+        planInvitation(
+          { projectId, email, role, invitedBy: caller },
+          deps.now ?? (() => Date.now()),
+        ),
+      )
+    } catch (error) {
+      if (error instanceof InvitationError) throw new MembershipRefused(400, error.message)
+      throw error
+    }
+    return
   }
 
   for (let attempt = 0; attempt < CONFLICT_ATTEMPTS; attempt += 1) {

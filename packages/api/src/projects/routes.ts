@@ -11,13 +11,14 @@
  * @module
  */
 
-import type { Action, Principal, ProjectRole } from '@matter-manager/core'
+import { type Action, type Principal, type ProjectRole, planInvitation } from '@matter-manager/core'
 import type { FastifyInstance } from 'fastify'
 import { bearerSubject } from '../auth/bearer.js'
 import type { SigningKey } from '../auth/jwt.js'
 import type { CouchClient } from '../couch/client.js'
 import { type Gate, NotEntitledError, gate as realGate } from '../entitlements/gate.js'
 import { accessValidator } from './design-docs.js'
+import { type InvitationSender, storeInvitation } from './invitations.js'
 import {
   changeMembership,
   listMembers,
@@ -30,7 +31,7 @@ import {
   ProvisioningError,
   provisionProject,
 } from './provision.js'
-import { projectsFor } from './registry.js'
+import { pointerId, projectsFor, REGISTRY_DATABASE } from './registry.js'
 import { findUser } from './users.js'
 
 /** What the project routes need. */
@@ -56,6 +57,13 @@ export interface ProjectDependencies {
   readonly clock?: () => string
   /** Finds a user by address or subject. Injected so a test needs no `_users`. */
   readonly findUser?: MembershipDependencies['findUser']
+  /**
+   * How an invitation is sent (M5-4).
+   *
+   * Absent means this deployment cannot invite, and an unknown address is refused exactly as it
+   * was before — see `InvitationSender` for why there is no default.
+   */
+  readonly sender?: InvitationSender
 }
 
 /** The actions these routes are gated by. Named so the routes and the map cannot drift. */
@@ -159,6 +167,29 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDepende
   const membership: MembershipDependencies = {
     couch: deps.couch,
     findUser: deps.findUser ?? ((value) => findUser(deps.couch, value)),
+    // Recorded **and then** sent. A send that fails must not leave an invitation nobody can
+    // see; a record that fails must not leave a message promising access that was never
+    // granted. Of the two orders, this is the one whose failure is recoverable — the invitation
+    // exists and can be sent again.
+    ...(deps.sender === undefined
+      ? {}
+      : {
+          invite: async (invitation) => {
+            const pointer = await deps.couch.getDoc<{ _id: string; projectName: string }>(
+              REGISTRY_DATABASE,
+              pointerId(invitation.projectId),
+            )
+            const planned = planInvitation(invitation, () => Date.now())
+            await storeInvitation(deps.couch, planned)
+            await deps.sender?.send({
+              to: planned.email,
+              projectName: pointer?.projectName ?? '',
+              invitedByName: invitation.invitedBy,
+              role: planned.role,
+              expiresAt: planned.expiresAt,
+            })
+          },
+        }),
   }
 
   app.get('/projects/:projectId/members', async (request, reply) => {
