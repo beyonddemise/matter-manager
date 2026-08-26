@@ -851,3 +851,36 @@ uses the same source on both sides asserts self-consistency, which every wrong a
 **Corollary:** a function that coverage reports as never called is not merely untested — it is
 usually the one whose only observable behaviour is a unit, a default, or an ambient dependency,
 which is exactly the class this lesson is about.
+
+---
+
+## L27 · A constructor that succeeds is not a working feature
+
+**Context:** `#87`/`#88`, `packages/web/src/scan/detector.ts`. `nativeDetector()` decided that a
+browser could read QR codes if `'BarcodeDetector' in globalThis` and `new BarcodeDetector(…)`
+did not throw. Both are true on **Android without Play Services** — Huawei devices, de-Googled
+builds, Fire OS, or Play Services older than 19.7.42 — where there is no barcode service behind
+the API at all. Blink exposes the interface on Android unconditionally, and its constructor
+validates nothing: it drops unrecognised format strings, keeps the rest as a *hint*, and hands
+them to a service that may not exist.
+
+The result was the worst shape a failure can take: the scan control renders, the camera opens,
+the loop runs, and nothing is ever read. Every `detect()` rejects with `NotSupportedError`, and
+`readFrame()`'s catch — correctly written for "most frames have no code in them" — swallowed it
+on every frame forever. Silent, unreportable, and indistinguishable from a bad camera, on the
+one platform where people are most likely to be scanning.
+
+Nothing in the test suite could have caught it: CI is Linux Chromium, which has no
+`BarcodeDetector` at all, so the native path was never taken there.
+
+**Rule:** feature detection has to detect the *feature*, not the *interface*. When an API is a
+shim over a platform service — barcode detection, speech, NFC, payments — the object's existence
+is a fact about the browser build, not about the device it is running on. Find the call that
+asks whether the service is actually there (`getSupportedFormats()` returning `[]`, here) and
+ask it once, at the point where the answer changes what is offered to the user.
+
+**Corollary:** a catch that is right about the common case can be wrong about a rare one in a way
+that hides it completely. "Most frames have no code in them" is true and "this browser will never
+read a code" is also true, and the second arrives through the same channel. Discriminate at the
+layer where the difference is knowable — here, before the control is offered — rather than adding
+a second guard inside the loop.
