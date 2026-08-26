@@ -5,6 +5,7 @@ import '@awesome.me/webawesome-pro/dist/components/icon/icon.js'
 import '@awesome.me/webawesome-pro/dist/components/input/input.js'
 import '@awesome.me/webawesome-pro/dist/components/option/option.js'
 import type { DeviceDocument, RoomDocument } from '@matter-manager/core'
+import type { ProjectRepositories } from '@matter-manager/data'
 import { fixture, html, waitUntil } from '@open-wc/testing-helpers'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { AddDeviceView } from '../../src/views/add-device.js'
@@ -32,15 +33,51 @@ afterEach(async () => {
  * not have to synchronise with a read it cannot see — and the test below that submits with no
  * wait at all is the one pinning that.
  */
-async function form(): Promise<AddDeviceView> {
+/** The real repositories, with room writes refused and device writes working. */
+function refusingRoomWrites(): ProjectRepositories {
+  const real = database.repositories
+  return {
+    ...real,
+    rooms: {
+      ...real.rooms,
+      save: async () => {
+        throw new Error('storage refused the write')
+      },
+    },
+  }
+}
+
+/** The real repositories, with every device write refused - a full disk, a locked database. */
+function refusingWrites(): ProjectRepositories {
+  const real = database.repositories
+  return {
+    ...real,
+    devices: {
+      ...real.devices,
+      save: async () => {
+        throw new Error('storage refused the write')
+      },
+    },
+  }
+}
+
+async function form(
+  repositories: ProjectRepositories = database.repositories,
+): Promise<AddDeviceView> {
   await Promise.all([
     customElements.whenDefined('wa-input'),
     customElements.whenDefined('wa-combobox'),
     customElements.whenDefined('wa-option'),
   ])
   return (await fixture(
-    html`<add-device-view .repositories=${database.repositories}></add-device-view>`,
+    html`<add-device-view .repositories=${repositories}></add-device-view>`,
   )) as AddDeviceView
+}
+
+/** Reads back what a control currently shows. */
+function fieldValue(element: HTMLElement, field: string): string {
+  const control = element.querySelector(`[data-field="${field}"]`) as { value?: unknown } | null
+  return typeof control?.value === 'string' ? control.value : ''
 }
 
 /** Fills a control the way a user's typing leaves it: through the DOM property. */
@@ -62,6 +99,13 @@ function typeRoom(element: HTMLElement, path: string): void {
   const combobox = element.querySelector('[data-field="room"]') as { inputValue?: string } | null
   if (combobox === null) throw new Error('no room combobox')
   combobox.inputValue = path
+}
+
+/** Picks an option from the list, which is `value` — the other half of the pair above. */
+function selectRoom(element: HTMLElement, path: string): void {
+  const combobox = element.querySelector('[data-field="room"]') as { value?: string } | null
+  if (combobox === null) throw new Error('no room combobox')
+  combobox.value = path
 }
 
 /** Submits the form and waits for whatever the caller says settles it. */
@@ -226,6 +270,36 @@ describe('the room', () => {
     expect(await rooms()).toHaveLength(1)
     expect((await devices())[0]?.roomId).toBe('room:kitchen')
   })
+
+  it('follows a change of mind after a room was already picked', async () => {
+    // Picking an option syncs the combobox's `inputValue` to that option's label, but typing
+    // afterwards leaves `value` on the old selection. Reading `value` whenever it is set — as
+    // this form used to — files the device in the room the user just changed their mind about,
+    // and nothing on screen says so.
+    await database.repositories.rooms.save({
+      _id: 'room:kitchen',
+      type: 'room',
+      path: 'Ground Floor/Kitchen',
+    })
+    await database.repositories.rooms.save({
+      _id: 'room:hall',
+      type: 'room',
+      path: 'Ground Floor/Hall',
+    })
+
+    const element = await form()
+    await waitUntil(() => element.rooms.length === 2, 'the view never read the existing rooms')
+
+    fill(element, 'credential', PAYLOAD)
+    fill(element, 'name', 'Hall sensor')
+    selectRoom(element, 'Ground Floor/Kitchen')
+    await element.updateComplete
+    typeRoom(element, 'Ground Floor/Hall')
+
+    await submit(element, async () => (await devices()).length === 1)
+
+    expect((await devices())[0]?.roomId).toBe('room:hall')
+  })
 })
 
 describe('refusing a draft', () => {
@@ -290,5 +364,40 @@ describe('the form itself', () => {
     const element = await form()
     expect(element.shadowRoot).toBeNull()
     expect(element.querySelector('.wa-stack')).not.toBeNull()
+  })
+})
+
+describe('a write storage refuses', () => {
+  it('stays on the form and says so, rather than navigating as though it saved', async () => {
+    // Navigating to a list that does not contain the device is the application saying it
+    // saved something it did not - and what it did not save is a code that cannot be recreated.
+    const before = window.location.hash
+    const element = await form(refusingWrites())
+    fill(element, 'credential', PAYLOAD)
+    fill(element, 'name', 'Kitchen ceiling light')
+    typeRoom(element, 'Ground Floor/Kitchen')
+
+    await submit(element, () => element.querySelector('[data-save-failed]') !== null)
+
+    expect(await devices()).toHaveLength(0)
+    expect(window.location.hash).toBe(before)
+    expect(fieldValue(element, 'credential')).toBe(PAYLOAD)
+  })
+})
+
+describe('the order the two documents are written in', () => {
+  it('never leaves a device pointing at a room that was not written', async () => {
+    // PouchDB has no transactions, so one of the two writes can fail on its own. Room first
+    // means the worst case is an empty room, which is harmless and reusable. Device first
+    // means a device whose `roomId` names nothing - and the list would file it under "Without
+    // a room", which is a device that has quietly lost the location someone recorded for it.
+    const element = await form(refusingRoomWrites())
+    fill(element, 'credential', PAYLOAD)
+    fill(element, 'name', 'Kitchen ceiling light')
+    typeRoom(element, 'Ground Floor/Kitchen')
+
+    await submit(element, () => element.querySelector('[data-save-failed]') !== null)
+
+    expect(await devices()).toHaveLength(0)
   })
 })

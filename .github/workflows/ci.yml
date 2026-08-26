@@ -110,7 +110,7 @@ jobs:
 
   couchdb-contract:
     name: CouchDB access model
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     # This guards a privilege-escalation risk that no application test can catch: if a
     # CouchDB upgrade stops preserving custom _security keys, read-only project access
     # silently becomes read-write while the application code behaves exactly as written.

@@ -11,18 +11,29 @@ import {
 } from './scheme.js'
 import './views/add-device.js'
 import './views/device-list.js'
+import './views/device.js'
+import './views/edit-device.js'
 import './views/not-found.js'
 import './views/settings.js'
 
 /**
- * View id to markup. `Record<string, …>` accepts any key, so a route whose `view` has no
- * entry here is not a type error - it silently falls through to the not-found view at
- * render time. The actual guard against that drift is the hand-maintained assertion in
- * `routes.test.ts` that every registered route's view exists.
+ * View id to markup, given whatever the route captured.
+ *
+ * `Record<string, …>` accepts any key, so a route whose `view` has no entry here is not a type
+ * error - it silently falls through to the not-found view at render time. The actual guard
+ * against that drift is the hand-maintained assertion in `routes.test.ts` that every registered
+ * route's view exists.
+ *
+ * Every entry takes the parameters even where it ignores them, so adding a parameter to an
+ * existing route is a change to one line rather than to this signature.
  */
-const VIEWS: Readonly<Record<string, () => TemplateResult>> = {
+type ViewParams = Readonly<Record<string, string>>
+
+const VIEWS: Readonly<Record<string, (params: ViewParams) => TemplateResult>> = {
   'add-device': () => html`<add-device-view></add-device-view>`,
+  device: (params) => html`<device-view uuid=${params.id ?? ''}></device-view>`,
   'device-list': () => html`<device-list-view></device-list-view>`,
+  'edit-device': (params) => html`<edit-device-view uuid=${params.id ?? ''}></edit-device-view>`,
   settings: () => html`<settings-view></settings-view>`,
 }
 
@@ -161,7 +172,9 @@ export class AppShell extends LitElement {
           )}
         </nav>
 
-        <main class="app-main">${view ? view() : html`<not-found-view></not-found-view>`}</main>
+        <main class="app-main">
+          ${view && match ? view(match.params) : html`<not-found-view></not-found-view>`}
+        </main>
       </wa-page>
     `
   }

@@ -718,3 +718,108 @@ its output; a timeout on its own names the symptom and not one of the six things
 **Related:** [[L20]] — assert that the thing you set up actually reached the code, rather than
 that a step ran. Same failure wearing different clothes: here the test set a property the
 component threw away.
+
+---
+
+## L23 · A passing test can be blind to the failure by construction, not by oversight
+
+**What happened:** the device page renders a QR from the stored payload. The test decodes the
+rendered `<canvas>` with zxing and asserts it comes back as identical field values — a genuinely
+end-to-end check, and the one the whole milestone rests on. It passed.
+
+Then I opened the page at 360px wide. The enlarged QR was **clipped**, missing its right-hand
+columns. A QR missing columns does not scan. The feature was broken on every phone, and the
+test could not have caught it: `decodeFromCanvas` reads the canvas *bitmap*, and CSS clipping
+never touches a bitmap. The test was not weak. It was measuring a different thing than the one
+that was broken, and no amount of strengthening it would have helped.
+
+The first fix made it worse. I reasoned from the component's stylesheet — `canvas { width:
+100%; height: 100% }` inside a host with `aspect-ratio: 1` — and concluded that constraining
+the host would scale the code down. It did not, and at 360px the code was then clipped on
+*both* sides. Reading the component's `render()` explained why in one line:
+
+```js
+style=${styleMap({ maxWidth: `${this.size}px`, minWidth: `${this.size}px`, ... })}
+```
+
+An inline `min-width` on an element inside the shadow root. No `max-width` I can write from
+outside beats it, so the code cannot shrink — it can only overflow. The size has to be correct
+at the moment it is set, which meant computing it in TypeScript from the viewport.
+
+Two rules out of one bug:
+
+**Rule (tests):** when a test asserts on data extracted from a rendering — a canvas, a
+serialised DOM, an accessibility tree — write down what layer it *cannot* see, next to the
+test. Then check that layer by hand at least once, at the sizes that matter. "The test passes"
+answers only the question the test asks.
+
+**Rule (shadow DOM):** before writing CSS to reshape a custom element from outside, read its
+`render()` for inline styles. A component that writes `min-width` inline has made a decision
+you cannot override from the light DOM, and the fix belongs wherever that value is chosen.
+Reasoning from its stylesheet alone tells you half the story and the half that is missing is
+the half that wins.
+
+**Related:** [[L21]] — a coverage hole was a false belief, not a missing test. Same family: the
+number that looked like the answer was answering a different question. [[L22]] — check what the
+component actually does before concluding what it must be doing.
+
+---
+
+## L24 · Extracting shared code exposes assumptions that were only true for the first caller
+
+**Context:** M2-8. The add form and the edit form differ in one field, so the shared half moved
+to a `DeviceFormView` base class. One of the methods that moved was this:
+
+```ts
+return selected === '' ? typed : selected   // combobox: value vs inputValue
+```
+
+Correct in the add form, and provably so — its tests had been green for two milestones. Wrong
+the moment the edit form called it, because it encodes an assumption the add form happened to
+satisfy: *there is never a prior selection*. On the edit form the room is preselected from the
+stored device, so `value` is always set, and typing a different room leaves `value` on the old
+one. The result was a **move that did not move** — save, navigate back, and the device is still
+in the room the user had just changed away from, with nothing on screen saying so.
+
+The tests I had written for the move caught it, but only because they typed rather than
+selected. It would have been just as easy to write them the other way and ship the bug.
+
+**Rule:** when a method moves into a shared base, do not carry its tests' green status with it.
+For each branch in the moved code, ask what the *original* caller made true that the new caller
+does not — a state that was unreachable, a field that was always empty, an order that was
+guaranteed. That list is the new caller's test plan. "It worked before" is a statement about
+one call site, and extraction is precisely the act of adding another.
+
+**Corollary, and it is [[L22]] again:** the fix rested on what `<wa-combobox>` does to
+`inputValue` when `value` is set programmatically. I did not reason about it — I wrote a
+throwaway test that dumped both properties before and after, learned that selecting *syncs*
+`inputValue` to the option's label while typing leaves `value` stale, and only then chose the
+condition. That one fact is what makes `typed !== '' && typed !== selected` safe rather than a
+different guess. Three minutes of probe, and the alternative was a second silent bug where the
+first one had been.
+
+---
+
+## L25 · `git add -A` commits the working tree, not your change
+
+**Context:** PR #82. CodeRabbit filed a finding against `scripts/derv-up.sh` — a tmux helper
+that hard-codes one developer's `$HOME/Code` layout. It was a fair finding about a file that
+had no business being in the diff: the script is my human partner's local helper, it was
+sitting untracked in the working tree, and `git add -A` swept it into a commit about editing
+devices. Nothing in `npm run verify` notices an extra file, and nothing in my own review did
+either — I read the diff of what I had *written*, not the diff of what I had *staged*.
+
+The damage here was small. The same reflex commits a `.env` someone left lying around, a
+scratch script with a token in it, or a half-finished file from another branch — and a public
+repository's history does not forget.
+
+**Rule:** never `git add -A` (or `git add .`) on a repository you did not start from empty.
+Stage the paths the change actually touches, and when a change is broad enough that listing
+paths is impractical, run `git status --short` first and account for **every** line: `M` you
+expected, `??` you can name. An untracked file you did not create is not yours to commit —
+leave it untracked and say so, because whether it belongs in the repository is its owner's
+decision and not part of your story.
+
+**Corollary:** `git diff --cached --stat` immediately before committing takes two seconds and
+answers "what am I actually about to put in history?" — a different question from "is my code
+right?", and the one no test suite asks.
