@@ -97,3 +97,36 @@ handling happen in one place**. A `fetch` at a call site is one where somebody e
 the credentials header, treats a 409 as a failure, or logs the response body — and the response
 body of a project database contains setup passcodes. No error message from this client ever
 echoes a response body; there is a test for that.
+
+## Sign-in
+
+Authorization code with PKCE. Three modules:
+
+| | |
+|---|---|
+| `auth/oidc.ts` | The flow, provider-agnostic. PKCE, state, the code exchange. |
+| `auth/google.ts` | Google's endpoints, and ID-token verification against its JWKS. |
+| `auth/routes.ts` | The three operations the contract declares. |
+
+**Tokens never touch `localStorage`.** The PKCE carrier and the session are **httpOnly** cookies
+the page cannot read. The CouchDB access token is returned by `POST /auth/token` in a response
+body, because PouchDB has to put it in an `Authorization` header — so it is held in memory,
+where it dies with the tab, rather than in storage, where it survives and is readable by any
+script that ever runs on the origin.
+
+**The routes are absent when no provider is configured**, rather than present and answering with
+a misconfiguration error at the moment a user presses the button.
+
+### Configuration
+
+| Variable | |
+|---|---|
+| `GOOGLE_CLIENT_ID` | From the Google Cloud console, OAuth 2.0 Client ID (Web application) |
+| `GOOGLE_CLIENT_SECRET` | Same screen |
+| `GOOGLE_REDIRECT_URI` | Must match what is registered **exactly**, e.g. `https://api.matter-manager.example/auth/google/callback` |
+| `APP_ORIGIN` | Where the browser is returned, e.g. `https://matter-manager.pages.dev` |
+| `JWT_PRIVATE_KEY` | EC P-256 private key, PEM. `openssl ecparam -name prime256v1 -genkey -noout` |
+| `JWT_KEY_ID` | Names the key in tokens and in CouchDB's `[jwt_keys]`, e.g. `ec-2026-08` |
+
+None of these are in the repository and none should be. The public half of `JWT_PRIVATE_KEY` is
+pushed into CouchDB at startup (`auth/keys.ts`), so key material never enters the image.

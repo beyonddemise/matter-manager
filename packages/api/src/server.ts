@@ -15,6 +15,7 @@
  */
 
 import Fastify, { type FastifyInstance } from 'fastify'
+import { type AuthDependencies, registerAuthRoutes } from './auth/routes.js'
 import type { paths } from './generated/openapi.js'
 import { redactionOptions } from './logging.js'
 
@@ -33,6 +34,15 @@ type Response<
 export interface ServerOptions {
   /** `false` in tests, so a suite does not print a request log per case. */
   readonly logger?: boolean
+  /**
+   * Everything sign-in needs.
+   *
+   * Optional, and that is not laziness: without a Google client id there is no sign-in to
+   * offer, and a service that registered the routes anyway would answer them with a
+   * misconfiguration error at the moment a user pressed the button. Absent means absent — and
+   * the contract-drift check treats the routes as unimplemented, which is true.
+   */
+  readonly auth?: AuthDependencies
 }
 
 /**
@@ -105,6 +115,8 @@ export function buildServer(options: ServerOptions = {}): Server {
   app.get('/healthz', async (): Promise<Response<'/healthz', 'get', 200>> => {
     return { status: 'ok' }
   })
+
+  if (options.auth !== undefined) registerAuthRoutes(app, options.auth)
 
   return Object.assign(app, { registeredRoutes: () => [...routes] })
 }

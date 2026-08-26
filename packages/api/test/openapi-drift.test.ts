@@ -51,6 +51,19 @@ describe('the contract itself', () => {
     )
   })
 
+  it('resolves the references the contract uses', () => {
+    // `$ref` was on the supported-keyword list, which meant a response declared as
+    // `{ $ref: '#/components/responses/Unauthorized' }` reached the validator as an object with
+    // no `type` and no `properties` — checked perfectly, and found perfectly fine. Every
+    // `$ref`-shaped response was waved through, and the unsupported-keyword guard could not see
+    // it *because the keyword was listed as supported*. This asserts the resolution happened.
+    const referenced = operations
+      .flatMap((operation) => Object.values(operation.responses))
+      .filter((schema) => typeof schema === 'object' && schema !== null && '$ref' in schema)
+
+    expect(referenced).toEqual([])
+  })
+
   it('uses only schema keywords the checker understands', () => {
     // The second way this file could quietly stop checking: a partial validator that ignores
     // what it does not know reports success for a `oneOf` it never looked at. Adding one to the
