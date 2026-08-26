@@ -31,6 +31,7 @@ import './styles/app.css'
 import './app-shell.js'
 import { negotiateLocale, readLocalePreference } from './i18n/locale.js'
 import { activateLocale } from './i18n/localization.js'
+import { registerServiceWorker } from './register-sw.js'
 import { applyScheme, readPreference, resolveScheme } from './scheme.js'
 
 // Applied from this deferred module, after the CSS and component imports above and after
@@ -65,3 +66,9 @@ activateLocale(
 ).catch((error: unknown) => {
   console.error('The translation catalogue could not be loaded; continuing in English.', error)
 })
+
+// Last, and not awaited. The worker is what makes the application open with no connectivity on
+// the *next* visit; it does nothing for this one, so holding anything back on it would trade a
+// visible delay for an invisible benefit. `registerServiceWorker` reports no failure for the
+// same reason - see there.
+void registerServiceWorker()
