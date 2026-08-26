@@ -1,0 +1,39 @@
+# The caching contract, published with the site and enforced by
+# `npm run check:deploy` (scripts/check-deploy-headers.mjs).
+#
+# Read the checker before changing anything here. A single-page application cached wrongly
+# does not break — it keeps working, on last week's code, and the person who deployed sees the
+# new version immediately because their own browser revalidated.
+
+# Fingerprinted by Vite: the bytes behind a given URL never change, so nothing ever needs to
+# ask again. A year is the conventional ceiling.
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
+
+# The shell names which fingerprinted bundle to load. Cached, it names an old one forever, and
+# every immutable asset around it then correctly serves the wrong application.
+/index.html
+  Cache-Control: no-cache
+
+/
+  Cache-Control: no-cache
+
+# The one that cannot be recovered from. A cached service worker cannot be replaced by a newer
+# one, so a long max-age here is not "stale until it expires" — it is stale until the user
+# clears storage, which they have no reason to think of doing. The worker itself arrives in
+# M2b-3; this rule is here first, deliberately, so that it cannot arrive into a deployment
+# that has already made updating it impossible.
+/sw.js
+  Cache-Control: no-cache
+
+# Applies to everything, including the fingerprinted assets, and states nothing about caching
+# — so it does not contradict the rules above.
+/*
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: no-referrer
+  # This catalogue is never a frame in someone else's page, and framing it is the setup for
+  # clickjacking a delete. A Content-Security-Policy belongs here too and is deliberately not
+  # here yet: it needs the same treatment as the API's headers (#47), and a policy written
+  # without testing the Web Awesome and PouchDB bundles against it would either be too loose
+  # to be worth having or would break the application in production only.
+  X-Frame-Options: DENY

