@@ -9,7 +9,8 @@
     /* eslint-disable @typescript-eslint/no-explicit-any */
 
     export const templates = {
-      's0384e1e586dd5707': `Wie Sie es im Alltag nennen würden: „Deckenlampe Küche“.`,
+      's01924e0434d0960b': str`${0} auswählen`,
+'s0384e1e586dd5707': `Wie Sie es im Alltag nennen würden: „Deckenlampe Küche“.`,
 's0d7644c23c3661d1': `PDF exportieren`,
 's10c8e4cae4e11503': `Deaktivieren`,
 's10e80d4c01c3cc21': `Eingebaut am`,
@@ -59,6 +60,7 @@
 's9c65d073fd830d71': `Anmerkung hinzufügen`,
 's9d8b8aa2b404c2c8': `Einstellungen`,
 's9df21cd186a68b5b': `Noch keine Geräte.`,
+'s9e143294067fa2be': str`${0} ausgewählte exportieren`,
 'sa4829cebe7a04d3c': `Kopplungscode`,
 'sa84b425ff0e662de': `Dem Erscheinungsbild des Systems folgen`,
 'sa9c46478165d17ed': `Diese Änderung konnte nicht gespeichert werden. Das Gerät ist unverändert; bitte erneut versuchen.`,
@@ -87,6 +89,7 @@
 'seb22faf93a15792d': `Wenn Sie das Gerät außer Betrieb nehmen, den Code aber behalten möchten, deaktivieren Sie es stattdessen.`,
 'sec68251fdc9f54ca': str`PDF wird erstellt: ${0} von ${1} Geräten.`,
 'sec77d4da6a57f2b7': `Seite nicht gefunden`,
+'see032876f36baf10': `Diesen Raum exportieren`,
 'sef49aec68fd1dc66': `Name`,
 'sefcf950b3cc4fc3b': `Sprache`,
 'sf0ef7644098b8a63': `Endgültig löschen`,

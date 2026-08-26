@@ -333,3 +333,127 @@ describe('exporting the inventory', () => {
     expect(new TextDecoder('latin1').decode(saved[0]?.bytes).startsWith('%PDF-')).toBe(true)
   })
 })
+
+describe('exporting a selection', () => {
+  /**
+   * Ticks a device by its document id.
+   *
+   * Through the property and a `change` event, the same way the disabled-filter helper above
+   * does it — `click()` on a `<wa-checkbox>` host does not toggle it, so a test using that
+   * would assert against a box nobody ticked.
+   */
+  function tick(element: DeviceListView, id: string): void {
+    const box = element.querySelector(`[data-device-id="${id}"] [data-select]`) as
+      | (HTMLElement & { checked?: boolean })
+      | null
+    if (box === null) throw new Error(`no checkbox for ${id}`)
+    box.checked = !(box.checked ?? false)
+    box.dispatchEvent(new Event('change', { bubbles: true }))
+  }
+
+  it('offers no selection export until something is selected', async () => {
+    await seed()
+    const element = await list()
+
+    expect(element.querySelector('[data-export-selected]')).toBeNull()
+  })
+
+  it('offers one, naming how many, once something is', async () => {
+    await seed()
+    const element = await list()
+
+    tick(element, 'device:ceiling')
+    await element.updateComplete
+
+    const button = element.querySelector('[data-export-selected]')
+    expect(button).not.toBeNull()
+    // Says how many, because on a page where the ticks have scrolled out of view a button
+    // called "Export selection" has an invisible effect.
+    expect(button?.textContent).toContain('1')
+  })
+
+  it('keeps a selection across a search', async () => {
+    // The selection has to outlive a search typed while choosing: the devices are re-read and
+    // re-grouped on every change, so anything stored on the device objects would be lost.
+    await seed()
+    const element = await list()
+
+    tick(element, 'device:ceiling')
+    element.query = 'Mirror'
+    await element.updateComplete
+    element.query = ''
+    await element.updateComplete
+
+    const box = element.querySelector('[data-device-id="device:ceiling"] [data-select]')
+    expect((box as { checked?: boolean } | null)?.checked).toBe(true)
+  })
+
+  it('unticks what was ticked', async () => {
+    await seed()
+    const element = await list()
+
+    tick(element, 'device:ceiling')
+    await element.updateComplete
+    tick(element, 'device:ceiling')
+    await element.updateComplete
+
+    expect(element.querySelector('[data-export-selected]')).toBeNull()
+  })
+
+  it('offers a per-room export', async () => {
+    await seed()
+    const element = await list()
+
+    expect(element.querySelector('[data-export-room="Ground Floor/Kitchen"]')).not.toBeNull()
+  })
+
+  it('offers no room export for devices whose room is gone', async () => {
+    // There is no room there to export.
+    await database.repositories.devices.save(device('device:orphan', 'Orphan', 'room:deleted'))
+    const element = await list()
+
+    const buttons = [...element.querySelectorAll('[data-export-room]')].map((node) =>
+      node.getAttribute('data-export-room'),
+    )
+    expect(buttons).not.toContain('')
+  })
+
+  it('produces a PDF for one room', async () => {
+    await seed()
+    const saved: Uint8Array[] = []
+    const element = await list()
+    ;(element as DeviceListView & { download?: unknown }).download = (bytes: Uint8Array) =>
+      saved.push(bytes)
+
+    ;(element.querySelector('[data-export-room="First Floor/Bathroom"]') as HTMLElement).click()
+    await waitUntil(() => saved.length === 1, 'the room export never finished', { timeout: 10000 })
+
+    expect(new TextDecoder('latin1').decode(saved[0]).startsWith('%PDF-')).toBe(true)
+  })
+
+  it('produces a PDF for the ticked devices', async () => {
+    await seed()
+    const saved: Uint8Array[] = []
+    const element = await list()
+    ;(element as DeviceListView & { download?: unknown }).download = (bytes: Uint8Array) =>
+      saved.push(bytes)
+
+    tick(element, 'device:ceiling')
+    await element.updateComplete
+    ;(element.querySelector('[data-export-selected]') as HTMLElement).click()
+    await waitUntil(() => saved.length === 1, 'the selection export never finished', {
+      timeout: 10000,
+    })
+
+    expect(new TextDecoder('latin1').decode(saved[0]).startsWith('%PDF-')).toBe(true)
+  })
+
+  it('has no checkbox for a device the filter is hiding', async () => {
+    // Which is what makes "disabled devices are excluded unless explicitly included" hold for
+    // every selection rather than only the default one: there is nothing to tick.
+    await seed()
+    const element = await list()
+
+    expect(element.querySelector('[data-device-id="device:old"] [data-select]')).toBeNull()
+  })
+})

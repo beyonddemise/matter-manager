@@ -102,8 +102,14 @@ export {
   type PageGeometry,
 } from './pdf/layout.js'
 export {
+  countSelected,
+  type ExportSelection,
+  selectForExport,
+} from './pdf/selection.js'
+export {
   isNearDuplicateRoomPath,
   isValidRoomPath,
+  isWithinRoom,
   normaliseRoomPath,
   ROOM_PATH_SEPARATOR,
   RoomPathError,

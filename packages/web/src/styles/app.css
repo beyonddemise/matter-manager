@@ -151,6 +151,13 @@ a.app-device:hover {
   background-color: var(--wa-color-neutral-fill-quiet);
 }
 
+/* The row's link takes the space the checkbox beside it does not, so ticking and opening stay
+   two separate targets on a phone rather than one that does both. */
+.app-device-row {
+  flex: 1;
+  min-width: 0;
+}
+
 .app-remarks {
   margin: 0;
   padding: 0;

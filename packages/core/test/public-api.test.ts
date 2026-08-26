@@ -66,6 +66,8 @@ const EXPECTED: ReadonlyArray<
   ['A4', 'object'],
   ['layoutInventory', 'function'],
   ['entriesOf', 'function'],
+  ['selectForExport', 'function'],
+  ['countSelected', 'function'],
   // conflict merge
   ['UNASSIGNED_ROOM_PREFIX', 'string'],
   ['compareRevisions', 'function'],
@@ -84,6 +86,7 @@ const EXPECTED: ReadonlyArray<
   ['RoomPathError', 'function'],
   ['isNearDuplicateRoomPath', 'function'],
   ['isValidRoomPath', 'function'],
+  ['isWithinRoom', 'function'],
   ['normaliseRoomPath', 'function'],
   ['renameRoomPath', 'function'],
   ['roomPathKey', 'function'],

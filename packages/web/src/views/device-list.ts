@@ -1,9 +1,12 @@
 import { msg, str, updateWhenLocaleChanges } from '@lit/localize'
 import {
   browseDevices,
+  countSelected,
   type DeviceDocument,
   type DeviceGroup,
+  type ExportSelection,
   type RoomDocument,
+  selectForExport,
   uuidOf,
 } from '@matter-manager/core'
 import type { ProjectRepositories } from '@matter-manager/data'
@@ -41,6 +44,7 @@ export class DeviceListView extends LitElement {
     exporting: { state: true },
     exportProgress: { state: true },
     exportFailed: { state: true },
+    selected: { state: true },
     download: { attribute: false },
   }
 
@@ -64,6 +68,14 @@ export class DeviceListView extends LitElement {
   declare exportProgress: InventoryProgress | undefined
   declare exportFailed: boolean
   /**
+   * Which devices are ticked, by full document id.
+   *
+   * A set rather than a flag on each device: the devices are re-read from the database and
+   * re-derived by `browseDevices` on every change, so a flag would be lost on the next read,
+   * and the selection has to outlive a search the user types while choosing.
+   */
+  declare selected: ReadonlySet<string>
+  /**
    * How the finished bytes reach the user. Bound by a test.
    *
    * A seam because the real one clicks a link: in a test browser that is a download prompt,
@@ -80,6 +92,7 @@ export class DeviceListView extends LitElement {
     this.exporting = false
     this.exportProgress = undefined
     this.exportFailed = false
+    this.selected = new Set()
     this.devices = []
     this.rooms = []
     this.loaded = false
@@ -149,12 +162,28 @@ export class DeviceListView extends LitElement {
     return group.path === '' ? msg('Without a room') : group.path
   }
 
+  /** Ticks or unticks one device. */
+  private toggleSelected(id: string): void {
+    const next = new Set(this.selected)
+    if (!next.delete(id)) next.add(id)
+    this.selected = next
+  }
+
   private renderDevice(device: DeviceDocument) {
     return html`
-      <li ?data-disabled=${device.disabled} data-device-id=${device._id}>
+      <li class="wa-cluster wa-gap-s" ?data-disabled=${device.disabled} data-device-id=${device._id}>
+        <!-- Outside the link, deliberately. Inside it, every tick would also navigate to the
+             device — and on a phone the two targets would overlap, so choosing several devices
+             would mean visiting each one. -->
+        <wa-checkbox
+          data-select
+          ?checked=${this.selected.has(device._id)}
+          @change=${() => this.toggleSelected(device._id)}
+          label=${msg(str`Select ${device.name}`)}
+        ></wa-checkbox>
         <!-- The whole row is the link, not just the name: a target the width of the list is
              what makes this usable on a phone, which is where a device gets looked up. -->
-        <a class="wa-split app-device" href="#/devices/${uuidOf(device._id) ?? ''}">
+        <a class="wa-split app-device app-device-row" href="#/devices/${uuidOf(device._id) ?? ''}">
           <span class="wa-stack wa-gap-3xs">
             <span>${device.name}</span>
             ${device.spot === undefined ? '' : html`<small class="app-empty">${device.spot}</small>`}
@@ -172,6 +201,23 @@ export class DeviceListView extends LitElement {
         <div class="wa-cluster wa-gap-s app-room-heading">
           <h2>${this.groupLabel(group)}</h2>
           <wa-badge variant="neutral">${count}</wa-badge>
+          <!-- Per room, because "print the labels for the kitchen" is the request people
+               actually have, and ticking eleven boxes to make it is not an answer. Absent for
+               devices whose room no longer exists: there is no room there to export. -->
+          ${
+            group.path === ''
+              ? ''
+              : html`<wa-button
+                  data-export-room=${group.path}
+                  size="small"
+                  appearance="plain"
+                  ?disabled=${this.exporting}
+                  @click=${() => void this.onExport({ kind: 'room', path: group.path })}
+                >
+                  <wa-icon slot="start" name="file-pdf"></wa-icon>
+                  ${msg('Export this room')}
+                </wa-button>`
+          }
         </div>
         <ul class="wa-stack wa-gap-2xs app-device-list">
           ${group.devices.map((device) => this.renderDevice(device))}
@@ -227,7 +273,7 @@ export class DeviceListView extends LitElement {
    * is rendering, so the search and the disabled filter apply to it exactly as the user sees
    * them. M3-2 turns that into a deliberate choice rather than a consequence.
    */
-  private async onExport(): Promise<void> {
+  private async onExport(selection: ExportSelection = { kind: 'all' }): Promise<void> {
     if (this.exporting) return
     const token = ++this.exportToken
     this.exporting = true
@@ -235,7 +281,12 @@ export class DeviceListView extends LitElement {
     this.exportProgress = { done: 0, total: 0 }
 
     try {
-      const bytes = await buildInventoryPdf(this.groups(), {
+      // Narrowed from what is on screen, never from the raw device list. That is what makes
+      // "disabled devices are excluded unless explicitly included" true for every selection
+      // rather than for the default one: a device the user cannot see is not in `groups()`,
+      // so no amount of selecting can reach it.
+      const chosen = selectForExport(this.groups(), selection)
+      const bytes = await buildInventoryPdf(chosen, {
         labels: inventoryLabels(),
         onProgress: (progress) => {
           if (token === this.exportToken) this.exportProgress = progress
@@ -267,7 +318,24 @@ export class DeviceListView extends LitElement {
         <div class="wa-split">
           <h1>${msg('Devices')}</h1>
           <div class="wa-cluster wa-gap-s">
-            <wa-button data-export appearance="outlined" @click=${this.onExport} ?disabled=${this.exporting}>
+            ${
+              this.selected.size === 0
+                ? ''
+                : html`<wa-button
+                    data-export-selected
+                    appearance="outlined"
+                    ?disabled=${this.exporting}
+                    @click=${() => void this.onExport({ kind: 'devices', ids: this.selected })}
+                  >
+                    <wa-icon slot="start" name="file-pdf"></wa-icon>
+                    <!-- Says how many, because "Export selection" on a page where the ticks
+                         have scrolled out of view is a button whose effect is invisible. -->
+                    ${msg(
+                      str`Export ${countSelected(this.groups(), { kind: 'devices', ids: this.selected })} selected`,
+                    )}
+                  </wa-button>`
+            }
+            <wa-button data-export appearance="outlined" @click=${() => void this.onExport()} ?disabled=${this.exporting}>
               <wa-icon slot="start" name="file-pdf"></wa-icon>
               ${msg('Export PDF')}
             </wa-button>

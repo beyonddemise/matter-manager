@@ -334,6 +334,18 @@
   <source>The PDF could not be built. Nothing was saved; try again.</source>
   <target>Das PDF konnte nicht erstellt werden. Es wurde nichts gespeichert; bitte erneut versuchen.</target>
 </trans-unit>
+<trans-unit id="s01924e0434d0960b">
+  <source>Select <x id="0" equiv-text="${device.name}"/></source>
+  <target><x id="0" equiv-text="${device.name}"/> auswählen</target>
+</trans-unit>
+<trans-unit id="see032876f36baf10">
+  <source>Export this room</source>
+  <target>Diesen Raum exportieren</target>
+</trans-unit>
+<trans-unit id="s9e143294067fa2be">
+  <source>Export <x id="0" equiv-text="${countSelected(this.groups(), { kind: 'devices', ids: this.selected })}"/> selected</source>
+  <target><x id="0" equiv-text="${countSelected(this.groups(), { kind: 'devices', ids: this.selected })}"/> ausgewählte exportieren</target>
+</trans-unit>
 </body>
 </file>
 </xliff>
