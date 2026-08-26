@@ -22,6 +22,14 @@ export {
   idRange,
   uuidOf,
 } from './documents/ids.js'
+export {
+  type DeviceCreation,
+  type DeviceDraft,
+  type DraftClock,
+  DraftError,
+  type DraftField,
+  planNewDevice,
+} from './documents/new-device.js'
 export type { DeviceDocument, RoomDocument, Unsaved } from './documents/types.js'
 export {
   ACTIONS,
@@ -36,6 +44,7 @@ export {
   type ProjectRef,
 } from './entitlements/can.js'
 export { BASE38_ALPHABET, Base38Error, decodeBase38, encodeBase38 } from './matter/base38.js'
+export { type DeviceCredential, readCredential } from './matter/credential.js'
 export {
   deriveManualCode,
   type ManualCode,

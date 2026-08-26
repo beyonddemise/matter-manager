@@ -32,10 +32,20 @@ describe('the route registry', () => {
     }
   })
 
+  it('routes /devices/new to the add-device view', () => {
+    expect(matchRoute('#/devices/new', ROUTES)?.route.view).toBe('add-device')
+  })
+
+  it('keeps the add-device route out of the navigation', () => {
+    // Reached from the button on the device list. A permanent nav entry beside "Devices"
+    // would list one section's action as though it were a section.
+    expect(NAV_ROUTES.map((route) => route.path)).not.toContain('/devices/new')
+  })
+
   it('registers no route whose view the shell cannot render', () => {
     // M2 registers only views that exist. Registering /devices/:id before M2-7 builds
     // its view would match a path and then fail to render, which is worse than not
     // matching it — an unregistered path correctly falls through to not-found.
-    expect(ROUTES.map((route) => route.view)).toEqual(['device-list', 'settings'])
+    expect(ROUTES.map((route) => route.view)).toEqual(['device-list', 'add-device', 'settings'])
   })
 })

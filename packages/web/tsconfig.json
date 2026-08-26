@@ -4,9 +4,17 @@
     "outDir": "dist",
     "rootDir": ".",
     "lib": ["ES2023", "DOM", "DOM.Iterable"],
-    "types": ["vite/client", "node"],
+    "types": ["vite/client", "node", "pouchdb-browser"],
     "experimentalDecorators": false,
     "useDefineForClassFields": false
   },
-  "include": ["src/**/*.ts", "test/**/*.ts", "vite.config.ts"]
+  "include": ["src/**/*.ts", "test/**/*.ts", "vite.config.ts"],
+  "references": [
+    {
+      "path": "../core"
+    },
+    {
+      "path": "../data"
+    }
+  ]
 }

@@ -685,3 +685,36 @@ is passing for a reason nobody has written down.
 
 **Related:** [[L19]] — a surviving mutant means redundant code *or* a missing test. This is its
 coverage-shaped twin, with a third answer: neither, and a false belief instead.
+
+---
+
+## L22 · A test that fakes an interaction the widget forbids is testing a state no user can reach
+
+**What happened:** six browser tests for the add-device form failed against an application that
+was correct. The helper filled every control the same way:
+
+```ts
+const control = element.querySelector(`[data-field="${field}"]`)
+control.value = value        // fine for <wa-input>
+```
+
+For `<wa-combobox>` it is not fine. Setting `value` to a string matching no `<wa-option>` does
+not select anything — the component rejects it and leaves `value` as `null`. What a user does
+when they type a new room is change `inputValue`; what they do when they pick one is change
+`value`. The helper produced a third state, reachable only from a test, in which both are
+empty. The form then reported "A device needs a room", which was the right answer to the
+question it was actually asked.
+
+The diagnosis took one throwaway test that dumped `value`, `inputValue`, the date field and the
+recorded error together. Reading `errorField: 'room'` next to `comboValue: null` ended it
+immediately; guessing from the timeout alone had already sent me to the date field first.
+
+**Rule:** before concluding that a component is broken, ask what the user's hands actually do
+to it and whether the test does that. For a custom element, a settable property is not
+automatically a settable-by-a-user property — read its documented API and find out which one
+the interaction writes. When a test fails, dump the inputs the code under test saw *alongside*
+its output; a timeout on its own names the symptom and not one of the six things that cause it.
+
+**Related:** [[L20]] — assert that the thing you set up actually reached the code, rather than
+that a step ran. Same failure wearing different clothes: here the test set a property the
+component threw away.

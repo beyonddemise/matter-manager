@@ -28,6 +28,8 @@ const EXPECTED: ReadonlyArray<
   ['ID_SEPARATOR', 'string'],
   ['idRange', 'function'],
   ['uuidOf', 'function'],
+  ['DraftError', 'function'],
+  ['planNewDevice', 'function'],
   // base38
   ['BASE38_ALPHABET', 'string'],
   ['Base38Error', 'function'],
@@ -38,6 +40,8 @@ const EXPECTED: ReadonlyArray<
   ['PayloadError', 'function'],
   ['decodePayload', 'function'],
   ['encodePayload', 'function'],
+  // credential
+  ['readCredential', 'function'],
   // manual code
   ['deriveManualCode', 'function'],
   ['parseManualCode', 'function'],

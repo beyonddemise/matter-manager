@@ -9,6 +9,7 @@ import {
   type SchemePreference,
   writePreference,
 } from './scheme.js'
+import './views/add-device.js'
 import './views/device-list.js'
 import './views/not-found.js'
 import './views/settings.js'
@@ -20,6 +21,7 @@ import './views/settings.js'
  * `routes.test.ts` that every registered route's view exists.
  */
 const VIEWS: Readonly<Record<string, () => TemplateResult>> = {
+  'add-device': () => html`<add-device-view></add-device-view>`,
   'device-list': () => html`<device-list-view></device-list-view>`,
   settings: () => html`<settings-view></settings-view>`,
 }
