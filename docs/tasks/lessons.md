@@ -921,3 +921,9 @@ before the failure handling was thought about at all.
 **Corollary:** a two-state flag (`loading` / `loaded`) is a design that cannot express failure.
 If the code has a boolean for "have we got the data", the failure case is already being rendered
 as one of the two states — and which one it lands in is an accident.
+
+**How to find the next one, cheaply:** grep for comments that explain how a failure should be
+*reported*, and for each one ask which side of the I/O boundary it was written for. This lesson
+was already written down in this repository — carefully, with the right reasoning — on the path
+it did not need to cover most. A codebase that has thought hard about one direction is a
+codebase where the other direction is worth reading immediately.
