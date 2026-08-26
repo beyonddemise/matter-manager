@@ -645,3 +645,43 @@ to remember, and the one forgotten is what produces a plausible wrong answer.
 
 **Related:** [[L16]] — a round trip proves neither direction. Same shape: agreement between two
 things that were never independent is not evidence.
+
+---
+
+## L21 · An uncovered defensive branch is a question about your model, not a number to chase
+
+**What happened:** the repository's `list` maps `_all_docs` rows and filters out any row with no
+`doc`, with a comment explaining why:
+
+> A deleted document still has a row in `_all_docs`, with no `doc` attached.
+
+The test beside it — *"drops removed documents rather than returning holes"* — passed. Coverage
+then reported the filter's false branch as never taken.
+
+The comment was simply wrong. A **ranged** `_all_docs` omits deleted documents entirely; no
+tombstone row is returned, so the filter never fires and the test was passing for a completely
+different reason than the one written next to it. Both the code comment and the test comment
+asserted a behaviour of CouchDB that I had inferred from the shape of the API rather than
+checked. Six lines to check it:
+
+```
+db.remove('device:a', rev)
+db.allDocs({ startkey: 'device:', endkey: 'device:￰', include_docs: true })
+→ rows: [ { id: 'device:b', hasDoc: true } ]      // no tombstone at all
+```
+
+The filter still earns its place — the row type declares `doc` optional and narrowing beats
+casting — but as a **type-level** guard, which is a different claim with a different comment.
+
+The general shape: an uncovered branch is usually read as "write a test for this". Sometimes
+the right reading is "you believe something about this system that is not true, and the belief
+is written down three inches away". The coverage number was the only thing in the room
+disagreeing with a comment, a test name and a test body that all agreed with each other.
+
+**Rule:** when coverage says a defensive branch never runs, do not reach for a test that forces
+it. First find out whether it *can* run, by probing the real dependency. If it cannot, the
+comment justifying it is a hypothesis that just failed, and the test that appeared to cover it
+is passing for a reason nobody has written down.
+
+**Related:** [[L19]] — a surviving mutant means redundant code *or* a missing test. This is its
+coverage-shaped twin, with a third answer: neither, and a false belief instead.

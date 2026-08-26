@@ -2,5 +2,25 @@
   "name": "@matter-manager/data",
   "version": "0.1.0",
   "private": true,
-  "type": "module"
+  "type": "module",
+  "devDependencies": {
+    "@types/node": "^24.13.3",
+    "@types/pouchdb-adapter-memory": "^6.1.6",
+    "@types/pouchdb-core": "^7.0.15",
+    "pouchdb-adapter-memory": "^9.0.0",
+    "pouchdb-core": "^9.0.0"
+  },
+  "description": "PouchDB repositories. Takes a database instance; constructs none.",
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "default": "./dist/src/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc --build"
+  },
+  "dependencies": {
+    "@matter-manager/core": "*"
+  }
 }

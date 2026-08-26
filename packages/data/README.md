@@ -2,9 +2,33 @@
 
 PouchDB repositories, the replication manager, and conflict resolution.
 
-**Created in M2.** Deliberately empty until then — an empty package with a `tsconfig.json`
-and no source files makes `tsc --build` fail, and scaffolding that has to be worked around
-is worse than scaffolding that does not yet exist.
+**Created in M2-4.**
+
+## It constructs no database
+
+A repository is handed an open `PouchDB.Database`; this package imports no PouchDB
+implementation and opens nothing. That is forced rather than chosen: `pouchdb-browser`, the
+allowlisted runtime build, references `self` at module scope and **cannot be imported in Node
+at all**, so any code depending on it could only be tested in a browser.
+
+Inverting it means `packages/web` supplies the browser build, the tests supply `pouchdb-core`
+plus `pouchdb-adapter-memory`, and these tests run in Node in milliseconds like `core`'s. The
+only PouchDB name in `src` is the *type* `PouchDB.Database`, which is erased at compile time —
+asserted by `test/no-pouchdb-import.test.ts`, which is what makes the `allowedDev` claim in
+`dependency-policy.json` a proof rather than a promise.
+
+## Documents are keyed by type
+
+Ids are `device:<uuid>` and `room:<uuid>`, so each type is a contiguous key range and `list()`
+is a ranged `_all_docs` query with no view to define, index, replicate or find stale. The cost
+is that the only free query is by id prefix, which is why a device's `roomId` is a full
+document id rather than a bare uuid.
+
+## The repository owns `updatedAt`
+
+`Unsaved<T>` removes it, so a caller cannot supply one. It is half of the total order the
+conflict merge depends on (ADR 0010), and a document written without it does not fail — it
+quietly loses every future conflict. The clock is injected, so tests are deterministic.
 
 ## What belongs here
 
