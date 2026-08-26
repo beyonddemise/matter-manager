@@ -122,6 +122,17 @@ export {
   selectForExport,
 } from './pdf/selection.js'
 export {
+  canManageMembers,
+  canWrite,
+  grantRole,
+  MembershipError,
+  narrowsAccess,
+  PROJECT_ROLES,
+  type ProjectSecurity,
+  revokeAccess,
+  securityFor,
+} from './projects/membership.js'
+export {
   type Caller,
   isOwner,
   type Owner,

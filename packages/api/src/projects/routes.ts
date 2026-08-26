@@ -11,7 +11,7 @@
  * @module
  */
 
-import type { Action, Principal } from '@matter-manager/core'
+import type { Action, Principal, ProjectRole } from '@matter-manager/core'
 import type { FastifyInstance } from 'fastify'
 import { bearerSubject } from '../auth/bearer.js'
 import type { SigningKey } from '../auth/jwt.js'
@@ -19,12 +19,19 @@ import type { CouchClient } from '../couch/client.js'
 import { type Gate, NotEntitledError, gate as realGate } from '../entitlements/gate.js'
 import { accessValidator } from './design-docs.js'
 import {
+  changeMembership,
+  listMembers,
+  type MembershipDependencies,
+  MembershipRefused,
+} from './members.js'
+import {
   OrphanedDatabaseError,
   type ProjectSummary,
   ProvisioningError,
   provisionProject,
 } from './provision.js'
 import { projectsFor } from './registry.js'
+import { findUser } from './users.js'
 
 /** What the project routes need. */
 export interface ProjectDependencies {
@@ -47,10 +54,16 @@ export interface ProjectDependencies {
   readonly now?: () => number
   /** The clock as an ISO string, for what is written into a pointer. */
   readonly clock?: () => string
+  /** Finds a user by address or subject. Injected so a test needs no `_users`. */
+  readonly findUser?: MembershipDependencies['findUser']
 }
 
-/** The action `POST /projects` is gated by. Named so the route and the map cannot drift. */
+/** The actions these routes are gated by. Named so the routes and the map cannot drift. */
 const CREATE: Action = 'project.create'
+const INVITE: Action = 'project.invite'
+
+/** The roles the contract allows, checked before anything is written. */
+const ROLES = new Set(['owner', 'manage', 'write', 'read'])
 
 /** What the request body may contain. Shape only — the rules live in `provision.ts`. */
 interface CreateBody {
@@ -141,5 +154,69 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDepende
         },
       ]
     })
+  })
+
+  const membership: MembershipDependencies = {
+    couch: deps.couch,
+    findUser: deps.findUser ?? ((value) => findUser(deps.couch, value)),
+  }
+
+  app.get('/projects/:projectId/members', async (request, reply) => {
+    const sub = bearerSubject(request, deps.key, now)
+    if (sub === undefined) return reply.code(401).send({ title: 'Not signed in', status: 401 })
+
+    const { projectId } = request.params as { projectId: string }
+
+    try {
+      return await listMembers(membership, projectId, sub)
+    } catch (error) {
+      if (error instanceof MembershipRefused) {
+        return reply.code(error.status).send({ title: error.message, status: error.status })
+      }
+      throw error
+    }
+  })
+
+  app.put('/projects/:projectId/members', async (request, reply) => {
+    const sub = bearerSubject(request, deps.key, now)
+    if (sub === undefined) return reply.code(401).send({ title: 'Not signed in', status: 401 })
+
+    const principal: Principal = { sub, plan: 'free' }
+    try {
+      gate(principal, INVITE, { id: (request.params as { projectId: string }).projectId })
+    } catch (error) {
+      if (!(error instanceof NotEntitledError)) throw error
+      return reply.code(403).send()
+    }
+
+    const { projectId } = request.params as { projectId: string }
+    const body = (request.body ?? {}) as { email?: unknown; role?: unknown }
+
+    if (typeof body.email !== 'string' || body.email.trim() === '') {
+      return reply.code(400).send({ title: 'An email address is needed.', status: 400 })
+    }
+    // `null` revokes. Spelled as a value rather than as a missing field, so that a body which
+    // forgot `role` is a mistake rather than an accidental revocation.
+    const revoking = body.role === null
+    if (!revoking && (typeof body.role !== 'string' || !ROLES.has(body.role))) {
+      return reply.code(400).send({ title: 'That is not a role.', status: 400 })
+    }
+
+    try {
+      await changeMembership(
+        membership,
+        projectId,
+        sub,
+        body.email,
+        revoking ? undefined : (body.role as ProjectRole),
+      )
+    } catch (error) {
+      if (error instanceof MembershipRefused) {
+        return reply.code(error.status).send({ title: error.message, status: error.status })
+      }
+      throw error
+    }
+
+    return reply.code(204).send()
   })
 }

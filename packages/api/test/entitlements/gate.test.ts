@@ -66,6 +66,18 @@ const DRIVERS: Readonly<Record<string, (built: Server, key: SigningKey) => Promi
       },
       payload: { name: 'Musterstraße 12' },
     }),
+  'PUT /projects/:projectId/members': (built, key) =>
+    built.inject({
+      method: 'PUT',
+      url: '/projects/8f14e45f-ceea-467a-9c0e-1b2c3d4e5f60/members',
+      headers: {
+        authorization: `Bearer ${mintToken(key, {
+          sub: ADA.sub,
+          exp: Math.floor(Date.now() / 1000) + 3600,
+        })}`,
+      },
+      payload: { email: 'grace@example.test', role: 'read' },
+    }),
 }
 
 /** A server with every gated route wired, and a gate that records what it was asked. */
@@ -117,9 +129,9 @@ describe('the enumeration that makes the seam real', () => {
   })
 
   it('has exactly the gated routes that are implemented, and no others', () => {
-    // The list that shrinks on purpose. `POST /projects` arrived with M5-1; the membership
-    // endpoint is M5-3's and is deliberately still absent. When it is implemented this goes
-    // red, which is exactly the moment somebody should be thinking about entitlement.
+    // The list that shrinks on purpose, and has now shrunk to nothing: `POST /projects` arrived
+    // with M5-1 and the membership endpoint with M5-3. Both are gated, both are driven below.
+    // A new gated action added to `ENFORCEMENT` puts an entry back here.
     const { built } = serverWithGatedRoutes()
     const registered = new Set(
       built.registeredRoutes().map((route) => `${route.method} ${route.url}`),
@@ -129,7 +141,7 @@ describe('the enumeration that makes the seam real', () => {
       .map((entry) => `${entry.method} ${entry.path}`)
       .filter((route) => registered.has(route))
 
-    expect(implemented).toEqual(['POST /projects'])
+    expect(implemented).toEqual(['POST /projects', 'PUT /projects/:projectId/members'])
   })
 
   it('watches the gate being called by every gated route that exists', async () => {

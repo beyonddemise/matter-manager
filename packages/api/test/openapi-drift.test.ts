@@ -194,11 +194,7 @@ describe('what the contract describes and the code does not yet', () => {
       .filter((operation) => !registered.has(operation))
       .sort()
 
-    expect(pending).toEqual([
-      'GET /projects/:projectId/members',
-      'POST /projects/:projectId/transfer',
-      'PUT /projects/:projectId/members',
-    ])
+    expect(pending).toEqual(['POST /projects/:projectId/transfer'])
   })
 })
 
