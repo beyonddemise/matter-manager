@@ -73,10 +73,15 @@ actually wrong. `pull_request_target` is **not** an option here and will not bec
 runs untrusted code with the credentials, trading an inconvenience for a credential compromise.
 
 **A branch name is checked against an allowlist before it reaches the deploy command.** Git
-permits `;`, `&`, `|`, `$`, `(`, `)` and backticks in a ref name, and the name is interpolated
-into a command a shell runs. Forks are already excluded, so this is not reachable by a
-stranger — but "only people we trust could exploit it" is not a security property, and the
-allowlist costs one step.
+permits `;`, `&`, `|`, `$`, `(`, `)` and backticks in a ref name, and the name ends up in a
+command line. Forks are already excluded, so this is not reachable by a stranger — but "only
+people we trust could exploit it" is not a security property, and the allowlist costs one step.
+
+The check is also what makes the *other* half safe. The branch is substituted into the action's
+`command` input by the workflow rather than left as `$BRANCH` for a shell to expand, because
+whether the action uses a shell is the action's business and not ours — passing `$BRANCH` would
+deploy to a branch literally named that if it does not. Substituting is only acceptable because
+the value has already been refused unless it matches `[A-Za-z0-9._/-]`.
 
 **The Pages project must be created before the first deploy.** `wrangler pages deploy` can
 create one interactively; an Actions runner is not a TTY, so it errors instead of prompting.

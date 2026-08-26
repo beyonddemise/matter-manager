@@ -54,11 +54,13 @@ jobs:
       # is outside this set, so the safe answer is to refuse the rest rather than to be clever
       # about quoting it.
       - name: Refuse a branch name that is not a branch name
+        id: branch
         run: |
           if ! printf '%s' "$BRANCH" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$'; then
             echo "Refusing to deploy: the branch name is not in [A-Za-z0-9._/-]." >&2
             exit 1
           fi
+          echo "name=$BRANCH" >> "$GITHUB_OUTPUT"
 
       - name: Reject a literal token in .npmrc
         run: node scripts/check-npmrc.mjs
@@ -113,13 +115,16 @@ jobs:
           # at <branch>.matter-manager.pages.dev. `github.head_ref` is set only for pull
           # requests, so `BRANCH` reads as "the PR's branch, or whatever branch was pushed".
           #
-          # `$BRANCH` and not `${{ env.BRANCH }}`: the value has been checked against an
-          # allowlist above, and reaching it through the shell rather than through template
-          # substitution keeps it data at the only moment that matters.
+          # Substituted, not left for a shell to expand. This is an action *input*, and
+          # whether the action runs it through a shell at all is the action's business, not
+          # ours — an earlier version passed `$BRANCH` and would have deployed to a branch
+          # literally named that if it did not. Substitution is safe here precisely because
+          # the step above refused anything outside [A-Za-z0-9._/-]; without that check this
+          # line would be the injection the check exists to prevent.
           command: >-
             pages deploy packages/web/dist
             --project-name=matter-manager
-            --branch=$BRANCH
+            --branch=${{ steps.branch.outputs.name }}
 
       - name: Say where it went
         env:
