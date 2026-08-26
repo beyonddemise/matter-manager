@@ -180,6 +180,32 @@ describe('disabled devices', () => {
     expect(shown(element)).toContain('device:old')
   })
 
+  it('does not blame a search nobody made when the filter hid everything', async () => {
+    // The third empty state, and the one that was missing. Every device disabled, box
+    // unticked: `browseDevices` returns nothing while `devices` is non-empty and the query is
+    // blank, so the search sentence would render with an empty pair of quotes in it - blaming
+    // the user for a filter they did not notice they had on.
+    await database.repositories.rooms.save({
+      _id: 'room:kitchen',
+      type: 'room',
+      path: 'Ground Floor/Kitchen',
+    })
+    await database.repositories.devices.save(
+      device('device:old', 'Old sensor', 'room:kitchen', { disabled: true }),
+    )
+
+    const element = await list()
+
+    expect(shown(element)).toEqual([])
+    expect(element.textContent).not.toContain('Nothing matches')
+    expect(element.textContent).not.toContain('No devices yet')
+    // Names the control, because the remedy is one tick away and the message has to say which.
+    expect(element.textContent).toContain('Show disabled devices')
+
+    await showDisabled(element)
+    expect(shown(element)).toEqual(['device:old'])
+  })
+
   it('marks the ones it shows, so they are not mistaken for working devices', async () => {
     await seed()
     const element = await list()

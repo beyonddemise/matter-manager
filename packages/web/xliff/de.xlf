@@ -130,6 +130,10 @@
   <source>Show disabled devices</source>
   <target>Deaktivierte Geräte anzeigen</target>
 </trans-unit>
+<trans-unit id="s93cbb1eaad49e46c">
+  <source>Every device you have is disabled. Tick "Show disabled devices" to see them.</source>
+  <target>Alle Ihre Geräte sind deaktiviert. Aktivieren Sie „Deaktivierte Geräte anzeigen“, um sie zu sehen.</target>
+</trans-unit>
 </body>
 </file>
 </xliff>
