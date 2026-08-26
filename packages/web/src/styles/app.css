@@ -138,6 +138,19 @@ a.app-device:hover {
   letter-spacing: var(--wa-letter-spacing-wider);
 }
 
+/* The camera preview. Sized by the dialog rather than by the stream: a camera's own aspect
+   ratio varies by device and by orientation, and letting it drive the layout makes the dialog
+   jump the moment the stream starts. `cover` crops instead, which is right here — the code
+   only has to be *in* frame, and the user is aiming. */
+.app-scan-preview {
+  width: 100%;
+  max-height: 60vh;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  border-radius: var(--wa-border-radius-m);
+  background-color: var(--wa-color-neutral-fill-quiet);
+}
+
 .app-remarks {
   margin: 0;
   padding: 0;

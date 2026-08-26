@@ -2,14 +2,17 @@ import '@awesome.me/webawesome-pro/dist/components/button/button.js'
 import '@awesome.me/webawesome-pro/dist/components/callout/callout.js'
 import '@awesome.me/webawesome-pro/dist/components/combobox/combobox.js'
 import '@awesome.me/webawesome-pro/dist/components/icon/icon.js'
+import '@awesome.me/webawesome-pro/dist/components/dialog/dialog.js'
 import '@awesome.me/webawesome-pro/dist/components/input/input.js'
 import '@awesome.me/webawesome-pro/dist/components/option/option.js'
 import type { DeviceDocument, RoomDocument } from '@matter-manager/core'
 import type { ProjectRepositories } from '@matter-manager/data'
 import { fixture, html, waitUntil } from '@open-wc/testing-helpers'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import type { ScanSource } from '../../src/scan/source.js'
 import type { AddDeviceView } from '../../src/views/add-device.js'
 import '../../src/views/add-device.js'
+import '../../src/views/scan-dialog.js'
 import { browserDatabase, type TestDatabase } from '../support/browser-database.js'
 
 /** The verified reference device; see `packages/core/test/matter/payload.test.ts`. */
@@ -63,6 +66,7 @@ function refusingWrites(): ProjectRepositories {
 
 async function form(
   repositories: ProjectRepositories = database.repositories,
+  scanSource: ScanSource | undefined = neverAvailable(),
 ): Promise<AddDeviceView> {
   await Promise.all([
     customElements.whenDefined('wa-input'),
@@ -70,8 +74,46 @@ async function form(
     customElements.whenDefined('wa-option'),
   ])
   return (await fixture(
-    html`<add-device-view .repositories=${repositories}></add-device-view>`,
+    html`<add-device-view
+      .repositories=${repositories}
+      .scanSource=${scanSource}
+    ></add-device-view>`,
   )) as AddDeviceView
+}
+
+/**
+ * A scan source that says this browser cannot scan.
+ *
+ * The default for every test that is not about scanning, and it is the honest default rather
+ * than a convenience: CI runs Linux Chromium, which has no `BarcodeDetector`, so "cannot scan"
+ * is what the real source answers there. Letting the tests fall through to the real one would
+ * mean the form under test differed between a developer's Mac and CI.
+ */
+function neverAvailable(): ScanSource {
+  return {
+    available: async () => false,
+    open: async () => {
+      throw new Error('a source that is not available should never be opened')
+    },
+    read: async () => [],
+    close: () => {},
+  }
+}
+
+/** A scan source that is available, and reads whatever the test tells it to. */
+function scanningSource(code: string): ScanSource {
+  const canvas = document.createElement('canvas')
+  canvas.width = 2
+  canvas.height = 2
+  const stream = canvas.captureStream(0)
+  return {
+    available: async () => true,
+    open: async () => stream,
+    read: async () => [code],
+    close: (open: MediaStream) => {
+      for (const track of open.getTracks()) track.stop()
+    },
+  }
 }
 
 /** Reads back what a control currently shows. */
@@ -399,5 +441,48 @@ describe('the order the two documents are written in', () => {
     await submit(element, () => element.querySelector('[data-save-failed]') !== null)
 
     expect(await devices()).toHaveLength(0)
+  })
+})
+
+describe('filling the setup code with the camera', () => {
+  it('offers no scan control at all when nothing can scan', async () => {
+    // Not a disabled button, and not one that explains itself when pressed. A desktop with no
+    // camera - or Chromium on Linux, which has no BarcodeDetector - should show a form that
+    // simply does not mention scanning.
+    const element = await form()
+    await waitUntil(() => element.scanChecked, 'the scan check never finished')
+    await element.updateComplete
+
+    expect(element.querySelector('[data-scan]')).toBeNull()
+  })
+
+  it('offers it when the browser can', async () => {
+    const element = await form(database.repositories, scanningSource(PAYLOAD))
+    await waitUntil(() => element.querySelector('[data-scan]') !== null, 'no scan control')
+  })
+
+  it('puts the scanned code into the setup-code field', async () => {
+    // The whole point of the story: the camera is one more way to fill the field the form
+    // already has, not a second flow with a second idea of what a setup code is.
+    const element = await form(database.repositories, scanningSource(PAYLOAD))
+    await waitUntil(() => element.querySelector('[data-scan]') !== null)
+    ;(element.querySelector('[data-scan]') as HTMLElement).click()
+
+    await waitUntil(() => fieldValue(element, 'credential') === PAYLOAD, 'the code never arrived')
+  })
+
+  it('files a device from a scanned code without anything else being typed into that field', async () => {
+    const element = await form(database.repositories, scanningSource(PAYLOAD))
+    await waitUntil(() => element.querySelector('[data-scan]') !== null)
+    ;(element.querySelector('[data-scan]') as HTMLElement).click()
+    await waitUntil(() => fieldValue(element, 'credential') === PAYLOAD)
+
+    fill(element, 'name', 'Kitchen ceiling light')
+    typeRoom(element, 'Ground Floor/Kitchen')
+    await submit(element, async () => (await devices()).length === 1)
+
+    const [device] = await devices()
+    expect(device?.payload).toBe(PAYLOAD)
+    expect(device?.vendorId).toBe(0xfff1)
   })
 })

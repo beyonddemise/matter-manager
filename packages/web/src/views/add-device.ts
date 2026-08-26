@@ -1,7 +1,9 @@
 import { msg } from '@lit/localize'
 import { type DeviceDraft, DraftError, planNewDevice } from '@matter-manager/core'
 import { html } from 'lit'
+import { cameraSource, type ScanSource } from '../scan/source.js'
 import { DeviceFormView, fieldValue } from './device-form.js'
+import './scan-dialog.js'
 
 /** Today, as `<input type="date">` writes it: a calendar date in the user's own timezone. */
 function today(): string {
@@ -28,12 +30,84 @@ function today(): string {
  * setup code, the date default, and what happens on save.
  */
 export class AddDeviceView extends DeviceFormView {
+  static override properties = {
+    ...DeviceFormView.properties,
+    scanSource: { attribute: false },
+    canScan: { state: true },
+    scanChecked: { state: true },
+    scanOpen: { state: true },
+  }
+
+  /** Bound by a test to a camera that is not one; the real one otherwise. */
+  declare scanSource?: ScanSource
+  /** Whether this browser can scan at all. Decides whether the control exists. */
+  declare canScan: boolean
+  /**
+   * Whether the answer is in yet.
+   *
+   * Distinct from `canScan` being false, and only a test needs the difference: without it,
+   * "the button is absent" is true before the check has finished and a test asserting it would
+   * pass against a form that was about to grow one.
+   */
+  declare scanChecked: boolean
+  declare scanOpen: boolean
+
+  constructor() {
+    super()
+    this.canScan = false
+    this.scanChecked = false
+    this.scanOpen = false
+  }
+
   protected override firstUpdated(): void {
     // The date is set once, imperatively, rather than bound in the template: a bound `value`
     // would be rewritten on every re-render, so the first validation error would silently
     // undo whatever date the user had chosen.
     this.setControlValue('[data-field="installed-at"]', today())
     void this.loadRooms()
+    void this.checkScanning()
+  }
+
+  private resolvedSource: ScanSource | undefined
+  private source(): ScanSource {
+    this.resolvedSource ??= this.scanSource ?? cameraSource()
+    return this.resolvedSource
+  }
+
+  /**
+   * Asks, once, whether scanning is possible here.
+   *
+   * The answer decides whether the control is rendered at all. A disabled button that explains
+   * itself when pressed would be worse than nothing on a desktop with no camera: it offers
+   * something, takes a press, and then says no — which reads as a broken feature rather than
+   * as a feature this machine cannot have.
+   */
+  private async checkScanning(): Promise<void> {
+    try {
+      this.canScan = await this.source().available()
+    } catch {
+      // A source that cannot even say whether it works is one to leave alone.
+      this.canScan = false
+    } finally {
+      this.scanChecked = true
+    }
+  }
+
+  /**
+   * Puts a scanned code into the field, exactly as if it had been typed.
+   *
+   * Written to the control rather than held in a property, for the reason this whole form is
+   * built that way: values here are imperative, so that a re-render cannot revert them.
+   * `planNewDevice` reads the control on submit, so a scanned code and a typed one reach the
+   * same validation by the same route — there is one place that turns text into a device.
+   */
+  private onScan(event: Event): void {
+    const { credential } = (event as CustomEvent<{ credential: string }>).detail
+    this.setControlValue('[data-field="credential"]', credential)
+    this.scanOpen = false
+    // A code that was scanned cannot be malformed in the ways a typed one can, so an error
+    // still on screen from an earlier attempt is now about text that is no longer there.
+    if (this.error?.field === 'credential') this.error = undefined
   }
 
   private draft(): DeviceDraft {
@@ -99,13 +173,36 @@ export class AddDeviceView extends DeviceFormView {
 
         ${this.renderError()}
 
-        <wa-input
-          data-field="credential"
-          label=${msg('Setup code')}
-          hint=${this.messageFor('credential') ?? msg('The MT: code from the QR label, or the numeric pairing code beneath it.')}
-          autocomplete="off"
-          spellcheck="false"
-        ></wa-input>
+        <div class="wa-stack wa-gap-2xs">
+          <wa-input
+            data-field="credential"
+            label=${msg('Setup code')}
+            hint=${this.messageFor('credential') ?? msg('The MT: code from the QR label, or the numeric pairing code beneath it.')}
+            autocomplete="off"
+            spellcheck="false"
+          ></wa-input>
+
+          <!-- Absent, not disabled, when nothing here can scan. See {@link checkScanning}. -->
+          ${
+            this.canScan
+              ? html`
+                  <div class="wa-cluster wa-gap-s">
+                    <wa-button
+                      data-scan
+                      type="button"
+                      appearance="outlined"
+                      @click=${() => {
+                        this.scanOpen = true
+                      }}
+                    >
+                      <wa-icon slot="start" name="camera"></wa-icon>
+                      ${msg('Scan the code')}
+                    </wa-button>
+                  </div>
+                `
+              : ''
+          }
+        </div>
 
         ${this.renderFields()}
 
@@ -115,6 +212,17 @@ export class AddDeviceView extends DeviceFormView {
           </wa-button>
           <wa-button href="#/" appearance="plain">${msg('Cancel')}</wa-button>
         </div>
+
+        <!-- Outside the controls it fills, and outside the submit path entirely: the dialog
+             hands over text and the form does what it would have done with typed text. -->
+        <scan-dialog
+          .source=${this.scanSource}
+          ?open=${this.scanOpen}
+          @scan=${this.onScan}
+          @wa-after-hide=${() => {
+            this.scanOpen = false
+          }}
+        ></scan-dialog>
       </form>
     `
   }

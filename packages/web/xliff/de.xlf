@@ -258,6 +258,38 @@
   <source>Nothing has been recorded about this device yet.</source>
   <target>Zu diesem Gerät wurde noch nichts erfasst.</target>
 </trans-unit>
+<trans-unit id="s3aae8e30897caca0">
+  <source>Scan the code</source>
+  <target>Code scannen</target>
+</trans-unit>
+<trans-unit id="sf78c048617264a07">
+  <source>This page has no permission to use a camera. Allow camera access for this site in your browser, or type the code instead.</source>
+  <target>Diese Seite hat keine Berechtigung, eine Kamera zu verwenden. Erlauben Sie den Kamerazugriff für diese Seite in Ihrem Browser, oder geben Sie den Code ein.</target>
+</trans-unit>
+<trans-unit id="s89220f0c63c6bb95">
+  <source>There is no camera this page can use. Type the code instead.</source>
+  <target>Es gibt keine Kamera, die diese Seite verwenden kann. Bitte geben Sie den Code ein.</target>
+</trans-unit>
+<trans-unit id="sc611e5288567bd05">
+  <source>The camera is being used by another application. Close it and try again, or type the code instead.</source>
+  <target>Die Kamera wird von einer anderen Anwendung verwendet. Schließen Sie diese und versuchen Sie es erneut, oder geben Sie den Code ein.</target>
+</trans-unit>
+<trans-unit id="sd9afa099cc06011f">
+  <source>The camera could not be started. Type the code instead.</source>
+  <target>Die Kamera konnte nicht gestartet werden. Bitte geben Sie den Code ein.</target>
+</trans-unit>
+<trans-unit id="s390cf7ed2baf42c1">
+  <source>Still looking — hold the QR code from the device in view.</source>
+  <target>Suche läuft — halten Sie den QR-Code des Geräts ins Bild.</target>
+</trans-unit>
+<trans-unit id="se1ff15b790979cfc">
+  <source>Scan the code on the device</source>
+  <target>Den Code am Gerät scannen</target>
+</trans-unit>
+<trans-unit id="s295750394c160fb5">
+  <source>Type the code instead</source>
+  <target>Code stattdessen eingeben</target>
+</trans-unit>
 </body>
 </file>
 </xliff>
