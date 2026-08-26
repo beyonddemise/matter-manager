@@ -56,6 +56,7 @@
     "@types/pouchdb-core": "Type declarations for PouchDB.Database, the only PouchDB name packages/data/src mentions. Erased at compile time.",
     "@types/pouchdb-adapter-memory": "Type declarations that add the memory adapter to PouchDB.Configuration. Test-only, erased at compile time.",
     "@types/pouchdb-browser": "Type declarations for the browser PouchDB build that packages/web opens. Erased at compile time.",
-    "openapi-typescript": "Generates TypeScript types from openapi/matter-manager.yaml at development time (ADR 0015). A devDependency by design: the generated file is committed, so a fresh clone builds without it, and nothing it produces reaches the runtime \u2014 types are erased."
+    "openapi-typescript": "Generates TypeScript types from openapi/matter-manager.yaml at development time (ADR 0015). A devDependency by design: the generated file is committed, so a fresh clone builds without it, and nothing it produces reaches the runtime \u2014 types are erased.",
+    "yaml": "Parses openapi/matter-manager.yaml for the contract-drift check (#39, ADR 0015). A root devDependency: the root package ships nothing, the specification is read only by tests, and Node has no built-in YAML parser. The alternative was hand-rolling one, which for a file the whole HTTP contract depends on is exactly the wrong place to be clever."
   }
 }

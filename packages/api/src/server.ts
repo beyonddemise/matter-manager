@@ -40,7 +40,16 @@ export interface ServerOptions {
  *
  * Does not listen. See the module note.
  */
-export function buildServer(options: ServerOptions = {}): FastifyInstance {
+/** One route as Fastify registered it. Used by the contract-drift check. */
+export interface RegisteredRoute {
+  readonly method: string
+  readonly url: string
+}
+
+/** A server that can say what it registered. */
+export type Server = FastifyInstance & { readonly registeredRoutes: () => RegisteredRoute[] }
+
+export function buildServer(options: ServerOptions = {}): Server {
   const app = Fastify({
     logger:
       options.logger === false
@@ -64,6 +73,27 @@ export function buildServer(options: ServerOptions = {}): FastifyInstance {
   })
 
   /**
+   * What was registered, for the contract-drift check (#39).
+   *
+   * Collected through `onRoute` rather than parsed out of `printRoutes()`. The printed tree is
+   * for humans and its shape is not a contract — a check built on it would be a check that
+   * breaks when Fastify changes its box-drawing characters, and worse, one that could silently
+   * stop matching anything and report no drift at all.
+   *
+   * The hook is added before any route, which is the only reason it sees them.
+   */
+  const routes: RegisteredRoute[] = []
+  app.addHook('onRoute', (route) => {
+    const methods = Array.isArray(route.method) ? route.method : [route.method]
+    // Fastify registers a HEAD alongside every GET by default. It is not an operation anyone
+    // wrote, and a contract that had to declare one for every GET would be a contract
+    // describing Fastify rather than this service.
+    for (const method of methods) {
+      if (method !== 'HEAD') routes.push({ method, url: route.url })
+    }
+  })
+
+  /**
    * Liveness.
    *
    * Deliberately says nothing but `ok`. A health endpoint that reports version, uptime or
@@ -76,5 +106,5 @@ export function buildServer(options: ServerOptions = {}): FastifyInstance {
     return { status: 'ok' }
   })
 
-  return app
+  return Object.assign(app, { registeredRoutes: () => [...routes] })
 }
