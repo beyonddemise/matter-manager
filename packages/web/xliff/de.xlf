@@ -302,6 +302,38 @@
   <source>Reload</source>
   <target>Neu laden</target>
 </trans-unit>
+<trans-unit id="s40e889c01e752e7f">
+  <source>Matter Manager inventory</source>
+  <target>Matter-Manager-Bestandsliste</target>
+</trans-unit>
+<trans-unit id="s7d09afc329d9995b">
+  <source>Page <x id="0" equiv-text="${page}"/> of <x id="1" equiv-text="${total}"/></source>
+  <target>Seite <x id="0" equiv-text="${page}"/> von <x id="1" equiv-text="${total}"/></target>
+</trans-unit>
+<trans-unit id="sda6f502557bcfc1f">
+  <source><x id="0" equiv-text="${path}"/> (continued)</source>
+  <target><x id="0" equiv-text="${path}"/> (Fortsetzung)</target>
+</trans-unit>
+<trans-unit id="s96e557d8c59f7621">
+  <source>Filed from a pairing code</source>
+  <target>Über Kopplungscode erfasst</target>
+</trans-unit>
+<trans-unit id="s3d664fde80ed00f2">
+  <source>There are no devices to export.</source>
+  <target>Es gibt keine Geräte zum Exportieren.</target>
+</trans-unit>
+<trans-unit id="s0d7644c23c3661d1">
+  <source>Export PDF</source>
+  <target>PDF exportieren</target>
+</trans-unit>
+<trans-unit id="sec68251fdc9f54ca">
+  <source>Building the PDF: <x id="0" equiv-text="${this.exportProgress?.done ?? 0}"/> of <x id="1" equiv-text="${this.exportProgress?.total ?? 0}"/> devices.</source>
+  <target>PDF wird erstellt: <x id="0" equiv-text="${this.exportProgress?.done ?? 0}"/> von <x id="1" equiv-text="${this.exportProgress?.total ?? 0}"/> Geräten.</target>
+</trans-unit>
+<trans-unit id="s8b62ca15bbdcc282">
+  <source>The PDF could not be built. Nothing was saved; try again.</source>
+  <target>Das PDF konnte nicht erstellt werden. Es wurde nichts gespeichert; bitte erneut versuchen.</target>
+</trans-unit>
 </body>
 </file>
 </xliff>

@@ -92,6 +92,16 @@ export {
 } from './matter/payload.js'
 export { isVerhoeffValid, VerhoeffError, verhoeffCheckDigit } from './matter/verhoeff.js'
 export {
+  A4,
+  type Block,
+  type EntryBlock,
+  entriesOf,
+  type HeadingBlock,
+  layoutInventory,
+  type Page,
+  type PageGeometry,
+} from './pdf/layout.js'
+export {
   isNearDuplicateRoomPath,
   isValidRoomPath,
   normaliseRoomPath,

@@ -10,6 +10,8 @@ import type { ProjectRepositories } from '@matter-manager/data'
 import { html, LitElement } from 'lit'
 import { projectDatabase } from '../db/project-database.js'
 import { getLocale } from '../i18n/localization.js'
+import { inventoryFilename, inventoryLabels, offerDownload } from '../pdf/download.js'
+import { buildInventoryPdf, ExportCancelled, type InventoryProgress } from '../pdf/inventory.js'
 
 /**
  * The device list: rooms, in order, with what is in them.
@@ -36,6 +38,10 @@ export class DeviceListView extends LitElement {
     loaded: { state: true },
     query: { state: true },
     includeDisabled: { state: true },
+    exporting: { state: true },
+    exportProgress: { state: true },
+    exportFailed: { state: true },
+    download: { attribute: false },
   }
 
   /** Bound by a test to a database of its own; resolved to the real one otherwise. */
@@ -52,12 +58,28 @@ export class DeviceListView extends LitElement {
   declare loaded: boolean
   declare query: string
   declare includeDisabled: boolean
+  /** Whether an export is running. Guards a second press landing on the same work. */
+  declare exporting: boolean
+  /** How far along, so a long export says what it is doing rather than appearing to hang. */
+  declare exportProgress: InventoryProgress | undefined
+  declare exportFailed: boolean
+  /**
+   * How the finished bytes reach the user. Bound by a test.
+   *
+   * A seam because the real one clicks a link: in a test browser that is a download prompt,
+   * or a file written into whatever directory the run happens to have — neither of which a
+   * test should cause, and both of which are invisible when they go wrong.
+   */
+  declare download?: (bytes: Uint8Array, filename: string) => void
 
   constructor() {
     super()
     // Subscribes this component to locale changes; without it the view keeps rendering the
     // strings that were active when it first rendered.
     updateWhenLocaleChanges(this)
+    this.exporting = false
+    this.exportProgress = undefined
+    this.exportFailed = false
     this.devices = []
     this.rooms = []
     this.loaded = false
@@ -183,6 +205,60 @@ export class DeviceListView extends LitElement {
     return html`<p class="app-empty">${msg(str`Nothing matches “${query}”.`)}</p>`
   }
 
+  /**
+   * Whether an export has been asked for that this one should abandon.
+   *
+   * A counter rather than a boolean: a cancelled export and a *newer* export are the same
+   * thing to the one being abandoned, and both have to stop the loop that is already running.
+   */
+  private exportToken = 0
+
+  /** Stops whatever export is running. */
+  private cancelExport(): void {
+    this.exportToken += 1
+    this.exporting = false
+    this.exportProgress = undefined
+  }
+
+  /**
+   * Exports what is on screen.
+   *
+   * What is on screen, not what is in the database: the export takes the same groups the list
+   * is rendering, so the search and the disabled filter apply to it exactly as the user sees
+   * them. M3-2 turns that into a deliberate choice rather than a consequence.
+   */
+  private async onExport(): Promise<void> {
+    if (this.exporting) return
+    const token = ++this.exportToken
+    this.exporting = true
+    this.exportFailed = false
+    this.exportProgress = { done: 0, total: 0 }
+
+    try {
+      const bytes = await buildInventoryPdf(this.groups(), {
+        labels: inventoryLabels(),
+        onProgress: (progress) => {
+          if (token === this.exportToken) this.exportProgress = progress
+        },
+        cancelled: () => token !== this.exportToken,
+      })
+      if (token !== this.exportToken) return
+      ;(this.download ?? offerDownload)(bytes, inventoryFilename())
+    } catch (error) {
+      // A cancelled export is not a failure, and saying so would be the application
+      // complaining about something the user asked for.
+      if (error instanceof ExportCancelled) return
+      // Not logged: the document being built contains setup passcodes, and an error carrying
+      // one into a console is exactly the leak this project keeps saying it will not have.
+      if (token === this.exportToken) this.exportFailed = true
+    } finally {
+      if (token === this.exportToken) {
+        this.exporting = false
+        this.exportProgress = undefined
+      }
+    }
+  }
+
   override render() {
     const groups = this.groups()
 
@@ -190,11 +266,47 @@ export class DeviceListView extends LitElement {
       <div class="wa-stack wa-gap-l">
         <div class="wa-split">
           <h1>${msg('Devices')}</h1>
-          <wa-button href="#/devices/new" variant="brand">
-            <wa-icon slot="start" name="plus"></wa-icon>
-            ${msg('Add a device')}
-          </wa-button>
+          <div class="wa-cluster wa-gap-s">
+            <wa-button data-export appearance="outlined" @click=${this.onExport} ?disabled=${this.exporting}>
+              <wa-icon slot="start" name="file-pdf"></wa-icon>
+              ${msg('Export PDF')}
+            </wa-button>
+            <wa-button href="#/devices/new" variant="brand">
+              <wa-icon slot="start" name="plus"></wa-icon>
+              ${msg('Add a device')}
+            </wa-button>
+          </div>
         </div>
+
+        ${
+          this.exporting
+            ? html`
+                <wa-callout variant="neutral" data-export-progress>
+                  <wa-icon slot="icon" name="file-pdf"></wa-icon>
+                  <div class="wa-split wa-gap-m">
+                    <span>
+                      ${msg(
+                        str`Building the PDF: ${this.exportProgress?.done ?? 0} of ${this.exportProgress?.total ?? 0} devices.`,
+                      )}
+                    </span>
+                    <wa-button data-cancel-export size="small" appearance="plain" @click=${this.cancelExport}>
+                      ${msg('Cancel')}
+                    </wa-button>
+                  </div>
+                </wa-callout>
+              `
+            : ''
+        }
+        ${
+          this.exportFailed
+            ? html`
+                <wa-callout variant="danger" data-export-failed>
+                  <wa-icon slot="icon" name="triangle-exclamation"></wa-icon>
+                  ${msg('The PDF could not be built. Nothing was saved; try again.')}
+                </wa-callout>
+              `
+            : ''
+        }
 
         <div class="wa-stack wa-gap-s">
           <wa-input

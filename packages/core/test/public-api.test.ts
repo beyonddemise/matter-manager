@@ -62,6 +62,10 @@ const EXPECTED: ReadonlyArray<
   ['passcodeProblem', 'function'],
   // text
   ['foldForComparison', 'function'],
+  // pdf layout
+  ['A4', 'object'],
+  ['layoutInventory', 'function'],
+  ['entriesOf', 'function'],
   // conflict merge
   ['UNASSIGNED_ROOM_PREFIX', 'string'],
   ['compareRevisions', 'function'],

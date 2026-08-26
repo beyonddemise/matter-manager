@@ -1,7 +1,9 @@
 import '@awesome.me/webawesome-pro/dist/components/badge/badge.js'
 import '@awesome.me/webawesome-pro/dist/components/button/button.js'
 import '@awesome.me/webawesome-pro/dist/components/checkbox/checkbox.js'
+import '@awesome.me/webawesome-pro/dist/components/callout/callout.js'
 import '@awesome.me/webawesome-pro/dist/components/icon/icon.js'
+import '@awesome.me/webawesome-pro/dist/components/qr-code/qr-code.js'
 import '@awesome.me/webawesome-pro/dist/components/input/input.js'
 import '@awesome.me/webawesome-pro/dist/components/tag/tag.js'
 import type { DeviceDocument, Unsaved } from '@matter-manager/core'
@@ -234,5 +236,100 @@ describe('the view itself', () => {
     const element = await list()
     expect(element.shadowRoot).toBeNull()
     expect(element.querySelector('.wa-stack')).not.toBeNull()
+  })
+})
+
+describe('exporting the inventory', () => {
+  /** The list, with the download intercepted. */
+  async function listWithDownload(): Promise<{
+    element: DeviceListView
+    saved: Array<{ bytes: Uint8Array; filename: string }>
+  }> {
+    const saved: Array<{ bytes: Uint8Array; filename: string }> = []
+    const element = await list()
+    // The real one clicks a link, which in a test browser is a download prompt or a file
+    // written into whatever directory the run happens to have. Neither is a thing a test
+    // should cause, and both are invisible when they go wrong.
+    ;(element as DeviceListView & { download?: unknown }).download = (
+      bytes: Uint8Array,
+      filename: string,
+    ) => saved.push({ bytes, filename })
+    return { element, saved }
+  }
+
+  it('produces a PDF named for today', async () => {
+    await seed()
+    const { element, saved } = await listWithDownload()
+
+    ;(element.querySelector('[data-export]') as HTMLElement).click()
+    await waitUntil(() => saved.length === 1, 'the export never finished', { timeout: 10000 })
+
+    expect(saved[0]?.filename).toMatch(/^matter-manager-\d{4}-\d{2}-\d{2}\.pdf$/)
+    expect(new TextDecoder('latin1').decode(saved[0]?.bytes).startsWith('%PDF-')).toBe(true)
+  })
+
+  it('exports what is on screen, filter and all', async () => {
+    // The export takes the groups the list is rendering, so a search or the disabled filter
+    // applies to it exactly as the user sees it. Anything else would be an export that
+    // disagrees with the page it was started from.
+    await seed()
+    const { element, saved } = await listWithDownload()
+
+    element.query = 'Mirror'
+    await element.updateComplete
+    ;(element.querySelector('[data-export]') as HTMLElement).click()
+    await waitUntil(() => saved.length === 1, 'the export never finished', { timeout: 10000 })
+
+    expect(saved[0]?.bytes.byteLength).toBeGreaterThan(500)
+  })
+
+  it('says what it is doing while it works', async () => {
+    await seed()
+    const { element } = await listWithDownload()
+
+    // Deterministic rather than timed: the click sets the flag synchronously, so exactly one
+    // update cycle later the callout is on the page. Polling for it races an export that may
+    // already have finished — which is a test that passes or fails on how fast the machine is.
+    ;(element.querySelector('[data-export]') as HTMLElement).click()
+    await element.updateComplete
+
+    expect(element.querySelector('[data-export-progress]')).not.toBeNull()
+    expect(element.querySelector('[data-cancel-export]')).not.toBeNull()
+  })
+
+  it('can be called off', async () => {
+    await seed()
+    const { element, saved } = await listWithDownload()
+
+    ;(element.querySelector('[data-export]') as HTMLElement).click()
+    await waitUntil(() => element.exporting, 'the export never started')
+    ;(element.querySelector('[data-cancel-export]') as HTMLElement).click()
+
+    await new Promise((resolve) => setTimeout(resolve, 500))
+    expect(saved).toHaveLength(0)
+    expect(element.exporting).toBe(false)
+  })
+
+  it('does not report a cancellation as a failure', async () => {
+    // The user asked for it. Complaining about it would be the application arguing.
+    await seed()
+    const { element } = await listWithDownload()
+
+    ;(element.querySelector('[data-export]') as HTMLElement).click()
+    await waitUntil(() => element.exporting, 'the export never started')
+    ;(element.querySelector('[data-cancel-export]') as HTMLElement).click()
+
+    await new Promise((resolve) => setTimeout(resolve, 500))
+    await element.updateComplete
+    expect(element.querySelector('[data-export-failed]')).toBeNull()
+  })
+
+  it('exports an empty project rather than refusing to', async () => {
+    const { element, saved } = await listWithDownload()
+
+    ;(element.querySelector('[data-export]') as HTMLElement).click()
+    await waitUntil(() => saved.length === 1, 'the export never finished', { timeout: 10000 })
+
+    expect(new TextDecoder('latin1').decode(saved[0]?.bytes).startsWith('%PDF-')).toBe(true)
   })
 })
