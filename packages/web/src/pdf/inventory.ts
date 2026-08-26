@@ -22,6 +22,7 @@ import {
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib'
 import { renderQrPng } from './qr-image.js'
 import { winAnsiSafe } from './win-ansi.js'
+import { yieldToBrowser } from './yield.js'
 
 /** How large the code is drawn, in points. About 34mm — comfortably scannable off paper. */
 const QR_SIZE = 96
@@ -123,8 +124,19 @@ export async function buildInventoryPdf(
       if (options.cancelled?.() === true) throw new ExportCancelled('The export was cancelled.')
 
       await drawEntry(page, block, { yOf, geometry, regular, bold, ink, quiet, labels, pdf })
+      // `embedPng` is **lazy**: it registers an embedder and does the decoding and deflating
+      // at save time. Left alone, two hundred images are processed in one synchronous call at
+      // the end — which measured as a 5.6-second freeze *after* the last progress callback,
+      // with the loop above looking perfectly well-behaved. Flushing here does that work now,
+      // inside the loop, where the yield below can break it up.
+      await pdf.flush()
       done += 1
       options.onProgress?.({ done, total })
+      // Once per device, and it is what makes the progress callout above actually appear.
+      // Every `await` in this loop settles on a microtask, which continues the *same* task —
+      // so without this the whole export is one block and the interface is frozen for its
+      // duration. See `yield.ts`.
+      await yieldToBrowser()
     }
 
     if (laid.blocks.length === 0) {
@@ -151,6 +163,14 @@ export async function buildInventoryPdf(
   pdf.setTitle(labels.title)
   // Deliberately no author, producer, or keywords beyond the title. Metadata is the quiet way
   // documents carry things nobody meant to publish, and this one is handed to other people.
+  //
+  // Object streams left on. They were briefly suspected of costing a second per forty pages,
+  // and that measurement was wrong: it saved the *same document* twice, and pdf-lib caches its
+  // normalisation, so whichever call ran second was fast because the first had done the work.
+  // Measured properly on two documents, object streams are the faster of the two (25ms against
+  // 61ms for sixty pages) as well as producing the smaller file.
+  //
+  // The real cost was the deferred image embedding flushed above.
   return pdf.save()
 }
 
