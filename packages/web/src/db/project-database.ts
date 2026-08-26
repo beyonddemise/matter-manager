@@ -9,7 +9,12 @@
  * @module
  */
 
-import { type ProjectRepositories, projectRepositories } from '@matter-manager/data'
+import {
+  type LocalCache,
+  localCache,
+  type ProjectRepositories,
+  projectRepositories,
+} from '@matter-manager/data'
 import PouchDB from 'pouchdb-browser'
 
 /**
@@ -34,4 +39,38 @@ let opened: ProjectRepositories | undefined
 export function projectDatabase(): ProjectRepositories {
   opened ??= projectRepositories(new PouchDB(PROJECT_DATABASE_NAME))
   return opened
+}
+
+/**
+ * The cache of what the server has told this browser.
+ *
+ * Deliberately **not** a project database and never given a remote counterpart: it holds the
+ * profile now and the project list at M5, which are the only two things in this application
+ * that are server-only (ADR 0012). See `data/src/local-cache.ts` for why replicating it would
+ * be wrong rather than merely unnecessary.
+ */
+export const LOCAL_CACHE_DATABASE_NAME = 'mm-local'
+
+let cache: LocalCache | undefined
+
+/**
+ * The local cache, opening the database on first use.
+ *
+ * Memoised for the same reason as {@link projectDatabase}: a second `new PouchDB(name)` is a
+ * second handle on the same store.
+ */
+export function localProfileCache(): LocalCache {
+  cache ??= localCache(new PouchDB(LOCAL_CACHE_DATABASE_NAME))
+  return cache
+}
+
+/**
+ * Forgets the memoised handle.
+ *
+ * Needed because {@link LocalCache.clear} *destroys* the database, and a destroyed PouchDB
+ * handle does not come back — a later read through the same object fails rather than finding an
+ * empty cache. Sign-out calls both.
+ */
+export function forgetLocalProfileCache(): void {
+  cache = undefined
 }
