@@ -122,6 +122,15 @@ export {
   selectForExport,
 } from './pdf/selection.js'
 export {
+  type Caller,
+  isOwner,
+  type Owner,
+  ownerOf,
+  type Participant,
+  type ProjectRole,
+  roleOf,
+} from './projects/ownership.js'
+export {
   isNearDuplicateRoomPath,
   isValidRoomPath,
   isWithinRoom,
