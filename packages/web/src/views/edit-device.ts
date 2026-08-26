@@ -133,10 +133,15 @@ export class EditDeviceView extends DeviceFormView {
 
       this.error = undefined
 
-      // The room first, for the same reason as in `add-device.ts`: an empty room is harmless,
-      // a device pointing at a room that does not exist is a broken record.
-      if (update.room !== undefined) await this.repos().rooms.save(update.room)
-      await this.repos().devices.save(update.device)
+      if (!(await this.write(update))) {
+        // A rejected write here is most often a conflict: another tab or another replica has
+        // moved the document on, so the `_rev` in hand is stale and every retry fails exactly
+        // the same way. Re-reading makes the next attempt plan against what is actually
+        // stored, and touches nothing the user typed - `fill` runs only from `load`.
+        const fresh = await this.repos().devices.get(device._id)
+        if (fresh !== undefined) this.device = fresh
+        return
+      }
     } finally {
       this.saving = false
     }

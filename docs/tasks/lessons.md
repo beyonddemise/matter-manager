@@ -797,3 +797,29 @@ throwaway test that dumped both properties before and after, learned that select
 condition. That one fact is what makes `typed !== '' && typed !== selected` safe rather than a
 different guess. Three minutes of probe, and the alternative was a second silent bug where the
 first one had been.
+
+---
+
+## L25 · `git add -A` commits the working tree, not your change
+
+**Context:** PR #82. CodeRabbit filed a finding against `scripts/derv-up.sh` — a tmux helper
+that hard-codes one developer's `$HOME/Code` layout. It was a fair finding about a file that
+had no business being in the diff: the script is my human partner's local helper, it was
+sitting untracked in the working tree, and `git add -A` swept it into a commit about editing
+devices. Nothing in `npm run verify` notices an extra file, and nothing in my own review did
+either — I read the diff of what I had *written*, not the diff of what I had *staged*.
+
+The damage here was small. The same reflex commits a `.env` someone left lying around, a
+scratch script with a token in it, or a half-finished file from another branch — and a public
+repository's history does not forget.
+
+**Rule:** never `git add -A` (or `git add .`) on a repository you did not start from empty.
+Stage the paths the change actually touches, and when a change is broad enough that listing
+paths is impractical, run `git status --short` first and account for **every** line: `M` you
+expected, `??` you can name. An untracked file you did not create is not yours to commit —
+leave it untracked and say so, because whether it belongs in the repository is its owner's
+decision and not part of your story.
+
+**Corollary:** `git diff --cached --stat` immediately before committing takes two seconds and
+answers "what am I actually about to put in history?" — a different question from "is my code
+right?", and the one no test suite asks.

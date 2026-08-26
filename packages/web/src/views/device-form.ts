@@ -1,10 +1,12 @@
 import { msg, updateWhenLocaleChanges } from '@lit/localize'
 import {
+  type DeviceDocument,
   type DeviceFields,
   type DraftError,
   type DraftField,
   normaliseRoomPath,
   type RoomDocument,
+  type Unsaved,
 } from '@matter-manager/core'
 import type { ProjectRepositories } from '@matter-manager/data'
 import { html, LitElement, type PropertyDeclarations, type TemplateResult } from 'lit'
@@ -50,6 +52,7 @@ export abstract class DeviceFormView extends LitElement {
     createdRoom: { state: true },
     error: { state: true },
     saving: { state: true },
+    saveFailed: { state: true },
   }
 
   /**
@@ -66,6 +69,8 @@ export abstract class DeviceFormView extends LitElement {
   // `exactOptionalPropertyTypes` assigning `undefined` to an optional property is an error.
   declare error: DraftError | undefined
   declare saving: boolean
+  /** Whether the last write was rejected by storage. Distinct from a rejected *field*. */
+  declare saveFailed: boolean
 
   constructor() {
     super()
@@ -75,6 +80,7 @@ export abstract class DeviceFormView extends LitElement {
     this.rooms = []
     this.createdRoom = ''
     this.saving = false
+    this.saveFailed = false
   }
 
   /**
@@ -92,6 +98,44 @@ export abstract class DeviceFormView extends LitElement {
 
   protected async loadRooms(): Promise<void> {
     this.rooms = await this.repos().rooms.list()
+  }
+
+  /**
+   * Writes the planned documents, and says whether it worked.
+   *
+   * The room goes first. PouchDB has no transactions, so a failure between the two writes
+   * leaves either nothing or an empty room — and an empty room is harmless and reusable,
+   * whereas a device pointing at a room that does not exist is a broken record.
+   *
+   * A rejected write is reported rather than thrown. Left to propagate out of a submit
+   * handler it becomes an unhandled rejection: the button un-busies, nothing appears on
+   * screen, and the user cannot tell whether their device was saved — which for a form whose
+   * whole purpose is not losing a code is the worst possible way to fail.
+   *
+   * The error itself is deliberately not logged. The document being written contains the
+   * setup passcode, and a storage error carrying a copy of it into a console — and from there
+   * into whatever a user pastes into a bug report — is the one leak this application must not
+   * have. What the user needs is on screen; what a developer needs is the failing operation,
+   * which is this one.
+   */
+  protected async write(plan: {
+    readonly room?: Unsaved<RoomDocument>
+    readonly device: Unsaved<DeviceDocument>
+  }): Promise<boolean> {
+    try {
+      if (plan.room !== undefined) await this.repos().rooms.save(plan.room)
+      await this.repos().devices.save(plan.device)
+      // Not observable today: a successful save always navigates away from the form, so
+      // nothing renders this flag afterwards, and a mutation probe reports the line as a
+      // survivor. It stays because it makes the flag a true statement about the last attempt
+      // rather than one that happens to be true because of where the caller goes next - the
+      // same reason `new-device.ts` keeps its unreachable rethrow.
+      this.saveFailed = false
+      return true
+    } catch {
+      this.saveFailed = true
+      return false
+    }
   }
 
   /** Writes a value into a control, once. Never bound; see the class comment. */
@@ -188,15 +232,34 @@ export abstract class DeviceFormView extends LitElement {
       : [...paths, this.createdRoom]
   }
 
-  /** The callout above the form, or nothing when the last attempt was fine. */
+  /**
+   * The callout above the form, or nothing when the last attempt was fine.
+   *
+   * Two different failures, deliberately two different callouts. "This field is wrong" is
+   * something the user can act on by fixing it; "storage refused the write" is not their
+   * mistake at all, and dressing the second up as the first sends them hunting through
+   * controls that were all correct.
+   */
   protected renderError(): TemplateResult | '' {
-    if (this.error === undefined) return ''
-    return html`
-      <wa-callout variant="danger" data-error>
-        <wa-icon slot="icon" name="circle-exclamation"></wa-icon>
-        ${this.error.message}
-      </wa-callout>
-    `
+    if (this.error !== undefined) {
+      return html`
+        <wa-callout variant="danger" data-error>
+          <wa-icon slot="icon" name="circle-exclamation"></wa-icon>
+          ${this.error.message}
+        </wa-callout>
+      `
+    }
+
+    if (this.saveFailed) {
+      return html`
+        <wa-callout variant="danger" data-save-failed>
+          <wa-icon slot="icon" name="triangle-exclamation"></wa-icon>
+          ${msg('Could not save to this browser’s storage. Everything you entered is still here — try again. If it keeps failing, the browser may be out of space.')}
+        </wa-callout>
+      `
+    }
+
+    return ''
   }
 
   /** The five controls both forms have, in the order both forms show them. */

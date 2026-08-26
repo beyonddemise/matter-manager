@@ -78,6 +78,7 @@ export class DeviceView extends LitElement {
     enlarged: { state: true },
     confirmingDelete: { state: true },
     busy: { state: true },
+    failure: { state: true },
   }
 
   /**
@@ -97,6 +98,14 @@ export class DeviceView extends LitElement {
   declare confirmingDelete: boolean
   /** A write is in flight. Guards the actions against a second click landing on a stale `_rev`. */
   declare busy: boolean
+  /**
+   * Which action storage refused, if any.
+   *
+   * Two values rather than a boolean, because the two failures need different sentences in
+   * different places: a refused disable belongs beside the buttons, a refused delete belongs
+   * inside the dialog that is still open asking for it.
+   */
+  declare failure: 'toggle' | 'delete' | undefined
 
   constructor() {
     super()
@@ -106,6 +115,7 @@ export class DeviceView extends LitElement {
     this.enlarged = false
     this.confirmingDelete = false
     this.busy = false
+    this.failure = undefined
   }
 
   /**
@@ -128,6 +138,7 @@ export class DeviceView extends LitElement {
     this.enlarged = false
     this.confirmingDelete = false
     this.busy = false
+    this.failure = undefined
     void this.load()
   }
 
@@ -273,17 +284,38 @@ export class DeviceView extends LitElement {
    * The write returns the stored document, `_rev` included, and that is what replaces the one
    * in hand: keeping the stale copy would make the *next* action a conflict, which shows up as
    * a save that fails for no reason the user did anything to cause.
+   *
+   * Guarded by the same {@link request} token as {@link load}, because a write outliving its
+   * route is the same wrong-device failure as a stale read arriving through the other door.
+   * Press Disable on one device, navigate to another before the write settles, and an
+   * unguarded assignment puts the first device's name, QR and pairing code on the second
+   * device's page — which is one device's setup code shown under another device's title.
+   *
+   * The action itself is never abandoned. Only its *result* is dropped; the device is still
+   * disabled, and the page the user has moved to is left alone.
    */
   private async onToggleDisabled(): Promise<void> {
     const device = this.device
     if (device === undefined || this.busy) return
     this.busy = true
+    const token = this.request
     try {
-      this.device = await this.repos().devices.save(
+      const saved = await this.repos().devices.save(
         setDeviceDisabled(device, !device.disabled, () => new Date().toISOString()),
       )
+      if (token !== this.request) return
+      this.device = saved
+      this.failure = undefined
+    } catch {
+      // Reported rather than rethrown: an unhandled rejection out of a click handler leaves
+      // the button un-busied and the screen unchanged, which is indistinguishable from a
+      // button that does nothing. Not logged - the document carries the setup passcode.
+      if (token === this.request) this.failure = 'toggle'
     } finally {
-      this.busy = false
+      // `busy` belongs to whichever route owns the page now. `willUpdate` already cleared it
+      // on navigation, and a later device may have set it again for a write of its own -
+      // clearing it unconditionally here would unlock that one's guard from under it.
+      if (token === this.request) this.busy = false
     }
   }
 
@@ -297,12 +329,24 @@ export class DeviceView extends LitElement {
     const device = this.device
     if (device === undefined || this.busy) return
     this.busy = true
+    const token = this.request
     try {
       await this.repos().devices.remove(device)
+    } catch {
+      // The dialog stays open, now saying why. Closing it would look like the delete had
+      // happened, which for the one irreversible action here is the wrong way to be wrong.
+      if (token === this.request) this.failure = 'delete'
+      return
     } finally {
-      this.busy = false
+      if (token === this.request) this.busy = false
     }
+
+    // Leaving is right for the page that was deleted and wrong for the one the user is on
+    // now. A delete that finishes after the route moved on has nothing left to navigate away
+    // from, so it navigates nowhere; see {@link onToggleDisabled}.
+    if (token !== this.request) return
     this.confirmingDelete = false
+    this.failure = undefined
     window.location.hash = '#/'
   }
 
@@ -314,7 +358,18 @@ export class DeviceView extends LitElement {
    */
   private renderActions(device: DeviceDocument): TemplateResult {
     return html`
-      <div class="wa-cluster wa-gap-s">
+      <div class="wa-stack wa-gap-s">
+        ${
+          this.failure === 'toggle'
+            ? html`
+                <wa-callout variant="danger" data-action-failed>
+                  <wa-icon slot="icon" name="triangle-exclamation"></wa-icon>
+                  ${msg('Could not save that change. The device is unchanged; try again.')}
+                </wa-callout>
+              `
+            : ''
+        }
+        <div class="wa-cluster wa-gap-s">
         <wa-button data-edit href="#/devices/${uuidOf(device._id) ?? ''}/edit" appearance="outlined">
           <wa-icon slot="start" name="pen"></wa-icon>
           ${msg('Edit')}
@@ -337,6 +392,7 @@ export class DeviceView extends LitElement {
           <wa-icon slot="start" name="trash"></wa-icon>
           ${msg('Delete')}
         </wa-button>
+        </div>
       </div>
     `
   }
@@ -364,6 +420,16 @@ export class DeviceView extends LitElement {
             ${msg('Deleting a device deletes its commissioning code with it. That code cannot be recovered, and without it the device can only be re-commissioned after a factory reset.')}
           </wa-callout>
           <p>${msg('To take it out of service but keep the code, disable it instead.')}</p>
+          ${
+            this.failure === 'delete'
+              ? html`
+                  <wa-callout variant="warning" data-delete-failed>
+                    <wa-icon slot="icon" name="circle-exclamation"></wa-icon>
+                    ${msg('Could not delete this device. It is still in the catalogue; try again.')}
+                  </wa-callout>
+                `
+              : ''
+          }
         </div>
 
         <wa-button slot="footer" data-dialog="close" appearance="plain">${msg('Cancel')}</wa-button>

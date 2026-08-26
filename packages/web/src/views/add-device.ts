@@ -82,13 +82,9 @@ export class AddDeviceView extends DeviceFormView {
 
       this.error = undefined
 
-      // The room first. PouchDB has no transactions, so a failure between the two writes
-      // leaves either nothing or an empty room - and an empty room is harmless and reusable,
-      // whereas a device pointing at a room that does not exist is a broken record.
-      if (creation.room !== undefined) {
-        await this.repos().rooms.save(creation.room)
-      }
-      await this.repos().devices.save(creation.device)
+      // Stay on the form when storage refuses the write: navigating to a list that does not
+      // contain the device would be the application saying it saved something it did not.
+      if (!(await this.write(creation))) return
     } finally {
       this.saving = false
     }

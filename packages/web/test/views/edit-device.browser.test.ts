@@ -5,6 +5,7 @@ import '@awesome.me/webawesome-pro/dist/components/icon/icon.js'
 import '@awesome.me/webawesome-pro/dist/components/input/input.js'
 import '@awesome.me/webawesome-pro/dist/components/option/option.js'
 import type { DeviceDocument, RoomDocument, Unsaved } from '@matter-manager/core'
+import type { ProjectRepositories } from '@matter-manager/data'
 import { fixture, html, waitUntil } from '@open-wc/testing-helpers'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { EditDeviceView } from '../../src/views/edit-device.js'
@@ -60,14 +61,31 @@ async function seed(device: Unsaved<DeviceDocument> = lamp()): Promise<void> {
   await database.repositories.devices.save(device)
 }
 
-async function form(uuid = UUID): Promise<EditDeviceView> {
+/** The real repositories, with every device write refused - a full disk, a locked database. */
+function refusingWrites(): ProjectRepositories {
+  const real = database.repositories
+  return {
+    ...real,
+    devices: {
+      ...real.devices,
+      save: async () => {
+        throw new Error('storage refused the write')
+      },
+    },
+  }
+}
+
+async function form(
+  uuid = UUID,
+  repositories: ProjectRepositories = database.repositories,
+): Promise<EditDeviceView> {
   await Promise.all([
     customElements.whenDefined('wa-input'),
     customElements.whenDefined('wa-combobox'),
     customElements.whenDefined('wa-option'),
   ])
   const element = (await fixture(
-    html`<edit-device-view uuid=${uuid} .repositories=${database.repositories}></edit-device-view>`,
+    html`<edit-device-view uuid=${uuid} .repositories=${repositories}></edit-device-view>`,
   )) as EditDeviceView
   await waitUntil(() => element.loaded, 'the edit form never finished its read')
   await element.updateComplete
@@ -250,5 +268,30 @@ describe('navigating between devices', () => {
       { timeout: 3000 },
     )
     expect(shown(element, 'room')).toBe('Ground Floor/Hall')
+  })
+})
+
+describe('a write storage refuses', () => {
+  it('stays on the form and says so, rather than navigating as though it saved', async () => {
+    await seed()
+    const element = await form(UUID, refusingWrites())
+    fill(element, 'name', 'Kitchen spotlight')
+
+    await submit(element, () => element.querySelector('[data-save-failed]') !== null)
+
+    expect((await stored()).name).toBe('Kitchen ceiling light')
+    // The one thing that must survive a failed save is the work the user just did.
+    expect(shown(element, 'name')).toBe('Kitchen spotlight')
+  })
+
+  it('says nothing about a field, because no field was wrong', async () => {
+    // A storage failure dressed up as a validation error sends the user hunting through
+    // controls that were all correct.
+    await seed()
+    const element = await form(UUID, refusingWrites())
+
+    await submit(element, () => element.querySelector('[data-save-failed]') !== null)
+
+    expect(element.querySelector('[data-error]')).toBeNull()
   })
 })

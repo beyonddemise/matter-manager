@@ -214,6 +214,18 @@
   <source>Save changes</source>
   <target>Änderungen speichern</target>
 </trans-unit>
+<trans-unit id="sdbab4f1561d03328">
+  <source>Could not save to this browser’s storage. Everything you entered is still here — try again. If it keeps failing, the browser may be out of space.</source>
+  <target>Speichern im Browser-Speicher nicht möglich. Alle Eingaben sind noch vorhanden – bitte erneut versuchen. Falls es weiterhin fehlschlägt, ist der Speicherplatz des Browsers womöglich erschöpft.</target>
+</trans-unit>
+<trans-unit id="sa9c46478165d17ed">
+  <source>Could not save that change. The device is unchanged; try again.</source>
+  <target>Diese Änderung konnte nicht gespeichert werden. Das Gerät ist unverändert; bitte erneut versuchen.</target>
+</trans-unit>
+<trans-unit id="s89cb1cead7c8b542">
+  <source>Could not delete this device. It is still in the catalogue; try again.</source>
+  <target>Dieses Gerät konnte nicht gelöscht werden. Es ist weiterhin im Katalog; bitte erneut versuchen.</target>
+</trans-unit>
 </body>
 </file>
 </xliff>
