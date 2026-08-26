@@ -166,6 +166,47 @@ export interface paths {
     patch?: never
     trace?: never
   }
+  '/auth/signout': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    /**
+     * End the session
+     * @description Clears the session cookie. Necessary as a server operation because that cookie is
+     *     `HttpOnly` — the page cannot remove it, and a page that merely forgot its own token
+     *     would still be signed in on the next request.
+     *
+     *     Removing local databases is the browser's half and is not undone by this.
+     */
+    post: {
+      parameters: {
+        query?: never
+        header?: never
+        path?: never
+        cookie?: never
+      }
+      requestBody?: never
+      responses: {
+        /** @description Signed out. Also the answer when there was no session to end. */
+        204: {
+          headers: {
+            [name: string]: unknown
+          }
+          content?: never
+        }
+      }
+    }
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
   '/profile': {
     parameters: {
       query?: never

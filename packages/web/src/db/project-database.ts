@@ -74,3 +74,51 @@ export function localProfileCache(): LocalCache {
 export function forgetLocalProfileCache(): void {
   cache = undefined
 }
+
+/**
+ * Every database this browser holds on behalf of the signed-in user.
+ *
+ * Listed by **name** rather than derived from the memoised handles, and that is the whole point:
+ * a page that never opened the device list has no project handle to destroy, and destroying only
+ * what happens to be open would leave every device on disk while the interface said the user had
+ * signed out.
+ */
+const LOCAL_DATABASE_NAMES = [PROJECT_DATABASE_NAME, LOCAL_CACHE_DATABASE_NAME] as const
+
+/** Opens a database purely to destroy it. Opening one that does not exist is harmless. */
+async function destroyByName(name: string): Promise<void> {
+  await new PouchDB(name).destroy()
+}
+
+/**
+ * Removes every local database, for signing out.
+ *
+ * **Only ever called because the user asked.** An expired session must not reach this — see
+ * `session.ts`, where the distinction is the substance of the issue.
+ *
+ * Each database is attempted regardless of the others (`allSettled`, not sequential `await`s):
+ * stopping at the first failure would leave the second one intact, which is the "signed out but
+ * the data is still here" state that signing out on a shared machine exists to prevent.
+ *
+ * @param destroy how to remove one database; injected so a test can make it fail
+ * @throws {AggregateError} if any database survived, so `signOut` can say "we could not remove
+ *   everything" rather than reporting a success the machine does not reflect
+ */
+export async function removeLocalDatabases(
+  destroy: (name: string) => Promise<void> = destroyByName,
+): Promise<void> {
+  // Before the destroys, and unconditionally. A destroyed PouchDB handle does not come back, so
+  // a memoised one that outlived its database fails every later read; and if a destroy fails,
+  // the handle may point at a database that is now half gone.
+  opened = undefined
+  cache = undefined
+
+  const outcomes = await Promise.allSettled(LOCAL_DATABASE_NAMES.map((name) => destroy(name)))
+  const failures = outcomes.flatMap((outcome) =>
+    outcome.status === 'rejected' ? [outcome.reason] : [],
+  )
+
+  if (failures.length > 0) {
+    throw new AggregateError(failures, 'Some local data could not be removed from this browser.')
+  }
+}

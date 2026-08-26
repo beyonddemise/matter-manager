@@ -104,6 +104,21 @@ paths:
                   expiresIn: { type: integer, description: Seconds until expiry }
         '401': { $ref: '#/components/responses/Unauthorized' }
 
+  /auth/signout:
+    post:
+      tags: [auth]
+      summary: End the session
+      description: |
+        Clears the session cookie. Necessary as a server operation because that cookie is
+        `HttpOnly` — the page cannot remove it, and a page that merely forgot its own token
+        would still be signed in on the next request.
+
+        Removing local databases is the browser's half and is not undone by this.
+      security: []
+      responses:
+        '204':
+          description: Signed out. Also the answer when there was no session to end.
+
   /profile:
     get:
       tags: [profile]

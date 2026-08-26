@@ -823,3 +823,31 @@ decision and not part of your story.
 **Corollary:** `git diff --cached --stat` immediately before committing takes two seconds and
 answers "what am I actually about to put in history?" — a different question from "is my code
 right?", and the one no test suite asks.
+
+---
+
+## L26 · A wrong clock is invisible to a test that reads through the same clock
+
+**Context:** `#46`, `packages/web/src/tokens.ts`. The token holder stores the *instant* a token
+expires, computed with an injected clock that defaults to `Math.floor(Date.now() / 1000)` —
+seconds, because that is the scale the contract and the JWT both use. Every behavioural test
+injected its own clock, so nothing exercised the default at all, and coverage said so: 75% of
+functions.
+
+The obvious fix was a test that remembers a token with the default clock and reads it back with
+the default clock. It passed. It also passed when the default was mutated to `Date.now()`
+(milliseconds) and when it was mutated to a constant `0`. Both mutations SURVIVED, because a
+clock that is consistently wrong is consistently wrong on both sides of the comparison: write
+`now + 3600`, read `now'`, and `now' < now + 3570` holds whatever unit `now` is in.
+
+Had it shipped, `expiresIn: 3600` would have placed the expiry roughly forty thousand years
+out. Sign-in would work, nothing would visibly break, and the safety margin — the entire reason
+the module knows about expiry — would have been dead code.
+
+**Rule:** to test a clock, unit, or any other scale, the assertion has to cross the boundary:
+write through the value under test and read through a *known* one, or the reverse. A test that
+uses the same source on both sides asserts self-consistency, which every wrong answer also has.
+
+**Corollary:** a function that coverage reports as never called is not merely untested — it is
+usually the one whose only observable behaviour is a unit, a default, or an ambient dependency,
+which is exactly the class this lesson is about.

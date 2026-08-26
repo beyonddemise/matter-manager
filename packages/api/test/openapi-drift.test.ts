@@ -153,6 +153,7 @@ describe('what the contract describes and the code does not yet', () => {
       'GET /profile',
       'GET /projects',
       'GET /projects/:projectId/members',
+      'POST /auth/signout',
       'POST /auth/token',
       'POST /projects',
       'POST /projects/:projectId/transfer',
