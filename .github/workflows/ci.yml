@@ -80,6 +80,17 @@ jobs:
       - name: Dependency policy
         run: npm run check:deps
 
+      # Web Awesome Pro's presence, and the translation catalogue's currency. Both are in
+      # `npm run verify`; the webawesome one was missing here, so a laptop and CI disagreed
+      # about what "green" meant.
+      - name: Web Awesome Pro
+        run: npm run check:webawesome
+
+      # Regenerates the catalogue into a temporary directory and compares. Catches a msg()
+      # added without an extract, which otherwise ships as English with nothing red anywhere.
+      - name: Translation catalogue
+        run: npm run check:i18n
+
       - name: Biome
         run: npm run check
 

@@ -5,10 +5,13 @@
  * collapsing them means a user who has chosen light gets dark the moment their laptop does.
  *
  * Storage is passed in rather than reached for, so the logic tests without a browser and
- * without touching real `localStorage`.
+ * without touching real `localStorage`. The guard that makes that safe lives in
+ * `preferences.ts` — see there for why the supplier is called inside the `try`.
  *
  * @module
  */
+
+import { readStoredPreference, writeStoredPreference } from './preferences.js'
 
 /** What the user chose. */
 export type SchemePreference = 'light' | 'dark' | 'system'
@@ -31,42 +34,18 @@ export function resolveScheme(preference: SchemePreference, systemPrefersDark: b
  * Reads the stored preference, falling back to following the system.
  *
  * Anything unrecognised — written by an older build, or edited by hand — falls back rather
- * than being applied, because "system" is the one answer that is never wrong. `getItem`
- * throwing (Safari in private browsing) is handled the same way.
- *
- * Takes a *supplier* rather than a storage object, and calls it inside this `try`, because
- * the throwing site on a hostile origin is the `localStorage` property access itself, not
- * just `getItem`. Accepting the object directly would move that access to the call site,
- * outside any guard, and a `SecurityError` there would abort application startup before this
- * function ever ran. Callers pass `() => localStorage` and the deferred access happens here,
- * where the surrounding `try` already covers it.
+ * than being applied, because "system" is the one answer that is never wrong.
  */
 export function readPreference(getStorage: () => Pick<Storage, 'getItem'>): SchemePreference {
-  try {
-    const stored = getStorage().getItem(SCHEME_STORAGE_KEY)
-    return stored !== null && PREFERENCES.has(stored) ? (stored as SchemePreference) : 'system'
-  } catch {
-    return 'system'
-  }
+  return readStoredPreference(getStorage, SCHEME_STORAGE_KEY, PREFERENCES, 'system')
 }
 
-/**
- * Stores the preference. A refused write is not worth breaking the page over.
- *
- * As with {@link readPreference}, `getStorage` is called inside this `try` so that a
- * `localStorage` access that throws on a hostile origin is guarded here rather than at the
- * call site.
- */
+/** Stores the preference. A refused write is not worth breaking the page over. */
 export function writePreference(
   getStorage: () => Pick<Storage, 'setItem'>,
   preference: SchemePreference,
 ): void {
-  try {
-    getStorage().setItem(SCHEME_STORAGE_KEY, preference)
-  } catch {
-    // Private browsing, a full quota, or a hostile origin refusing `localStorage` access
-    // entirely. The preference simply does not persist.
-  }
+  writeStoredPreference(getStorage, SCHEME_STORAGE_KEY, preference)
 }
 
 /** Applies the scheme to the document element, leaving theme and palette classes untouched. */

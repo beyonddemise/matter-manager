@@ -88,12 +88,45 @@ i18n across a built UI is miserable work that is never quite finished, and it co
 to do it as you go.
 
 ```ts
-import { msg } from '@lit/localize'
+import { msg, updateWhenLocaleChanges } from '@lit/localize'
 
-render() {
-  return html`<sl-button>${msg('Add device')}</sl-button>`
+class AddDeviceView extends LitElement {
+  constructor() {
+    super()
+    // Without this the component keeps the strings it first rendered with, while the rest of
+    // the page changes language around it.
+    updateWhenLocaleChanges(this)
+  }
+
+  render() {
+    return html`<wa-button>${msg('Add device')}</wa-button>`
+  }
 }
 ```
+
+`npm run check:i18n` enforces this. It scans `html` templates for text and for user-visible
+attributes (`label`, `placeholder`, `title`, `alt`, `aria-label`, `hint`) that are plain
+literals. It is a heuristic and cannot see a string built in a helper, so it is a floor rather
+than a proof.
+
+### After adding or changing a string
+
+```
+npm run i18n     # extract into packages/web/xliff/de.xlf, then regenerate the locale modules
+```
+
+Then **write the German** in the new `<trans-unit>` before committing. A unit with no
+`<target>` does not fail the build — lit-localize silently falls back to English — so
+`check:i18n` fails on it instead. Commit the regenerated files: they are checked in so that a
+fresh clone builds without a code-generation step, and `check:i18n` compares them against a
+regeneration in a temporary directory to make sure they are current.
+
+Two things are deliberately **not** wrapped in `msg()`:
+
+- **Language names** (`English`, `Deutsch`). A language picker names each option in its own
+  language, so that a user stranded in a language they cannot read can still find their own.
+  They live in `LOCALE_NAMES` in `packages/web/src/i18n/locale.ts`, as data rather than markup.
+- **The generated catalogue** under `packages/web/src/generated/`. Never edit it by hand.
 
 ## Runtime dependencies
 

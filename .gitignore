@@ -47,4 +47,13 @@ npm-debug.log*
 
 # Browser-test artefacts
 packages/web/.vitest-attachments/
-packages/web/test/__screenshots__/
+# Anchored with ** because vitest writes these beside each test file, not only at the
+# top of test/: a plain `test/__screenshots__/` misses test/<area>/__screenshots__/ and a
+# failure screenshot then arrives in a commit looking like a deliberate baseline.
+packages/web/test/**/__screenshots__/
+
+# Written and removed by scripts/check-i18n.mjs; listed so a crashed run leaves no trap.
+.lit-localize.check.json
+
+# Screenshots and snapshots from the Playwright MCP browser, used for manual verification.
+.playwright-mcp/

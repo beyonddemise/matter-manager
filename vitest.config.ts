@@ -63,6 +63,10 @@ export default defineConfig({
       // fails silently: coverage falls back to loaded files only and still reports 100%.
       // Verified by adding an unimported module and confirming the total drops.
       include: ['packages/*/src/**/*.ts'],
+      // lit-localize output. Excluded because it is generated: its statements would move the
+      // number without anyone having tested anything, and the guard that actually matters -
+      // that it is current and complete - is `npm run check:i18n`, not a coverage percentage.
+      exclude: ['packages/web/src/generated/**'],
       // Per-glob rather than global: `core`'s 90% must not silently become the bar for UI
       // code, and `web`'s lower bar must not silently weaken `core`'s. When data and api
       // arrive they get their own entries here too.
