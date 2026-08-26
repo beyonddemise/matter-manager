@@ -35,7 +35,7 @@
     "check:i18n": "node scripts/check-i18n.mjs"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.9",
+    "@biomejs/biome": "^2.5.10",
     "@lit/localize-tools": "^0.8.2",
     "@vitest/browser-playwright": "^4.1.11",
     "@vitest/coverage-v8": "^4.1.11",
