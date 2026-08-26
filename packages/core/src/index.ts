@@ -47,6 +47,11 @@ export {
   type DeviceDraft,
   planNewDevice,
 } from './documents/new-device.js'
+export {
+  addRemark,
+  type RemarkAuthor,
+  remarksNewestFirst,
+} from './documents/remark.js'
 export type { DeviceDocument, RoomDocument, Unsaved } from './documents/types.js'
 export {
   ACTIONS,

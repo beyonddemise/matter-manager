@@ -5,6 +5,7 @@ import '@awesome.me/webawesome-pro/dist/components/dialog/dialog.js'
 import '@awesome.me/webawesome-pro/dist/components/icon/icon.js'
 import '@awesome.me/webawesome-pro/dist/components/qr-code/qr-code.js'
 import '@awesome.me/webawesome-pro/dist/components/tag/tag.js'
+import '@awesome.me/webawesome-pro/dist/components/textarea/textarea.js'
 import { type DeviceDocument, decodePayload, type Unsaved } from '@matter-manager/core'
 import type { ProjectRepositories } from '@matter-manager/data'
 import { fixture, html, waitUntil } from '@open-wc/testing-helpers'
@@ -641,5 +642,156 @@ describe('the busy guard belongs to the route that set it', () => {
     await new Promise((resolve) => setTimeout(resolve, 600))
 
     expect(attempted.filter((id) => id === `device:${SECOND_UUID}`)).toHaveLength(1)
+  })
+})
+
+describe('remarks', () => {
+  /** A stored remark, of the shape the conflict merge already unions by id. */
+  const note = (id: string, createdAt: string, text: string) => ({
+    id,
+    text,
+    authorSub: 'auth0|someone',
+    authorName: 'Someone',
+    createdAt,
+  })
+
+  /** Types into the composer the way a user does, then presses the button. */
+  async function write(element: DeviceView, text: string): Promise<void> {
+    const box = element.querySelector('[data-remark-text]') as { value?: string } | null
+    if (box === null) throw new Error('the remark composer is not on the page')
+    box.value = text
+    click(element, '[data-add-remark]')
+    await element.updateComplete
+  }
+
+  /** The remarks as rendered, in the order they appear. */
+  const shown = (element: DeviceView): string[] =>
+    [...element.querySelectorAll('[data-remark]')].map((entry) =>
+      (entry.querySelector('[data-remark-body]')?.textContent ?? '').trim(),
+    )
+
+  it('stores what was typed, with a timestamp and an author', async () => {
+    await seed()
+    const element = await page()
+
+    await write(element, 'Replaced batteries')
+    await waitUntil(
+      () => (element.device?.remarks.length ?? 0) === 1,
+      'the remark was never stored',
+    )
+
+    const stored = await database.repositories.devices.get(DEVICE_ID)
+    expect(stored?.remarks).toHaveLength(1)
+    expect(stored?.remarks[0]?.text).toBe('Replaced batteries')
+    expect(stored?.remarks[0]?.createdAt).toMatch(/^\d{4}-\d{2}-\d{2}T/)
+    expect(stored?.remarks[0]?.authorSub).not.toBe('')
+    expect(stored?.remarks[0]?.id).not.toBe('')
+  })
+
+  it('shows the remark it just stored', async () => {
+    await seed()
+    const element = await page()
+
+    await write(element, 'Replaced batteries')
+    await waitUntil(() => shown(element).length === 1, 'the remark was never rendered')
+
+    expect(shown(element)).toEqual(['Replaced batteries'])
+  })
+
+  it('leaves the remarks already there exactly as they were', async () => {
+    // Append-only is the whole contract. A rewrite here would be invisible on screen and
+    // would break the conflict merge, which unions by id and assumes an id means one text.
+    const existing = note('aaa', '2026-08-01T10:00:00.000Z', 'Installed')
+    await seed(lamp({ remarks: [existing] }))
+    const element = await page()
+
+    await write(element, 'Replaced batteries')
+    await waitUntil(() => (element.device?.remarks.length ?? 0) === 2)
+
+    const stored = await database.repositories.devices.get(DEVICE_ID)
+    expect(stored?.remarks.find((entry) => entry.id === 'aaa')).toEqual(existing)
+  })
+
+  it('reads newest first', async () => {
+    await seed(
+      lamp({
+        remarks: [
+          note('aaa', '2026-08-01T10:00:00.000Z', 'Installed'),
+          note('bbb', '2026-08-02T10:00:00.000Z', 'Moved to the north end'),
+        ],
+      }),
+    )
+    const element = await page()
+
+    expect(shown(element)).toEqual(['Moved to the north end', 'Installed'])
+  })
+
+  it('puts a newly added remark above the ones before it', async () => {
+    await seed(lamp({ remarks: [note('aaa', '2026-08-01T10:00:00.000Z', 'Installed')] }))
+    const element = await page()
+
+    await write(element, 'Replaced batteries')
+    await waitUntil(() => shown(element).length === 2)
+
+    expect(shown(element)[0]).toBe('Replaced batteries')
+  })
+
+  it('empties the composer once the remark is stored', async () => {
+    await seed()
+    const element = await page()
+
+    await write(element, 'Replaced batteries')
+    await waitUntil(() => shown(element).length === 1)
+
+    const box = element.querySelector('[data-remark-text]') as { value?: string }
+    expect(box.value).toBe('')
+  })
+
+  it('writes nothing when there is nothing to record', async () => {
+    await seed()
+    const element = await page()
+    const before = (await database.repositories.devices.get(DEVICE_ID))?._rev
+
+    await write(element, '   ')
+    await element.updateComplete
+
+    expect((await database.repositories.devices.get(DEVICE_ID))?._rev).toBe(before)
+    expect(element.querySelector('[data-remark-failed]')).not.toBeNull()
+  })
+
+  it('keeps the typed text when storage refuses the write', async () => {
+    // The one thing that must not happen to a remark: the user types a paragraph about what
+    // they did to a device in a basement, the write fails, and the text is gone.
+    await seed()
+    const element = await page(UUID, refusingWrites())
+
+    await write(element, 'Replaced batteries')
+    await waitUntil(() => element.querySelector('[data-remark-failed]') !== null)
+
+    const box = element.querySelector('[data-remark-text]') as { value?: string }
+    expect(box.value).toBe('Replaced batteries')
+  })
+
+  it('does not carry a composer between devices', async () => {
+    await seed()
+    await seedSecond()
+    const element = await page()
+    const box = element.querySelector('[data-remark-text]') as { value?: string }
+    box.value = 'half-written note about the kitchen light'
+
+    element.uuid = SECOND_UUID
+    await waitUntil(() => element.device?.name === 'Hall sensor')
+    await element.updateComplete
+
+    const moved = element.querySelector('[data-remark-text]') as { value?: string }
+    expect(moved.value).toBe('')
+  })
+
+  it('says so rather than leaving a gap when there are no remarks yet', async () => {
+    await seed()
+    const element = await page()
+
+    expect(shown(element)).toEqual([])
+    expect(element.querySelector('[data-no-remarks]')).not.toBeNull()
   })
 })

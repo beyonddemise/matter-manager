@@ -137,3 +137,23 @@ a.app-device:hover {
   font-size: var(--wa-font-size-l);
   letter-spacing: var(--wa-letter-spacing-wider);
 }
+
+.app-remarks {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.app-remarks > li {
+  padding-inline-start: var(--wa-space-m);
+  border-inline-start: var(--wa-border-width-m) solid var(--wa-color-neutral-border-quiet);
+}
+
+/* A remark is usually a short account of what was done, and it is written in a textarea, so
+   the line breaks the author put in are part of what they said. Collapsing them runs a list
+   of three things into one sentence. `anywhere` rather than `break-word` so a long serial or
+   URL pasted into a remark wraps instead of widening the page on a phone. */
+.app-remark-body {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

@@ -24,7 +24,7 @@ import { documentId } from './ids.js'
 import type { RoomDocument, Unsaved } from './types.js'
 
 /** Which control the user has to go back to. A closed union, so a view cannot miss a case. */
-export type DraftField = 'credential' | 'name' | 'room' | 'installedAt'
+export type DraftField = 'credential' | 'name' | 'room' | 'installedAt' | 'remark'
 
 /**
  * A form that cannot become a device, and the field responsible.
