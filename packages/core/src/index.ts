@@ -92,6 +92,21 @@ export {
 } from './matter/payload.js'
 export { isVerhoeffValid, VerhoeffError, verhoeffCheckDigit } from './matter/verhoeff.js'
 export {
+  AVERY_5160,
+  AVERY_L7160,
+  AVERY_L7163,
+  FIRST_LABEL,
+  LABEL_SAFE_INSET,
+  LABEL_STOCKS,
+  type LabelPage,
+  type LabelStart,
+  type LabelStock,
+  type LabelSubject,
+  layoutLabels,
+  MM,
+  type PlacedLabel,
+} from './pdf/labels.js'
+export {
   A4,
   type Block,
   type EntryBlock,
@@ -102,8 +117,54 @@ export {
   type PageGeometry,
 } from './pdf/layout.js'
 export {
+  countSelected,
+  type ExportSelection,
+  selectForExport,
+} from './pdf/selection.js'
+export {
+  foldEmail,
+  INVITATION_LIFETIME,
+  type Invitation,
+  InvitationError,
+  type InvitationProblem,
+  isOpen,
+  planInvitation,
+  redeemable,
+} from './projects/invitation.js'
+export {
+  canManageMembers,
+  canWrite,
+  grantRole,
+  MembershipError,
+  narrowsAccess,
+  PROJECT_ROLES,
+  type ProjectSecurity,
+  revokeAccess,
+  securityFor,
+} from './projects/membership.js'
+export {
+  type Caller,
+  isOwner,
+  type Owner,
+  ownerOf,
+  type Participant,
+  type ProjectRole,
+  roleOf,
+} from './projects/ownership.js'
+export {
+  acceptable,
+  applyTransfer,
+  type PendingTransfer,
+  planTransfer,
+  type RetainedAccess,
+  TRANSFER_LIFETIME,
+  TransferError,
+  type TransferProblem,
+} from './projects/transfer.js'
+export {
   isNearDuplicateRoomPath,
   isValidRoomPath,
+  isWithinRoom,
   normaliseRoomPath,
   ROOM_PATH_SEPARATOR,
   RoomPathError,

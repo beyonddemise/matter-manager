@@ -37,6 +37,12 @@ export function inventoryFilename(now: Date = new Date()): string {
   return `matter-manager-${local.toISOString().slice(0, 10)}.pdf`
 }
 
+/** The label sheet's filename, on the same pattern and for the same reason. */
+export function labelsFilename(now: Date = new Date()): string {
+  const local = new Date(now.getTime() - now.getTimezoneOffset() * 60_000)
+  return `matter-manager-labels-${local.toISOString().slice(0, 10)}.pdf`
+}
+
 /**
  * Offers the bytes to the user as a download.
  *

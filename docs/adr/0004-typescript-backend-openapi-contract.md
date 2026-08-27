@@ -4,7 +4,9 @@ Date: 2026-08-19
 
 ## Status
 
-Accepted
+Accepted. **Amended by [ADR 0015](0015-openapi-checked-not-executed.md)**, which settles a
+question this record left open: Fastify does not read OpenAPI, so "the contract is the source of
+truth" needed a mechanism. 0015 chooses checking over executing, and keeps Fastify.
 
 ## Context
 
