@@ -108,10 +108,12 @@ export function codeChallenge(verifier: string): string {
 const FLOW_TTL = 600
 
 /**
- * Creates an authorization request and signed flow carrier for sign-in.
+ * Starts a sign-in.
  *
- * @param returnTo - Application-relative path to use after sign-in; invalid values default to `/`.
- * @returns The authorization URL and signed carrier containing the flow state.
+ * @param returnTo where to send the browser afterwards. A path within the application, never a
+ *   full URL — anything else is replaced with `/`, because an open redirect here is a phishing
+ *   primitive that arrives wearing this application's own domain.
+ * @returns where to send the browser, and the signed carrier to set as a cookie
  */
 export function beginSignIn(
   provider: Provider,
@@ -155,12 +157,11 @@ function equals(a: string, b: string): boolean {
 }
 
 /**
- * Validates a signed sign-in flow carrier and matches it to the provider's returned state.
+ * Reads and checks the carrier against the state the provider sent back.
  *
- * @param carrier - The signed flow carrier received from the application
- * @param returnedState - The state value returned by the identity provider
- * @returns The validated flow state
- * @throws SignInError If the carrier or returned state is missing, invalid, expired, or mismatched
+ * @throws {SignInError} on `state` for a missing, expired, forged or mismatched carrier. All
+ *   four are the same answer to the user — start again — and distinguishing them in the response
+ *   would tell an attacker which part of their attempt was wrong.
  */
 export function readFlowState(
   carrier: string | undefined,

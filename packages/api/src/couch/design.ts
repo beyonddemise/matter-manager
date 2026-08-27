@@ -42,9 +42,18 @@ function unchanged(stored: DesignDocument['views'], wanted: Views): boolean {
 }
 
 /**
- * Installs a CouchDB design document when its views differ from the stored document.
+ * Writes a design document, creating it or replacing it as required.
  *
- * @param views - The JavaScript view definitions to install
+ * **Skips the write when the stored map functions already match.** Not an optimisation: a design
+ * document that is written back identically still gets a new `_rev` and still replicates, and
+ * on a deployment with several nodes that is a stream of no-op updates every time anything
+ * restarts. Writing only on a real change is also what makes "rewritten on every fresh process"
+ * safe to say — the rewrite is how a changed map function reaches a deployment, and an
+ * unchanged one has nothing to reach it with.
+ *
+ * @param attempts how many times to re-read and try again after a 409. Bounded, because a
+ *   conflict that keeps recurring is not contention — it is two deployments disagreeing about
+ *   what this view should be, and each restart overwriting the other.
  */
 export async function installDesign(
   couch: CouchClient,
@@ -89,13 +98,17 @@ export async function installDesign(
 }
 
 /**
- * Coordinates one in-flight installation and shares its result among callers.
+ * Runs an installation once per process, and shares it with whoever asks while it is in flight.
  *
- * Failed installations are cleared so later callers can retry. The stored installation can also
- * be cleared explicitly.
+ * A boolean set *after* the write does not do this: two callers that arrive together both see
+ * `false`, both write, and the second is refused with the conflict this module exists to avoid.
+ * `findUser` awaits one of these on the path of every invitation, so that race is reachable
+ * from two people sharing a project at the same moment.
  *
- * @param install - Installation operation to run at most once while it is in flight
- * @returns Methods for starting or sharing the installation and clearing it
+ * **A failure is forgotten**, so a transient CouchDB error is retried by the next caller rather
+ * than remembered as a permanent one — the behaviour the boolean had, kept deliberately.
+ *
+ * Within one process only. Two *processes* racing is what `installDesign` retries on 409 for.
  */
 export function once(install: (couch: CouchClient) => Promise<void>): {
   ensure: (couch: CouchClient) => Promise<void>
