@@ -177,3 +177,129 @@ a.app-device:hover {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+
+/* ─── Print ────────────────────────────────────────────────────────────────────────────────
+   For the user who reaches for Ctrl+P before finding the export button. This is not a second
+   implementation of the PDF: the PDF is the considered artefact with QR codes on it, and this
+   is a courtesy so that the obvious gesture produces something usable rather than a screenshot
+   of an application.
+
+   Everything is inside the media block, so none of it can affect the screen. */
+@media print {
+  /* Ink on paper, by moving the tokens rather than by overriding every rule that uses them.
+     A screen palette is chosen for a lit display: on paper its quiet greys will not photocopy
+     and its surfaces are cartridge. Retinting here means every component follows, including
+     ones inside shadow roots that no selector of ours can reach — custom properties inherit
+     through a shadow boundary where ordinary declarations do not.
+
+     This is also why there is almost no `!important` below. An earlier version of this block
+     had fourteen, which is what brute force looks like when the tokens were right there. */
+  :root {
+    --wa-color-surface-default: white;
+    --wa-color-surface-raised: white;
+    --wa-color-surface-lowered: white;
+    --wa-color-text-normal: black;
+    --wa-color-text-quiet: #3a3a3a;
+    --wa-color-text-link: black;
+    --wa-color-brand-on-quiet: black;
+    --wa-color-brand-fill-quiet: transparent;
+    --wa-color-neutral-fill-quiet: transparent;
+    --wa-color-neutral-border-quiet: #999;
+  }
+
+  html,
+  body {
+    height: auto;
+    overflow: visible;
+    background: white;
+  }
+
+  /* Interface, not content. Navigation cannot be followed on paper, the theme toggle changes
+     nothing on it, and a search box printed with a cursor in it looks like a bug. The offline
+     indicator and the update banner are about the running application rather than about the
+     devices.
+
+     Hidden by role rather than by a `.no-print` class sprinkled around: a class has to be
+     remembered on every new control, and the one nobody remembers is the one that prints. */
+  [slot="header"],
+  [slot="navigation"],
+  [data-search],
+  [data-include-disabled],
+  [data-export],
+  [data-export-selected],
+  [data-export-room],
+  [data-labels],
+  [data-select],
+  [data-scan],
+  [data-offline],
+  [data-update-available],
+  [data-export-progress],
+  [data-export-failed],
+  wa-dialog {
+    display: none;
+  }
+
+  /* `<wa-page>` is a fixed, scrolling application frame, and its layout comes from inside its
+     own shadow root — so this is one of the two places `!important` genuinely earns itself.
+     Printed as a scrolling frame it produces a single page containing whatever happened to be
+     in the viewport: the classic "only the first page prints" bug, which is a
+     scrolling-container problem rather than a clipping one. */
+  wa-page,
+  wa-page::part(base),
+  wa-page::part(body),
+  wa-page::part(main) {
+    display: block !important;
+    height: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
+    position: static !important;
+  }
+
+  .app-main {
+    padding: 0;
+  }
+
+  /* Content is not clipped at page boundaries, which is the criterion. A device split across
+     the fold is worse than one left out: half a name and half a serial number read as a
+     different device. */
+  .app-device-list > li,
+  .app-remarks > li,
+  .app-code {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  /* A room heading at the foot of a page, with its devices overleaf, reads as an empty room —
+     the same failure the PDF layout guards against, and the same remedy. */
+  .app-room-heading,
+  h1,
+  h2 {
+    break-after: avoid;
+    page-break-after: avoid;
+  }
+
+  /* On screen a disabled device is distinguished by a tint, which is now white. The dashed
+     border does that work on paper: a printed list where a decommissioned device looks live is
+     a list that sends somebody to a wall socket. */
+  [data-disabled] > .app-device {
+    border: var(--wa-border-width-s) dashed #999;
+  }
+
+  /* The other place `!important` earns itself. The QR's quiet zone must stay white whatever
+     the surrounding palette does — a code printed as dark modules on nothing does not scan,
+     and that is the one thing on the page nobody can work around. */
+  .app-qr-plate {
+    background-color: white !important;
+    padding: 4mm;
+  }
+
+  /* Hash routes mean nothing off the device, so they print as text rather than as underlined
+     blue nothing. */
+  a[href^="#"] {
+    text-decoration: none;
+  }
+
+  @page {
+    margin: 15mm;
+  }
+}

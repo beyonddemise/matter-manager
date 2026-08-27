@@ -14,5 +14,11 @@
  * @module
  */
 
+export {
+  type CachedProfile,
+  type LocalCache,
+  localCache,
+  PROFILE_ID,
+} from './local-cache.js'
 export { type ProjectRepositories, projectRepositories } from './project-database.js'
 export { type Repository, repository } from './repository.js'
