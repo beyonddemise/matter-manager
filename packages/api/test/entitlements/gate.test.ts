@@ -60,6 +60,7 @@ const DRIVERS: Readonly<Record<string, (built: Server, key: SigningKey) => Promi
       url: '/projects',
       headers: {
         authorization: `Bearer ${mintToken(key, {
+          purpose: 'access',
           sub: ADA.sub,
           exp: Math.floor(Date.now() / 1000) + 3600,
         })}`,
@@ -72,6 +73,7 @@ const DRIVERS: Readonly<Record<string, (built: Server, key: SigningKey) => Promi
       url: '/projects/8f14e45f-ceea-467a-9c0e-1b2c3d4e5f60/members',
       headers: {
         authorization: `Bearer ${mintToken(key, {
+          purpose: 'access',
           sub: ADA.sub,
           exp: Math.floor(Date.now() / 1000) + 3600,
         })}`,

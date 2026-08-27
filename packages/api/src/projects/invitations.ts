@@ -13,6 +13,7 @@
 import { foldEmail, type Invitation, isOpen, redeemable } from '@matter-manager/core'
 import type { Identity } from '../auth/oidc.js'
 import type { CouchClient } from '../couch/client.js'
+import { installDesign, once } from '../couch/design.js'
 import { changeMembership, type MembershipDependencies } from './members.js'
 import { ensureRegistry, REGISTRY_DATABASE } from './registry.js'
 
@@ -46,25 +47,21 @@ const BY_EMAIL_MAP = `function (doc) {
   }
 }`
 
-let established = false
+const index = once(async (couch: CouchClient) => {
+  await ensureRegistry(couch)
+  await installDesign(couch, REGISTRY_DATABASE, `_design/${BY_INVITEE_DESIGN}`, {
+    [BY_INVITEE_VIEW]: { map: BY_EMAIL_MAP },
+  })
+})
 
 /** Forgets that the index was established. For tests. */
 export function forgetInvitationIndex(): void {
-  established = false
+  index.forget()
 }
 
 /** Installs the invitation index if it is not already there. */
 export async function ensureInvitationIndex(couch: CouchClient): Promise<void> {
-  if (established) return
-
-  await ensureRegistry(couch)
-  await couch.putDoc(REGISTRY_DATABASE, {
-    _id: `_design/${BY_INVITEE_DESIGN}`,
-    views: { [BY_INVITEE_VIEW]: { map: BY_EMAIL_MAP } },
-    language: 'javascript',
-  } as unknown as { _id: string })
-
-  established = true
+  return index.ensure(couch)
 }
 
 /**

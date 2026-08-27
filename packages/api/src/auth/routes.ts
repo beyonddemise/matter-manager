@@ -142,7 +142,11 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthDependencies)
 
     // The session, as an httpOnly cookie the page cannot read. Its only use is to authorise
     // `POST /auth/token`, which is what hands the page something it *can* read.
-    const session = mintToken(deps.key, { sub: identity.sub, exp: now() + 30 * 24 * 3600 })
+    const session = mintToken(deps.key, {
+      purpose: 'session',
+      sub: identity.sub,
+      exp: now() + 30 * 24 * 3600,
+    })
     setCookie(reply, `${FLOW_COOKIE}=; ${cookieAttributes(0, secure)}`)
     setCookie(
       reply,
@@ -176,6 +180,8 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthDependencies)
     }
 
     const accessToken = mintToken(deps.key, {
+      // Not interchangeable with the session cookie above, deliberately. See `TokenPurpose`.
+      purpose: 'access',
       sub,
       exp: now() + ACCESS_TOKEN_TTL,
       iat: now(),
@@ -196,7 +202,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthDependencies)
  * present with `alg: none`.
  */
 function verifySession(session: string, deps: AuthDependencies, now: () => number): string {
-  return verifyToken(session, deps.key.publicKey, now).sub
+  return verifyToken(session, deps.key.publicKey, 'session', now).sub
 }
 
 function clearCookies(reply: FastifyReply, secure: boolean): void {

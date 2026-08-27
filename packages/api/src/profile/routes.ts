@@ -42,7 +42,7 @@ function subjectOf(
   const session = cookie(request, SESSION_COOKIE)
   if (session === undefined) return undefined
   try {
-    return verifyToken(session, key.publicKey, now).sub
+    return verifyToken(session, key.publicKey, 'session', now).sub
   } catch {
     return undefined
   }

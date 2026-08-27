@@ -72,7 +72,14 @@
   # them from here — scripts/check-deploy-headers.mjs treats this as a floor, so tightening it
   # is not a change the checker will object to.
   #
-  # connect-src is 'self' because nothing cross-origin is wired yet. **The API origin and the
-  # CouchDB origin must be added here when M5 wires replication**, or the application will fail
-  # to reach either, in production only.
+  # connect-src is 'self' because nothing cross-origin is wired yet, and that is still true:
+  # M5 wrote packages/web/src/sync/, and **nothing in the application imports it** — only its
+  # own tests do. No code in the shipped bundle makes a request to the API or to CouchDB, so
+  # there is no origin to allow and no request being blocked.
+  #
+  # **Both origins must be added here in the same change that wires it**, or replication will
+  # fail in production only, reported by the browser as a CSP violation rather than by anything
+  # this application can see. They are deployment values (the API host and the CouchDB host),
+  # so that change also needs a way to get them into this file at build time - it is a static
+  # asset today, with no substitution step.
   Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.bunny.net; font-src 'self' data: https://fonts.bunny.net; img-src 'self' data: blob:; connect-src 'self' data: https://ka-f.fontawesome.com; manifest-src 'self'; worker-src 'self'; media-src 'self' blob:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'

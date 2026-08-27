@@ -19,7 +19,7 @@ const soon = () => Math.floor(Date.now() / 1000) + 3600
 
 describe('minting a token', () => {
   it('produces three base64url parts', () => {
-    const token = mintToken(newKey(), { sub: 'google|abc', exp: soon() })
+    const token = mintToken(newKey(), { purpose: 'access', sub: 'google|abc', exp: soon() })
 
     expect(token.split('.')).toHaveLength(3)
     expect(token).not.toContain('+')
@@ -31,7 +31,11 @@ describe('minting a token', () => {
     // CouchDB reads `kid` to pick a key from `[jwt_keys]`. Without one it falls back to the key
     // named `_default` — which works right up until a second key exists, and then rotation
     // stops working in a way that only shows up under load.
-    const token = mintToken(newKey('ec-2026-08'), { sub: 'google|abc', exp: soon() })
+    const token = mintToken(newKey('ec-2026-08'), {
+      purpose: 'access',
+      sub: 'google|abc',
+      exp: soon(),
+    })
     const header = JSON.parse(Buffer.from(token.split('.')[0] ?? '', 'base64url').toString())
 
     expect(header).toEqual({ alg: 'ES256', typ: 'JWT', kid: 'ec-2026-08' })
@@ -41,12 +45,14 @@ describe('minting a token', () => {
     const key = newKey()
     const exp = soon()
     const token = mintToken(key, {
+      purpose: 'access',
       sub: 'google|abc',
       exp,
       '_couchdb.roles': ['project_x_reader'],
     })
 
-    expect(verifyToken(token, key.publicKey)).toEqual({
+    expect(verifyToken(token, key.publicKey, 'access')).toEqual({
+      purpose: 'access',
       sub: 'google|abc',
       exp,
       '_couchdb.roles': ['project_x_reader'],
@@ -58,7 +64,7 @@ describe('minting a token', () => {
     // signs correctly and encodes the signature as DER — the same algorithm, different bytes,
     // rejected by CouchDB with no hint as to why. A P-256 R‖S signature is exactly 64 bytes;
     // a DER one is variable and starts with 0x30.
-    const token = mintToken(newKey(), { sub: 'google|abc', exp: soon() })
+    const token = mintToken(newKey(), { purpose: 'access', sub: 'google|abc', exp: soon() })
     const signature = Buffer.from(token.split('.')[2] ?? '', 'base64url')
 
     expect(signature).toHaveLength(64)
@@ -79,17 +85,17 @@ describe('minting a token', () => {
 describe('verifying a token', () => {
   it('accepts one it just minted', () => {
     const key = newKey()
-    const token = mintToken(key, { sub: 'google|abc', exp: soon() })
+    const token = mintToken(key, { purpose: 'access', sub: 'google|abc', exp: soon() })
 
-    expect(verifyToken(token, key.publicKey).sub).toBe('google|abc')
+    expect(verifyToken(token, key.publicKey, 'access').sub).toBe('google|abc')
   })
 
   it('refuses one signed with another key', () => {
     // One of the three refusals `verify-jwt-model.sh` proves CouchDB makes. This service makes
     // the same one, so a token that would fail at CouchDB fails here first with a reason.
-    const token = mintToken(newKey(), { sub: 'google|abc', exp: soon() })
+    const token = mintToken(newKey(), { purpose: 'access', sub: 'google|abc', exp: soon() })
 
-    expect(() => verifyToken(token, newKey().publicKey)).toThrow(
+    expect(() => verifyToken(token, newKey().publicKey, 'access')).toThrow(
       expect.objectContaining({ problem: 'signature' }),
     )
   })
@@ -98,23 +104,23 @@ describe('verifying a token', () => {
     // The attack the signature exists to stop: take a valid token, change `sub` to somebody
     // else's, and present it. The claim changes, the signature does not cover the new bytes.
     const key = newKey()
-    const token = mintToken(key, { sub: 'google|abc', exp: soon() })
+    const token = mintToken(key, { purpose: 'access', sub: 'google|abc', exp: soon() })
     const [header, payload, signature] = token.split('.') as [string, string, string]
 
     const edited = JSON.parse(Buffer.from(payload, 'base64url').toString())
     edited.sub = 'google|someone-else'
     const forged = `${header}.${Buffer.from(JSON.stringify(edited)).toString('base64url')}.${signature}`
 
-    expect(() => verifyToken(forged, key.publicKey)).toThrow(
+    expect(() => verifyToken(forged, key.publicKey, 'access')).toThrow(
       expect.objectContaining({ problem: 'signature' }),
     )
   })
 
   it('refuses an expired one', () => {
     const key = newKey()
-    const token = mintToken(key, { sub: 'google|abc', exp: 1_000 })
+    const token = mintToken(key, { purpose: 'access', sub: 'google|abc', exp: 1_000 })
 
-    expect(() => verifyToken(token, key.publicKey)).toThrow(
+    expect(() => verifyToken(token, key.publicKey, 'access')).toThrow(
       expect.objectContaining({ problem: 'expired' }),
     )
   })
@@ -125,9 +131,9 @@ describe('verifying a token', () => {
     // presents as replication failing moments after a successful refresh.
     const key = newKey()
     const at = 1_700_000_000
-    const token = mintToken(key, { sub: 'google|abc', exp: at })
+    const token = mintToken(key, { purpose: 'access', sub: 'google|abc', exp: at })
 
-    expect(() => verifyToken(token, key.publicKey, () => at)).toThrow(
+    expect(() => verifyToken(token, key.publicKey, 'access', () => at)).toThrow(
       expect.objectContaining({ problem: 'expired' }),
     )
   })
@@ -138,23 +144,23 @@ describe('verifying a token', () => {
     // signature, because by the time a signature check has been performed the algorithm has
     // already been chosen.
     const key = newKey()
-    const token = mintToken(key, { sub: 'google|abc', exp: soon() })
+    const token = mintToken(key, { purpose: 'access', sub: 'google|abc', exp: soon() })
     const [, payload, signature] = token.split('.') as [string, string, string]
 
     for (const alg of ['none', 'HS256', 'RS256']) {
       const header = Buffer.from(JSON.stringify({ alg, typ: 'JWT' })).toString('base64url')
-      expect(() => verifyToken(`${header}.${payload}.${signature}`, key.publicKey)).toThrow(
-        expect.objectContaining({ problem: 'algorithm' }),
-      )
+      expect(() =>
+        verifyToken(`${header}.${payload}.${signature}`, key.publicKey, 'access'),
+      ).toThrow(expect.objectContaining({ problem: 'algorithm' }))
     }
   })
 
   it('refuses a token with no signature at all', () => {
     const key = newKey()
-    const token = mintToken(key, { sub: 'google|abc', exp: soon() })
+    const token = mintToken(key, { purpose: 'access', sub: 'google|abc', exp: soon() })
     const [header, payload] = token.split('.') as [string, string]
 
-    expect(() => verifyToken(`${header}.${payload}.`, key.publicKey)).toThrow(TokenError)
+    expect(() => verifyToken(`${header}.${payload}.`, key.publicKey, 'access')).toThrow(TokenError)
   })
 
   it.each([
@@ -163,7 +169,7 @@ describe('verifying a token', () => {
     ['four parts', 'a.b.c.d'],
     ['not base64url', '!!!.???.###'],
   ])('refuses %s', (_case, token) => {
-    expect(() => verifyToken(token, newKey().publicKey)).toThrow(TokenError)
+    expect(() => verifyToken(token, newKey().publicKey, 'access')).toThrow(TokenError)
   })
 
   it('tolerates a minute of clock skew on iat', () => {
@@ -171,13 +177,19 @@ describe('verifying a token', () => {
     // not an attack. More than a minute ahead is.
     const key = newKey()
     const at = 1_700_000_000
-    const token = mintToken(key, { sub: 'google|abc', exp: at + 3600, iat: at + 30 })
+    const token = mintToken(key, {
+      purpose: 'access',
+      sub: 'google|abc',
+      exp: at + 3600,
+      iat: at + 30,
+    })
 
-    expect(verifyToken(token, key.publicKey, () => at).sub).toBe('google|abc')
+    expect(verifyToken(token, key.publicKey, 'access', () => at).sub).toBe('google|abc')
     expect(() =>
       verifyToken(
-        mintToken(key, { sub: 'google|abc', exp: at + 3600, iat: at + 600 }),
+        mintToken(key, { purpose: 'access', sub: 'google|abc', exp: at + 3600, iat: at + 600 }),
         key.publicKey,
+        'access',
         () => at,
       ),
     ).toThrow(expect.objectContaining({ problem: 'not-yet-valid' }))
@@ -189,7 +201,9 @@ describe('choosing a key', () => {
     // Which is the point: the key needed to verify a token is named *by* the token, so the kid
     // has to be readable before any key has been chosen. It is untrusted input at that moment,
     // and is used only to look one up.
-    expect(kidOf(mintToken(newKey('ec-b'), { sub: 'x', exp: soon() }))).toBe('ec-b')
+    expect(kidOf(mintToken(newKey('ec-b'), { purpose: 'access', sub: 'x', exp: soon() }))).toBe(
+      'ec-b',
+    )
   })
 
   it('answers nothing for a token it cannot read', () => {
@@ -202,11 +216,11 @@ describe('choosing a key', () => {
     // one. `verify-jwt-model.sh` proves CouchDB does the same, live, without a restart.
     const oldKey = newKey('ec-a')
     const newer = newKey('ec-b')
-    const older = mintToken(oldKey, { sub: 'google|abc', exp: soon() })
+    const older = mintToken(oldKey, { purpose: 'access', sub: 'google|abc', exp: soon() })
 
     expect(kidOf(older)).toBe('ec-a')
-    expect(verifyToken(older, oldKey.publicKey).sub).toBe('google|abc')
-    expect(() => verifyToken(older, newer.publicKey)).toThrow()
+    expect(verifyToken(older, oldKey.publicKey, 'access').sub).toBe('google|abc')
+    expect(() => verifyToken(older, newer.publicKey, 'access')).toThrow()
   })
 })
 
@@ -229,7 +243,7 @@ describe('the public key CouchDB is given', () => {
     const encoded = publicKeyForCouch(key.publicKey)
     const pem = `-----BEGIN PUBLIC KEY-----\n${(encoded.match(/.{1,64}/g) ?? []).join('\n')}\n-----END PUBLIC KEY-----\n`
 
-    const token = mintToken(key, { sub: 'google|abc', exp: soon() })
-    expect(verifyToken(token, createPublicKey(pem)).sub).toBe('google|abc')
+    const token = mintToken(key, { purpose: 'access', sub: 'google|abc', exp: soon() })
+    expect(verifyToken(token, createPublicKey(pem), 'access').sub).toBe('google|abc')
   })
 })

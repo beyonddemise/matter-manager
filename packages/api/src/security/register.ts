@@ -118,8 +118,15 @@ export function registerSecurity(app: FastifyInstance, options: SecurityOptions)
     const path = pathOf(request.url)
     if (!path.startsWith(AUTH_PREFIX)) return
 
-    const limiter = path === TOKEN_PATH ? tokenLimiter : authLimiter
-    const decision = limiter.check(`${path}:${request.ip}`)
+    const isToken = path === TOKEN_PATH
+    const limiter = isToken ? tokenLimiter : authLimiter
+    // Keyed on the **bucket** and the address, never on the path. This hook runs before the
+    // router, so the path is any string the client sent — and a per-path key lets one address
+    // create an unbounded number of entries in a map that refuses *new* keys once it is full
+    // and evicts nothing within a window. A few thousand requests to `/auth/<random>` would
+    // then deny sign-in to every client not already counted, for as long as the attacker keeps
+    // refilling it. Bounded by the number of addresses, this cannot happen.
+    const decision = limiter.check(`${isToken ? 'token' : 'auth'}:${request.ip}`)
     if (decision.allowed) return
 
     reply.header('retry-after', String(decision.retryAfterSeconds))

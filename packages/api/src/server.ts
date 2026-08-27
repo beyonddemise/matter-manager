@@ -105,7 +105,7 @@ export function buildServer(options: ServerOptions = {}): Server {
         : {
             // Structured, and redacting from the first commit rather than after an incident —
             // see `logging.ts` for what is on the list and why the Matter fields are on it.
-            redact: redactionOptions(),
+            ...redactionOptions(),
             // A request id per line, so a report of "it failed" can be traced to the request
             // that failed rather than to the minute it happened in.
             level: process.env.LOG_LEVEL ?? 'info',

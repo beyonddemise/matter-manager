@@ -18,6 +18,7 @@ import {
 } from '@matter-manager/core'
 import type { Identity } from '../auth/oidc.js'
 import { type CouchClient, CouchError } from '../couch/client.js'
+import { installDesign, once } from '../couch/design.js'
 import { type MembershipDependencies, MembershipRefused } from './members.js'
 import { type ProjectPointer, pointerId, REGISTRY_DATABASE } from './registry.js'
 
@@ -49,24 +50,20 @@ const BY_EMAIL_MAP = `function (doc) {
   }
 }`
 
-let established = false
+const index = once(async (couch: CouchClient) => {
+  await installDesign(couch, REGISTRY_DATABASE, `_design/${BY_RECIPIENT_DESIGN}`, {
+    [BY_RECIPIENT_VIEW]: { map: BY_EMAIL_MAP },
+  })
+})
 
 /** Forgets that the index was established. For tests. */
 export function forgetTransferIndex(): void {
-  established = false
+  index.forget()
 }
 
 /** Installs the offer index if it is not already there. */
 export async function ensureTransferIndex(couch: CouchClient): Promise<void> {
-  if (established) return
-
-  await couch.putDoc(REGISTRY_DATABASE, {
-    _id: `_design/${BY_RECIPIENT_DESIGN}`,
-    views: { [BY_RECIPIENT_VIEW]: { map: BY_EMAIL_MAP } },
-    language: 'javascript',
-  } as unknown as { _id: string })
-
-  established = true
+  return index.ensure(couch)
 }
 
 /**
