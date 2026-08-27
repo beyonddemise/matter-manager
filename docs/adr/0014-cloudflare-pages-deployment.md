@@ -102,7 +102,11 @@ rather than a wrong setting.
 | Secret | What |
 |---|---|
 | `CLOUDFLARE_API_TOKEN` | An API token with **Account → Cloudflare Pages → Edit**. Nothing else; this token can only publish the site. |
-| `CLOUDFLARE_ACCOUNT_ID` | The Cloudflare account the project lives in. |
+| `CLOUDFLARE_ACCOUNT_ID` | The Cloudflare account the project lives in. Read from a secret or a variable, whichever exists. |
+
+The account id is not sensitive — it is in the path of every Cloudflare dashboard URL — so a
+variable is its more honest home, and the workflow accepts either rather than letting the store
+an administrator reached for decide whether the site deploys. The token is only ever a secret.
 
 They are held at the organisation because the account is the organisation's, not this
 repository's: a second repository publishing to it should not mean a second copy of the token

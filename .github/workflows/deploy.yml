@@ -39,14 +39,20 @@ jobs:
       # code at that point rather than data.
       BRANCH: ${{ github.head_ref || github.ref_name }}
 
-      # Organisation secrets, not repository ones - so a second repository that deploys to the
-      # same Cloudflare account does not need its own copy of the token to rotate.
+      # Held at the organisation, not the repository, so a second repository publishing to the
+      # same Cloudflare account does not mean a second copy of the token to rotate.
       #
       # Job-level rather than on the deploy step alone, because the preflight below has to read
       # them too, and a check that reads different values from the step it guards is not a
       # check. Unlike WEBAWESOME_NPM_TOKEN this is not narrowed to a single step: `npm ci`
       # already runs with --ignore-scripts, so no dependency code executes in this job at all.
-      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      #
+      # The account id is read from either store. It is not a secret - it is in the path of
+      # every dashboard URL - so a variable is its more honest home, but it works as a secret
+      # too and which one an administrator reached for should not decide whether the site
+      # deploys. `||` yields the first non-empty operand, and an unset secret is "".
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || vars.CLOUDFLARE_ACCOUNT_ID }}
+      # The token is a secret in the sense that matters and is only ever read as one.
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 
     steps:
@@ -84,8 +90,9 @@ jobs:
           [ -n "$CLOUDFLARE_API_TOKEN" ] || missing="$missing CLOUDFLARE_API_TOKEN"
           if [ -n "$missing" ]; then
             echo "Not deploying: no value for$missing." >&2
-            echo "These are organisation secrets. Check that beyonddemise has them and that" >&2
-            echo "their repository access includes this one." >&2
+            echo "These live on the beyonddemise organisation: CLOUDFLARE_API_TOKEN as a" >&2
+            echo "secret, CLOUDFLARE_ACCOUNT_ID as either a secret or a variable. Check that" >&2
+            echo "each one exists and that its repository access includes this one." >&2
             exit 1
           fi
 

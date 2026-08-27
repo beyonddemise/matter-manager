@@ -165,7 +165,7 @@ Full rationale, including the caching contract and why it is enforced by a check
 |---|---|---|---|
 | `WEBAWESOME_NPM_TOKEN` | repository | Web Awesome Pro registry token | CI and deploy |
 | `CLOUDFLARE_API_TOKEN` | organisation | API token with **Account → Cloudflare Pages → Edit**, and nothing else | deploy |
-| `CLOUDFLARE_ACCOUNT_ID` | organisation | The account the Pages project lives in | deploy |
+| `CLOUDFLARE_ACCOUNT_ID` | organisation | The account the Pages project lives in. Secret *or* variable — it is not sensitive | deploy |
 
 The two Cloudflare values are organisation secrets, so one rotation covers every repository
 that deploys to the account. An organisation secret still has to *grant* this repository
