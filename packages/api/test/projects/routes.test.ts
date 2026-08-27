@@ -43,7 +43,16 @@ function server(options: { fails?: CouchFailures; gateRefuses?: boolean } = {}) 
         if (options.gateRefuses === true) throw new NotEntitledError(action)
       },
       findUser: async (value: string) =>
-        value.includes('grace') ? { sub: 'google|grace', email: 'grace@example.test' } : undefined,
+        value.includes('grace')
+          ? { sub: 'google|grace', email: 'grace@example.test' }
+          : value === OWNER
+            ? { sub: OWNER, email: 'ada@example.test' }
+            : undefined,
+      identityOf: async (sub: string) =>
+        sub === 'google|grace'
+          ? { sub, email: 'grace@example.test', emailVerified: true }
+          : { sub, email: 'ada@example.test', emailVerified: true },
+      millis: () => Date.parse('2026-08-27T09:00:00.000Z'),
     },
   })
 
@@ -471,6 +480,181 @@ describe('sharing a project', () => {
     })
 
     expect(response.statusCode).toBe(200)
-    expect(JSON.parse(response.body)).toEqual([{ sub: OWNER, email: '', role: 'owner' }])
+    expect(JSON.parse(response.body)).toEqual([
+      { sub: OWNER, email: 'ada@example.test', role: 'owner' },
+    ])
+  })
+})
+
+describe('handing a project to somebody else', () => {
+  const seedProject = (built: ReturnType<typeof server>) => {
+    built.couch.documents.set(`projects/project:${PROJECT_ID}`, {
+      _id: `project:${PROJECT_ID}`,
+      _rev: '1-a',
+      type: 'projectPointer',
+      projectId: PROJECT_ID,
+      dbName: DATABASE,
+      projectName: 'Musterstraße 12',
+      participants: [{ role: 'owner', userid: OWNER }],
+      addedAt: '2026-08-27T09:00:00.000Z',
+    })
+    return built
+  }
+
+  const transfer = (built: Server, body: unknown, sub: string | null = OWNER) =>
+    built.inject({
+      method: 'POST',
+      url: `/projects/${PROJECT_ID}/transfer`,
+      headers: sub === null ? {} : { authorization: `Bearer ${tokenFor(sub)}` },
+      payload: body as Record<string, unknown>,
+    })
+
+  it('answers 204 when the offer is made', async () => {
+    const built = seedProject(server())
+
+    expect((await transfer(built.app, { toEmail: 'grace@example.test' })).statusCode).toBe(204)
+  })
+
+  it('does not move ownership yet', async () => {
+    // **The second scenario.** An offer is not a transfer: an unaccepted one would let anybody
+    // push responsibility for data — and eventually a bill — onto somebody who never agreed.
+    const built = seedProject(server())
+    await transfer(built.app, { toEmail: 'grace@example.test' })
+
+    expect(
+      (built.couch.documents.get(`projects/project:${PROJECT_ID}`) as { participants: unknown[] })
+        .participants,
+    ).toEqual([{ role: 'owner', userid: OWNER }])
+  })
+
+  it('is 400 without an address', async () => {
+    const built = seedProject(server())
+
+    expect((await transfer(built.app, {})).statusCode).toBe(400)
+  })
+
+  it('refuses to retain anything but read', async () => {
+    // The contract's enum is `[read]` and deliberately not a reference to `Role`: a departing
+    // owner who could keep `manage` could remove the new owner afterwards, which is not a
+    // transfer.
+    const built = seedProject(server())
+
+    expect(
+      (await transfer(built.app, { toEmail: 'grace@example.test', retainAccess: 'manage' }))
+        .statusCode,
+    ).toBe(400)
+  })
+
+  it('is 404 for somebody who does not own the project', async () => {
+    const built = seedProject(server())
+
+    expect(
+      (await transfer(built.app, { toEmail: 'grace@example.test' }, 'google|stranger')).statusCode,
+    ).toBe(404)
+  })
+
+  it('is 401 without a token', async () => {
+    const built = seedProject(server())
+
+    expect((await transfer(built.app, { toEmail: 'grace@example.test' }, null)).statusCode).toBe(
+      401,
+    )
+  })
+
+  it('lists the offer for the person it was made to', async () => {
+    const built = seedProject(server())
+    await transfer(built.app, { toEmail: 'grace@example.test' })
+    built.couch.rows = [
+      {
+        value: {
+          _id: `transfer:${PROJECT_ID}`,
+          type: 'transfer',
+          projectId: PROJECT_ID,
+          toEmail: 'grace@example.test',
+          fromSub: OWNER,
+          retainAccess: 'none',
+          createdAt: '2026-08-27T09:00:00.000Z',
+          expiresAt: '2026-09-10T09:00:00.000Z',
+        },
+      },
+    ]
+
+    const response = await built.app.inject({
+      method: 'GET',
+      url: '/transfers',
+      headers: { authorization: `Bearer ${tokenFor('google|grace')}` },
+    })
+
+    expect(JSON.parse(response.body)).toEqual([
+      {
+        projectId: PROJECT_ID,
+        projectName: 'Musterstraße 12',
+        retainAccess: 'none',
+        expiresAt: '2026-09-10T09:00:00.000Z',
+      },
+    ])
+  })
+
+  it('moves ownership when the recipient accepts', async () => {
+    const built = seedProject(server())
+    await transfer(built.app, { toEmail: 'grace@example.test', retainAccess: 'read' })
+
+    const response = await built.app.inject({
+      method: 'POST',
+      url: `/transfers/${PROJECT_ID}`,
+      headers: { authorization: `Bearer ${tokenFor('google|grace')}` },
+    })
+
+    expect(response.statusCode).toBe(204)
+    expect(
+      (built.couch.documents.get(`projects/project:${PROJECT_ID}`) as { participants: unknown[] })
+        .participants,
+    ).toEqual([
+      { role: 'read', userid: OWNER },
+      { role: 'owner', userid: 'google|grace' },
+    ])
+  })
+
+  it('is 404 when somebody else tries to accept', async () => {
+    const built = seedProject(server())
+    await transfer(built.app, { toEmail: 'grace@example.test' })
+
+    const response = await built.app.inject({
+      method: 'POST',
+      url: `/transfers/${PROJECT_ID}`,
+      headers: { authorization: `Bearer ${tokenFor(OWNER)}` },
+    })
+
+    expect(response.statusCode).toBe(404)
+  })
+
+  it('withdraws the offer when the recipient declines', async () => {
+    const built = seedProject(server())
+    await transfer(built.app, { toEmail: 'grace@example.test' })
+
+    const response = await built.app.inject({
+      method: 'DELETE',
+      url: `/transfers/${PROJECT_ID}`,
+      headers: { authorization: `Bearer ${tokenFor('google|grace')}` },
+    })
+
+    expect(response.statusCode).toBe(204)
+    expect(built.couch.documents.get(`projects/transfer:${PROJECT_ID}`)).toMatchObject({
+      _deleted: true,
+    })
+  })
+
+  it('does not let anybody else decline an offer', async () => {
+    // Withdrawing somebody else's offer is the owner's act, not a bystander's.
+    const built = seedProject(server())
+    await transfer(built.app, { toEmail: 'grace@example.test' })
+
+    const response = await built.app.inject({
+      method: 'DELETE',
+      url: `/transfers/${PROJECT_ID}`,
+      headers: { authorization: `Bearer ${tokenFor(OWNER)}` },
+    })
+
+    expect(response.statusCode).toBe(404)
   })
 })

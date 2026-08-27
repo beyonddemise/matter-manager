@@ -11,7 +11,15 @@
  * @module
  */
 
-import { type Action, type Principal, type ProjectRole, planInvitation } from '@matter-manager/core'
+import {
+  type Action,
+  type Principal,
+  type ProjectRole,
+  planInvitation,
+  planTransfer,
+  type RetainedAccess,
+  TransferError,
+} from '@matter-manager/core'
 import type { FastifyInstance } from 'fastify'
 import { bearerSubject } from '../auth/bearer.js'
 import type { SigningKey } from '../auth/jwt.js'
@@ -32,6 +40,14 @@ import {
   provisionProject,
 } from './provision.js'
 import { pointerId, projectsFor, REGISTRY_DATABASE } from './registry.js'
+import {
+  acceptTransfer,
+  removeTransfer,
+  storeTransfer,
+  type TransferDocument,
+  transferId,
+  transfersFor,
+} from './transfers.js'
 import { findUser } from './users.js'
 
 /** What the project routes need. */
@@ -55,6 +71,20 @@ export interface ProjectDependencies {
   readonly now?: () => number
   /** The clock as an ISO string, for what is written into a pointer. */
   readonly clock?: () => string
+  /** The clock in milliseconds, for the lifetimes of offers. */
+  readonly millis?: () => number
+  /**
+   * The verified identity behind a subject, for accepting a transfer.
+   *
+   * Rebuilt from what sign-in recorded rather than read off the token: acceptance is decided by
+   * an address the **provider** verified, and a token carries a subject. Absent means transfers
+   * cannot be accepted, which is what a deployment with no sign-in configured should answer.
+   */
+  readonly identityOf?: (
+    sub: string,
+  ) => Promise<
+    { readonly sub: string; readonly email?: string; readonly emailVerified?: boolean } | undefined
+  >
   /** Finds a user by address or subject. Injected so a test needs no `_users`. */
   readonly findUser?: MembershipDependencies['findUser']
   /**
@@ -248,6 +278,133 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDepende
       throw error
     }
 
+    return reply.code(204).send()
+  })
+
+  /** The clock in milliseconds, for the lifetimes of offers. */
+  const millis = deps.millis ?? (() => Date.now())
+
+  app.post('/projects/:projectId/transfer', async (request, reply) => {
+    const sub = bearerSubject(request, deps.key, now)
+    if (sub === undefined) return reply.code(401).send({ title: 'Not signed in', status: 401 })
+
+    const { projectId } = request.params as { projectId: string }
+    const body = (request.body ?? {}) as { toEmail?: unknown; retainAccess?: unknown }
+
+    if (typeof body.toEmail !== 'string') {
+      return reply.code(400).send({ title: 'An email address is needed.', status: 400 })
+    }
+    // The contract's enum is `[read]` and deliberately not a reference to `Role`: a departing
+    // owner who could retain `owner` or `manage` could remove the new owner afterwards, which
+    // is not a transfer.
+    if (body.retainAccess !== undefined && body.retainAccess !== 'read') {
+      return reply.code(400).send({ title: 'Only read access can be retained.', status: 400 })
+    }
+    const retainAccess: RetainedAccess = body.retainAccess === 'read' ? 'read' : 'none'
+
+    const pointer = await deps.couch.getDoc<{ _id: string; participants: [] }>(
+      REGISTRY_DATABASE,
+      pointerId(projectId),
+    )
+    // 404 for a project the caller cannot see, and for one that is not there. `planTransfer`
+    // refuses anybody who is not the owner, so this only decides which of the two it is.
+    if (pointer === undefined) {
+      return reply.code(404).send({ title: 'No such project.', status: 404 })
+    }
+
+    try {
+      const offer = planTransfer(
+        { projectId, toEmail: body.toEmail, fromSub: sub, retainAccess },
+        pointer.participants,
+        millis,
+      )
+      await storeTransfer(deps.couch, offer)
+    } catch (error) {
+      if (error instanceof TransferError) {
+        // 404 rather than 403 for "you are not the owner": whether a project exists is a fact
+        // about somebody else's house, and the caller may not be a participant at all.
+        const status = /only the owner/i.test(error.message) ? 404 : 400
+        return reply.code(status).send({ title: error.message, status })
+      }
+      throw error
+    }
+
+    return reply.code(204).send()
+  })
+
+  app.get('/transfers', async (request, reply) => {
+    const sub = bearerSubject(request, deps.key, now)
+    if (sub === undefined) return reply.code(401).send({ title: 'Not signed in', status: 401 })
+
+    const account = await membership.findUser(sub)
+    if (account === undefined) return []
+
+    const offers = await transfersFor(deps.couch, account.email, millis)
+
+    return Promise.all(
+      offers.map(async (offer) => {
+        const pointer = await deps.couch.getDoc<{ _id: string; projectName: string }>(
+          REGISTRY_DATABASE,
+          pointerId(offer.projectId),
+        )
+        return {
+          projectId: offer.projectId,
+          projectName: pointer?.projectName ?? '',
+          retainAccess: offer.retainAccess,
+          expiresAt: offer.expiresAt,
+        }
+      }),
+    )
+  })
+
+  app.post('/transfers/:projectId', async (request, reply) => {
+    const sub = bearerSubject(request, deps.key, now)
+    if (sub === undefined) return reply.code(401).send({ title: 'Not signed in', status: 401 })
+
+    const { projectId } = request.params as { projectId: string }
+
+    // The identity is rebuilt from the account rather than taken from the token: the token
+    // carries a subject, and acceptance is decided by a **verified address**. `verifiedEmail`
+    // is what sign-in recorded, so it is the provider's answer rather than the caller's.
+    const identity = await deps.identityOf?.(sub)
+    if (identity === undefined) {
+      return reply.code(404).send({ title: 'No such transfer.', status: 404 })
+    }
+
+    try {
+      await acceptTransfer(membership, projectId, identity, millis)
+    } catch (error) {
+      if (error instanceof MembershipRefused) {
+        return reply.code(error.status).send({ title: error.message, status: error.status })
+      }
+      throw error
+    }
+
+    return reply.code(204).send()
+  })
+
+  app.delete('/transfers/:projectId', async (request, reply) => {
+    const sub = bearerSubject(request, deps.key, now)
+    if (sub === undefined) return reply.code(401).send({ title: 'Not signed in', status: 401 })
+
+    const { projectId } = request.params as { projectId: string }
+    const account = await membership.findUser(sub)
+    const offer = await deps.couch.getDoc<TransferDocument>(
+      REGISTRY_DATABASE,
+      transferId(projectId),
+    )
+
+    // Only the person it was offered to may decline it. Anybody else declining would be
+    // withdrawing somebody else's offer, which is the owner's act and not theirs.
+    if (
+      offer === undefined ||
+      account === undefined ||
+      offer.toEmail !== account.email.trim().toLowerCase()
+    ) {
+      return reply.code(404).send({ title: 'No such transfer.', status: 404 })
+    }
+
+    await removeTransfer(deps.couch, offer)
     return reply.code(204).send()
   })
 }
