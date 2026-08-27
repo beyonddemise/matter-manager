@@ -40,6 +40,12 @@ const GOOD = `
 
 /sw.js
   Cache-Control: no-cache
+
+/*
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: no-referrer
+  X-Frame-Options: DENY
+  Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'
 `
 
 describe('the deployment caching contract', () => {
@@ -169,6 +175,84 @@ describe('the deployment caching contract', () => {
 
   it('reads a comment as a comment', () => {
     const { code } = scan(`# why these rules exist\n${GOOD}`)
+    expect(code).toBe(0)
+  })
+})
+
+describe('the security headers the shell is served with', () => {
+  it('catches a shell served with no Content-Security-Policy', () => {
+    // The policy was measured against the real bundle in a real browser (todo-47) — which is
+    // work nobody is going to repeat, so the result has to be guarded rather than trusted to
+    // survive the next edit of this file.
+    const { code, output } = scan(GOOD.replace(/\n {2}Content-Security-Policy:.*\n/, '\n'))
+    expect(code).toBe(1)
+    expect(output).toContain('Content-Security-Policy')
+  })
+
+  it('catches a policy that allows inline script', () => {
+    // Which is the whole point of having one. A CSP with `'unsafe-inline'` in `script-src`
+    // still *looks* like a CSP in a report, and stops nothing an injected `<script>` would do.
+    const { code, output } = scan(
+      GOOD.replace("script-src 'self'", "script-src 'self' 'unsafe-inline'"),
+    )
+    expect(code).toBe(1)
+    expect(output).toContain('unsafe-inline')
+  })
+
+  it('catches a policy that allows eval', () => {
+    const { code, output } = scan(
+      GOOD.replace("script-src 'self'", "script-src 'self' 'unsafe-eval'"),
+    )
+    expect(code).toBe(1)
+    expect(output).toContain('unsafe-eval')
+  })
+
+  it('catches a policy that will load script from anywhere', () => {
+    const { code, output } = scan(GOOD.replace("script-src 'self'", "script-src 'self' *"))
+    expect(code).toBe(1)
+    expect(output).toContain('script-src')
+  })
+
+  it('catches a policy with no script-src and no default-src to fall back to', () => {
+    // `script-src` falls back to `default-src`, and a policy with neither restricts nothing
+    // about script at all while still being a valid header.
+    const { code, output } = scan(GOOD.replace("default-src 'none'; script-src 'self'; ", ''))
+    expect(code).toBe(1)
+    expect(output).toContain('script')
+  })
+
+  it('catches a policy that can be framed', () => {
+    // `frame-ancestors` does not fall back to `default-src`, so leaving it out is the easy
+    // mistake — and clickjacking a delete is what it costs.
+    const { code, output } = scan(GOOD.replace("; frame-ancestors 'none'", ''))
+    expect(code).toBe(1)
+    expect(output).toContain('frame-ancestors')
+  })
+
+  it('catches a policy that lets an injection rewrite the base URL', () => {
+    // `base-uri` does not fall back either. With it unset, one injected `<base>` repoints every
+    // relative script URL on the page — `script-src 'self'` and all.
+    const { code, output } = scan(GOOD.replace("; base-uri 'none'", ''))
+    expect(code).toBe(1)
+    expect(output).toContain('base-uri')
+  })
+
+  it('catches a shell that may be sniffed', () => {
+    const { code, output } = scan(GOOD.replace('  X-Content-Type-Options: nosniff\n', ''))
+    expect(code).toBe(1)
+    expect(output).toContain('X-Content-Type-Options')
+  })
+
+  it('catches a shell that leaks a referrer', () => {
+    const { code, output } = scan(GOOD.replace('  Referrer-Policy: no-referrer\n', ''))
+    expect(code).toBe(1)
+    expect(output).toContain('Referrer-Policy')
+  })
+
+  it('accepts a policy that is stricter than required', () => {
+    // The check is a floor, not a shape. Tightening `style-src` when the third-party fonts go
+    // (see the note in `_headers`) must not fail because it no longer matches a literal.
+    const { code } = scan(GOOD.replace("style-src 'self' 'unsafe-inline'", "style-src 'self'"))
     expect(code).toBe(0)
   })
 })
