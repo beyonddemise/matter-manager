@@ -17,7 +17,18 @@ const COMPLETE: Environment = {
   JWT_PRIVATE_KEY: PEM,
   JWT_KEY_ID: 'ec-2026-08',
   APP_ORIGIN: 'https://matter.example',
+  GOOGLE_CLIENT_ID: '1234.apps.googleusercontent.com',
+  GOOGLE_CLIENT_SECRET: 'GOCSPX-secret',
+  GOOGLE_REDIRECT_URI: 'https://api.matter.example/auth/google/callback',
 }
+
+/** The operations sign-in adds, straight from `auth/routes.ts`. */
+const SIGN_IN_ROUTES = [
+  'GET /auth/google',
+  'GET /auth/google/callback',
+  'POST /auth/signout',
+  'POST /auth/token',
+]
 
 let app: Server | undefined
 
@@ -39,6 +50,41 @@ describe('a fully configured deployment', () => {
 
   it("allows the application's own origin", () => {
     expect(serverOptions(COMPLETE).security?.origins).toEqual(['https://matter.example'])
+  })
+
+  it('serves the sign-in routes', () => {
+    // The gap this test was written for: every variable below was documented, passed through
+    // `compose.prod.yml`, and read by nothing. A deployment with a Google client configured
+    // answered `GET /auth/google` with 404 — which reads as a broken application, not as an
+    // incomplete deployment, and is exactly what `serverOptions` exists to prevent.
+    expect(routesFor(COMPLETE)).toEqual(expect.arrayContaining(SIGN_IN_ROUTES))
+  })
+
+  it('serves the profile routes', () => {
+    // Sign-in writes a `_users` document through the same store `GET /profile` reads. Wiring
+    // one without the other gives a user who can sign in and then cannot be shown their name.
+    expect(routesFor(COMPLETE)).toEqual(expect.arrayContaining(['GET /profile', 'PUT /profile']))
+  })
+
+  it('sends the browser back to the application, not to the API', () => {
+    // `appOrigin` is where the callback redirects to when sign-in succeeds. Defaulting it to
+    // the API's own host would land the user on a JSON endpoint holding a session cookie.
+    expect(serverOptions(COMPLETE).auth?.appOrigin).toBe('https://matter.example')
+  })
+
+  it('trims a trailing slash from the application origin', () => {
+    // The callback redirects to `${appOrigin}/`. A deployment that wrote the origin with its
+    // own slash would send every successful sign-in to `https://matter.example//`, which the
+    // application does not serve — a sign-in that works and then lands on a 404.
+    const withSlash = { ...COMPLETE, APP_ORIGIN: 'https://matter.example/' }
+
+    expect(serverOptions(withSlash).auth?.appOrigin).toBe('https://matter.example')
+  })
+
+  it('asks Google for nothing beyond identity', () => {
+    // Any fourth scope makes this project subject to Google's verification review. That is a
+    // consequence of a one-line edit in `google.ts`, so it is asserted where it is observable.
+    expect(serverOptions(COMPLETE).auth?.provider.scopes).toEqual(['openid', 'email', 'profile'])
   })
 })
 
@@ -66,6 +112,41 @@ describe('a deployment that is part-way through being set up', () => {
     const { JWT_KEY_ID: _kid, ...withoutKid } = COMPLETE
 
     expect(routesFor(withoutKid)).not.toContain('POST /projects')
+  })
+
+  it('serves no sign-in routes without a Google client', () => {
+    const { GOOGLE_CLIENT_ID: _id, ...withoutClient } = COMPLETE
+
+    expect(routesFor(withoutClient)).not.toContain('GET /auth/google')
+  })
+
+  it('serves no sign-in routes without the client secret', () => {
+    // The code exchange is server-to-server and carries the secret. Without it every sign-in
+    // reaches Google, returns, and fails at the exchange — after the user has consented.
+    const { GOOGLE_CLIENT_SECRET: _secret, ...withoutSecret } = COMPLETE
+
+    expect(routesFor(withoutSecret)).not.toContain('GET /auth/google')
+  })
+
+  it('serves no sign-in routes without a redirect URI', () => {
+    // Google matches it byte-for-byte against what is registered. There is no value this
+    // service could invent that would be right, so absent means absent here too.
+    const { GOOGLE_REDIRECT_URI: _uri, ...withoutRedirect } = COMPLETE
+
+    expect(routesFor(withoutRedirect)).not.toContain('GET /auth/google')
+  })
+
+  it('serves no sign-in routes without somewhere to send the user back to', () => {
+    const { APP_ORIGIN: _origin, ...withoutOrigin } = COMPLETE
+
+    expect(routesFor(withoutOrigin)).not.toContain('GET /auth/google')
+  })
+
+  it('treats an empty Google client id as unset rather than as a value', () => {
+    // A deployment tool rendering `GOOGLE_CLIENT_ID=` for a secret it was never given has not
+    // configured sign-in. Building a provider from it would reach Google and be refused for a
+    // client id of `""` — an error about Google, for a mistake made here.
+    expect(routesFor({ ...COMPLETE, GOOGLE_CLIENT_ID: '' })).not.toContain('GET /auth/google')
   })
 
   it('still answers its health check', () => {

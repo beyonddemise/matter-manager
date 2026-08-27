@@ -37,7 +37,6 @@
     "i18n": "npm run i18n:extract && npm run i18n:build",
     "check:i18n": "node scripts/check-i18n.mjs",
     "check:deploy": "node scripts/check-deploy-headers.mjs",
-    "build": "npm --workspace @matter-manager/web run build",
     "check:lazy": "node scripts/check-lazy-fallback.mjs"
   },
   "devDependencies": {

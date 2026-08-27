@@ -29,21 +29,34 @@ services:
       context: ..
       dockerfile: packages/api/Dockerfile
     restart: unless-stopped
+    # Every name here is read by packages/api/src/composition.ts. That is not a
+    # coincidence to preserve casually: this block previously passed API_PORT,
+    # JWT_PRIVATE_KEY_PATH, JWT_ISSUER, JWT_AUDIENCE and API_PUBLIC_URL, none of
+    # which anything read - so the stack started, looked configured, and served
+    # no sign-in and no projects.
     environment:
       NODE_ENV: production
-      API_PORT: 3000
+      PORT: 3000
       COUCHDB_URL: http://couchdb:5984
       COUCHDB_ADMIN_USER: ${COUCHDB_ADMIN_USER}
       COUCHDB_ADMIN_PASSWORD: ${COUCHDB_ADMIN_PASSWORD}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
-      JWT_PRIVATE_KEY_PATH: /run/secrets/jwt-private.pem
-      JWT_ISSUER: matter-manager
-      JWT_AUDIENCE: matter-manager
-      API_PUBLIC_URL: ${API_PUBLIC_URL}
-      WEB_PUBLIC_URL: ${WEB_PUBLIC_URL}
-    volumes:
-      - ./secrets/jwt-private.pem:/run/secrets/jwt-private.pem:ro
+      # Byte-for-byte what is registered in the Google console. See
+      # docs/GOOGLE-SIGN-IN.md.
+      GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI}
+      # Where the browser is returned to, and the only origin allowed to make a
+      # cross-origin request. Unset means the application is refused.
+      APP_ORIGIN: ${APP_ORIGIN}
+      # The PEM itself, not a path: signingKeyFromPem parses a value, and there is
+      # no code that reads a key file. Multi-line values are supported in .env by
+      # Compose v2 when double-quoted.
+      JWT_PRIVATE_KEY: ${JWT_PRIVATE_KEY}
+      JWT_KEY_ID: ${JWT_KEY_ID}
+      # Caddy is the only ingress and sets X-Forwarded-For. Without this the rate
+      # limiter counts every request against Caddy's address, so the first twenty
+      # sign-in attempts from anywhere lock out everybody else.
+      TRUST_PROXY: 'true'
     depends_on:
       couchdb:
         condition: service_healthy
@@ -57,7 +70,7 @@ services:
     # exit 1 with no log output on any host where chown of the mount fails.
     #
     # The JWT public key is deliberately NOT baked into this image. The API injects it
-    # at startup via PUT /_node/_local/_config/jwt_keys/rsa:_default, which keeps key
+    # at startup via PUT /_node/_local/_config/jwt_keys/ec:$JWT_KEY_ID, which keeps key
     # rotation out of the image build and keeps key material out of the registry.
     build:
       context: ./couchdb

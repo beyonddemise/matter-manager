@@ -10,7 +10,7 @@ The Fastify backend. Deliberately thin.
 - Project provisioning: create `project_<uuid>`, write `_security`, install `_design/access`
 - Membership changes, invitations, ownership transfer
 - Injecting the JWT public key into CouchDB at startup via
-  `PUT /_node/_local/_config/jwt_keys/rsa:_default`
+  `PUT /_node/_local/_config/jwt_keys/ec:<kid>`
 - Admin and audit endpoints (M7), billing webhooks (M8)
 
 ## What does not
@@ -118,6 +118,12 @@ script that ever runs on the origin.
 a misconfiguration error at the moment a user presses the button.
 
 ### Configuration
+
+Step-by-step, with the console URLs: [docs/GOOGLE-SIGN-IN.md](../../docs/GOOGLE-SIGN-IN.md).
+
+`composition.ts` builds these into `ServerOptions.auth`, and `buildServer` registers `/auth/*`
+only when it is present — so a deployment missing any one of the first four answers
+`GET /auth/google` with **404** rather than with a misconfiguration error.
 
 | Variable | |
 |---|---|
