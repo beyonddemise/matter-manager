@@ -90,6 +90,18 @@ export function signingKeyFromPem(kid: string, privatePem: string): SigningKey {
  * exists, and then rotation stops working in a way that only shows up under load.
  */
 export function mintToken(key: SigningKey, claims: Claims): string {
+  return signCompact(key, claims)
+}
+
+/**
+ * Signs any claims as a compact ES256 JWT.
+ *
+ * Exported because the sign-in flow needs a signed, short-lived carrier for its PKCE verifier
+ * and state, and that carrier is a JWT with different claims rather than a different mechanism.
+ * One implementation of the ES256 detail below, used by both — two would be two chances to get
+ * `dsaEncoding` wrong, in the same service, months apart.
+ */
+export function signCompact(key: SigningKey, claims: object): string {
   const header = encode({ alg: 'ES256', typ: 'JWT', kid: key.kid })
   const payload = encode(claims)
 
@@ -145,15 +157,30 @@ export function verifyToken(
   publicKey: KeyObject,
   now: () => number = () => Math.floor(Date.now() / 1000),
 ): Claims {
+  return verifyCompact<Claims>(token, publicKey, now)
+}
+
+/**
+ * Verifies any compact ES256 JWT and returns its claims.
+ *
+ * The generic half of {@link verifyToken}, so that the sign-in flow's carrier gets the same
+ * algorithm-confusion guard, the same wrapped `verify`, and the same expiry rule as a CouchDB
+ * token. A separate implementation for it would be a second place to forget one of them.
+ */
+export function verifyCompact<T extends { exp: number; iat?: number }>(
+  token: string,
+  publicKey: KeyObject,
+  now: () => number = () => Math.floor(Date.now() / 1000),
+): T {
   const parts = token.split('.')
   if (parts.length !== 3) throw new TokenError('malformed', 'A JWT has three parts.')
   const [header, payload, signature] = parts as [string, string, string]
 
   let head: { alg?: unknown }
-  let claims: Claims
+  let claims: T
   try {
     head = decode(header) as { alg?: unknown }
-    claims = decode(payload) as Claims
+    claims = decode(payload) as T
   } catch {
     throw new TokenError('malformed', 'The token’s header or payload is not JSON.')
   }

@@ -21,11 +21,62 @@ import { parse } from 'yaml'
 
 const here = dirname(fileURLToPath(import.meta.url))
 
-/** The contract, parsed. `unknown`-typed on purpose: it is a document, not an API. */
+/**
+ * The contract, parsed and with local `$ref`s resolved.
+ *
+ * Resolved rather than tolerated, and this is not tidiness. `$ref` was on the supported-keyword
+ * list, so a response declared as `{ $ref: '#/components/responses/Unauthorized' }` reached the
+ * validator as an object with no `type` and no `properties` — which it checks perfectly and
+ * finds nothing wrong with. Every `$ref`-shaped response in the contract was being waved
+ * through, and the guard against unsupported keywords could not see it because `$ref` was
+ * *listed as supported*.
+ *
+ * Only local pointers (`#/…`) are resolved. A remote one would be a contract this repository
+ * does not fully own, which is a different conversation.
+ */
 export function loadContract(
   path = join(here, '../../../../openapi/matter-manager.yaml'),
 ): Record<string, unknown> {
-  return parse(readFileSync(path, 'utf8')) as Record<string, unknown>
+  const document = parse(readFileSync(path, 'utf8')) as Record<string, unknown>
+  return resolveRefs(document, document) as Record<string, unknown>
+}
+
+/** Follows a local JSON pointer, e.g. `#/components/schemas/Profile`. */
+function pointer(document: unknown, ref: string): unknown {
+  return ref
+    .replace(/^#\//, '')
+    .split('/')
+    .reduce<unknown>(
+      (node, step) =>
+        typeof node === 'object' && node !== null
+          ? (node as Record<string, unknown>)[decodeURIComponent(step)]
+          : undefined,
+      document,
+    )
+}
+
+/**
+ * Replaces every local `$ref` with what it points at.
+ *
+ * `seen` guards a self-referential schema, which would otherwise recurse forever — a contract
+ * can legitimately describe a tree, and this file must not be the reason one cannot.
+ */
+function resolveRefs(node: unknown, document: unknown, seen = new Set<string>()): unknown {
+  if (Array.isArray(node)) return node.map((entry) => resolveRefs(entry, document, seen))
+  if (typeof node !== 'object' || node === null) return node
+
+  const object = node as Record<string, unknown>
+  const ref = object.$ref
+  if (typeof ref === 'string' && ref.startsWith('#/')) {
+    if (seen.has(ref)) return {}
+    const next = new Set(seen)
+    next.add(ref)
+    return resolveRefs(pointer(document, ref), document, next)
+  }
+
+  return Object.fromEntries(
+    Object.entries(object).map(([key, value]) => [key, resolveRefs(value, document, seen)]),
+  )
 }
 
 /** One operation the contract describes. */
@@ -179,7 +230,6 @@ const SUPPORTED = new Set([
   'readOnly',
   'writeOnly',
   'deprecated',
-  '$ref',
 ])
 
 /**
