@@ -81,6 +81,7 @@ export class DeviceView extends LitElement {
     device: { state: true },
     room: { state: true },
     loaded: { state: true },
+    failed: { state: true },
     enlarged: { state: true },
     confirmingDelete: { state: true },
     busy: { state: true },
@@ -101,6 +102,14 @@ export class DeviceView extends LitElement {
   declare device: DeviceDocument | undefined
   declare room: RoomDocument | undefined
   declare loaded: boolean
+  /**
+   * The device could not be read.
+   *
+   * Distinct from `loaded === true, device === undefined`, which is *there is no device with
+   * that address* — and saying that when the read failed would tell somebody their device is
+   * gone. It is not gone; this browser could not open its own database.
+   */
+  declare failed: boolean
   declare enlarged: boolean
   declare confirmingDelete: boolean
   /** A write is in flight. Guards the actions against a second click landing on a stale `_rev`. */
@@ -127,6 +136,7 @@ export class DeviceView extends LitElement {
     updateWhenLocaleChanges(this)
     this.uuid = ''
     this.loaded = false
+    this.failed = false
     this.enlarged = false
     this.confirmingDelete = false
     this.busy = false
@@ -148,6 +158,7 @@ export class DeviceView extends LitElement {
     this.device = undefined
     this.room = undefined
     this.loaded = false
+    this.failed = false
     // An enlargement of the previous device's code has no business staying open over the new
     // one, and closing it is what makes the dialog's contents and its title agree. The same
     // goes for a delete confirmation: an open one would now be pointing at a different device.
@@ -200,16 +211,25 @@ export class DeviceView extends LitElement {
   private async load(): Promise<void> {
     const token = ++this.request
     const id = this.documentId()
-    const device = id === undefined ? undefined : await this.repos().devices.get(id)
-    // Only when there is a device, and only its own room: reading every room to show one
-    // path would grow with the project for no gain.
-    const room = device === undefined ? undefined : await this.repos().rooms.get(device.roomId)
 
-    if (token !== this.request) return
+    try {
+      const device = id === undefined ? undefined : await this.repos().devices.get(id)
+      // Only when there is a device, and only its own room: reading every room to show one
+      // path would grow with the project for no gain.
+      const room = device === undefined ? undefined : await this.repos().rooms.get(device.roomId)
 
-    this.room = room
-    this.device = device
-    this.loaded = true
+      if (token !== this.request) return
+
+      this.room = room
+      this.device = device
+      this.loaded = true
+    } catch {
+      // Guarded by the same token as the success path: a failed read for a device the user has
+      // already navigated away from must not put an error on the page they are looking at now.
+      if (token !== this.request) return
+      // Not logged: a device document carries a setup code.
+      this.failed = true
+    }
   }
 
   /**
@@ -634,6 +654,18 @@ export class DeviceView extends LitElement {
   }
 
   override render() {
+    if (this.failed) {
+      return html`
+        <div class="wa-stack wa-gap-l">
+          <h1>${msg('This device could not be read')}</h1>
+          <p class="app-empty" data-read-failed>
+            ${msg('Your devices could not be read from this browser’s storage. Nothing has been lost — reload to try again.')}
+          </p>
+          <a class="app-back" href="#/">${msg('Back to devices')}</a>
+        </div>
+      `
+    }
+
     if (!this.loaded) return html`<div class="wa-stack wa-gap-l"></div>`
 
     const device = this.device

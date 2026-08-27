@@ -474,17 +474,127 @@ export interface paths {
         }
       }
       responses: {
-        /** @description Transferred */
+        /** @description Offered; the recipient must accept before ownership moves */
         204: {
           headers: {
             [name: string]: unknown
           }
           content?: never
         }
+        400: components['responses']['BadRequest']
         403: components['responses']['Forbidden']
       }
     }
     delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/transfers': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /**
+     * Projects being offered to the signed-in user
+     * @description An offer of ownership is not a change of ownership. It waits here until the recipient
+     *     accepts it, because ownership carries responsibility for somebody's data and eventually
+     *     for a bill, and neither is a thing one person may assign to another (M5-5).
+     */
+    get: {
+      parameters: {
+        query?: never
+        header?: never
+        path?: never
+        cookie?: never
+      }
+      requestBody?: never
+      responses: {
+        /** @description Offers awaiting an answer */
+        200: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/json': components['schemas']['TransferOffer'][]
+          }
+        }
+        401: components['responses']['Unauthorized']
+      }
+    }
+    put?: never
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/transfers/{projectId}': {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        projectId: string
+      }
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    /**
+     * Accept an offer of ownership
+     * @description The recipient is identified by an email address the identity provider has **verified**,
+     *     never by possession of a link. A forwarded message therefore grants nothing.
+     */
+    post: {
+      parameters: {
+        query?: never
+        header?: never
+        path: {
+          projectId: string
+        }
+        cookie?: never
+      }
+      requestBody?: never
+      responses: {
+        /** @description Accepted; ownership has moved */
+        204: {
+          headers: {
+            [name: string]: unknown
+          }
+          content?: never
+        }
+        400: components['responses']['BadRequest']
+        401: components['responses']['Unauthorized']
+        404: components['responses']['NotFound']
+      }
+    }
+    /** Decline an offer of ownership */
+    delete: {
+      parameters: {
+        query?: never
+        header?: never
+        path: {
+          projectId: string
+        }
+        cookie?: never
+      }
+      requestBody?: never
+      responses: {
+        /** @description Declined */
+        204: {
+          headers: {
+            [name: string]: unknown
+          }
+          content?: never
+        }
+        401: components['responses']['Unauthorized']
+        404: components['responses']['NotFound']
+      }
+    }
     options?: never
     head?: never
     patch?: never
@@ -539,6 +649,22 @@ export interface components {
       displayName?: string
       role: components['schemas']['Role']
     }
+    /**
+     * @description An offer of ownership awaiting an answer. Carries no token: acceptance is by signing in
+     *     with the address it was sent to.
+     */
+    TransferOffer: {
+      /** Format: uuid */
+      projectId: string
+      projectName: string
+      /**
+       * @description What the current owner keeps once the offer is accepted.
+       * @enum {string}
+       */
+      retainAccess: 'read' | 'none'
+      /** Format: date-time */
+      expiresAt: string
+    }
     /** @description RFC 9457 problem details. */
     Problem: {
       /** Format: uri */
@@ -569,6 +695,19 @@ export interface components {
     }
     /** @description Authenticated but not permitted */
     Forbidden: {
+      headers: {
+        [name: string]: unknown
+      }
+      content: {
+        'application/problem+json': components['schemas']['Problem']
+      }
+    }
+    /**
+     * @description No such thing, as far as this caller is concerned. Used in preference to 403 where a
+     *     403 would confirm that something exists — a project id is a uuid, so the only way to
+     *     hold one is to have been told it.
+     */
+    NotFound: {
       headers: {
         [name: string]: unknown
       }
