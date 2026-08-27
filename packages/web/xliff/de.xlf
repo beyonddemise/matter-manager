@@ -226,6 +226,38 @@
   <source>Could not delete this device. It is still in the catalogue; try again.</source>
   <target>Dieses Gerät konnte nicht gelöscht werden. Es ist weiterhin im Katalog; bitte erneut versuchen.</target>
 </trans-unit>
+<trans-unit id="sbc4cbc3f5750b49c">
+  <source>Recorded on this device</source>
+  <target>Auf diesem Gerät erfasst</target>
+</trans-unit>
+<trans-unit id="sd80496e9c65f1366">
+  <source>Remarks</source>
+  <target>Anmerkungen</target>
+</trans-unit>
+<trans-unit id="s9c65d073fd830d71">
+  <source>Add a remark</source>
+  <target>Anmerkung hinzufügen</target>
+</trans-unit>
+<trans-unit id="s5501d7aeca8e0f44">
+  <source>What was done, and anything the next person needs to know. Remarks cannot be edited or deleted afterwards.</source>
+  <target>Was getan wurde und was die nächste Person wissen muss. Anmerkungen lassen sich später weder ändern noch löschen.</target>
+</trans-unit>
+<trans-unit id="sd12cac24d95fa4a0">
+  <source>There is nothing to record yet. Write the remark first.</source>
+  <target>Es gibt noch nichts zu erfassen. Bitte zuerst die Anmerkung schreiben.</target>
+</trans-unit>
+<trans-unit id="s1bafc1d32c67c73f">
+  <source>Could not save that remark. What you wrote is still here; try again.</source>
+  <target>Diese Anmerkung konnte nicht gespeichert werden. Der Text ist noch da; bitte erneut versuchen.</target>
+</trans-unit>
+<trans-unit id="s601fb086b0961538">
+  <source>Add remark</source>
+  <target>Anmerkung speichern</target>
+</trans-unit>
+<trans-unit id="s3008e7051bd90a59">
+  <source>Nothing has been recorded about this device yet.</source>
+  <target>Zu diesem Gerät wurde noch nichts erfasst.</target>
+</trans-unit>
 </body>
 </file>
 </xliff>

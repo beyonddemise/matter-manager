@@ -1,14 +1,20 @@
 import { msg, str, updateWhenLocaleChanges } from '@lit/localize'
 import {
+  addRemark,
   type DeviceDocument,
+  DraftError,
   documentId,
+  type Remark,
   type RoomDocument,
+  remarksNewestFirst,
   setDeviceDisabled,
   uuidOf,
 } from '@matter-manager/core'
 import type { ProjectRepositories } from '@matter-manager/data'
 import { html, LitElement, type PropertyValues, type TemplateResult } from 'lit'
 import { projectDatabase } from '../db/project-database.js'
+import { currentAuthor } from '../identity.js'
+import { fieldValue } from './device-form.js'
 
 /**
  * The size of the inline QR, in CSS pixels.
@@ -79,6 +85,7 @@ export class DeviceView extends LitElement {
     confirmingDelete: { state: true },
     busy: { state: true },
     failure: { state: true },
+    remarkError: { state: true },
   }
 
   /**
@@ -106,6 +113,14 @@ export class DeviceView extends LitElement {
    * inside the dialog that is still open asking for it.
    */
   declare failure: 'toggle' | 'delete' | undefined
+  /**
+   * Why the last remark was not recorded, if it was not.
+   *
+   * Separate from {@link failure} because the remedies are different and so is the place the
+   * sentence belongs: a blank remark is fixed by typing something, a refused write by trying
+   * again, and both belong beside the composer rather than beside the disable button.
+   */
+  declare remarkError: 'blank' | 'storage' | undefined
 
   constructor() {
     super()
@@ -116,6 +131,7 @@ export class DeviceView extends LitElement {
     this.confirmingDelete = false
     this.busy = false
     this.failure = undefined
+    this.remarkError = undefined
   }
 
   /**
@@ -139,6 +155,14 @@ export class DeviceView extends LitElement {
     this.confirmingDelete = false
     this.busy = false
     this.failure = undefined
+    this.remarkError = undefined
+    // The composer is deliberately *not* cleared here, and that is worth stating because the
+    // obvious defensive call belongs nowhere else either: `willUpdate` runs before the render,
+    // so it would clear the control that is about to be discarded. Clearing `loaded` unmounts
+    // the composer along with the rest of the page, and the device navigated to renders a new
+    // one — empty. A browser test holds that end of it, so a future render that keeps the
+    // composer mounted across a route change fails rather than silently carrying half a
+    // sentence about the kitchen light onto the hall sensor.
     void this.load()
   }
 
@@ -446,6 +470,138 @@ export class DeviceView extends LitElement {
     `
   }
 
+  /** Empties the composer. A no-op before the first render, when there is no control yet. */
+  private clearComposer(): void {
+    const box = this.querySelector('[data-remark-text]') as { value?: string } | null
+    if (box !== null) box.value = ''
+  }
+
+  /**
+   * Records a remark against the device.
+   *
+   * The text is **read from the control and never written back to it**, which is the same rule
+   * the device forms follow (`device-form.ts`) and for the same reason: binding `.value` means
+   * Lit rewrites the box on every re-render, so the render that displays "storage refused the
+   * write" would also erase what the user typed. For a paragraph written in a basement about
+   * what was just done to a device, that is the worst way for this to fail. It is cleared by
+   * hand, once, after a write that actually landed.
+   *
+   * Guarded by the same {@link request} token as every other write here: a remark whose write
+   * outlives its route must not be attributed to whatever device the user is now looking at.
+   */
+  private async onAddRemark(): Promise<void> {
+    const device = this.device
+    if (device === undefined || this.busy) return
+
+    let updated: ReturnType<typeof addRemark>
+    try {
+      updated = addRemark(device, fieldValue(this, '[data-remark-text]'), currentAuthor(), {
+        uuid: () => crypto.randomUUID(),
+        now: () => new Date().toISOString(),
+      })
+    } catch (error) {
+      // The only thing `addRemark` refuses is a remark with nothing in it. Rethrowing anything
+      // else keeps a genuine fault visible rather than reporting it as an empty box.
+      if (!(error instanceof DraftError)) throw error
+      this.remarkError = 'blank'
+      return
+    }
+
+    this.busy = true
+    const token = this.request
+    try {
+      const saved = await this.repos().devices.save(updated)
+      if (token !== this.request) return
+      this.device = saved
+      this.remarkError = undefined
+      this.clearComposer()
+    } catch {
+      // Not logged: the document carries the setup passcode.
+      if (token === this.request) this.remarkError = 'storage'
+    } finally {
+      if (token === this.request) this.busy = false
+    }
+  }
+
+  /** One remark: what was said, when, and by whom. */
+  private renderRemark(remark: Remark): TemplateResult {
+    return html`
+      <li class="wa-stack wa-gap-3xs" data-remark>
+        <!-- Pre-wrapped rather than collapsed: a remark is often a short list of what was
+             done, and running it into one line loses the structure the author put there. -->
+        <span class="app-remark-body" data-remark-body>${remark.text}</span>
+        <small class="app-empty">
+          ${
+            remark.authorName === ''
+              ? // Written before this project had accounts, so there is no name to show. Said
+                // in the reader's language rather than stored in the writer's; see
+                // `identity.ts` for why the document holds an empty name instead of "You".
+                msg('Recorded on this device')
+              : remark.authorName
+          }
+          · ${remark.createdAt}
+        </small>
+      </li>
+    `
+  }
+
+  /**
+   * The remark log, and the box that adds to it.
+   *
+   * Append-only, by design rather than by omission: there is no control here that edits or
+   * removes a remark, because the conflict merge unions remarks by id (ADR 0010) and is only
+   * sound while an id means one fixed piece of text.
+   */
+  private renderRemarks(device: DeviceDocument): TemplateResult {
+    const remarks = remarksNewestFirst(device.remarks)
+    return html`
+      <div class="wa-stack wa-gap-s">
+        <h2>${msg('Remarks')}</h2>
+
+        <div class="wa-stack wa-gap-2xs">
+          <wa-textarea
+            data-remark-text
+            label=${msg('Add a remark')}
+            hint=${msg('What was done, and anything the next person needs to know. Remarks cannot be edited or deleted afterwards.')}
+            rows="3"
+          ></wa-textarea>
+          ${
+            this.remarkError === undefined
+              ? ''
+              : html`
+                  <wa-callout variant="danger" data-remark-failed>
+                    <wa-icon slot="icon" name="circle-exclamation"></wa-icon>
+                    ${
+                      this.remarkError === 'blank'
+                        ? msg('There is nothing to record yet. Write the remark first.')
+                        : msg(
+                            'Could not save that remark. What you wrote is still here; try again.',
+                          )
+                    }
+                  </wa-callout>
+                `
+          }
+          <div class="wa-cluster wa-gap-s">
+            <wa-button data-add-remark ?disabled=${this.busy} @click=${this.onAddRemark}>
+              <wa-icon slot="start" name="comment-medical"></wa-icon>
+              ${msg('Add remark')}
+            </wa-button>
+          </div>
+        </div>
+
+        ${
+          remarks.length === 0
+            ? html`<p class="app-empty" data-no-remarks>
+                ${msg('Nothing has been recorded about this device yet.')}
+              </p>`
+            : html`<ul class="wa-stack wa-gap-s app-remarks">
+                ${remarks.map((remark) => this.renderRemark(remark))}
+              </ul>`
+        }
+      </div>
+    `
+  }
+
   /** One labelled fact, or nothing when there is no fact to state. */
   private field(label: string, value: string | undefined): TemplateResult | '' {
     if (value === undefined || value === '') return ''
@@ -501,6 +657,7 @@ export class DeviceView extends LitElement {
         </div>
 
         ${this.renderCode(device)} ${this.renderActions(device)} ${this.renderDetails(device)}
+        ${this.renderRemarks(device)}
 
         <a class="app-back" href="#/">${msg('Back to devices')}</a>
 

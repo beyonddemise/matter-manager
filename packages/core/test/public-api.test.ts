@@ -32,6 +32,8 @@ const EXPECTED: ReadonlyArray<
   ['planNewDevice', 'function'],
   ['planDeviceEdit', 'function'],
   ['setDeviceDisabled', 'function'],
+  ['addRemark', 'function'],
+  ['remarksNewestFirst', 'function'],
   ['browseDevices', 'function'],
   // base38
   ['BASE38_ALPHABET', 'string'],
