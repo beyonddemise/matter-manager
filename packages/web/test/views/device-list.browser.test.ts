@@ -200,7 +200,13 @@ describe('disabled devices', () => {
     expect(element.textContent).not.toContain('Nothing matches')
     expect(element.textContent).not.toContain('No devices yet')
     // Names the control, because the remedy is one tick away and the message has to say which.
-    expect(element.textContent).toContain('Show disabled devices')
+    //
+    // Scoped to the empty-state paragraph, not the whole view: the checkbox's own label *is*
+    // "Show disabled devices", so `element.textContent` contains that string however the
+    // message is worded — including when it says nothing useful at all. Verified with the
+    // mutation probe, which reported the unscoped version as SURVIVED against a message
+    // rewritten to "Nothing to show."
+    expect(element.querySelector('.app-empty')?.textContent).toContain('Show disabled devices')
 
     await showDisabled(element)
     expect(shown(element)).toEqual(['device:old'])
