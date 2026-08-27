@@ -927,3 +927,35 @@ as one of the two states — and which one it lands in is an accident.
 was already written down in this repository — carefully, with the right reasoning — on the path
 it did not need to cover most. A codebase that has thought hard about one direction is a
 codebase where the other direction is worth reading immediately.
+
+## L30 — Documentation is not wiring, and it reads exactly like it
+
+`GOOGLE_CLIENT_ID` was in `.env.example`, in `infra/compose.prod.yml` and in a configuration
+table in the API README. Three files, agreeing with each other, all correct about what the
+variable is for. **No source file read it.** `serverOptions` never populated
+`ServerOptions.auth`, so `buildServer` registered no `/auth` routes, and a deployment with a
+Google client fully configured answered `GET /auth/google` with 404.
+
+Every individual artefact was honest. `googleProvider()` was written, tested and correct. The
+README's table described the variables the *code* wanted. The compose file passed them in. The
+one thing nobody wrote was the six lines that read them — and the absence of those six lines is
+invisible from every direction except the one nobody looked from.
+
+The test suite agreed with the documentation rather than with the code:
+`describe('a fully configured deployment')` asserted only that the *project* routes were served.
+It had been true when written, and stayed passing while the definition of "fully configured"
+grew past it.
+
+**Rule:** an environment variable is wired when something *reads* it. Documenting a variable and
+plumbing it through a deployment file are not steps towards that — they are steps that make its
+absence harder to notice, because they are exactly what a wired variable also looks like.
+
+**Corollary — the cheap check.** For each variable named in `.env.example`, in a compose file or
+in a README table, grep the source for its name. A variable with no reader is either dead or a
+feature that does not work. There is no third case, and the grep takes a minute.
+
+**Corollary — the same drift in reverse.** The same three files described an *RS256* keypair and
+a `JWT_PRIVATE_KEY_PATH` long after the code moved to inline ES256 and started refusing non-EC
+keys at startup. Configuration files do not fail to compile, so nothing ever tells you they have
+stopped being true. They need reading at the same moments code gets reviewed, not at the moment
+somebody follows them.
