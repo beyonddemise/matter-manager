@@ -82,6 +82,46 @@ describe('what must never reach a log', () => {
     expect(logLine({ nested: { [field]: SECRET } })).not.toContain(SECRET)
   })
 
+  it('keeps an error readable', () => {
+    // `main.ts` logs `{ err: error }` on a failed start and a failed shutdown. `message` and
+    // `stack` are **non-enumerable** own properties, so `Object.entries` does not see them —
+    // a formatter that rebuilds an Error as a plain object silently produces a log line that
+    // records that something failed and nothing about what.
+    const failure = new Error('CouchDB refused the write')
+
+    const line = logLine({ err: failure })
+
+    expect(line).toContain('CouchDB refused the write')
+    expect(JSON.parse(line).err?.stack).toBeTruthy()
+  })
+
+  it('still redacts context attached to an error', () => {
+    // The positive control for the test above: handing the Error through untouched would keep
+    // the message and leak everything somebody attached to it. Both have to hold at once.
+    const failure = Object.assign(new Error('write refused'), { payload: SECRET })
+
+    const line = logLine({ err: failure })
+
+    expect(line).toContain('write refused')
+    expect(line).not.toContain(SECRET)
+  })
+
+  it('redacts inside an error cause', () => {
+    const failure = new Error('outer', { cause: { payload: SECRET } })
+
+    expect(logLine({ err: failure })).not.toContain(SECRET)
+  })
+
+  it('does not hand back an unredacted object when it stops descending', () => {
+    // The bound has to fail closed. Returning the value at `MAX_DEPTH` means everything below
+    // it is serialised untouched — so nesting past the bound is not a way to lose a secret in
+    // the noise, it is a way to publish one.
+    let deep: Record<string, unknown> = { payload: SECRET }
+    for (let level = 0; level < 15; level += 1) deep = { [`level${level}`]: deep }
+
+    expect(logLine(deep)).not.toContain(SECRET)
+  })
+
   it('does not follow a cycle forever', () => {
     // A log object is built from request data. Nothing should be able to turn a log line into
     // a stack overflow in the logger.

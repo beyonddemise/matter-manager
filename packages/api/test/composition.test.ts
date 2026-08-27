@@ -1,9 +1,16 @@
-import { generateKeyPairSync } from 'node:crypto'
+import { createPrivateKey, generateKeyPairSync } from 'node:crypto'
 import { afterEach, describe, expect, it } from 'vitest'
 import { type Environment, serverOptions } from '../src/composition.js'
 import { buildServer, type Server } from '../src/server.js'
 
 const PEM = generateKeyPairSync('ec', {
+  namedCurve: 'prime256v1',
+  privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+  publicKeyEncoding: { type: 'spki', format: 'pem' },
+}).privateKey as unknown as string
+
+/** A *second* key, because sessions must not be signed with the one CouchDB validates. */
+const SESSION_PEM = generateKeyPairSync('ec', {
   namedCurve: 'prime256v1',
   privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
   publicKeyEncoding: { type: 'spki', format: 'pem' },
@@ -15,6 +22,7 @@ const COMPLETE: Environment = {
   COUCHDB_ADMIN_USER: 'admin',
   COUCHDB_ADMIN_PASSWORD: 'secret',
   JWT_PRIVATE_KEY: PEM,
+  JWT_SESSION_PRIVATE_KEY: SESSION_PEM,
   JWT_KEY_ID: 'ec-2026-08',
   APP_ORIGIN: 'https://matter.example',
   GOOGLE_CLIENT_ID: '1234.apps.googleusercontent.com',
@@ -134,6 +142,64 @@ describe('a deployment that is part-way through being set up', () => {
     const { GOOGLE_REDIRECT_URI: _uri, ...withoutRedirect } = COMPLETE
 
     expect(routesFor(withoutRedirect)).not.toContain('GET /auth/google')
+  })
+
+  it('serves no sign-in routes without a session key', () => {
+    // **No fallback to JWT_PRIVATE_KEY.** That key is installed in CouchDB's `[jwt_keys]`, so
+    // signing sessions with it would make a thirty-day session cookie a thirty-day database
+    // credential — the exact thing the second key exists to remove. A deployment that forgot
+    // should serve no sign-in rather than quietly reinstate it.
+    const { JWT_SESSION_PRIVATE_KEY: _session, ...withoutSession } = COMPLETE
+
+    expect(routesFor(withoutSession)).not.toContain('GET /auth/google')
+  })
+
+  it('serves no profile routes without a session key', () => {
+    // The profile authenticates by the session cookie, so without a key to verify one it is a
+    // route that can never admit anybody.
+    const { JWT_SESSION_PRIVATE_KEY: _session, ...withoutSession } = COMPLETE
+
+    expect(routesFor(withoutSession)).not.toContain('GET /profile')
+  })
+
+  it('serves no sign-in routes when both keys are the same key', () => {
+    // The way the two-key arrangement is most likely to be undone: not by omitting the second
+    // variable, which is refused above, but by filling it in with the first one's value. The
+    // derived `kid` makes that look separated — CouchDB has never heard of `<kid>-session`, so
+    // it refuses the cookie — while the key material behind both is one key. Anything that
+    // leaks the session key has then leaked the key that signs database credentials, and can
+    // re-sign under the `kid` CouchDB does know.
+    const reused = { ...COMPLETE, JWT_SESSION_PRIVATE_KEY: PEM }
+
+    expect(routesFor(reused)).not.toContain('GET /auth/google')
+  })
+
+  it('serves no profile routes when both keys are the same key', () => {
+    const reused = { ...COMPLETE, JWT_SESSION_PRIVATE_KEY: PEM }
+
+    expect(routesFor(reused)).not.toContain('GET /profile')
+  })
+
+  it('notices reuse through a differently encoded copy of the same key', () => {
+    // A byte comparison would call these two separate. They are one key: the same private half,
+    // written as SEC1 rather than PKCS#8 — which is what `openssl ecparam -genkey` emits, so it
+    // is the copy a deployment following the documentation is likeliest to have to hand.
+    const sec1 = createPrivateKey(PEM).export({ type: 'sec1', format: 'pem' }).toString()
+
+    expect(routesFor({ ...COMPLETE, JWT_SESSION_PRIVATE_KEY: sec1 })).not.toContain(
+      'GET /auth/google',
+    )
+  })
+
+  it('signs sessions with a different key from the one CouchDB is given', () => {
+    // The property itself, asserted where it is decided. Two keys that happened to be equal
+    // would satisfy every other test in this file.
+    const options = serverOptions(COMPLETE)
+
+    expect(options.auth?.sessionKey.kid).not.toBe(options.auth?.key.kid)
+    expect(options.auth?.sessionKey.publicKey.export({ type: 'spki', format: 'pem' })).not.toEqual(
+      options.auth?.key.publicKey.export({ type: 'spki', format: 'pem' }),
+    )
   })
 
   it('serves no sign-in routes without somewhere to send the user back to', () => {

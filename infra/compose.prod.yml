@@ -53,6 +53,11 @@ services:
       # Compose v2 when double-quoted.
       JWT_PRIVATE_KEY: ${JWT_PRIVATE_KEY}
       JWT_KEY_ID: ${JWT_KEY_ID}
+      # A SECOND key, for session cookies and PKCE carriers. Its public half is never given to
+      # CouchDB, which is the point: CouchDB checks a signature and an expiry and no claim we
+      # invented, so a session signed with the key above would be a thirty-day database
+      # credential. Must not be the same value.
+      JWT_SESSION_PRIVATE_KEY: ${JWT_SESSION_PRIVATE_KEY}
       # Caddy is the only ingress and sets X-Forwarded-For. Without this the rate
       # limiter counts every request against Caddy's address, so the first twenty
       # sign-in attempts from anywhere lock out everybody else.

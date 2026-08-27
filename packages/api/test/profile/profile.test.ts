@@ -206,7 +206,7 @@ describe('the profile endpoints', () => {
   function serve(seed = storedAda({ locale: 'de' })) {
     const key = newKey()
     const { couch, writes } = fakeCouch(seed)
-    app = buildServer({ logger: false, profile: { store: profileStore(couch), key } })
+    app = buildServer({ logger: false, profile: { store: profileStore(couch), sessionKey: key } })
     const session = mintToken(key, {
       purpose: 'session',
       sub: 'google|1234',

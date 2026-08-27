@@ -59,6 +59,9 @@ const REDACTED = new Set(REDACTED_FIELDS.map((field) => field.toLowerCase()))
  */
 const MAX_DEPTH = 12
 
+/** What replaces anything below {@link MAX_DEPTH}. Withheld, not omitted, as everywhere here. */
+const TOO_DEEP = '[too deep to redact]'
+
 /** Whether this is something to walk into rather than a value to keep. */
 const isWalkable = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' &&
@@ -76,12 +79,19 @@ const isWalkable = (value: unknown): value is Record<string, unknown> =>
  * @returns The redacted copy, or the original value when it cannot be traversed.
  */
 export function censor(value: unknown, depth = 0, seen = new WeakSet<object>()): unknown {
-  if (!isWalkable(value) || depth >= MAX_DEPTH) return value
+  if (!isWalkable(value)) return value
+
+  // **Fails closed.** Returning the value here would serialise everything below the bound
+  // untouched, which would make nesting past it a way to publish a secret rather than a way to
+  // lose one. The marker says something was withheld, which is what the censor is for.
+  if (depth >= MAX_DEPTH) return TOO_DEEP
 
   // A cycle would otherwise recurse until the stack ends. Pino handles cycles in its own
   // serializer; this runs before that, so it has to handle its own.
   if (seen.has(value)) return '[circular]'
   seen.add(value)
+
+  if (value instanceof Error) return censorError(value, depth, seen)
 
   if (Array.isArray(value)) return value.map((entry) => censor(entry, depth + 1, seen))
 
@@ -89,13 +99,38 @@ export function censor(value: unknown, depth = 0, seen = new WeakSet<object>()):
   for (const [key, entry] of Object.entries(value)) {
     out[key] = REDACTED.has(key.toLowerCase()) ? REDACTION : censor(entry, depth + 1, seen)
   }
-  // An Error's own enumerable properties are what `Object.entries` sees; `message` and `stack`
-  // are not among them, and pino's error serializer has already lifted what it needs by here.
   return out
 }
 
 /**
- * Configures logging to replace sensitive field values with redaction placeholders.
+ * An error, with its context censored and everything that makes it an error kept.
+ *
+ * **`message` and `stack` are non-enumerable own properties**, so `Object.entries` does not see
+ * them. Rebuilding an error as a plain object therefore produces a log line that records that
+ * something failed and nothing whatever about what — and `main.ts` logs `{ err: error }` on a
+ * failed start and a failed shutdown, which are the two lines most worth reading.
+ *
+ * A copy rather than the original with fields overwritten: the error belongs to the caller, and
+ * a logger that redacted in place would blank the field for whatever handles it next.
+ */
+function censorError(error: Error, depth: number, seen: WeakSet<object>): Error {
+  const copy = new Error(error.message)
+  copy.name = error.name
+  if (error.stack !== undefined) copy.stack = error.stack
+  // Enumerable when assigned, non-enumerable when passed to the constructor — so it is carried
+  // explicitly rather than left to the loop below to find.
+  if (error.cause !== undefined) copy.cause = censor(error.cause, depth + 1, seen)
+
+  for (const [key, entry] of Object.entries(error)) {
+    ;(copy as unknown as Record<string, unknown>)[key] = REDACTED.has(key.toLowerCase())
+      ? REDACTION
+      : censor(entry, depth + 1, seen)
+  }
+  return copy
+}
+
+/**
+ * The logging options this service uses.
  *
  * @returns Pino logging options that apply recursive redaction to log objects.
  */
