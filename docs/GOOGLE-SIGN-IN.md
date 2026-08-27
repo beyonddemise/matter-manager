@@ -118,9 +118,16 @@ user on a JSON endpoint.
 ## What happens when something is missing
 
 **No routes**, rather than routes that fail when pressed. `composition.ts` builds the sign-in
-dependencies only when all of `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`
-and `APP_ORIGIN` are present, and `buildServer` registers `/auth/*` only when they are. A
-half-configured deployment answers `GET /auth/google` with 404.
+dependencies only when all five of `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`,
+`GOOGLE_REDIRECT_URI`, `APP_ORIGIN` and `JWT_SESSION_PRIVATE_KEY` are present, and `buildServer`
+registers `/auth/*` only when they are. A half-configured deployment answers `GET /auth/google`
+with 404.
+
+`JWT_SESSION_PRIVATE_KEY` is the one that surprises people, because it is not a Google setting and
+its absence looks like a Google problem. It also takes `/profile` with it, which authenticates by
+the session cookie and so needs the key that verifies one. **A copy of `JWT_PRIVATE_KEY` counts as
+absent**: same key, two names, and the isolation described above is gone — so it is refused rather
+than accepted, and the symptom is the same 404.
 
 That is deliberate and it is what to check first: a 404 there means this service, not Google.
 `packages/api/test/composition.test.ts` asserts each variable's absence individually.
@@ -137,7 +144,8 @@ The `Location` header should be `https://accounts.google.com/o/oauth2/v2/auth?..
 
 | Symptom | Cause |
 | --- | --- |
-| 404 on `/auth/google` | One of the four variables is unset or empty |
+| 404 on `/auth/google` | One of the five variables is unset or empty |
+| 404 on `/auth/google` **and** on `/profile` | `JWT_SESSION_PRIVATE_KEY` is unset, empty, or the same key as `JWT_PRIVATE_KEY` |
 | `redirect_uri_mismatch` from Google | `GOOGLE_REDIRECT_URI` differs from the console by a character — check the trailing slash and `http` vs `https` |
 | `invalid_client` | Wrong client ID or secret, or a secret from a different project |
 | Sign-in returns to a 404 | `APP_ORIGIN` points at the API rather than the application |

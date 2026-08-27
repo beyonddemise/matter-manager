@@ -52,11 +52,22 @@ function keyFrom(env: Environment): SigningKey | undefined {
  *
  * No fallback to `JWT_PRIVATE_KEY`. A deployment that forgot this should serve no sign-in, not
  * quietly reinstate the thirty-day database credential this exists to remove.
+ *
+ * **And no fallback by copy-paste either.** The same PEM in both variables is the same key under
+ * two names: CouchDB refuses the derived `kid`, so it looks separated, but anything that leaks
+ * the session key has also leaked the key that signs database credentials — and can re-sign
+ * under the `kid` CouchDB *was* taught. That is the isolation gone, silently, which is the
+ * failure this whole arrangement was built to make impossible. Refused for the same reason a
+ * missing one is.
  */
-function sessionKeyFrom(env: Environment, kid: string | undefined): SigningKey | undefined {
+function sessionKeyFrom(env: Environment, key: SigningKey): SigningKey | undefined {
   const pem = value(env.JWT_SESSION_PRIVATE_KEY)
-  if (pem === undefined || kid === undefined) return undefined
-  return signingKeyFromPem(`${kid}-session`, pem)
+  if (pem === undefined) return undefined
+
+  const sessionKey = signingKeyFromPem(`${key.kid}-session`, pem)
+  // The public halves, because they answer the question the private halves would: two PEMs can
+  // be encoded differently and still be one key, and a byte comparison would call that separate.
+  return sessionKey.publicKey.equals(key.publicKey) ? undefined : sessionKey
 }
 
 /** CouchDB, if this deployment has it. */
@@ -150,7 +161,7 @@ export function serverOptions(env: Environment = process.env): ServerOptions {
   checkDesignDocs()
 
   const store = profileStore(couch)
-  const sessionKey = sessionKeyFrom(env, value(env.JWT_KEY_ID))
+  const sessionKey = sessionKeyFrom(env, key)
   const auth = authFrom(env, key, sessionKey, store)
 
   return {
