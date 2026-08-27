@@ -59,7 +59,11 @@ export function forgetUserIndex(): void {
 }
 
 /**
- * Ensures the CouchDB user email index is installed.
+ * Installs the address index if it is not already there.
+ *
+ * Lazy, and remembered only on success, for the same reasons as `ensureRegistry`. Shared while
+ * in flight, because `findUser` awaits this on the path of every invitation — two people
+ * sharing a project at the same moment is enough to reach the race.
  */
 export async function ensureUserIndex(couch: CouchClient): Promise<void> {
   return index.ensure(couch)

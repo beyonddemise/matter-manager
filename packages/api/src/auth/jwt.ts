@@ -121,11 +121,12 @@ export function mintToken(key: SigningKey, claims: Claims): string {
 }
 
 /**
- * Signs claims as a compact ES256 JWT.
+ * Signs any claims as a compact ES256 JWT.
  *
- * @param key - The signing key and key ID included in the JWT header
- * @param claims - The claims to encode in the JWT payload
- * @returns The signed compact JWT
+ * Exported because the sign-in flow needs a signed, short-lived carrier for its PKCE verifier
+ * and state, and that carrier is a JWT with different claims rather than a different mechanism.
+ * One implementation of the ES256 detail below, used by both — two would be two chances to get
+ * `dsaEncoding` wrong, in the same service, months apart.
  */
 export function signCompact(key: SigningKey, claims: object): string {
   const header = encode({ alg: 'ES256', typ: 'JWT', kid: key.kid })
@@ -174,12 +175,18 @@ export function kidOf(token: string): string | undefined {
 }
 
 /**
- * Validates a token and returns its claims when it identifies a subject and matches the expected purpose.
+ * Verifies a token and returns its claims.
  *
- * @param expected - The purpose the token must declare
- * @param now - Function providing the current Unix time in seconds
- * @returns The validated token claims
- * @throws TokenError If the token is invalid or does not identify a subject
+ * This service does not strictly need to verify its own tokens — CouchDB does that — but the
+ * startup check in `keys.ts` does, and so does anything that reads a bearer on an API request.
+ * More to the point: a minting function with no verifier is a minting function whose output
+ * nobody has read back, and the failure mode of ES256 signature encoding is precisely that the
+ * bytes look fine.
+ *
+ * @param expected what this token must say it is for. Required rather than defaulted, so that
+ *   every caller states which of the three credentials it is willing to accept.
+ * @param now injected so expiry is testable without waiting an hour
+ * @throws {TokenError} naming the problem
  */
 export function verifyToken(
   token: string,
@@ -198,14 +205,14 @@ export function verifyToken(
 }
 
 /**
- * Verifies an ES256 compact JWT and returns its claims.
+ * Verifies any compact ES256 JWT and returns its claims.
  *
- * @param token - The compact JWT to verify
- * @param publicKey - The public key used to verify the signature
- * @param expected - The purpose the token must have
- * @param now - Function that supplies the current Unix timestamp
- * @returns The verified JWT claims
- * @throws TokenError If the token is malformed, uses an unsupported algorithm, has an invalid signature, is expired, is for a different purpose, or is not yet valid
+ * The generic half of {@link verifyToken}, so that the sign-in flow's carrier gets the same
+ * algorithm-confusion guard, the same wrapped `verify`, and the same expiry rule as a CouchDB
+ * token. A separate implementation for it would be a second place to forget one of them.
+ *
+ * @throws {TokenError} for a malformed token, an algorithm other than ES256, a signature that
+ *   does not match, an expired or not-yet-valid token, or one issued for another purpose.
  */
 export function verifyCompact<T extends { exp: number; iat?: number; purpose: TokenPurpose }>(
   token: string,

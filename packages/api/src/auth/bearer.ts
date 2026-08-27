@@ -36,12 +36,14 @@ export function bearerToken(header: string | undefined): string | undefined {
 }
 
 /**
- * Extracts and verifies the subject from an access token in the request's authorization header.
+ * The signed-in subject, or `undefined` when the caller is not signed in.
  *
- * @param request - The request containing the authorization header
- * @param key - The signing key used to verify the token
- * @param now - Supplies the current time for token validation
- * @returns The token subject, or `undefined` if the header is missing or malformed, or the token is invalid or expired
+ * Every failure is the same answer — no header, a malformed one, a bad signature, an expired
+ * token. The caller gets 401 and nothing else: which of those it was is a fact about the
+ * credential somebody presented, and telling them narrows the search.
+ *
+ * @param key the key CouchDB also validates, because this reads an **access** token. A session
+ *   is signed with a different one and is refused here on the signature.
  */
 export function bearerSubject(
   request: FastifyRequest,

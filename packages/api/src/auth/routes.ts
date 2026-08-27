@@ -217,10 +217,15 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthDependencies)
 }
 
 /**
- * Verifies a session token and extracts its subject.
+ * Reads the session cookie, throwing if it is not one this service issued and still valid.
  *
- * @param session - The session token to verify
- * @returns The subject contained in the valid session token
+ * Deliberately the same verification a CouchDB token gets: same algorithm guard, same wrapped
+ * signature check, same expiry rule. A separate one here would be a second place to forget the
+ * algorithm check — and a session cookie is exactly the token an attacker would most like to
+ * present with `alg: none`.
+ *
+ * Verified with `sessionKey`, never with the key CouchDB was given. See
+ * {@link AuthDependencies.sessionKey} for why those are two keys and not one.
  */
 function verifySession(session: string, deps: AuthDependencies, now: () => number): string {
   return verifyToken(session, deps.sessionKey.publicKey, 'session', now).sub

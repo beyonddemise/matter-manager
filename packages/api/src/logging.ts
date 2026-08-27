@@ -71,12 +71,19 @@ const isWalkable = (value: unknown): value is Record<string, unknown> =>
   !Buffer.isBuffer(value)
 
 /**
- * Creates a copy of a value with sensitive fields replaced by `[redacted]`.
+ * Replaces every redacted field, wherever it is.
  *
- * Nested objects and arrays are traversed up to the configured depth, and circular references are
- * replaced with `[circular]` without mutating the original value.
+ * **Pino's `redact` cannot do this, and used to be asked to.** Its wildcards are not recursive:
+ * `*.payload` matches one level and `*.*.payload` two, so a list of `[field, *.field,
+ * *.*.field]` covers depths nought to two and nothing below. `{ err: { cause: { request: {
+ * payload } } } }` — an error somebody attached a request to, which is an ordinary shape — went
+ * to the log in clear. The module note above already said the list was applied "at every
+ * depth"; this is what makes that true rather than intended.
  *
- * @returns The redacted copy, or the original value when it cannot be traversed.
+ * Errors are copied rather than mutated: the object being logged belongs to the caller, and a
+ * logger that redacted in place would blank the field for whatever runs next.
+ *
+ * @returns a censored copy; the value itself only when there is nothing to walk into.
  */
 export function censor(value: unknown, depth = 0, seen = new WeakSet<object>()): unknown {
   if (!isWalkable(value)) return value
@@ -132,7 +139,13 @@ function censorError(error: Error, depth: number, seen: WeakSet<object>): Error 
 /**
  * The logging options this service uses.
  *
- * @returns Pino logging options that apply recursive redaction to log objects.
+ * A **formatter** rather than `redact`, because `redact` is path-based and this list is a list
+ * of names — see {@link censor}. Spread into pino's options, so that the test suite configures
+ * a logger exactly as `server.ts` does rather than approximately.
+ *
+ * `censor` rather than `remove`, so a log line says a field was present and withheld. Removing
+ * it makes a redacted request indistinguishable from one that never carried the field, which
+ * is exactly the distinction someone reading the log is trying to make.
  */
 export function redactionOptions(): {
   readonly formatters: {
