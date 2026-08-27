@@ -97,6 +97,60 @@ async function seed(): Promise<void> {
   await devices.save(device('device:old', 'Old sensor', 'room:bath', { disabled: true }))
 }
 
+describe('when the catalogue cannot be read', () => {
+  /** Repositories whose reads reject, the way a storage failure arrives. */
+  const failing = () =>
+    ({
+      devices: { list: async () => Promise.reject(new Error('indexed_db_went_bad')) },
+      rooms: { list: async () => Promise.reject(new Error('indexed_db_went_bad')) },
+    }) as never
+
+  it('says so rather than showing an empty catalogue', async () => {
+    // **The state that did not exist.** `loaded` distinguishes "you have no devices" from "we
+    // have not looked yet"; a rejected read left it false forever, so the page rendered its
+    // header, its search box and nothing else — indistinguishable from a broken application,
+    // and shown to somebody standing in a basement in front of the device they came to look up.
+    const element = (await fixture(
+      html`<device-list-view .repositories=${failing()}></device-list-view>`,
+    )) as DeviceListView
+    await waitUntil(() => element.failed, 'the read never reported a failure')
+    await element.updateComplete
+
+    expect(element.querySelector('[data-read-failed]')).not.toBeNull()
+  })
+
+  it('does not claim the catalogue is empty', async () => {
+    // The worst possible message here: this application's entire promise is that a device
+    // recorded is a device kept, and "no devices yet" says the opposite of what happened.
+    const element = (await fixture(
+      html`<device-list-view .repositories=${failing()}></device-list-view>`,
+    )) as DeviceListView
+    await waitUntil(() => element.failed, 'the read never reported a failure')
+    await element.updateComplete
+
+    expect(element.textContent).not.toContain('No devices yet')
+  })
+
+  it('is not left in the "not looked yet" state', async () => {
+    const element = (await fixture(
+      html`<device-list-view .repositories=${failing()}></device-list-view>`,
+    )) as DeviceListView
+    await waitUntil(() => element.failed, 'the read never reported a failure')
+
+    expect(element.loaded).toBe(false)
+    expect(element.failed).toBe(true)
+  })
+
+  it('reports nothing when the read works', async () => {
+    // The positive control. Without it, a view that rendered the failure permanently would
+    // pass every case above.
+    const element = await list()
+
+    expect(element.failed).toBe(false)
+    expect(element.querySelector('[data-read-failed]')).toBeNull()
+  })
+})
+
 describe('grouping', () => {
   it('groups by room path and counts what is in each', async () => {
     await seed()

@@ -276,6 +276,34 @@ describe('reading an identity', () => {
     })
   })
 
+  it('carries a verified address as verified', () => {
+    // The claim M5-4 rests on: an invitation is redeemed by signing in with the address it was
+    // sent to, so this decides whether somebody *is* the invitee or merely says so.
+    expect(
+      identityFrom(PROVIDER, { sub: '1', email: 'a@b.c', email_verified: true }).emailVerified,
+    ).toBe(true)
+  })
+
+  it('does not treat an unverified address as verified', () => {
+    // Google issues tokens with `email_verified: false` for an address a user typed in.
+    expect(
+      identityFrom(PROVIDER, { sub: '1', email: 'a@b.c', email_verified: false }).emailVerified,
+    ).toBeUndefined()
+  })
+
+  it('does not treat a missing claim as verified', () => {
+    // A provider that does not say has not said yes.
+    expect(identityFrom(PROVIDER, { sub: '1', email: 'a@b.c' }).emailVerified).toBeUndefined()
+  })
+
+  it.each([['true'], [1], ['yes'], [{}]])('does not accept %o as verification', (value) => {
+    // Strictly `=== true`. Providers have been known to send the string `"true"`, and a
+    // truthy check would accept it — along with `"false"`, which is also a non-empty string.
+    expect(
+      identityFrom(PROVIDER, { sub: '1', email: 'a@b.c', email_verified: value }).emailVerified,
+    ).toBeUndefined()
+  })
+
   it('leaves out a field the provider did not give', () => {
     // Absent rather than empty: an empty name reads back as a person called nothing.
     expect(identityFrom(PROVIDER, { sub: '1', name: '' })).toEqual({ sub: 'google|1' })

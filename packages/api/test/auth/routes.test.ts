@@ -366,3 +366,52 @@ describe('issuing an access token', () => {
     expect(response.statusCode).toBe(401)
   })
 })
+
+describe('signing out', () => {
+  it('clears the session cookie', async () => {
+    // Necessary as a server operation because the cookie is httpOnly: the page cannot remove it,
+    // and a page that merely forgot its own token would still be signed in on the next request.
+    const { app: server } = signInServer()
+    const response = await server.inject({ method: 'POST', url: '/auth/signout' })
+
+    expect(response.statusCode).toBe(204)
+    expect(cookieNamed(response.headers as Record<string, unknown>, 'mm_session')).toContain(
+      'Max-Age=0',
+    )
+  })
+
+  it('clears the flow carrier too', async () => {
+    // A half-finished sign-in left behind at sign-out is a PKCE verifier lying around for a flow
+    // nobody is going to complete.
+    const { app: server } = signInServer()
+    const response = await server.inject({ method: 'POST', url: '/auth/signout' })
+
+    expect(cookieNamed(response.headers as Record<string, unknown>, 'mm_flow')).toContain(
+      'Max-Age=0',
+    )
+  })
+
+  it('succeeds when there was no session to end', async () => {
+    // Signing out when already signed out is not an error. Answering 401 would leave a user who
+    // is confused about their state unable to reach a state they are certain about.
+    const { app: server } = signInServer()
+
+    expect((await server.inject({ method: 'POST', url: '/auth/signout' })).statusCode).toBe(204)
+  })
+
+  it('is honest about what it can and cannot revoke', async () => {
+    // The session cookie is cleared, and the browser will stop sending it. The access token
+    // already issued stays cryptographically valid until it expires — which is why it is
+    // short-lived, and why revoking one before its time is M5's problem rather than something
+    // this endpoint quietly pretends to do.
+    const { app: server, key } = signInServer()
+    const stillValid = mintToken(key, {
+      sub: 'google|1234',
+      exp: Math.floor(Date.now() / 1000) + 3600,
+    })
+
+    await server.inject({ method: 'POST', url: '/auth/signout' })
+
+    expect(verifyToken(stillValid, key.publicKey).sub).toBe('google|1234')
+  })
+})

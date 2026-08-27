@@ -18,6 +18,9 @@ import Fastify, { type FastifyInstance } from 'fastify'
 import { type AuthDependencies, registerAuthRoutes } from './auth/routes.js'
 import type { paths } from './generated/openapi.js'
 import { redactionOptions } from './logging.js'
+import { type ProfileDependencies, registerProfileRoutes } from './profile/routes.js'
+import { type ProjectDependencies, registerProjectRoutes } from './projects/routes.js'
+import { registerSecurity, type SecurityOptions } from './security/register.js'
 
 /** The response body for an operation, straight from the contract. */
 type Response<
@@ -43,6 +46,41 @@ export interface ServerOptions {
    * the contract-drift check treats the routes as unimplemented, which is true.
    */
   readonly auth?: AuthDependencies
+  /**
+   * The profile store, when there is one.
+   *
+   * Separate from `auth` because they need different things — sign-in needs a provider, the
+   * profile needs CouchDB — and a deployment can have one configured and not the other while it
+   * is being brought up.
+   */
+  readonly profile?: ProfileDependencies
+  /**
+   * Project provisioning and listing.
+   *
+   * Separate from `profile` for the same reason `profile` is separate from `auth`: they need
+   * different things, and a deployment can have one configured and not the other while it is
+   * being brought up. Absent means the routes are absent, which the contract-drift check reads
+   * as unimplemented — which is true.
+   */
+  readonly projects?: ProjectDependencies
+  /**
+   * Rate limits, cross-origin access and the headers on every response.
+   *
+   * Not optional in effect: the headers and the limits apply whether or not this is given. What
+   * it configures is which origins may make a cross-origin request, and the answer when nobody
+   * says is **none** — a deployment that forgot should refuse the application rather than admit
+   * the internet.
+   */
+  readonly security?: SecurityOptions
+  /**
+   * Whether `X-Forwarded-*` may be believed.
+   *
+   * Defaults to `TRUST_PROXY=true` in the environment. An option as well as a variable because
+   * it decides two things worth testing directly — which address the rate limiter counts, and
+   * whether a connection is treated as encrypted — and a test that had to set an environment
+   * variable to reach them would be a test that leaked into the next one.
+   */
+  readonly trustProxy?: boolean
 }
 
 /**
@@ -73,9 +111,13 @@ export function buildServer(options: ServerOptions = {}): Server {
             level: process.env.LOG_LEVEL ?? 'info',
           },
     // Fastify's default is to trust no proxy. Behind one, that makes every client address the
-    // proxy's — which matters for the rate limiting M4-8 adds, where a shared address means
-    // one abusive client throttles everybody.
-    trustProxy: process.env.TRUST_PROXY === 'true',
+    // proxy's — and the rate limiter would then see every request as coming from one client, so
+    // the first twenty sign-in attempts from anywhere would lock out everybody else.
+    //
+    // The other way round is worse: believing `X-Forwarded-For` from a client that is *not*
+    // behind a trusted proxy lets anyone claim any address, which turns the limit off. Hence a
+    // deployment has to say so, and the default is to trust nothing.
+    trustProxy: options.trustProxy ?? process.env.TRUST_PROXY === 'true',
     // A body larger than this is not a request this service has: its largest legitimate body
     // is a membership list. The default is a megabyte, which is a megabyte of parsing offered
     // to anyone who asks.
@@ -103,6 +145,10 @@ export function buildServer(options: ServerOptions = {}): Server {
     }
   })
 
+  // Before any route, so that every response carries the headers and no endpoint can be added
+  // outside the limits by being registered first.
+  registerSecurity(app, options.security ?? {})
+
   /**
    * Liveness.
    *
@@ -117,6 +163,8 @@ export function buildServer(options: ServerOptions = {}): Server {
   })
 
   if (options.auth !== undefined) registerAuthRoutes(app, options.auth)
+  if (options.profile !== undefined) registerProfileRoutes(app, options.profile)
+  if (options.projects !== undefined) registerProjectRoutes(app, options.projects)
 
   return Object.assign(app, { registeredRoutes: () => [...routes] })
 }

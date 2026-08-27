@@ -152,6 +152,18 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthDependencies)
     return reply.redirect(`${deps.appOrigin}${returnTo}`, 302)
   })
 
+  app.post('/auth/signout', async (_request, reply) => {
+    // Necessary as a *server* operation because the session cookie is httpOnly: the page cannot
+    // remove it, and a page that merely forgot its own token would still be signed in on the
+    // next request.
+    //
+    // No session check. Signing out when already signed out is not an error, and answering 401
+    // to it would leave a user who is confused about their state unable to reach a state they
+    // are certain about.
+    clearCookies(reply, secure)
+    return reply.code(204).send()
+  })
+
   app.post('/auth/token', async (request, reply) => {
     const session = cookie(request, SESSION_COOKIE)
     if (session === undefined) return reply.code(401).send({ error: 'not signed in' })

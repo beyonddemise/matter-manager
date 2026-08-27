@@ -382,6 +382,18 @@
   <source>Labels</source>
   <target>Etiketten</target>
 </trans-unit>
+<trans-unit id="sb4d5a690c084aca3">
+  <source>The rooms already in this catalogue could not be read, so none are suggested below. You can still type a room name.</source>
+  <target>Die bereits vorhandenen Räume konnten nicht gelesen werden, daher werden unten keine vorgeschlagen. Sie können einen Raumnamen trotzdem eingeben.</target>
+</trans-unit>
+<trans-unit id="s04bffb7fd8963811">
+  <source>Your devices could not be read from this browser’s storage. Nothing has been lost — reload to try again.</source>
+  <target>Ihre Geräte konnten nicht aus dem Speicher dieses Browsers gelesen werden. Es ist nichts verloren gegangen – laden Sie die Seite neu, um es erneut zu versuchen.</target>
+</trans-unit>
+<trans-unit id="s381e1afa47b9490e">
+  <source>This device could not be read</source>
+  <target>Dieses Gerät konnte nicht gelesen werden</target>
+</trans-unit>
 </body>
 </file>
 </xliff>

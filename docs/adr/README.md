@@ -24,6 +24,7 @@ decision to be wrong. That is the part people need eighteen months later.
 | [0013](0013-minimal-runtime-dependencies.md) | Minimal runtime dependencies | Accepted |
 | [0014](0014-cloudflare-pages-deployment.md) | Cloudflare Pages by direct upload, caching contract pinned | Accepted |
 | [0015](0015-openapi-checked-not-executed.md) | The OpenAPI contract is checked against, not executed from | Accepted (amends 0004) |
+| [0016](0016-in-process-rate-limiting.md) | Rate limiting is in-process, which constrains how the API is deployed | Accepted |
 
 ## Writing one
 
