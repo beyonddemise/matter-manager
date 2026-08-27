@@ -97,3 +97,61 @@ handling happen in one place**. A `fetch` at a call site is one where somebody e
 the credentials header, treats a 409 as a failure, or logs the response body — and the response
 body of a project database contains setup passcodes. No error message from this client ever
 echoes a response body; there is a test for that.
+
+## Sign-in
+
+Authorization code with PKCE. Three modules:
+
+| | |
+|---|---|
+| `auth/oidc.ts` | The flow, provider-agnostic. PKCE, state, the code exchange. |
+| `auth/google.ts` | Google's endpoints, and ID-token verification against its JWKS. |
+| `auth/routes.ts` | The three operations the contract declares. |
+
+**Tokens never touch `localStorage`.** The PKCE carrier and the session are **httpOnly** cookies
+the page cannot read. The CouchDB access token is returned by `POST /auth/token` in a response
+body, because PouchDB has to put it in an `Authorization` header — so it is held in memory,
+where it dies with the tab, rather than in storage, where it survives and is readable by any
+script that ever runs on the origin.
+
+**The routes are absent when no provider is configured**, rather than present and answering with
+a misconfiguration error at the moment a user presses the button.
+
+### Configuration
+
+| Variable | |
+|---|---|
+| `GOOGLE_CLIENT_ID` | From the Google Cloud console, OAuth 2.0 Client ID (Web application) |
+| `GOOGLE_CLIENT_SECRET` | Same screen |
+| `GOOGLE_REDIRECT_URI` | Must match what is registered **exactly**, e.g. `https://api.matter-manager.example/auth/google/callback` |
+| `APP_ORIGIN` | Where the browser is returned, e.g. `https://matter-manager.pages.dev` |
+| `JWT_PRIVATE_KEY` | EC P-256 private key, PEM. `openssl ecparam -name prime256v1 -genkey -noout` |
+| `JWT_KEY_ID` | Names the key in tokens and in CouchDB's `[jwt_keys]`, e.g. `ec-2026-08` |
+
+None of these are in the repository and none should be. The public half of `JWT_PRIVATE_KEY` is
+pushed into CouchDB at startup (`auth/keys.ts`), so key material never enters the image.
+
+## Protecting the service
+
+Rate limits, cross-origin access, the headers on every response and a cap on request bodies
+(#47). The limits are in-process and that constrains the deployment — see
+[ADR 0016](../../docs/adr/0016-in-process-rate-limiting.md).
+
+| Variable | |
+|---|---|
+| `CORS_ORIGINS` | Comma-separated origins allowed to make cross-origin requests. `APP_ORIGIN` is included automatically, so this is only needed for a second front end |
+| `TRUST_PROXY` | `true` when the service runs behind a proxy that sets `X-Forwarded-For` |
+
+**`TRUST_PROXY` matters in both directions.** Unset behind a proxy, every request appears to
+come from the proxy, one address is counted for everybody, and the first twenty sign-in attempts
+from anywhere lock out the world. Set where there is no trusted proxy, any client can claim any
+address and the limit is off. There is no default that is right for both, so the deployment says
+and the default trusts nothing.
+
+**A bad origin stops the service starting.** `https://app.example/` is tolerated, but a value
+with a path, a wildcard, or something that is not a URL throws before anything listens. The
+alternative failure — the real application quietly refused, in production — looks exactly like a
+browser problem.
+
+Nothing configured means **no** cross-origin access, which is why a deployment that forgets
+`APP_ORIGIN` refuses the application rather than admitting the internet.
