@@ -9,8 +9,9 @@ Accepted
 ## Context
 
 The web application is a static bundle: Vite output, no server rendering, no runtime the host
-has to provide. It needs somewhere to be served from, with a preview per pull request so that
-a change to a QR-rendering page can be looked at rather than reasoned about.
+has to provide. It needs somewhere to be served from, and — as originally framed — a preview per
+pull request, so that a change to a QR-rendering page could be looked at rather than reasoned
+about. That second requirement was withdrawn; see *Pull requests are not deployed* below.
 
 Two things make the choice less obvious than "any static host".
 
@@ -66,15 +67,30 @@ impossible.
 
 ## Consequences
 
-**A fork gets no deployment.** GitHub does not give fork workflows access to secrets, the same
-constraint that already makes `npm ci` fail on a fork (see CONTRIBUTING). The job is skipped by
-condition rather than left to fail, so a red cross on a fork's pull request means something is
-actually wrong. `pull_request_target` is **not** an option here and will not become one: it
-runs untrusted code with the credentials, trading an inconvenience for a credential compromise.
+**Pull requests are not deployed.** This reverses the preview-per-pull-request requirement in
+the Context above, and the reason is the one that requirement could not survive: a workflow that
+deploys a pull request runs *that pull request's code* with the Cloudflare credentials reachable
+from the job. `npm run build` executes `vite.config.ts` and every plugin it loads, from the
+branch being built. Scoping the token to the steps that need it narrows the exposure and cannot
+remove it, because a pull request can edit the workflow too — so with previews on, branch write
+access is Cloudflare token access, in a repository that accepts pull requests.
+
+The alternative considered was protected GitHub Environments with required reviewers, which keeps
+previews at the cost of a click per pull request. It was judged not worth that: the bundle's
+behaviour is covered by browser tests in CI, and anybody who wants a preview can dispatch the
+workflow by hand against any branch — which requires write access, so the code being run is code
+somebody with write access chose.
+
+What a pull request keeps is the **caching contract check**: `ci.yml` runs `npm run check:deploy`
+independently of this workflow, so a `_headers` that would pin the app shell is still caught in
+review rather than after it ships.
+
+`pull_request_target` is **not** an option here and never was: it runs untrusted code with the
+credentials, trading an inconvenience for a credential compromise.
 
 **A branch name is checked against an allowlist before it reaches the deploy command.** Git
 permits `;`, `&`, `|`, `$`, `(`, `)` and backticks in a ref name, and the name ends up in a
-command line. Forks are already excluded, so this is not reachable by a stranger — but "only
+command line. With no pull-request trigger this is not reachable by a stranger — but "only
 people we trust could exploit it" is not a security property, and the allowlist costs one step.
 
 The check is also what makes the *other* half safe. The branch is substituted into the action's
@@ -96,12 +112,44 @@ set at creation, or afterwards through the Update Project API. Getting it wrong 
 means every deploy is a preview and nothing is ever live, which looks like a broken workflow
 rather than a wrong setting.
 
-**Two repository secrets are required**, in addition to the existing `WEBAWESOME_NPM_TOKEN`:
+**Two organisation secrets are required**, in addition to the existing repository-level
+`WEBAWESOME_NPM_TOKEN`:
 
 | Secret | What |
 |---|---|
 | `CLOUDFLARE_API_TOKEN` | An API token with **Account → Cloudflare Pages → Edit**. Nothing else; this token can only publish the site. |
-| `CLOUDFLARE_ACCOUNT_ID` | The Cloudflare account the project lives in. |
+| `CLOUDFLARE_ACCOUNT_ID` | The Cloudflare account the project lives in. Read from a secret or a variable, whichever exists. |
+
+The account id is not sensitive — it is in the path of every Cloudflare dashboard URL — so a
+variable is its more honest home, and the workflow accepts either rather than letting the store
+an administrator reached for decide whether the site deploys. The token is only ever a secret.
+
+They are held at the organisation because the account is the organisation's, not this
+repository's: a second repository publishing to it should not mean a second copy of the token
+to rotate. The cost is one more way to be wrong — an organisation secret has a repository
+access list, and a repository left off it reads `secrets.CLOUDFLARE_API_TOKEN` as the empty
+string rather than failing. That is why the deploy job checks both values before it builds,
+instead of letting wrangler report a missing token four minutes later.
+
+**They are passed through the action's `apiToken`/`accountId` inputs.** An earlier version of
+this record said the opposite, and had the mechanism backwards; it is corrected here rather than
+quietly, because the reasoning is worth keeping. From the pinned action's own source:
+
+```js
+CLOUDFLARE_API_TOKEN: getInput("apiToken"),
+// …
+function authenticationSetup(config) {
+  process.env.CLOUDFLARE_API_TOKEN = config["CLOUDFLARE_API_TOKEN"]
+  process.env.CLOUDFLARE_ACCOUNT_ID = config["CLOUDFLARE_ACCOUNT_ID"]
+}
+```
+
+`authenticationSetup` is the first thing `main()` calls and it assigns **unconditionally**, and
+`getInput` returns `""` for an input nobody supplied. So omitting the inputs is what overwrites
+the environment: both variables would be set to the empty string before wrangler ran, and the
+deploy would report no credentials however carefully the secrets were configured. The `env:`
+block stays because the preflight check reads it. The deploy inputs repeat the same expressions,
+so both steps currently use the same values.
 
 **No SPA fallback is needed.** The router is hash-based (`#/devices/<uuid>`), so every request
 is for `/` and there are no deep paths for the host to rewrite. A `_redirects` file would be

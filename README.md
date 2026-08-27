@@ -137,10 +137,14 @@ comes up alongside, already configured, and your token is forwarded from the hos
 npm ci
 docker compose -f .devcontainer/docker-compose.yml up -d couchdb  # optional until M4
 npm run verify        # lint + typecheck + tests
+npm run dev           # Vite dev server with HMR on http://localhost:5173
 ```
 
 | Command | Does |
 |---|---|
+| `npm run dev` | Vite dev server for `packages/web` with hot module replacement. Builds `core` and `data` first, because the web app resolves them through their emitted `dist/`. |
+| `npm run build` | Production bundle into `packages/web/dist`. Same two steps the deploy workflow runs. |
+| `npm run preview` | Serve the built bundle, to check it before deploying. |
 | `npm run verify` | Dependency policy, `.npmrc` guard, Biome, typecheck, tests. CI additionally runs coverage gates and the CouchDB contract checks, which need a live CouchDB. |
 | `npm test` | Unit and integration tests |
 | `npm run test:watch` | Test watcher for red-green-refactor |
@@ -159,13 +163,19 @@ for the same reason they cannot run `npm ci` — GitHub does not give fork workf
 Full rationale, including the caching contract and why it is enforced by a checker, in
 [ADR 0014](docs/adr/0014-cloudflare-pages-deployment.md).
 
-### Repository secrets
+### Secrets
 
-| Secret | What | Where |
-|---|---|---|
-| `WEBAWESOME_NPM_TOKEN` | Web Awesome Pro registry token | CI and deploy |
-| `CLOUDFLARE_API_TOKEN` | API token with **Account → Cloudflare Pages → Edit**, and nothing else | deploy |
-| `CLOUDFLARE_ACCOUNT_ID` | The account the Pages project lives in | deploy |
+| Secret | Scope | What | Where |
+|---|---|---|---|
+| `WEBAWESOME_NPM_TOKEN` | repository | Web Awesome Pro registry token | CI and deploy |
+| `CLOUDFLARE_API_TOKEN` | organisation | API token with **Account → Cloudflare Pages → Edit**, and nothing else | deploy |
+| `CLOUDFLARE_ACCOUNT_ID` | organisation | The account the Pages project lives in. Secret *or* variable — it is not sensitive | deploy |
+
+The two Cloudflare values are organisation secrets, so one rotation covers every repository
+that deploys to the account. An organisation secret still has to *grant* this repository
+access — a secret that exists but is scoped to other repositories reads as empty here, which
+looks identical to one that was never created. The deploy job checks for both before it builds
+anything and says which is missing.
 
 ### One-time setup
 

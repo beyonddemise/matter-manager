@@ -189,6 +189,27 @@ function parseHeaders(text) {
       return
     }
 
+    // Cloudflare also accepts an absolute URL as a rule — `https://site.pages.dev/sw.js`.
+    // This checker does not model host patterns, and the failure of *not* saying so is silent
+    // and specific: `https://…` contains a colon, so it parses as a header named `https`, and
+    // every `Cache-Control` beneath it attaches to whichever rule came before. The absolute
+    // rule is then never evaluated, and any complaint names the wrong line.
+    //
+    // Refused rather than handled, which is the same choice the `:placeholder` matcher makes:
+    // there is no rule this project needs whose pattern is a URL, so the safe answer is to
+    // reject the form rather than to be clever about it.
+    if (/^[a-z][a-z0-9+.-]*:\/\//i.test(line)) {
+      problems.push({
+        where: `line ${index + 1}`,
+        what: 'an absolute URL as a rule, which this checker does not model',
+        detail:
+          `${line} — write it as a path pattern instead. Left as a URL it parses as a header ` +
+          'called "https", its own headers attach to the rule above it, and nothing here ever ' +
+          'checks the path it names.',
+      })
+      return
+    }
+
     const colon = line.indexOf(':')
     const current = rules.at(-1)
     if (colon === -1 || current === undefined) {
