@@ -215,7 +215,7 @@ export class AppShell extends LitElement {
             ${
               this.online
                 ? ''
-                : html`<wa-tag data-offline variant="neutral" size="small">
+                : html`<wa-tag data-offline variant="neutral" size="s">
                     <wa-icon slot="start" name="cloud-slash"></wa-icon>
                     ${msg('Offline')}
                   </wa-tag>`
@@ -253,7 +253,7 @@ export class AppShell extends LitElement {
                     <wa-icon slot="icon" name="arrows-rotate"></wa-icon>
                     <div class="wa-split wa-gap-m">
                       <span>${msg('A new version of Matter Manager is ready.')}</span>
-                      <wa-button data-take-update size="small" @click=${this.onTakeUpdate}>
+                      <wa-button data-take-update size="s" @click=${this.onTakeUpdate}>
                         ${msg('Reload')}
                       </wa-button>
                     </div>

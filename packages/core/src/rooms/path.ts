@@ -104,6 +104,27 @@ export function isNearDuplicateRoomPath(a: string, b: string): boolean {
   return roomPathKey(a) === roomPathKey(b)
 }
 
+/**
+ * Whether `path` is `root` or lives inside it.
+ *
+ * **Matching is on segment boundaries, not string prefixes**, and that distinction is the whole
+ * reason this is a function rather than a `startsWith`: `Floor 10/Kitchen` starts with
+ * `Floor 1` and is not in it. Get it wrong when renaming and a room moves into a building it
+ * was never in; get it wrong when exporting and a PDF quietly contains rooms nobody asked for
+ * — which is worse, because it is handed to someone else.
+ *
+ * Case-sensitive, because ADR 0006 makes case distinguish rooms. Use
+ * {@link isNearDuplicateRoomPath} to warn about a confusable pair at creation time instead.
+ *
+ * Both paths are normalised first, so a trailing separator or doubled spacing on either side
+ * does not change the answer.
+ */
+export function isWithinRoom(path: string, root: string): boolean {
+  const current = normaliseRoomPath(path)
+  const ancestor = normaliseRoomPath(root)
+  return current === ancestor || current.startsWith(ancestor + ROOM_PATH_SEPARATOR)
+}
+
 /** Normalises a path for use as an endpoint of a rename, refusing anything unusable. */
 function requireUsable(path: string, role: string): string {
   const problem = roomPathProblem(path)
@@ -141,9 +162,9 @@ export function renameRoomPath(path: string, from: string, to: string): string {
   const target = requireUsable(to, 'target')
   const current = normaliseRoomPath(path)
 
-  if (current === source) return target
-  if (current.startsWith(source + ROOM_PATH_SEPARATOR)) {
-    return target + current.slice(source.length)
-  }
-  return current
+  // Through `isWithinRoom` rather than a second `startsWith` here, so the segment-boundary
+  // rule described above has exactly one implementation. Two would be two chances to get
+  // `Floor 10` versus `Floor 1` wrong, in two features, at different times.
+  if (!isWithinRoom(current, source)) return current
+  return current === source ? target : target + current.slice(source.length)
 }
