@@ -137,10 +137,14 @@ comes up alongside, already configured, and your token is forwarded from the hos
 npm ci
 docker compose -f .devcontainer/docker-compose.yml up -d couchdb  # optional until M4
 npm run verify        # lint + typecheck + tests
+npm run dev           # Vite dev server with HMR on http://localhost:5173
 ```
 
 | Command | Does |
 |---|---|
+| `npm run dev` | Vite dev server for `packages/web` with hot module replacement. Builds `core` and `data` first, because the web app resolves them through their emitted `dist/`. |
+| `npm run build` | Production bundle into `packages/web/dist`. Same two steps the deploy workflow runs. |
+| `npm run preview` | Serve the built bundle, to check it before deploying. |
 | `npm run verify` | Dependency policy, `.npmrc` guard, Biome, typecheck, tests. CI additionally runs coverage gates and the CouchDB contract checks, which need a live CouchDB. |
 | `npm test` | Unit and integration tests |
 | `npm run test:watch` | Test watcher for red-green-refactor |

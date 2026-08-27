@@ -17,6 +17,9 @@
     "e2e"
   ],
   "scripts": {
+    "dev": "npm run typecheck && npm --workspace @matter-manager/web run dev",
+    "build": "npm run typecheck && npm --workspace @matter-manager/web run build",
+    "preview": "npm --workspace @matter-manager/web run preview",
     "check": "biome check .",
     "check:fix": "biome check --write .",
     "check:deps": "node scripts/check-dependencies.mjs",
