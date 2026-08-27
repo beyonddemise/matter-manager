@@ -989,3 +989,36 @@ whole subtree implies absence from the part. Scope the positives; leave the nega
 string in it is the string the message is supposed to contain. Nothing about it reads as wrong.
 Only asking "what else on this page says that?" — or running the probe — distinguishes it from a
 test that works.
+
+## L31 — Every test starts with an empty database. A deployment is empty once.
+
+Four helpers wrote a CouchDB design document with `putDoc` and no `_rev`. CouchDB accepts that as
+a *create* and refuses it as a *replace*, so each worked on the first process against a given
+database and threw `409 conflict` on every process after — permanently, because each set its
+"already done" flag only after a successful write. Creating a project, redeeming an invitation,
+accepting a transfer and finding anybody by address were all broken after any restart.
+
+The test suite could not have caught it. `fakeCouch()` enforces `_rev` **exactly as CouchDB
+does** — that was a deliberate choice, made for exactly this class of bug, and it still missed
+this one, because every test constructed a fresh empty fake. The write under test was always a
+create. The replace path had no test because no test had a *before*.
+
+The fix was to make the process boundary expressible: `forget*()` already existed for tests, and
+calling it between two `ensure` calls against the *same* fake is what a restart is.
+
+**Rule:** for any code that runs once per process against durable state, write the test that runs
+it twice. Not twice in one process — the flag makes that free — but twice with the state kept and
+the memory discarded. If there is no way to express "the same database, a fresh process", that
+absence is the finding.
+
+**Corollary — a skip can hide the thing it optimises.** The fix both carried the `_rev` and
+skipped the write when the stored map was unchanged. Skipping made the `_rev` carry *unreachable*
+in every test, so removing it again changed nothing and the mutant survived. An early return that
+makes a fix untestable is worth noticing: the case the fix exists for is the case the early return
+excludes. Here it was a map function that had **changed**, which is the entire reason those
+helpers run on every process.
+
+**Corollary — a flag set after an await is a race.** `if (established) return` … `await write()`
+… `established = true` lets two callers through. Memoise the in-flight promise instead, and forget
+it on failure so a transient error is retried rather than remembered. This one was reachable from
+two people sharing a project at the same moment, because `findUser` awaits it.

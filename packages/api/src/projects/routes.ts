@@ -100,8 +100,19 @@ export interface ProjectDependencies {
 const CREATE: Action = 'project.create'
 const INVITE: Action = 'project.invite'
 
-/** The roles the contract allows, checked before anything is written. */
-const ROLES = new Set(['owner', 'manage', 'write', 'read'])
+/**
+ * The roles this route may grant, checked before anything is written.
+ *
+ * **`owner` is deliberately absent**, and this is not the same list as `Role` in the contract.
+ * Sharing requires `manage`, and `grantRole` will set any role it is given — so including
+ * `owner` here would let a manager promote anybody, themselves included, and the whole of the
+ * ownership transfer flow (an offer, a lifetime, an acceptance by the recipient, the outgoing
+ * owner's decision about what to retain) would be bypassable by the people it exists to
+ * constrain. Ownership moves through `POST /projects/:projectId/transfer` or it does not move.
+ *
+ * The transfer route makes the same narrowing for the same reason, on `retainAccess`.
+ */
+const ROLES = new Set(['manage', 'write', 'read'])
 
 /** What the request body may contain. Shape only — the rules live in `provision.ts`. */
 interface CreateBody {

@@ -63,6 +63,7 @@ export async function installSigningKey(
   await admin.putConfig('jwt_keys', `ec:${key.kid}`, publicKeyForCouch(key.publicKey))
 
   const probe = mintToken(key, {
+    purpose: 'access',
     sub: `startup-probe-${key.kid}`,
     exp: Math.floor(Date.now() / 1000) + 60,
   })

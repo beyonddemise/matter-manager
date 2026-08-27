@@ -51,7 +51,7 @@ export function bearerSubject(
   if (token === undefined) return undefined
 
   try {
-    return verifyToken(token, key.publicKey, now).sub
+    return verifyToken(token, key.publicKey, 'access', now).sub
   } catch {
     return undefined
   }

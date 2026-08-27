@@ -206,8 +206,9 @@ describe('the profile endpoints', () => {
   function serve(seed = storedAda({ locale: 'de' })) {
     const key = newKey()
     const { couch, writes } = fakeCouch(seed)
-    app = buildServer({ logger: false, profile: { store: profileStore(couch), key } })
+    app = buildServer({ logger: false, profile: { store: profileStore(couch), sessionKey: key } })
     const session = mintToken(key, {
+      purpose: 'session',
       sub: 'google|1234',
       exp: Math.floor(Date.now() / 1000) + 3600,
     })
@@ -324,5 +325,48 @@ describe('the profile endpoints', () => {
     const response = await server.inject({ method: 'GET', url: '/profile', headers: { cookie } })
 
     expect(response.statusCode).toBe(401)
+  })
+})
+
+describe('an address that was already stored', () => {
+  const stored = {
+    [`_users/${userDocumentId('google|1234')}`]: {
+      _id: userDocumentId('google|1234'),
+      _rev: '1-a',
+      name: 'google|1234',
+      roles: [],
+      type: 'user',
+      email: 'ada@example.test',
+      displayName: 'Ada',
+    },
+  }
+
+  it('survives a sign-in whose token carried no email claim', async () => {
+    // The address in `_users` is what `users.ts` indexes for `findUser`, so losing it does not
+    // merely blank a profile field — it makes the account unfindable by address, and sharing a
+    // project with that person answers "nobody with that address has an account yet". The claim
+    // is optional in OIDC, and `identityFrom` already drops an empty one, so an identity with
+    // no email is an ordinary thing rather than a malformed one.
+    const { couch, documents } = fakeCouch(stored)
+
+    await profileStore(couch as unknown as CouchClient).remember({
+      sub: 'google|1234',
+      name: 'Ada',
+    })
+
+    expect(documents.get(`_users/${userDocumentId('google|1234')}`)?.email).toBe('ada@example.test')
+  })
+
+  it('is replaced when the provider does send one', async () => {
+    // The positive control. Carrying the stored value forward *unconditionally* would pass the
+    // test above while ignoring somebody who changed their address with their provider.
+    const { couch, documents } = fakeCouch(stored)
+
+    await profileStore(couch as unknown as CouchClient).remember({
+      sub: 'google|1234',
+      email: 'ada@new.test',
+    })
+
+    expect(documents.get(`_users/${userDocumentId('google|1234')}`)?.email).toBe('ada@new.test')
   })
 })

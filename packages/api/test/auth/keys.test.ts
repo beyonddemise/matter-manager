@@ -73,7 +73,9 @@ describe('installing the signing key', () => {
     await installSigningKey(admin, key)
 
     expect(probes).toHaveLength(1)
-    expect(verifyToken(probes[0]?.token ?? '', key.publicKey).sub).toContain('startup-probe')
+    expect(verifyToken(probes[0]?.token ?? '', key.publicKey, 'access').sub).toContain(
+      'startup-probe',
+    )
   })
 
   it('refuses to continue when CouchDB rejects that token', async () => {
@@ -113,7 +115,7 @@ describe('installing the signing key', () => {
     const { admin, probes } = fakeAdmin()
     await installSigningKey(admin, key)
 
-    const claims = verifyToken(probes[0]?.token ?? '', key.publicKey)
+    const claims = verifyToken(probes[0]?.token ?? '', key.publicKey, 'access')
     expect(claims.exp - Math.floor(Date.now() / 1000)).toBeLessThanOrEqual(60)
   })
 })

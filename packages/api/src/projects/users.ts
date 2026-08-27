@@ -15,6 +15,7 @@
  */
 
 import type { CouchClient } from '../couch/client.js'
+import { installDesign, once } from '../couch/design.js'
 import { userDocumentId } from '../profile/store.js'
 
 /** CouchDB's own account database. */
@@ -46,29 +47,26 @@ export interface FoundUser {
   readonly email: string
 }
 
-/** Whether the index has been established in this process. */
-let established = false
+const index = once(async (couch: CouchClient) => {
+  await installDesign(couch, USERS_DATABASE, `_design/${BY_EMAIL_DESIGN}`, {
+    [BY_EMAIL_VIEW]: { map: BY_EMAIL_MAP },
+  })
+})
 
 /** Forgets that the index was established. For tests. */
 export function forgetUserIndex(): void {
-  established = false
+  index.forget()
 }
 
 /**
  * Installs the address index if it is not already there.
  *
- * Lazy, and remembered only on success, for the same reasons as `ensureRegistry`.
+ * Lazy, and remembered only on success, for the same reasons as `ensureRegistry`. Shared while
+ * in flight, because `findUser` awaits this on the path of every invitation — two people
+ * sharing a project at the same moment is enough to reach the race.
  */
 export async function ensureUserIndex(couch: CouchClient): Promise<void> {
-  if (established) return
-
-  await couch.putDoc(USERS_DATABASE, {
-    _id: `_design/${BY_EMAIL_DESIGN}`,
-    views: { [BY_EMAIL_VIEW]: { map: BY_EMAIL_MAP } },
-    language: 'javascript',
-  } as unknown as { _id: string })
-
-  established = true
+  return index.ensure(couch)
 }
 
 /**

@@ -20,7 +20,8 @@ function signingKey(): SigningKey {
 const KEY = signingKey()
 
 /** A valid access token for `sub`. */
-const tokenFor = (sub: string) => mintToken(KEY, { sub, exp: Math.floor(Date.now() / 1000) + 3600 })
+const tokenFor = (sub: string) =>
+  mintToken(KEY, { purpose: 'access', sub, exp: Math.floor(Date.now() / 1000) + 3600 })
 
 let app: Server | undefined
 let couch: FakeCouch
@@ -177,7 +178,9 @@ describe('who may create a project', () => {
     const response = await built.inject({
       method: 'POST',
       url: '/projects',
-      headers: { authorization: `Bearer ${mintToken(other, { sub: OWNER, exp: 2 ** 31 })}` },
+      headers: {
+        authorization: `Bearer ${mintToken(other, { purpose: 'access', sub: OWNER, exp: 2 ** 31 })}`,
+      },
       payload: { name: 'Musterstraße 12' },
     })
 
@@ -190,7 +193,7 @@ describe('who may create a project', () => {
       method: 'POST',
       url: '/projects',
       headers: {
-        authorization: `Bearer ${mintToken(KEY, { sub: OWNER, exp: Math.floor(Date.now() / 1000) - 60 })}`,
+        authorization: `Bearer ${mintToken(KEY, { purpose: 'access', sub: OWNER, exp: Math.floor(Date.now() / 1000) - 60 })}`,
       },
       payload: { name: 'Musterstraße 12' },
     })
@@ -207,7 +210,7 @@ describe('who may create a project', () => {
       method: 'POST',
       url: '/projects',
       headers: {
-        authorization: `Bearer ${mintToken(KEY, { sub: OWNER, exp: 1 })}`,
+        authorization: `Bearer ${mintToken(KEY, { purpose: 'access', sub: OWNER, exp: 1 })}`,
       },
       payload: { name: 'x' },
     })
@@ -402,6 +405,27 @@ describe('sharing a project', () => {
     const response = await share(built.app, { email: 'grace@example.test', role: 'read' })
 
     expect(response.statusCode).toBe(204)
+  })
+
+  it('refuses to grant ownership through this route', async () => {
+    // Sharing requires `manage`, and `grantRole` accepts `owner` — so without this, a manager
+    // could promote anybody, themselves included, to owner. That is the whole of the M5-5
+    // transfer flow bypassed: no offer, no acceptance by the recipient, no owner's decision.
+    // Ownership moves through `POST /projects/:id/transfer` or it does not move.
+    const built = seedProject(server())
+    const response = await share(built.app, { email: 'grace@example.test', role: 'owner' })
+
+    expect(response.statusCode).toBe(400)
+  })
+
+  it('still grants the roles this route is for', async () => {
+    // The positive control for the refusal above: refusing every role would also pass it.
+    const built = seedProject(server())
+
+    for (const role of ['manage', 'write', 'read']) {
+      const response = await share(built.app, { email: 'grace@example.test', role })
+      expect(response.statusCode, role).toBe(204)
+    }
   })
 
   it('calls the gate with project.invite and the project', async () => {

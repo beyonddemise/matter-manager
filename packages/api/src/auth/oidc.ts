@@ -40,6 +40,8 @@ export interface Provider {
 
 /** What is carried across the redirect, signed, so this service holds no session state. */
 export interface FlowState {
+  /** Always `flow`, so this carrier cannot be presented as a session. See `TokenPurpose`. */
+  readonly purpose: 'flow'
   /** Random, and compared on the way back. */
   readonly state: string
   /** The PKCE verifier. **Never leaves this service and never reaches the browser.** */
@@ -129,6 +131,7 @@ export function beginSignIn(
   url.searchParams.set('code_challenge_method', 'S256')
 
   const carrier = signCompact(key, {
+    purpose: 'flow',
     state,
     verifier,
     // Only a path, never a full URL. An open redirect here is a phishing primitive that
@@ -169,7 +172,7 @@ export function readFlowState(
 
   let flow: FlowState
   try {
-    flow = verifyCompact<FlowState>(carrier, key.publicKey, now)
+    flow = verifyCompact<FlowState>(carrier, key.publicKey, 'flow', now)
   } catch (error) {
     // Includes expiry, a forged signature and a wrong algorithm — `verifyCompact` makes the
     // same checks a CouchDB token gets, which is the point of sharing it.

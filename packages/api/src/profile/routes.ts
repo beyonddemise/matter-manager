@@ -18,7 +18,14 @@ const SESSION_COOKIE = 'mm_session'
 
 export interface ProfileDependencies {
   readonly store: ProfileStore
-  readonly key: SigningKey
+  /**
+   * The **session** key, not the one CouchDB validates.
+   *
+   * These routes authenticate by the session cookie, so they verify with the key that signs
+   * one. Naming it plainly because the two are interchangeable to the type checker and not at
+   * all interchangeable in what they mean — see `AuthDependencies.sessionKey`.
+   */
+  readonly sessionKey: SigningKey
   readonly now?: () => number
 }
 
@@ -36,13 +43,13 @@ function cookie(request: FastifyRequest, name: string): string | undefined {
 /** The signed-in subject, or `undefined`. */
 function subjectOf(
   request: FastifyRequest,
-  key: SigningKey,
+  sessionKey: SigningKey,
   now: () => number,
 ): string | undefined {
   const session = cookie(request, SESSION_COOKIE)
   if (session === undefined) return undefined
   try {
-    return verifyToken(session, key.publicKey, now).sub
+    return verifyToken(session, sessionKey.publicKey, 'session', now).sub
   } catch {
     return undefined
   }
@@ -52,7 +59,7 @@ export function registerProfileRoutes(app: FastifyInstance, deps: ProfileDepende
   const now = deps.now ?? (() => Math.floor(Date.now() / 1000))
 
   app.get('/profile', async (request, reply) => {
-    const sub = subjectOf(request, deps.key, now)
+    const sub = subjectOf(request, deps.sessionKey, now)
     if (sub === undefined) return reply.code(401).send({ title: 'Not signed in', status: 401 })
 
     const profile = await deps.store.read(sub)
@@ -70,7 +77,7 @@ export function registerProfileRoutes(app: FastifyInstance, deps: ProfileDepende
   })
 
   app.put('/profile', async (request, reply) => {
-    const sub = subjectOf(request, deps.key, now)
+    const sub = subjectOf(request, deps.sessionKey, now)
     if (sub === undefined) return reply.code(401).send({ title: 'Not signed in', status: 401 })
 
     const body = request.body as { locale?: unknown; displayName?: unknown } | undefined

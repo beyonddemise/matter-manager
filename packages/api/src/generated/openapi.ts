@@ -413,7 +413,8 @@ export interface paths {
           'application/json': {
             /** Format: email */
             email: string
-            role: components['schemas']['Role']
+            /** @enum {string} */
+            role: 'manage' | 'write' | 'read'
           }
         }
       }
