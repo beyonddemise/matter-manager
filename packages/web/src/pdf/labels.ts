@@ -23,6 +23,8 @@ import {
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib'
 import { ExportCancelled, type InventoryProgress } from './inventory.js'
 import { renderQrPng } from './qr-image.js'
+import { winAnsiSafe } from './win-ansi.js'
+import { yieldToBrowser } from './yield.js'
 
 export interface LabelOptions {
   readonly stock: LabelStock
@@ -51,11 +53,14 @@ export function labelSubjects(groups: readonly DeviceGroup[]): readonly LabelSub
  * truncating is the only one of those a person can read.
  */
 function fitted(
-  text: string,
+  raw: string,
   font: Awaited<ReturnType<PDFDocument['embedFont']>>,
   size: number,
   width: number,
 ): string {
+  // Made safe *before* measuring, not after: a substitution changes the width, so measuring
+  // the original would fit a string that is not the one drawn.
+  const text = winAnsiSafe(raw)
   if (font.widthOfTextAtSize(text, size) <= width) return text
 
   const ellipsis = '…'
@@ -98,8 +103,12 @@ export async function buildLabelPdf(
     for (const label of sheet.labels) {
       if (options.cancelled?.() === true) throw new ExportCancelled('The export was cancelled.')
       await drawLabel(page, label, { pdf, regular, bold, ink, quiet, yOf, options })
+      // See the note in `inventory.ts`: `embedPng` defers its work to save time, and a sheet
+      // of sixty-five labels is sixty-five images to decode in one block at the end.
+      await pdf.flush()
       done += 1
       options.onProgress?.({ done, total: subjects.length })
+      await yieldToBrowser()
     }
   }
 
@@ -180,7 +189,9 @@ async function drawLabel(
   // The pairing code, because a label rained on inside a fuse box is where a QR fails and
   // digits still work. Truncation would make it useless rather than degraded, so it is drawn
   // at whatever size fits: a code a reader has to squint at beats one that is cut in half.
-  const code = device.manualCode
+  // Digits only, so the guard is a no-op — applied anyway, so that every `drawText` in this
+  // file goes through it and none can be forgotten when this changes.
+  const code = winAnsiSafe(device.manualCode)
   let codeSize = detailSize
   while (codeSize > 4 && regular.widthOfTextAtSize(code, codeSize) > textWidth) codeSize -= 0.25
 
