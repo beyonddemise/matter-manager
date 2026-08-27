@@ -54,6 +54,16 @@ export interface Identity {
   /** `google|1234…`, which becomes the CouchDB user name. */
   readonly sub: string
   readonly email?: string
+  /**
+   * Whether the provider says it has verified the address.
+   *
+   * **Only ever `true` when the claim is literally `true`.** An invitation is redeemed by
+   * signing in with the address it was sent to (M5-4), so this is the claim that decides
+   * whether somebody *is* the invitee or merely says so — and Google issues tokens with
+   * `email_verified: false` for an address a user has typed in themselves. A missing claim is
+   * not a yes.
+   */
+  readonly emailVerified?: boolean
   readonly name?: string
   readonly picture?: string
 }
@@ -251,10 +261,14 @@ export function identityFrom(provider: Provider, claims: Record<string, unknown>
   const email = text(claims.email)
   const name = text(claims.name)
   const picture = text(claims.picture)
+  // Strictly `=== true`. Providers have been known to send the string `"true"`, and a truthy
+  // check would accept it — along with `"false"`, which is also a non-empty string.
+  const emailVerified = claims.email_verified === true
 
   return {
     sub: `${provider.name}|${sub}`,
     ...(email === undefined ? {} : { email }),
+    ...(emailVerified ? { emailVerified } : {}),
     ...(name === undefined ? {} : { name }),
     ...(picture === undefined ? {} : { picture }),
   }

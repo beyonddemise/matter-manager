@@ -61,6 +61,11 @@ const MEANING: Readonly<Record<string, CameraProblem>> = {
  * `TypeError` at the call site. `source.ts` feature-detects rather than catching it.
  */
 export function cameraProblem(error: unknown): CameraProblem {
+  // `instanceof` rather than reading `.name` off anything, and that is deliberate — do not
+  // "fix" it. What it buys is that an object merely *carrying* the right name cannot be read as
+  // a permission refusal. The cost is theoretical: `OverconstrainedError` was not a DOMException
+  // in some old Firefox builds, and `source.ts` passes `facingMode` as a plain value rather than
+  // `{ exact: … }` precisely so this application can never provoke one.
   if (!(error instanceof DOMException)) return 'unknown'
   return MEANING[error.name] ?? 'unknown'
 }
