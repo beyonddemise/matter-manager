@@ -142,6 +142,44 @@ describe('a design document whose map function has changed', () => {
   }
 })
 
+describe('two processes installing at the same moment', () => {
+  beforeEach(() => {
+    for (const helper of HELPERS) helper.forget()
+  })
+
+  for (const { what, ensure, forget } of HELPERS) {
+    it(`survives losing the race for ${what}`, async () => {
+      // `once()` shares work within **one** process, which is all it can do. Two API instances
+      // starting together both read "not there", both write, and the loser gets a 409 — the
+      // same conflict as the restart case, reached by a different route and not fixed by the
+      // same means. Deployments run more than one instance; this is the ordinary case, not the
+      // unlucky one.
+      const [database, id] = designLocation(what)
+      const { couch } = fakeCouch({ databases: [database] })
+
+      // The other process, winning the race between our read and our write.
+      const original = couch.getDoc.bind(couch)
+      let raced = false
+      couch.getDoc = (async (db: string, docId: string) => {
+        const result = await original(db, docId)
+        if (db === database && docId === id && !raced) {
+          raced = true
+          // Written by somebody else, after we looked and before we write.
+          await couch.putDoc(database, {
+            _id: id,
+            language: 'javascript',
+            views: { theirs: { map: 'function (doc) { emit(null, null) }' } },
+          } as unknown as { _id: string })
+        }
+        return result
+      }) as typeof couch.getDoc
+
+      forget()
+      await expect(ensure(couch)).resolves.toBeUndefined()
+    })
+  }
+})
+
 /** Where each helper's design document lives, so the assertion above reads one. */
 function designLocation(what: (typeof HELPERS)[number]['what']): [string, string] {
   switch (what) {

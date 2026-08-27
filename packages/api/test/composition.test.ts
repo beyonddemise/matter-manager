@@ -9,12 +9,20 @@ const PEM = generateKeyPairSync('ec', {
   publicKeyEncoding: { type: 'spki', format: 'pem' },
 }).privateKey as unknown as string
 
+/** A *second* key, because sessions must not be signed with the one CouchDB validates. */
+const SESSION_PEM = generateKeyPairSync('ec', {
+  namedCurve: 'prime256v1',
+  privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+  publicKeyEncoding: { type: 'spki', format: 'pem' },
+}).privateKey as unknown as string
+
 /** Everything a deployment needs for the project routes. */
 const COMPLETE: Environment = {
   COUCHDB_URL: 'http://couch.test:5984',
   COUCHDB_ADMIN_USER: 'admin',
   COUCHDB_ADMIN_PASSWORD: 'secret',
   JWT_PRIVATE_KEY: PEM,
+  JWT_SESSION_PRIVATE_KEY: SESSION_PEM,
   JWT_KEY_ID: 'ec-2026-08',
   APP_ORIGIN: 'https://matter.example',
   GOOGLE_CLIENT_ID: '1234.apps.googleusercontent.com',
@@ -134,6 +142,35 @@ describe('a deployment that is part-way through being set up', () => {
     const { GOOGLE_REDIRECT_URI: _uri, ...withoutRedirect } = COMPLETE
 
     expect(routesFor(withoutRedirect)).not.toContain('GET /auth/google')
+  })
+
+  it('serves no sign-in routes without a session key', () => {
+    // **No fallback to JWT_PRIVATE_KEY.** That key is installed in CouchDB's `[jwt_keys]`, so
+    // signing sessions with it would make a thirty-day session cookie a thirty-day database
+    // credential — the exact thing the second key exists to remove. A deployment that forgot
+    // should serve no sign-in rather than quietly reinstate it.
+    const { JWT_SESSION_PRIVATE_KEY: _session, ...withoutSession } = COMPLETE
+
+    expect(routesFor(withoutSession)).not.toContain('GET /auth/google')
+  })
+
+  it('serves no profile routes without a session key', () => {
+    // The profile authenticates by the session cookie, so without a key to verify one it is a
+    // route that can never admit anybody.
+    const { JWT_SESSION_PRIVATE_KEY: _session, ...withoutSession } = COMPLETE
+
+    expect(routesFor(withoutSession)).not.toContain('GET /profile')
+  })
+
+  it('signs sessions with a different key from the one CouchDB is given', () => {
+    // The property itself, asserted where it is decided. Two keys that happened to be equal
+    // would satisfy every other test in this file.
+    const options = serverOptions(COMPLETE)
+
+    expect(options.auth?.sessionKey.kid).not.toBe(options.auth?.key.kid)
+    expect(options.auth?.sessionKey.publicKey.export({ type: 'spki', format: 'pem' })).not.toEqual(
+      options.auth?.key.publicKey.export({ type: 'spki', format: 'pem' }),
+    )
   })
 
   it('serves no sign-in routes without somewhere to send the user back to', () => {

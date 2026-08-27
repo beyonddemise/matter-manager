@@ -49,11 +49,18 @@ const decode = (value: string): unknown => JSON.parse(Buffer.from(value, 'base64
  * - the access token is handed to page scripts on purpose (PouchDB needs it in a header), so a
  *   script that exfiltrates one could present it as a session and mint fresh access tokens for
  *   as long as it liked — making the one-hour lifetime a limit on nothing;
- * - the session lasts thirty days and **CouchDB validates these tokens itself**, checking a
- *   signature and an expiry and nothing else, so a session presented as a bearer is a
- *   thirty-day direct database credential.
+ * - the session lasts thirty days, so a session presented as a bearer would be a thirty-day
+ *   direct database credential.
  *
  * A claim is the cheapest way to say which is which, and checking it is one comparison.
+ *
+ * **It is not sufficient on its own, and the second case is why.** CouchDB validates these
+ * tokens itself, checking a signature and an expiry and evaluating no claim it was not taught
+ * about — so a `purpose` mismatch stops this service and says nothing to the database. What
+ * closes that is a *second key*: sessions and flow carriers are signed with a key whose public
+ * half is never installed in `[jwt_keys]`, so CouchDB cannot verify one at all. See
+ * `AuthDependencies.sessionKey`. The claim still earns its place, because within this service
+ * the three credentials are otherwise interchangeable.
  */
 export type TokenPurpose = 'access' | 'session' | 'flow'
 

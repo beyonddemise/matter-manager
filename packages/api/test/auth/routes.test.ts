@@ -30,6 +30,8 @@ function signInServer(
   } = {},
 ) {
   const key = newKey()
+  // A *different* key, and that is the entire point of it. See the tests below.
+  const sessionKey = newKey('ec-session')
   const remembered = overrides.remembered ?? []
 
   app = buildServer({
@@ -41,6 +43,7 @@ function signInServer(
         redirectUri: 'https://matter.example/auth/google/callback',
       }),
       key,
+      sessionKey,
       verifyIdToken: overrides.verifyIdToken ?? (async () => IDENTITY),
       appOrigin: 'https://matter.example',
       // The provider's token endpoint, faked. Letting this reach Google would be a test that
@@ -60,7 +63,7 @@ function signInServer(
         }),
     },
   })
-  return { app, key, remembered }
+  return { app, key, sessionKey, remembered }
 }
 
 /** Every `Set-Cookie` on a reply, as strings. */
@@ -149,14 +152,14 @@ describe('completing sign-in', () => {
   }
 
   it('returns the user to the application with a session', async () => {
-    const { callback, key } = await signIn()
+    const { callback, sessionKey } = await signIn()
 
     expect(callback.statusCode).toBe(302)
     expect(callback.headers.location).toBe('https://matter.example/')
 
     const session = cookieNamed(callback.headers as Record<string, unknown>, 'mm_session')
     expect(session).toContain('HttpOnly')
-    expect(verifyToken(cookieValue(session ?? ''), key.publicKey, 'session').sub).toBe(
+    expect(verifyToken(cookieValue(session ?? ''), sessionKey.publicKey, 'session').sub).toBe(
       'google|1234',
     )
   })
@@ -322,19 +325,57 @@ describe('issuing an access token', () => {
     expect(replayed.statusCode).toBe(401)
   })
 
+  it('signs the session with a key CouchDB does not have', async () => {
+    // The finding the `purpose` claim could not answer. **CouchDB does not evaluate `purpose`**
+    // — it checks a signature and an expiry, using the public key this service installs in
+    // `[jwt_keys]`. So a thirty-day session cookie presented straight to CouchDB as a bearer
+    // was accepted by CouchDB no matter what this service would have said about it.
+    //
+    // A claim cannot fix that. A second key can: sessions are signed with a key whose public
+    // half is never installed, so CouchDB cannot verify one at all. This asserts the property
+    // CouchDB actually enforces — the signature — rather than the one it ignores.
+    const { app: server, key, sessionCookie } = await signedIn()
+    const session = decodeURIComponent(sessionCookie.split('=').slice(1).join('='))
+
+    expect(() => verifyToken(session, key.publicKey, 'session')).toThrow(
+      expect.objectContaining({ problem: 'signature' }),
+    )
+    await server.close()
+  })
+
+  it('signs the access token with the key CouchDB does have', async () => {
+    // The positive control. Signing *everything* with the session key would pass the test
+    // above and leave replication unable to authenticate at all.
+    const { app: server, key, sessionCookie } = await signedIn()
+    const minted = await server.inject({
+      method: 'POST',
+      url: '/auth/token',
+      headers: { cookie: sessionCookie },
+    })
+    const { accessToken } = minted.json() as { accessToken: string }
+
+    expect(verifyToken(accessToken, key.publicKey, 'access').sub).toBe('google|1234')
+  })
+
   it('does not accept a session as a CouchDB bearer', async () => {
     // The same substitution the other way round, and the more expensive one: the session lasts
     // thirty days and CouchDB validates these tokens **itself**, checking a signature and an
     // expiry and nothing else. A session that verifies as an access token is a thirty-day
     // direct database credential, which is exactly what the one-hour access token exists not
     // to be.
-    const { app: server, sessionCookie, key } = await signedIn()
+    const { app: server, sessionCookie, key, sessionKey } = await signedIn()
     const session = decodeURIComponent(sessionCookie.split('=').slice(1).join('='))
 
-    // Named, not merely "throws": before the purpose claim existed this same call threw
-    // because `'access'` landed in the clock parameter, which is a passing test for a reason
-    // that has nothing to do with what it claims to check.
+    // Refused on the **signature**, which is the stronger answer and the only one that also
+    // binds CouchDB: it checks a signature and an expiry and evaluates no claim this service
+    // invented, so a purpose mismatch would have stopped this API and not the database.
     expect(() => verifyToken(session, key.publicKey, 'access')).toThrow(
+      expect.objectContaining({ problem: 'signature' }),
+    )
+
+    // And still refused by purpose when checked against its own key, so the claim is doing its
+    // job for the credentials that *do* share one.
+    expect(() => verifyToken(session, sessionKey.publicKey, 'access')).toThrow(
       expect.objectContaining({ problem: 'purpose' }),
     )
   })

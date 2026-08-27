@@ -72,9 +72,11 @@
   # them from here — scripts/check-deploy-headers.mjs treats this as a floor, so tightening it
   # is not a change the checker will object to.
   #
-  # connect-src is 'self' because nothing cross-origin is wired yet, and that is still true:
-  # M5 wrote packages/web/src/sync/, and **nothing in the application imports it** — only its
-  # own tests do. No code in the shipped bundle makes a request to the API or to CouchDB, so
+  # **No API origin and no CouchDB origin is wired yet** - which is narrower than saying
+  # nothing cross-origin is, because the Font Awesome and data: exceptions above are real and
+  # are used on every visit (#106). What is absent is this application's own back end: M5 wrote
+  # packages/web/src/sync/, and **nothing in the application imports it** — only its own tests
+  # do (#120). No code in the shipped bundle makes a request to the API or to CouchDB, so
   # there is no origin to allow and no request being blocked.
   #
   # **Both origins must be added here in the same change that wires it**, or replication will

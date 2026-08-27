@@ -15,7 +15,7 @@
  * @module
  */
 
-import type { CouchClient } from './client.js'
+import { type CouchClient, CouchError } from './client.js'
 
 /** A design document, as far as this module reads one. */
 interface DesignDocument {
@@ -50,17 +50,41 @@ export async function installDesign(
   database: string,
   id: string,
   views: Views,
+  attempts = 3,
 ): Promise<void> {
-  const existing = await couch.getDoc<DesignDocument>(database, id)
-  if (existing !== undefined && unchanged(existing.views, views)) return
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const existing = await couch.getDoc<DesignDocument>(database, id)
+    if (existing !== undefined && unchanged(existing.views, views)) return
 
-  await couch.putDoc(database, {
-    _id: id,
-    // The whole point. Absent on a create, and required on a replace.
-    ...(existing?._rev === undefined ? {} : { _rev: existing._rev }),
-    views,
-    language: 'javascript',
-  } as unknown as { _id: string })
+    try {
+      await couch.putDoc(database, {
+        _id: id,
+        // The whole point. Absent on a create, and required on a replace.
+        ...(existing?._rev === undefined ? {} : { _rev: existing._rev }),
+        views,
+        language: 'javascript',
+      } as unknown as { _id: string })
+      return
+    } catch (error) {
+      // Somebody wrote between the read above and this write, so the `_rev` we carried is no
+      // longer current. `once()` cannot prevent this: it shares work within **one** process,
+      // and this is a second process — which is the ordinary case for a deployment running
+      // more than one instance, not the unlucky one.
+      //
+      // Re-reading is the whole fix. Either the other writer wrote what we wanted, in which
+      // case the next pass returns early, or it wrote something else and we replace it with
+      // the current `_rev`.
+      if (!(error instanceof CouchError) || error.status !== 409) throw error
+    }
+  }
+
+  // Bounded, because a conflict that keeps recurring is not contention — it is two deployments
+  // disagreeing about what this view should be, and each restart overwriting the other. That
+  // should be heard about at startup rather than resolved silently, over and over.
+  throw new Error(
+    `Could not install ${id} in ${database} after ${attempts} attempts: something else keeps ` +
+      'writing it. Two deployments with different map functions will do this to each other.',
+  )
 }
 
 /**
