@@ -183,8 +183,11 @@ describe('the deployment caching contract', () => {
   it('names the line the absolute URL is on, not the rule above it', () => {
     // The whole point of refusing it: the previous behaviour reported a line number belonging
     // to somebody else's rule, which sends the reader to a line that is correct.
-    const { output } = scan(`${GOOD}\nhttps://example.test/x\n  Cache-Control: no-cache\n`)
+    const headers = `${GOOD}\nhttps://example.test/x\n  Cache-Control: no-cache\n`
+    const { output } = scan(headers)
+    const urlLine = headers.split('\n').findIndex((line) => line === 'https://example.test/x') + 1
 
+    expect(output).toContain(`line ${urlLine}`)
     expect(output).toContain('https://example.test/x')
   })
 
