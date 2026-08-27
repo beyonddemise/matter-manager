@@ -989,3 +989,30 @@ whole subtree implies absence from the part. Scope the positives; leave the nega
 string in it is the string the message is supposed to contain. Nothing about it reads as wrong.
 Only asking "what else on this page says that?" — or running the probe — distinguishes it from a
 test that works.
+
+---
+
+## L30 · A resource list is not a map of what the resources are *for*
+
+**Context:** asked to point the deploy workflow at a new Cloudflare Pages project,
+`matter-manager-app`. `cf pages projects list` returned exactly one existing project,
+`matter-manager-web`, holding the custom domain `matter-manager.io`. From that single fact I
+inferred a story — "the app's project, about to be superseded" — and proposed moving the domain
+onto the new project.
+
+Wrong. `matter-manager-web` is the **public website**; `matter-manager-app` is the
+**application**. Two projects, distinct purposes, and the domain belongs where it already was.
+Acting on the inference would have taken the website's domain off the website.
+
+**Rule:** an inventory tells you what exists, never what it is for. When the purpose of an
+existing resource decides whether an action is safe — moving a domain, retargeting a deploy,
+deleting anything — the purpose is a question for the owner, not a gap to fill by inference from
+a name. A name that shares a prefix with the thing being built is the weakest evidence there is.
+
+**Corollary:** the shape of the ask carries information. "Deploy to a **new** project" says the
+old one keeps doing whatever it was doing. Had I read the word "new" as load-bearing rather than
+incidental, the two-projects reading was available without asking anything.
+
+**What was right about it:** the suggestion was surfaced as a question rather than executed. The
+edits shipped were all scoped to the new project and needed no revert. Flagging beats acting when
+the inference is this thin — but noticing it *was* an inference, and asking, beats both.

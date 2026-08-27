@@ -130,7 +130,7 @@ only when it is present — so a deployment missing any one of the first four an
 | `GOOGLE_CLIENT_ID` | From the Google Cloud console, OAuth 2.0 Client ID (Web application) |
 | `GOOGLE_CLIENT_SECRET` | Same screen |
 | `GOOGLE_REDIRECT_URI` | Must match what is registered **exactly**, e.g. `https://api.matter-manager.example/auth/google/callback` |
-| `APP_ORIGIN` | Where the browser is returned, e.g. `https://matter-manager.pages.dev` |
+| `APP_ORIGIN` | Where the browser is returned, e.g. `https://matter-manager-app.pages.dev` |
 | `JWT_PRIVATE_KEY` | EC P-256 private key, PEM. `openssl ecparam -name prime256v1 -genkey -noout` |
 | `JWT_KEY_ID` | Names the key in tokens and in CouchDB's `[jwt_keys]`, e.g. `ec-2026-08` |
 

@@ -155,10 +155,12 @@ npm run dev           # Vite dev server with HMR on http://localhost:5173
 
 ## Deployment
 
-The web application is a static bundle, deployed to **Cloudflare Pages by direct upload** from
-GitHub Actions: a push to `main` goes to production, and every pull request from this
-repository gets a preview at `<branch>.matter-manager.pages.dev`. Forks get no deployment,
-for the same reason they cannot run `npm ci` — GitHub does not give fork workflows secrets.
+The web application is a static bundle, deployed to the **Cloudflare Pages** project
+`matter-manager-app` **by direct upload** from GitHub Actions: a push to `main` goes to
+production at `matter-manager-app.pages.dev`, and a hand-dispatched run against any other
+branch gets a preview at `<branch>.matter-manager-app.pages.dev`. Pull requests are not
+deployed — deploying a branch runs that branch's build with the Cloudflare token, so previews
+are dispatched by somebody with write access rather than opened by anybody.
 
 Full rationale, including the caching contract and why it is enforced by a checker, in
 [ADR 0014](docs/adr/0014-cloudflare-pages-deployment.md).

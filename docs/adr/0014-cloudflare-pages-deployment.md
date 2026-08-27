@@ -39,8 +39,16 @@ would be a second build system with its own opinions about all four, and therefo
 place for "it works on main" to stop being true. `wrangler pages deploy` uploads a directory
 that has already been built and checked here.
 
+The project is **`matter-manager-app`**, production branch `main`, so the application is served
+from `matter-manager-app.pages.dev`.
+
+**`matter-manager-app` is the application; `matter-manager-web` is the public website.** They
+are two Pages projects with distinct purposes, and only the first is deployed from this
+repository. The custom domain `matter-manager.io` belongs to the website and is not this
+workflow's to move — a deploy here never touches it.
+
 `--branch` decides production from preview: a deployment on the project's production branch is
-production, anything else is a preview at `<branch>.matter-manager.pages.dev`.
+production, anything else is a preview at `<branch>.matter-manager-app.pages.dev`.
 
 **The caching contract lives in `packages/web/public/_headers` and is enforced by a checker.**
 
@@ -101,10 +109,12 @@ the value has already been refused unless it matches `[A-Za-z0-9._/-]`.
 
 **The Pages project must be created before the first deploy.** `wrangler pages deploy` can
 create one interactively; an Actions runner is not a TTY, so it errors instead of prompting.
-One-time, from a machine with the API token:
+One-time, from a machine with credentials:
 
 ```sh
-npx wrangler pages project create matter-manager --production-branch=main
+cf pages projects create --name matter-manager-app --production-branch main
+# or, equivalently
+npx wrangler pages project create matter-manager-app --production-branch=main
 ```
 
 A Direct Upload project's production branch **cannot be changed from the dashboard** — it is
