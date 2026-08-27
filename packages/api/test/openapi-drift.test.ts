@@ -76,6 +76,11 @@ const server = (): Server => {
       couch: fakeCouch().couch,
       key,
       validator: () => 'function (doc) { return doc }',
+      identityOf: async (sub: string) => ({
+        sub,
+        email: 'drift@example.test',
+        emailVerified: true,
+      }),
     },
   })
   return app
@@ -194,7 +199,10 @@ describe('what the contract describes and the code does not yet', () => {
       .filter((operation) => !registered.has(operation))
       .sort()
 
-    expect(pending).toEqual(['POST /projects/:projectId/transfer'])
+    // **Empty.** Every operation the contract describes is implemented, which is what this
+    // check was built to be able to say — and from here it goes red when the contract grows an
+    // operation, rather than when somebody forgets to update a list.
+    expect(pending).toEqual([])
   })
 })
 
