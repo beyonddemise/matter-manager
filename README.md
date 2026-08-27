@@ -149,6 +149,46 @@ npm run verify        # lint + typecheck + tests
 
 ---
 
+## Deployment
+
+The web application is a static bundle, deployed to **Cloudflare Pages by direct upload** from
+GitHub Actions: a push to `main` goes to production, and every pull request from this
+repository gets a preview at `<branch>.matter-manager.pages.dev`. Forks get no deployment,
+for the same reason they cannot run `npm ci` — GitHub does not give fork workflows secrets.
+
+Full rationale, including the caching contract and why it is enforced by a checker, in
+[ADR 0014](docs/adr/0014-cloudflare-pages-deployment.md).
+
+### Secrets
+
+| Secret | Scope | What | Where |
+|---|---|---|---|
+| `WEBAWESOME_NPM_TOKEN` | repository | Web Awesome Pro registry token | CI and deploy |
+| `CLOUDFLARE_API_TOKEN` | organisation | API token with **Account → Cloudflare Pages → Edit**, and nothing else | deploy |
+| `CLOUDFLARE_ACCOUNT_ID` | organisation | The account the Pages project lives in. Secret *or* variable — it is not sensitive | deploy |
+
+The two Cloudflare values are organisation secrets, so one rotation covers every repository
+that deploys to the account. An organisation secret still has to *grant* this repository
+access — a secret that exists but is scoped to other repositories reads as empty here, which
+looks identical to one that was never created. The deploy job checks for both before it builds
+anything and says which is missing.
+
+### One-time setup
+
+The Pages project has to exist before the first deploy: `wrangler pages deploy` can create one
+interactively, and an Actions runner is not a TTY, so it errors instead of prompting.
+
+```bash
+npx wrangler pages project create matter-manager --production-branch=main
+```
+
+`--production-branch` matters and is awkward to correct: a Direct Upload project's production
+branch cannot be changed from the dashboard, only through the Update Project API. Set wrongly,
+every deployment is a preview and nothing is ever live — which presents as a broken workflow
+rather than as a wrong setting.
+
+---
+
 ## Contributing
 
 This project is developed test-first. Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening

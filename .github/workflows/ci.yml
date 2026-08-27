@@ -91,6 +91,12 @@ jobs:
       - name: Translation catalogue
         run: npm run check:i18n
 
+      # The deployment's caching contract. Here as well as in deploy.yml, because a `_headers`
+      # that would pin the app shell is a bug worth catching in review rather than after it
+      # has shipped - by which point the users it affects are the ones who cannot get the fix.
+      - name: Caching contract
+        run: npm run check:deploy
+
       - name: Biome
         run: npm run check
 

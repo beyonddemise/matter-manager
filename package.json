@@ -27,12 +27,13 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "e2e": "playwright test",
-    "verify": "npm run check:deps && npm run check:npmrc && npm run check:webawesome && npm run check:i18n && npm run check && npm run typecheck && npm run test",
+    "verify": "npm run check:deps && npm run check:npmrc && npm run check:webawesome && npm run check:i18n && npm run check:deploy && npm run check && npm run typecheck && npm run test",
     "check:webawesome": "node scripts/check-webawesome-pro.mjs",
     "i18n:extract": "lit-localize extract",
     "i18n:build": "lit-localize build",
     "i18n": "npm run i18n:extract && npm run i18n:build",
-    "check:i18n": "node scripts/check-i18n.mjs"
+    "check:i18n": "node scripts/check-i18n.mjs",
+    "check:deploy": "node scripts/check-deploy-headers.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.10",
