@@ -160,6 +160,27 @@ async function submit(element: HTMLElement, settled: () => boolean | Promise<boo
 const devices = (): Promise<DeviceDocument[]> => database.repositories.devices.list()
 const rooms = (): Promise<RoomDocument[]> => database.repositories.rooms.list()
 
+describe('when the existing rooms cannot be read', () => {
+  it('says so, and still lets a device be entered', async () => {
+    // Not fatal: a room can be typed. But offering no suggestions in silence invites somebody
+    // to type "Kitchen" for a project that already has one, and the duplicate outlives the
+    // failure that caused it.
+    const failing = {
+      devices: { list: async () => [], get: async () => undefined, save: async () => undefined },
+      rooms: { list: async () => Promise.reject(new Error('indexed_db_went_bad')) },
+    } as never
+
+    const element = (await fixture(
+      html`<add-device-view .repositories=${failing}></add-device-view>`,
+    )) as HTMLElement & { updateComplete: Promise<unknown>; roomsFailed: boolean }
+    await waitUntil(() => element.roomsFailed, 'the room read never reported a failure')
+    await element.updateComplete
+
+    expect(element.querySelector('[data-rooms-failed]')).not.toBeNull()
+    expect(element.querySelector('[data-field="name"]')).not.toBeNull()
+  })
+})
+
 describe('filing a device from a pasted payload', () => {
   it('saves it with the fields the payload carried', async () => {
     const element = await form()

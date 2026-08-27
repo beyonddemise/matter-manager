@@ -147,7 +147,56 @@ describe('creating a database', () => {
   })
 })
 
+describe('deleting a database', () => {
+  it('reports that it removed one', async () => {
+    const { impl } = fakeFetch([{ status: 200, body: { ok: true } }])
+    expect(await couchClient(CONFIG, impl).deleteDb('project_x')).toBe(true)
+  })
+
+  it('sends a DELETE to the database itself', async () => {
+    // Asserted because the consequence of getting the URL wrong is deleting the wrong thing,
+    // and the only caller is a rollback that runs when something has already gone wrong.
+    const { impl, calls } = fakeFetch([{ status: 200, body: { ok: true } }])
+    await couchClient(CONFIG, impl).deleteDb('project_x')
+
+    expect(calls[0]?.method).toBe('DELETE')
+    expect(calls[0]?.url).toBe('http://couch.test:5984/project_x')
+  })
+
+  it('reports an absent one as false rather than throwing', async () => {
+    // The expected answer when the rollback runs because creation itself is what failed.
+    const { impl } = fakeFetch([{ status: 404, body: { error: 'not_found' } }])
+
+    expect(await couchClient(CONFIG, impl).deleteDb('project_x')).toBe(false)
+  })
+
+  it('throws when it was refused for a real reason', async () => {
+    // A rollback that cannot complete must be loud. The database it failed to remove has no
+    // `_security`, so it is readable by anyone with an account.
+    const { impl } = fakeFetch([{ status: 401, body: { error: 'unauthorized' } }])
+
+    await expect(couchClient(CONFIG, impl).deleteDb('project_x')).rejects.toThrow(CouchError)
+  })
+})
+
 describe('security', () => {
+  it('carries the writers key CouchDB does not interpret', async () => {
+    // `writers` is not a CouchDB concept: the server understands `admins` and `members` and
+    // preserves anything else, and `_design/access` reads this from the `_security` object it
+    // is handed. A client that dropped unknown keys would produce a project every member
+    // could write to, silently.
+    const { impl, calls } = fakeFetch([{ status: 200, body: { ok: true } }])
+    await couchClient(CONFIG, impl).putSecurity('project_x', {
+      members: { names: ['ada', 'grace'], roles: [] },
+      writers: { names: ['ada'] },
+    })
+
+    expect(JSON.parse(String(calls[0]?.body))).toEqual({
+      members: { names: ['ada', 'grace'], roles: [] },
+      writers: { names: ['ada'] },
+    })
+  })
+
   it('writes a security object', async () => {
     const { impl, calls } = fakeFetch([{ status: 200, body: { ok: true } }])
     await couchClient(CONFIG, impl).putSecurity('project_x', { members: { roles: ['reader'] } })
