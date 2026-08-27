@@ -87,12 +87,19 @@ permission, so a `projects` database readable by authenticated users would discl
 project's name, address and participant list to *every* user. Project names here are street
 addresses, and `participants` is a map of who has access to whose home.
 
+`dbName` keeps the uuid's hyphens. CouchDB permits them — this repository's own
+`infra/couchdb/verify-access-model.sh` creates `verify-access-model-$$` against a real server —
+and an earlier version of this example replaced them with underscores, which disagreed with
+ADR 0003 and with the OpenAPI contract. One representation, produced by one function:
+`projectDatabaseName()` in `packages/api/src/projects/names.ts`, which refuses anything that is
+not a lower-case v4 uuid.
+
 ```jsonc
 {
   "_id": "project:8f14e45f-ceea-467a-9c0e-1b2c3d4e5f60",
   "type": "projectPointer",
   "projectId": "8f14e45f-ceea-467a-9c0e-1b2c3d4e5f60",
-  "dbName": "project_8f14e45f_ceea_467a_9c0e_1b2c3d4e5f60",
+  "dbName": "project_8f14e45f-ceea-467a-9c0e-1b2c3d4e5f60",
   "projectName": "Musterstraße 12",
   "participants": [
     // role: owner | manage | write | read
@@ -112,9 +119,17 @@ document on the server. A view emitting one row per participant is required:
 // projects/_design/by_participant, view "by_user"
 function (doc) {
   if (doc.type === 'projectPointer' && doc.participants) {
+    // The owner is emitted with every row. `ProjectSummary` in the contract requires one, and
+    // a row describes a single participant - without this the API would read every pointer
+    // again to render a list.
+    var ownerId = null
+    doc.participants.forEach(function (p) {
+      if (p.role === 'owner' && ownerId === null) ownerId = p.userid
+    })
     doc.participants.forEach(function (p) {
       emit(p.userid, { projectId: doc.projectId, dbName: doc.dbName,
-                       projectName: doc.projectName, role: p.role })
+                       projectName: doc.projectName, role: p.role,
+                       ownerId: ownerId })
     })
   }
 }
@@ -145,7 +160,7 @@ project discovery in that category.
 {
   "_id": "project:8f14e45f-ceea-467a-9c0e-1b2c3d4e5f60",
   "type": "cachedProject",
-  "dbName": "project_8f14e45f_ceea_467a_9c0e_1b2c3d4e5f60",
+  "dbName": "project_8f14e45f-ceea-467a-9c0e-1b2c3d4e5f60",
   "projectName": "Musterstraße 12",
   "myRole": "owner",
   "fetchedAt": "2026-08-19T08:00:00.000Z",   // when the server last confirmed this
