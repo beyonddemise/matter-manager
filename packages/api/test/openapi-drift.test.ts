@@ -1,4 +1,7 @@
+import { generateKeyPairSync } from 'node:crypto'
 import { afterEach, describe, expect, it } from 'vitest'
+import type { SigningKey } from '../src/auth/jwt.js'
+import type { ProfileDependencies } from '../src/profile/routes.js'
 import { buildServer, type Server } from '../src/server.js'
 import {
   loadContract,
@@ -7,6 +10,7 @@ import {
   unsupportedKeywords,
   validate,
 } from './support/contract.js'
+import { fakeCouch } from './support/couch.js'
 
 /**
  * The contract-drift check.
@@ -29,8 +33,56 @@ afterEach(async () => {
   app = undefined
 })
 
+/**
+ * A server with **everything wired**.
+ *
+ * Not `buildServer({ logger: false })`. Routes are registered only when their dependencies are
+ * supplied, so a dependency-less server registers almost nothing — and the "not implemented
+ * yet" list below would then be a list of things this test forgot to configure rather than a
+ * list of things nobody has written. The two are indistinguishable from the outside, which is
+ * exactly the kind of check that reads as thorough and is not.
+ */
 const server = (): Server => {
-  app = buildServer({ logger: false })
+  const { privateKey, publicKey } = generateKeyPairSync('ec', { namedCurve: 'prime256v1' })
+  const key: SigningKey = { kid: 'drift', privateKey, publicKey }
+
+  app = buildServer({
+    logger: false,
+    auth: {
+      provider: {
+        name: 'drift',
+        jwksUri: 'https://provider.test/jwks',
+        authorizationEndpoint: 'https://provider.test/authorize',
+        tokenEndpoint: 'https://provider.test/token',
+        clientId: 'drift',
+        clientSecret: 'drift',
+        redirectUri: 'https://api.test/auth/google/callback',
+        scopes: ['openid', 'email', 'profile'],
+      },
+      key,
+      verifyIdToken: async () => ({ sub: 'google|1234', email: 'ada@example.test', name: 'Ada' }),
+      appOrigin: 'https://app.test',
+      rememberUser: async () => undefined,
+    },
+    profile: {
+      store: {
+        read: async () => undefined,
+        write: async () => undefined,
+        rememberUser: async () => undefined,
+      } as unknown as ProfileDependencies['store'],
+      key,
+    },
+    projects: {
+      couch: fakeCouch().couch,
+      key,
+      validator: () => 'function (doc) { return doc }',
+      identityOf: async (sub: string) => ({
+        sub,
+        email: 'drift@example.test',
+        emailVerified: true,
+      }),
+    },
+  })
   return app
 }
 
@@ -147,18 +199,10 @@ describe('what the contract describes and the code does not yet', () => {
       .filter((operation) => !registered.has(operation))
       .sort()
 
-    expect(pending).toEqual([
-      'GET /auth/google',
-      'GET /auth/google/callback',
-      'GET /profile',
-      'GET /projects',
-      'GET /projects/:projectId/members',
-      'POST /auth/token',
-      'POST /projects',
-      'POST /projects/:projectId/transfer',
-      'PUT /profile',
-      'PUT /projects/:projectId/members',
-    ])
+    // **Empty.** Every operation the contract describes is implemented, which is what this
+    // check was built to be able to say — and from here it goes red when the contract grows an
+    // operation, rather than when somebody forgets to update a list.
+    expect(pending).toEqual([])
   })
 })
 
