@@ -24,6 +24,7 @@ import { PDFDocument, rgb, StandardFonts } from 'pdf-lib'
 import { ExportCancelled, type InventoryProgress } from './inventory.js'
 import { renderQrPng } from './qr-image.js'
 import { winAnsiSafe } from './win-ansi.js'
+import { yieldToBrowser } from './yield.js'
 
 export interface LabelOptions {
   readonly stock: LabelStock
@@ -102,8 +103,12 @@ export async function buildLabelPdf(
     for (const label of sheet.labels) {
       if (options.cancelled?.() === true) throw new ExportCancelled('The export was cancelled.')
       await drawLabel(page, label, { pdf, regular, bold, ink, quiet, yOf, options })
+      // See the note in `inventory.ts`: `embedPng` defers its work to save time, and a sheet
+      // of sixty-five labels is sixty-five images to decode in one block at the end.
+      await pdf.flush()
       done += 1
       options.onProgress?.({ done, total: subjects.length })
+      await yieldToBrowser()
     }
   }
 

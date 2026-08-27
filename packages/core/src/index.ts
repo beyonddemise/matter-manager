@@ -122,6 +122,46 @@ export {
   selectForExport,
 } from './pdf/selection.js'
 export {
+  foldEmail,
+  INVITATION_LIFETIME,
+  type Invitation,
+  InvitationError,
+  type InvitationProblem,
+  isOpen,
+  planInvitation,
+  redeemable,
+} from './projects/invitation.js'
+export {
+  canManageMembers,
+  canWrite,
+  grantRole,
+  MembershipError,
+  narrowsAccess,
+  PROJECT_ROLES,
+  type ProjectSecurity,
+  revokeAccess,
+  securityFor,
+} from './projects/membership.js'
+export {
+  type Caller,
+  isOwner,
+  type Owner,
+  ownerOf,
+  type Participant,
+  type ProjectRole,
+  roleOf,
+} from './projects/ownership.js'
+export {
+  acceptable,
+  applyTransfer,
+  type PendingTransfer,
+  planTransfer,
+  type RetainedAccess,
+  TRANSFER_LIFETIME,
+  TransferError,
+  type TransferProblem,
+} from './projects/transfer.js'
+export {
   isNearDuplicateRoomPath,
   isValidRoomPath,
   isWithinRoom,
