@@ -94,7 +94,7 @@ Copy the client ID (ends `.apps.googleusercontent.com`) and secret (starts `GOCS
 | `GOOGLE_CLIENT_ID` | From step 6 |
 | `GOOGLE_CLIENT_SECRET` | From step 6 |
 | `GOOGLE_REDIRECT_URI` | Byte-for-byte one of the URIs registered in step 6 |
-| `APP_ORIGIN` | Where the browser is returned to, e.g. `https://matter-manager.pages.dev` |
+| `APP_ORIGIN` | Where the browser is returned to, e.g. `https://matter-manager-app.pages.dev` |
 | `JWT_PRIVATE_KEY` | EC P-256 private key, PEM. `openssl ecparam -name prime256v1 -genkey -noout` |
 | `JWT_SESSION_PRIVATE_KEY` | A **second** EC P-256 key, generated the same way. Must differ from the one above |
 | `JWT_KEY_ID` | Names the key in tokens and in CouchDB's `[jwt_keys]`, e.g. `ec-2026-08` |

@@ -148,8 +148,12 @@ jobs:
       # for "works on main" to stop being true.
       #
       # The project must already exist: `wrangler pages deploy` can create one interactively,
-      # and an Actions runner is not a TTY, so it errors instead. Created once with
-      # `npx wrangler pages project create matter-manager --production-branch=main`.
+      # and an Actions runner is not a TTY, so it errors instead. `matter-manager-app` was
+      # created once, from a machine with credentials, with
+      # `cf pages projects create --name matter-manager-app --production-branch main`
+      # (`npx wrangler pages project create matter-manager-app --production-branch=main` does
+      # the same thing). The production branch is fixed at creation for a Direct Upload
+      # project, so getting it wrong there makes every deploy a preview.
       # See docs/adr/0014-cloudflare-pages-deployment.md.
       - name: Deploy
         id: deploy
@@ -177,7 +181,7 @@ jobs:
           gitHubToken: ${{ secrets.GITHUB_TOKEN }}
           # `--branch` is what decides production from preview: a deployment whose branch is
           # the project's production branch (main) is production, anything else is a preview
-          # at <branch>.matter-manager.pages.dev. A push to `main` is therefore production, and
+          # at <branch>.matter-manager-app.pages.dev. A push to `main` is therefore production, and
           # a hand dispatch against any other branch is a preview — which is what replaced
           # deploying pull requests automatically.
           #
@@ -189,7 +193,7 @@ jobs:
           # line would be the injection the check exists to prevent.
           command: >-
             pages deploy packages/web/dist
-            --project-name=matter-manager
+            --project-name=matter-manager-app
             --branch=${{ steps.branch.outputs.name }}
 
       - name: Say where it went
