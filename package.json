@@ -17,6 +17,9 @@
     "e2e"
   ],
   "scripts": {
+    "dev": "npm run typecheck && npm --workspace @matter-manager/web run dev",
+    "build": "npm run typecheck && npm --workspace @matter-manager/web run build",
+    "preview": "npm --workspace @matter-manager/web run preview",
     "check": "biome check .",
     "check:fix": "biome check --write .",
     "check:deps": "node scripts/check-dependencies.mjs",
@@ -34,7 +37,6 @@
     "i18n": "npm run i18n:extract && npm run i18n:build",
     "check:i18n": "node scripts/check-i18n.mjs",
     "check:deploy": "node scripts/check-deploy-headers.mjs",
-    "build": "npm --workspace @matter-manager/web run build",
     "check:lazy": "node scripts/check-lazy-fallback.mjs"
   },
   "devDependencies": {
