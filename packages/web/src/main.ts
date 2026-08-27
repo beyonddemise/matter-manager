@@ -25,6 +25,7 @@ import '@awesome.me/webawesome-pro/dist/components/page/page.js'
 import '@awesome.me/webawesome-pro/dist/components/radio/radio.js'
 import '@awesome.me/webawesome-pro/dist/components/qr-code/qr-code.js'
 import '@awesome.me/webawesome-pro/dist/components/radio-group/radio-group.js'
+import '@awesome.me/webawesome-pro/dist/components/select/select.js'
 import '@awesome.me/webawesome-pro/dist/components/tag/tag.js'
 import '@awesome.me/webawesome-pro/dist/components/textarea/textarea.js'
 import './styles/app.css'
@@ -33,6 +34,7 @@ import { negotiateLocale, readLocalePreference } from './i18n/locale.js'
 import { activateLocale } from './i18n/localization.js'
 import { registerServiceWorker } from './register-sw.js'
 import { applyScheme, readPreference, resolveScheme } from './scheme.js'
+import { checkForUpdate, watchForUpdate } from './updates.js'
 
 // Applied from this deferred module, after the CSS and component imports above and after
 // `index.html` has already hard-coded `wa-light` on the root element. A page loading dark
@@ -71,4 +73,26 @@ activateLocale(
 // the *next* visit; it does nothing for this one, so holding anything back on it would trade a
 // visible delay for an invisible benefit. `registerServiceWorker` reports no failure for the
 // same reason - see there.
-void registerServiceWorker()
+void registerServiceWorker().then((registration) => {
+  if (registration === undefined) return
+
+  // Read *before* anything is awaited on the registration. `controller` is what distinguishes
+  // an update from a first install, and a first install sets it partway through this flow — so
+  // reading it later would classify a brand-new visitor's install as an update, and greet them
+  // with "a new version is ready" on their first ever visit.
+  const controlled = navigator.serviceWorker.controller !== null
+
+  watchForUpdate(registration, controlled, (waiting) => {
+    // The shell announces the update; it does not go looking for one. Two concerns, two sets
+    // of tests, and the noticing keeps working if the component is ever replaced.
+    const shell = document.querySelector('app-shell') as { updateReady?: ServiceWorker } | null
+    if (shell !== null) shell.updateReady = waiting
+  })
+
+  // Someone returning to an application they left open for days is exactly the person pinned
+  // to an old build without knowing it. The browser checks on navigation, and an installed PWA
+  // can go a long time without one.
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') void checkForUpdate(registration)
+  })
+})

@@ -28,6 +28,8 @@ interface Harness {
   /** What the last `respondWith` was given, or `undefined` when it was never called. */
   readonly responded: () => Promise<FakeResponse | undefined>
   readonly claimed: () => boolean
+  /** How many times the worker has been asked to step aside for a new version. */
+  readonly skipped: () => number
   readonly waited: Promise<unknown>[]
 }
 
@@ -102,6 +104,7 @@ function load(network: (request: { url: string }) => Promise<FakeResponse>): Har
   const requested: string[] = []
   const waited: Promise<unknown>[] = []
   let claimed = false
+  let skipped = 0
   let responded: Promise<FakeResponse> | undefined
 
   const self = {
@@ -110,6 +113,9 @@ function load(network: (request: { url: string }) => Promise<FakeResponse>): Har
       claim: async () => {
         claimed = true
       },
+    },
+    skipWaiting: () => {
+      skipped += 1
     },
     addEventListener: (type: string, listener: Listener) => listeners.set(type, listener),
   }
@@ -161,6 +167,7 @@ function load(network: (request: { url: string }) => Promise<FakeResponse>): Har
     requested,
     responded: async () => (responded === undefined ? undefined : await responded),
     claimed: () => claimed,
+    skipped: () => skipped,
     waited,
   }
 }
@@ -412,5 +419,40 @@ describe('what the worker refuses to touch', () => {
     sw.fire('fetch', { request: request('/some/future/thing.json') })
 
     await untouched(sw)
+  })
+})
+
+describe('stepping aside for a new version', () => {
+  it('does so when the page asks', () => {
+    const sw = load(online)
+
+    sw.fire('message', { data: { type: 'matter-manager:skip-waiting' } })
+
+    expect(sw.skipped()).toBe(1)
+  })
+
+  it('does not do so on install', () => {
+    // The difference between an update the user took and one that happened to them. A worker
+    // that skips waiting by itself replaces the code behind a page that is already running,
+    // which is how a half-filled form meets a bundle that disagrees with it.
+    const sw = load(online)
+
+    sw.fire('install', {})
+
+    expect(sw.skipped()).toBe(0)
+  })
+
+  it.each([
+    ['a message with no data', undefined],
+    ['a message that is not the one', { type: 'something-else' }],
+    ['a bare string', 'skip-waiting'],
+  ])('ignores %s', (_case, data) => {
+    // A service worker receives messages from every client in its scope. "Any message means
+    // activate" is an instruction from anything that can reach postMessage.
+    const sw = load(online)
+
+    sw.fire('message', { data })
+
+    expect(sw.skipped()).toBe(0)
   })
 })

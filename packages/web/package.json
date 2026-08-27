@@ -16,6 +16,7 @@
     "@zxing/browser": "^0.1.5",
     "events": "^3.3.0",
     "lit": "^3.3.3",
+    "pdf-lib": "^1.17.1",
     "pouchdb-browser": "^9.0.0"
   },
   "devDependencies": {

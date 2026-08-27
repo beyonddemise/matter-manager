@@ -1,15 +1,30 @@
 import { msg, str, updateWhenLocaleChanges } from '@lit/localize'
 import {
   browseDevices,
+  countSelected,
   type DeviceDocument,
   type DeviceGroup,
+  type ExportSelection,
+  FIRST_LABEL,
+  LABEL_STOCKS,
+  type LabelStock,
   type RoomDocument,
+  selectForExport,
   uuidOf,
 } from '@matter-manager/core'
 import type { ProjectRepositories } from '@matter-manager/data'
 import { html, LitElement } from 'lit'
 import { projectDatabase } from '../db/project-database.js'
 import { getLocale } from '../i18n/localization.js'
+import {
+  inventoryFilename,
+  inventoryLabels,
+  labelsFilename,
+  offerDownload,
+} from '../pdf/download.js'
+import { buildInventoryPdf, ExportCancelled, type InventoryProgress } from '../pdf/inventory.js'
+import { buildLabelPdf } from '../pdf/labels.js'
+import { fieldValue } from './device-form.js'
 
 /**
  * The device list: rooms, in order, with what is in them.
@@ -34,8 +49,16 @@ export class DeviceListView extends LitElement {
     devices: { state: true },
     rooms: { state: true },
     loaded: { state: true },
+    failed: { state: true },
     query: { state: true },
     includeDisabled: { state: true },
+    exporting: { state: true },
+    exportProgress: { state: true },
+    exportFailed: { state: true },
+    selected: { state: true },
+    labelsOpen: { state: true },
+    labelStock: { state: true },
+    download: { attribute: false },
   }
 
   /** Bound by a test to a database of its own; resolved to the real one otherwise. */
@@ -50,17 +73,58 @@ export class DeviceListView extends LitElement {
    * the read would tell a user with a full catalogue that it is gone.
    */
   declare loaded: boolean
+  /**
+   * The catalogue could not be read.
+   *
+   * A third state, and the one that was missing. `loaded` separates *you have no devices* from
+   * *we have not looked yet*; a rejected read is neither, and without somewhere to put it the
+   * page rendered its header, its search box and nothing else — indistinguishable from a broken
+   * application, to somebody standing in front of the device they came to look up.
+   */
+  declare failed: boolean
   declare query: string
   declare includeDisabled: boolean
+  /** Whether an export is running. Guards a second press landing on the same work. */
+  declare exporting: boolean
+  /** How far along, so a long export says what it is doing rather than appearing to hang. */
+  declare exportProgress: InventoryProgress | undefined
+  declare exportFailed: boolean
+  /**
+   * Which devices are ticked, by full document id.
+   *
+   * A set rather than a flag on each device: the devices are re-read from the database and
+   * re-derived by `browseDevices` on every change, so a flag would be lost on the next read,
+   * and the selection has to outlive a search the user types while choosing.
+   */
+  declare selected: ReadonlySet<string>
+  /** Whether the label-sheet options are showing. */
+  declare labelsOpen: boolean
+  /** Which stock the sheet is laid out for. Defaults to the common European address label. */
+  declare labelStock: LabelStock
+  /**
+   * How the finished bytes reach the user. Bound by a test.
+   *
+   * A seam because the real one clicks a link: in a test browser that is a download prompt,
+   * or a file written into whatever directory the run happens to have — neither of which a
+   * test should cause, and both of which are invisible when they go wrong.
+   */
+  declare download?: (bytes: Uint8Array, filename: string) => void
 
   constructor() {
     super()
     // Subscribes this component to locale changes; without it the view keeps rendering the
     // strings that were active when it first rendered.
     updateWhenLocaleChanges(this)
+    this.exporting = false
+    this.exportProgress = undefined
+    this.exportFailed = false
+    this.selected = new Set()
+    this.labelsOpen = false
+    this.labelStock = LABEL_STOCKS[0] as LabelStock
     this.devices = []
     this.rooms = []
     this.loaded = false
+    this.failed = false
     this.query = ''
     this.includeDisabled = false
   }
@@ -86,13 +150,25 @@ export class DeviceListView extends LitElement {
 
   private async load(): Promise<void> {
     const repositories = this.repos()
-    const [devices, rooms] = await Promise.all([
-      repositories.devices.list(),
-      repositories.rooms.list(),
-    ])
-    this.devices = devices
-    this.rooms = rooms
-    this.loaded = true
+
+    try {
+      const [devices, rooms] = await Promise.all([
+        repositories.devices.list(),
+        repositories.rooms.list(),
+      ])
+      this.devices = devices
+      this.rooms = rooms
+      this.loaded = true
+    } catch {
+      // Everything the local database can refuse arrives here as one shape: PouchDB flattens
+      // every IndexedDB failure into `status: 500, name: 'indexed_db_went_bad'`, and the
+      // underlying DOMException name survives only in an undocumented `reason` field. So there
+      // is one message rather than four guesses, and it says the one thing that is certainly
+      // true — the devices were not read, and nothing has been lost.
+      //
+      // The error is deliberately not logged. A device document carries a setup code.
+      this.failed = true
+    }
   }
 
   /**
@@ -127,12 +203,28 @@ export class DeviceListView extends LitElement {
     return group.path === '' ? msg('Without a room') : group.path
   }
 
+  /** Ticks or unticks one device. */
+  private toggleSelected(id: string): void {
+    const next = new Set(this.selected)
+    if (!next.delete(id)) next.add(id)
+    this.selected = next
+  }
+
   private renderDevice(device: DeviceDocument) {
     return html`
-      <li ?data-disabled=${device.disabled} data-device-id=${device._id}>
+      <li class="wa-cluster wa-gap-s" ?data-disabled=${device.disabled} data-device-id=${device._id}>
+        <!-- Outside the link, deliberately. Inside it, every tick would also navigate to the
+             device — and on a phone the two targets would overlap, so choosing several devices
+             would mean visiting each one. -->
+        <wa-checkbox
+          data-select
+          ?checked=${this.selected.has(device._id)}
+          @change=${() => this.toggleSelected(device._id)}
+          label=${msg(str`Select ${device.name}`)}
+        ></wa-checkbox>
         <!-- The whole row is the link, not just the name: a target the width of the list is
              what makes this usable on a phone, which is where a device gets looked up. -->
-        <a class="wa-split app-device" href="#/devices/${uuidOf(device._id) ?? ''}">
+        <a class="wa-split app-device app-device-row" href="#/devices/${uuidOf(device._id) ?? ''}">
           <span class="wa-stack wa-gap-3xs">
             <span>${device.name}</span>
             ${device.spot === undefined ? '' : html`<small class="app-empty">${device.spot}</small>`}
@@ -150,6 +242,23 @@ export class DeviceListView extends LitElement {
         <div class="wa-cluster wa-gap-s app-room-heading">
           <h2>${this.groupLabel(group)}</h2>
           <wa-badge variant="neutral">${count}</wa-badge>
+          <!-- Per room, because "print the labels for the kitchen" is the request people
+               actually have, and ticking eleven boxes to make it is not an answer. Absent for
+               devices whose room no longer exists: there is no room there to export. -->
+          ${
+            group.path === ''
+              ? ''
+              : html`<wa-button
+                  data-export-room=${group.path}
+                  size="s"
+                  appearance="plain"
+                  ?disabled=${this.exporting}
+                  @click=${() => void this.onExport({ kind: 'room', path: group.path })}
+                >
+                  <wa-icon slot="start" name="file-pdf"></wa-icon>
+                  ${msg('Export this room')}
+                </wa-button>`
+          }
         </div>
         <ul class="wa-stack wa-gap-2xs app-device-list">
           ${group.devices.map((device) => this.renderDevice(device))}
@@ -183,6 +292,188 @@ export class DeviceListView extends LitElement {
     return html`<p class="app-empty">${msg(str`Nothing matches “${query}”.`)}</p>`
   }
 
+  /**
+   * Whether an export has been asked for that this one should abandon.
+   *
+   * A counter rather than a boolean: a cancelled export and a *newer* export are the same
+   * thing to the one being abandoned, and both have to stop the loop that is already running.
+   */
+  private exportToken = 0
+
+  /** Stops whatever export is running. */
+  private cancelExport(): void {
+    this.exportToken += 1
+    this.exporting = false
+    this.exportProgress = undefined
+  }
+
+  /**
+   * Exports what is on screen.
+   *
+   * What is on screen, not what is in the database: the export takes the same groups the list
+   * is rendering, so the search and the disabled filter apply to it exactly as the user sees
+   * them. M3-2 turns that into a deliberate choice rather than a consequence.
+   */
+  private async onExport(selection: ExportSelection = { kind: 'all' }): Promise<void> {
+    if (this.exporting) return
+    const token = ++this.exportToken
+    this.exporting = true
+    this.exportFailed = false
+    this.exportProgress = { done: 0, total: 0 }
+
+    try {
+      // Narrowed from what is on screen, never from the raw device list. That is what makes
+      // "disabled devices are excluded unless explicitly included" true for every selection
+      // rather than for the default one: a device the user cannot see is not in `groups()`,
+      // so no amount of selecting can reach it.
+      const chosen = selectForExport(this.groups(), selection)
+      const bytes = await buildInventoryPdf(chosen, {
+        labels: inventoryLabels(),
+        onProgress: (progress) => {
+          if (token === this.exportToken) this.exportProgress = progress
+        },
+        cancelled: () => token !== this.exportToken,
+      })
+      if (token !== this.exportToken) return
+      ;(this.download ?? offerDownload)(bytes, inventoryFilename())
+    } catch (error) {
+      // A cancelled export is not a failure, and saying so would be the application
+      // complaining about something the user asked for.
+      if (error instanceof ExportCancelled) return
+      // Not logged: the document being built contains setup passcodes, and an error carrying
+      // one into a console is exactly the leak this project keeps saying it will not have.
+      if (token === this.exportToken) this.exportFailed = true
+    } finally {
+      if (token === this.exportToken) {
+        this.exporting = false
+        this.exportProgress = undefined
+      }
+    }
+  }
+
+  /**
+   * Exports labels for whatever is selected, or for everything when nothing is.
+   *
+   * Sharing `exporting`, the progress callout and the cancel button with the inventory export,
+   * because from the user's side there is one export running or none — two independent
+   * "exporting" states would let both start at once and both write a file.
+   */
+  private async onExportLabels(): Promise<void> {
+    if (this.exporting) return
+    const token = ++this.exportToken
+    this.exporting = true
+    this.exportFailed = false
+    this.exportProgress = { done: 0, total: 0 }
+    this.labelsOpen = false
+
+    const start = {
+      row: Number(fieldValue(this, '[data-label-row]')) || FIRST_LABEL.row,
+      column: Number(fieldValue(this, '[data-label-column]')) || FIRST_LABEL.column,
+    }
+
+    try {
+      const chosen = selectForExport(
+        this.groups(),
+        this.selected.size === 0 ? { kind: 'all' } : { kind: 'devices', ids: this.selected },
+      )
+      const bytes = await buildLabelPdf(chosen, {
+        stock: this.labelStock,
+        start,
+        title: msg('Matter Manager labels'),
+        noQrCode: msg('Filed from a pairing code'),
+        withoutRoom: msg('Without a room'),
+        onProgress: (progress) => {
+          if (token === this.exportToken) this.exportProgress = progress
+        },
+        cancelled: () => token !== this.exportToken,
+      })
+      if (token !== this.exportToken) return
+      ;(this.download ?? offerDownload)(bytes, labelsFilename())
+    } catch (error) {
+      if (error instanceof ExportCancelled) return
+      if (token === this.exportToken) this.exportFailed = true
+    } finally {
+      if (token === this.exportToken) {
+        this.exporting = false
+        this.exportProgress = undefined
+      }
+    }
+  }
+
+  /** The label-sheet options: which stock, and where on a part-used sheet to begin. */
+  private renderLabelDialog() {
+    const stock = this.labelStock
+    return html`
+      <wa-dialog
+        data-label-dialog
+        label=${msg('Print labels')}
+        ?open=${this.labelsOpen}
+        @wa-after-hide=${() => {
+          this.labelsOpen = false
+        }}
+      >
+        <div class="wa-stack wa-gap-m">
+          <wa-select
+            data-label-stock
+            label=${msg('Label sheet')}
+            value=${stock.code}
+            @change=${(event: Event) => {
+              const code = (event.target as { value?: string }).value
+              this.labelStock =
+                LABEL_STOCKS.find((candidate) => candidate.code === code) ?? this.labelStock
+            }}
+          >
+            ${LABEL_STOCKS.map(
+              (candidate) => html`
+                <wa-option value=${candidate.code}>
+                  ${msg(str`${candidate.code} — ${candidate.columns * candidate.rows} per sheet`)}
+                </wa-option>
+              `,
+            )}
+          </wa-select>
+
+          <!-- The small feature the issue calls disproportionately appreciated, and it is:
+               nobody wants to waste most of a sheet to print four labels. -->
+          <div class="wa-cluster wa-gap-s">
+            <wa-input
+              data-label-row
+              type="number"
+              min="1"
+              max=${stock.rows}
+              value="1"
+              label=${msg('Start at row')}
+            ></wa-input>
+            <wa-input
+              data-label-column
+              type="number"
+              min="1"
+              max=${stock.columns}
+              value="1"
+              label=${msg('and column')}
+            ></wa-input>
+          </div>
+
+          <wa-callout variant="neutral">
+            <wa-icon slot="icon" name="circle-info"></wa-icon>
+            <!-- Not a nicety. The label positions are absolute on the physical sheet, so a
+                 printer scaling the page to fit puts every label over its die-cut. -->
+            ${msg('Print at 100% — not "fit to page" — or the labels will not line up with the sheet.')}
+          </wa-callout>
+        </div>
+
+        <wa-button slot="footer" data-dialog="close" appearance="plain">${msg('Cancel')}</wa-button>
+        <wa-button
+          slot="footer"
+          data-print-labels
+          variant="brand"
+          @click=${() => void this.onExportLabels()}
+        >
+          ${msg('Create the sheet')}
+        </wa-button>
+      </wa-dialog>
+    `
+  }
+
   override render() {
     const groups = this.groups()
 
@@ -190,11 +481,85 @@ export class DeviceListView extends LitElement {
       <div class="wa-stack wa-gap-l">
         <div class="wa-split">
           <h1>${msg('Devices')}</h1>
-          <wa-button href="#/devices/new" variant="brand">
-            <wa-icon slot="start" name="plus"></wa-icon>
-            ${msg('Add a device')}
-          </wa-button>
+          <div class="wa-cluster wa-gap-s">
+            ${
+              this.selected.size === 0
+                ? ''
+                : html`<wa-button
+                    data-export-selected
+                    appearance="outlined"
+                    ?disabled=${this.exporting}
+                    @click=${() => void this.onExport({ kind: 'devices', ids: this.selected })}
+                  >
+                    <wa-icon slot="start" name="file-pdf"></wa-icon>
+                    <!-- Says how many, because "Export selection" on a page where the ticks
+                         have scrolled out of view is a button whose effect is invisible. -->
+                    ${msg(
+                      str`Export ${countSelected(this.groups(), { kind: 'devices', ids: this.selected })} selected`,
+                    )}
+                  </wa-button>`
+            }
+            <wa-button
+              data-labels
+              appearance="outlined"
+              ?disabled=${this.exporting}
+              @click=${() => {
+                this.labelsOpen = true
+              }}
+            >
+              <wa-icon slot="start" name="tags"></wa-icon>
+              ${msg('Labels')}
+            </wa-button>
+            <wa-button data-export appearance="outlined" @click=${() => void this.onExport()} ?disabled=${this.exporting}>
+              <wa-icon slot="start" name="file-pdf"></wa-icon>
+              ${msg('Export PDF')}
+            </wa-button>
+            <wa-button href="#/devices/new" variant="brand">
+              <wa-icon slot="start" name="plus"></wa-icon>
+              ${msg('Add a device')}
+            </wa-button>
+          </div>
         </div>
+
+        ${
+          this.exporting
+            ? html`
+                <wa-callout variant="neutral" data-export-progress>
+                  <wa-icon slot="icon" name="file-pdf"></wa-icon>
+                  <div class="wa-split wa-gap-m">
+                    <span>
+                      ${msg(
+                        str`Building the PDF: ${this.exportProgress?.done ?? 0} of ${this.exportProgress?.total ?? 0} devices.`,
+                      )}
+                    </span>
+                    <wa-button data-cancel-export size="s" appearance="plain" @click=${this.cancelExport}>
+                      ${msg('Cancel')}
+                    </wa-button>
+                  </div>
+                </wa-callout>
+              `
+            : ''
+        }
+        ${
+          this.failed
+            ? html`
+                <wa-callout variant="danger" data-read-failed>
+                  <wa-icon slot="icon" name="triangle-exclamation"></wa-icon>
+                  ${msg('Your devices could not be read from this browser’s storage. Nothing has been lost — reload to try again.')}
+                </wa-callout>
+              `
+            : ''
+        }
+        ${
+          this.exportFailed
+            ? html`
+                <wa-callout variant="danger" data-export-failed>
+                  <wa-icon slot="icon" name="triangle-exclamation"></wa-icon>
+                  ${msg('The PDF could not be built. Nothing was saved; try again.')}
+                </wa-callout>
+              `
+            : ''
+        }
 
         <div class="wa-stack wa-gap-s">
           <wa-input
@@ -218,6 +583,8 @@ export class DeviceListView extends LitElement {
                 ${groups.map((group) => this.renderGroup(group))}
               </div>`
         }
+
+        ${this.renderLabelDialog()}
       </div>
     `
   }
