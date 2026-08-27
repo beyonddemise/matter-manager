@@ -26,14 +26,53 @@
 /sw.js
   Cache-Control: no-cache
 
+# Not fingerprinted, and read by the platform rather than by the application: a stale one is an
+# installed app pointing at the wrong start URL or the wrong icons, which the user cannot fix
+# by reloading because the platform decides when to look again.
+/manifest.webmanifest
+  Cache-Control: no-cache
+
+# Fixed names rather than fingerprinted, so they cannot be immutable. A week is the trade: an
+# icon changed today is wrong on a home screen for at most that long, which is a cosmetic
+# problem, and the alternative is re-fetching them on every visit.
+/icon-192.png
+  Cache-Control: public, max-age=604800
+
+/icon-512.png
+  Cache-Control: public, max-age=604800
+
+/icon-maskable-512.png
+  Cache-Control: public, max-age=604800
+
+/apple-touch-icon.png
+  Cache-Control: public, max-age=604800
+
 # Applies to everything, including the fingerprinted assets, and states nothing about caching
 # — so it does not contradict the rules above.
 /*
   X-Content-Type-Options: nosniff
   Referrer-Policy: no-referrer
   # This catalogue is never a frame in someone else's page, and framing it is the setup for
-  # clickjacking a delete. A Content-Security-Policy belongs here too and is deliberately not
-  # here yet: it needs the same treatment as the API's headers (#47), and a policy written
-  # without testing the Web Awesome and PouchDB bundles against it would either be too loose
-  # to be worth having or would break the application in production only.
+  # clickjacking a delete.
   X-Frame-Options: DENY
+  # Measured, not written from a template (#47). The built bundle was served with a candidate
+  # policy and loaded in Chromium, and every relaxation below is something the application was
+  # observed to need — see docs/tasks/todo-47.md for the violations each one answers.
+  #
+  #   'unsafe-inline' in style-src   Web Awesome components set style attributes, and index.html
+  #                                  carries one inline <style>. A hash covers the second, not
+  #                                  the first. Note this does NOT relax script-src, which is
+  #                                  where 'unsafe-inline' would matter.
+  #   https://fonts.bunny.net        webawesome.css @imports its webfonts from there.
+  #   https://ka-f.fontawesome.com   <wa-icon> fetches each icon from Font Awesome's CDN at use.
+  #   data: in connect-src           some icons are bundled as data: URLs and fetched the same way.
+  #
+  # The last three are third-party requests made on every visit, which for an offline-first
+  # application is a bug rather than a policy question: see #106. When they are gone, delete
+  # them from here — scripts/check-deploy-headers.mjs treats this as a floor, so tightening it
+  # is not a change the checker will object to.
+  #
+  # connect-src is 'self' because nothing cross-origin is wired yet. **The API origin and the
+  # CouchDB origin must be added here when M5 wires replication**, or the application will fail
+  # to reach either, in production only.
+  Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.bunny.net; font-src 'self' data: https://fonts.bunny.net; img-src 'self' data: blob:; connect-src 'self' data: https://ka-f.fontawesome.com; manifest-src 'self'; worker-src 'self'; media-src 'self' blob:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'

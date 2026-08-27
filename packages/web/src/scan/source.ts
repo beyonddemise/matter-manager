@@ -1,19 +1,22 @@
 /**
- * Where scanned codes come from.
+ * Where scanned codes come from: the camera, and whichever detector this browser has.
  *
- * One interface with three implementations in mind: the camera below, the fakes the browser
- * tests drive, and — at M2b-2 — the ZXing fallback for browsers with no `BarcodeDetector`,
- * which becomes a second implementation rather than a branch inside the view.
+ * The camera half is the same whatever reads the frames — opening it, releasing it, and
+ * reporting why it would not open do not vary — so it lives here once and the reading is
+ * delegated to a {@link Detector}. Keeping the split that narrow is what makes the native path
+ * and the ZXing fallback "indistinguishable" in the sense M2b-2 asks for: there is only one
+ * implementation of everything except the decode itself.
  *
- * That last one is the reason this is an interface at all. `BarcodeDetector` is **not
- * available in Chromium on Linux**: it delegates to platform-native detection that Linux does
- * not provide, so it exists on Android, ChromeOS and macOS and nowhere else in Chrome. CI runs
- * Linux Chromium. A view that reached for `new BarcodeDetector()` directly would therefore be
- * a view no test in this repository could ever drive — and the failure paths, which are most
- * of the work here, are exactly what needs driving.
+ * This is also an interface because a test cannot use the real one. `BarcodeDetector` is **not
+ * available in Chromium on Linux** — it delegates to platform-native detection Linux does not
+ * provide — and CI runs Linux Chromium. A view that reached for `new BarcodeDetector()`
+ * directly would be a view no test in this repository could ever drive, and the failure paths
+ * are most of the work.
  *
  * @module
  */
+
+import { chooseDetector, type Detector } from './detector.js'
 
 /** A source of scanned text, and the camera preview that goes with it. */
 export interface ScanSource {
@@ -42,65 +45,31 @@ export interface ScanSource {
 }
 
 /**
- * Whether the platform offers everything scanning needs.
+ * Whether this page is allowed to ask for a camera at all.
  *
  * `navigator.mediaDevices` is `[SecureContext]`, so on plain HTTP it is `undefined` rather
  * than a method that rejects — an optional chain, not a `try`.
  */
-function platformCanScan(): boolean {
-  return (
-    typeof navigator !== 'undefined' &&
-    navigator.mediaDevices?.getUserMedia !== undefined &&
-    'BarcodeDetector' in globalThis
-  )
-}
-
-/** The `BarcodeDetector` surface this uses. Declared because TypeScript's DOM lib omits it. */
-interface BarcodeDetectorLike {
-  detect(source: HTMLVideoElement): Promise<ReadonlyArray<{ readonly rawValue: string }>>
-}
-
-interface BarcodeDetectorConstructor {
-  new (options?: { formats?: readonly string[] }): BarcodeDetectorLike
-  getSupportedFormats(): Promise<readonly string[]>
+function canAskForCamera(): boolean {
+  return typeof navigator !== 'undefined' && navigator.mediaDevices?.getUserMedia !== undefined
 }
 
 /**
- * The camera, read by the platform's own barcode detector.
+ * The camera, read by whichever detector this browser has.
  *
- * The detector is built once and reused: the specification asks for it in as many words —
- * "detectors may potentially allocate and hold significant resources; where possible, reuse
- * the same `BarcodeDetector` for several detections" — and this one is asked for a frame
- * several times a second.
+ * @param detector how frames are read, injectable for tests. By default the platform's own,
+ *   or the ZXing fallback loaded on demand — see `detector.ts`.
  */
-export function cameraSource(): ScanSource {
-  let detector: BarcodeDetectorLike | undefined
-
-  const construct = (): BarcodeDetectorLike => {
-    const Detector = (globalThis as unknown as { BarcodeDetector: BarcodeDetectorConstructor })
-      .BarcodeDetector
-    // Narrowed to QR: the specification says limiting the formats "is likely to provide better
-    // performance", and every other format here would be a code this application cannot read
-    // anyway. A one-dimensional barcode on a device's label is a serial number, not a setup
-    // code, and offering to scan it would promise something that cannot work.
-    detector ??= new Detector({ formats: ['qr_code'] })
-    return detector
-  }
-
+export function cameraSource(
+  detector: () => Promise<Detector | undefined> = chooseDetector,
+): ScanSource {
   return {
     async available(): Promise<boolean> {
-      if (!platformCanScan()) return false
-
-      try {
-        const Detector = (globalThis as unknown as { BarcodeDetector: BarcodeDetectorConstructor })
-          .BarcodeDetector
-        // Present is not the same as able. Chrome on macOS shipped this interface for two
-        // years in a state where it silently failed on Ventura and later, and asking which
-        // formats it supports is the cheapest way to find out that it supports none.
-        if (!(await Detector.getSupportedFormats()).includes('qr_code')) return false
-      } catch {
-        return false
-      }
+      if (!canAskForCamera()) return false
+      // Asked here rather than at the first frame, because the answer decides whether the scan
+      // control is rendered at all — and on the fallback path, asking is what downloads the
+      // decoder. Doing it later would mean a control that exists and then cannot work.
+      if ((await detector()) === undefined) return false
 
       try {
         const devices = await navigator.mediaDevices.enumerateDevices()
@@ -127,8 +96,9 @@ export function cameraSource(): ScanSource {
     },
 
     async read(video: HTMLVideoElement): Promise<readonly string[]> {
-      const found = await construct().detect(video)
-      return found.map((barcode) => barcode.rawValue)
+      // `chooseDetector` is memoised, so this is a resolved promise after the first frame
+      // rather than a fresh decision several times a second.
+      return (await detector())?.read(video) ?? []
     },
 
     close(stream: MediaStream): void {

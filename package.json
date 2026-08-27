@@ -33,7 +33,9 @@
     "i18n:build": "lit-localize build",
     "i18n": "npm run i18n:extract && npm run i18n:build",
     "check:i18n": "node scripts/check-i18n.mjs",
-    "check:deploy": "node scripts/check-deploy-headers.mjs"
+    "check:deploy": "node scripts/check-deploy-headers.mjs",
+    "build": "npm --workspace @matter-manager/web run build",
+    "check:lazy": "node scripts/check-lazy-fallback.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.10",
@@ -41,6 +43,7 @@
     "@vitest/browser-playwright": "^4.1.11",
     "@vitest/coverage-v8": "^4.1.11",
     "typescript": "^7.0.2",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.11",
+    "yaml": "^2.9.0"
   }
 }

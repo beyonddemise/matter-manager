@@ -4,6 +4,17 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Matter Manager</title>
+    <!-- Installable: the manifest names the icons, the scope and the standalone display.
+         iOS reads none of it for the home-screen icon, which is why apple-touch-icon is a
+         separate link below rather than an entry in the manifest. -->
+    <meta name="description" content="Never lose a Matter commissioning QR code again." />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="theme-color" content="#111418" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <!-- Without this, iOS opens the pinned icon in Safari's chrome rather than as an
+         application, and the "installed" app is a bookmark wearing an icon. -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Matter" />
     <!-- Inline SVG favicon: avoids a network request and the console-logged 404 that comes
          with having none. Uses currentColor so it carries no hex literal. -->
     <link

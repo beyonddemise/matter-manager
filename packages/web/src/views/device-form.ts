@@ -53,6 +53,7 @@ export abstract class DeviceFormView extends LitElement {
     error: { state: true },
     saving: { state: true },
     saveFailed: { state: true },
+    roomsFailed: { state: true },
   }
 
   /**
@@ -71,6 +72,13 @@ export abstract class DeviceFormView extends LitElement {
   declare saving: boolean
   /** Whether the last write was rejected by storage. Distinct from a rejected *field*. */
   declare saveFailed: boolean
+  /**
+   * Whether the existing rooms could not be read.
+   *
+   * Not fatal — a room can be typed — but worth saying, because offering no suggestions
+   * silently invites a duplicate room that outlives the failure that caused it.
+   */
+  declare roomsFailed: boolean
 
   constructor() {
     super()
@@ -78,6 +86,7 @@ export abstract class DeviceFormView extends LitElement {
     // strings while its neighbours change - a silent failure, hence the locale-switch test.
     updateWhenLocaleChanges(this)
     this.rooms = []
+    this.roomsFailed = false
     this.createdRoom = ''
     this.saving = false
     this.saveFailed = false
@@ -97,7 +106,17 @@ export abstract class DeviceFormView extends LitElement {
   }
 
   protected async loadRooms(): Promise<void> {
-    this.rooms = await this.repos().rooms.list()
+    try {
+      this.rooms = await this.repos().rooms.list()
+    } catch {
+      // The least severe of the three read failures, and still worth saying. The rooms are only
+      // suggestions here — the form works without them, because a room can be typed. But
+      // silently offering none invites somebody to type "Kitchen" for a project that already
+      // has a Kitchen, and the duplicate outlives the failure that caused it.
+      //
+      // Not logged: the form holds a setup code.
+      this.roomsFailed = true
+    }
   }
 
   /**
@@ -246,6 +265,15 @@ export abstract class DeviceFormView extends LitElement {
         <wa-callout variant="danger" data-error>
           <wa-icon slot="icon" name="circle-exclamation"></wa-icon>
           ${this.error.message}
+        </wa-callout>
+      `
+    }
+
+    if (this.roomsFailed) {
+      return html`
+        <wa-callout variant="warning" data-rooms-failed>
+          <wa-icon slot="icon" name="triangle-exclamation"></wa-icon>
+          ${msg('The rooms already in this catalogue could not be read, so none are suggested below. You can still type a room name.')}
         </wa-callout>
       `
     }
