@@ -49,6 +49,7 @@ export class DeviceListView extends LitElement {
     devices: { state: true },
     rooms: { state: true },
     loaded: { state: true },
+    failed: { state: true },
     query: { state: true },
     includeDisabled: { state: true },
     exporting: { state: true },
@@ -72,6 +73,15 @@ export class DeviceListView extends LitElement {
    * the read would tell a user with a full catalogue that it is gone.
    */
   declare loaded: boolean
+  /**
+   * The catalogue could not be read.
+   *
+   * A third state, and the one that was missing. `loaded` separates *you have no devices* from
+   * *we have not looked yet*; a rejected read is neither, and without somewhere to put it the
+   * page rendered its header, its search box and nothing else — indistinguishable from a broken
+   * application, to somebody standing in front of the device they came to look up.
+   */
+  declare failed: boolean
   declare query: string
   declare includeDisabled: boolean
   /** Whether an export is running. Guards a second press landing on the same work. */
@@ -114,6 +124,7 @@ export class DeviceListView extends LitElement {
     this.devices = []
     this.rooms = []
     this.loaded = false
+    this.failed = false
     this.query = ''
     this.includeDisabled = false
   }
@@ -139,13 +150,25 @@ export class DeviceListView extends LitElement {
 
   private async load(): Promise<void> {
     const repositories = this.repos()
-    const [devices, rooms] = await Promise.all([
-      repositories.devices.list(),
-      repositories.rooms.list(),
-    ])
-    this.devices = devices
-    this.rooms = rooms
-    this.loaded = true
+
+    try {
+      const [devices, rooms] = await Promise.all([
+        repositories.devices.list(),
+        repositories.rooms.list(),
+      ])
+      this.devices = devices
+      this.rooms = rooms
+      this.loaded = true
+    } catch {
+      // Everything the local database can refuse arrives here as one shape: PouchDB flattens
+      // every IndexedDB failure into `status: 500, name: 'indexed_db_went_bad'`, and the
+      // underlying DOMException name survives only in an undocumented `reason` field. So there
+      // is one message rather than four guesses, and it says the one thing that is certainly
+      // true — the devices were not read, and nothing has been lost.
+      //
+      // The error is deliberately not logged. A device document carries a setup code.
+      this.failed = true
+    }
   }
 
   /**
@@ -513,6 +536,16 @@ export class DeviceListView extends LitElement {
                       ${msg('Cancel')}
                     </wa-button>
                   </div>
+                </wa-callout>
+              `
+            : ''
+        }
+        ${
+          this.failed
+            ? html`
+                <wa-callout variant="danger" data-read-failed>
+                  <wa-icon slot="icon" name="triangle-exclamation"></wa-icon>
+                  ${msg('Your devices could not be read from this browser’s storage. Nothing has been lost — reload to try again.')}
                 </wa-callout>
               `
             : ''

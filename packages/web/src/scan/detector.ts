@@ -44,23 +44,51 @@ const barcodeDetector = (): BarcodeDetectorConstructor | undefined =>
     ? (globalThis as unknown as { BarcodeDetector: BarcodeDetectorConstructor }).BarcodeDetector
     : undefined
 
+/** The format this application reads. Nothing else on a device's box is a setup code. */
+const QR = 'qr_code'
+
 /**
  * The platform's own detector, or `undefined` where there is none.
  *
- * Built once and reused: the specification asks for it in as many words — "detectors may
- * potentially allocate and hold significant resources; where possible, reuse the same
- * `BarcodeDetector` for several detections" — and this one is asked for a frame several times
- * a second.
+ * **The constructor proves nothing**, which is why this asks. Blink exposes `BarcodeDetector`
+ * on Android unconditionally and its constructor validates no formats at all — it drops
+ * unrecognised strings, keeps the rest as a *hint* and hands them to a service that may not
+ * exist. On Android without Play Services (Huawei, de-Googled builds, Fire OS, or Play Services
+ * older than 19.7.42 — crbug.com/1020746) the object is there, `new` succeeds, and every
+ * `detect()` rejects with `NotSupportedError` forever.
+ *
+ * That failure is invisible from inside the scan loop, which treats a rejected frame as a frame
+ * with no code in it — correctly, because most frames are. So it has to be caught *here*, once,
+ * before the scan control is offered: `getSupportedFormats()` resolves to an empty array when
+ * there is no service behind the API, and `chooseDetector` then loads the ZXing fallback, which
+ * is exactly right for a browser that genuinely cannot detect natively.
+ *
+ * Asked once and the detector reused: the specification asks for that in as many words —
+ * "detectors may potentially allocate and hold significant resources; where possible, reuse the
+ * same `BarcodeDetector` for several detections" — and this one is asked for a frame several
+ * times a second. `chooseDetector` memoises, so the question is asked once per page load, on a
+ * path that is already asynchronous.
  *
  * Narrowed to QR: the specification says limiting the formats "is likely to provide better
  * performance", and a one-dimensional barcode on a device's label is a serial number rather
  * than a setup code, so offering to read it would promise something that cannot work.
  */
-export function nativeDetector(): Detector | undefined {
+export async function nativeDetector(): Promise<Detector | undefined> {
   const Detector = barcodeDetector()
   if (Detector === undefined) return undefined
 
-  const detector = new Detector({ formats: ['qr_code'] })
+  try {
+    // Every shipping backend has QR — ChromeOS and Android hardcode it, macOS and WebKit map it
+    // from Vision — so this is not really a format check. It is a **service** check, and an
+    // empty list is how a platform with no service answers it.
+    if (!(await Detector.getSupportedFormats()).includes(QR)) return undefined
+  } catch {
+    // A rejection is not an answer, and reading it either way is a guess. "No native detector"
+    // is the conservative one: it costs a fallback download and works.
+    return undefined
+  }
+
+  const detector = new Detector({ formats: [QR] })
   return {
     async read(source) {
       const found = await detector.detect(source)
@@ -137,15 +165,15 @@ let chosen: Promise<Detector | undefined> | undefined
  *
  * @param native the platform's detector factory, injectable so a test can pretend to be a
  *   browser it is not — CI runs Linux Chromium, which has no `BarcodeDetector`, so the native
- *   path cannot otherwise be exercised at all
+ *   path cannot otherwise be exercised there at all
  * @param zxing the fallback loader, injectable so a test can prove it was **not** called
  */
 export async function chooseDetector(
-  native: () => Detector | undefined = nativeDetector,
+  native: () => Promise<Detector | undefined> | Detector | undefined = nativeDetector,
   zxing: () => Promise<Detector> = () => zxingDetector(),
 ): Promise<Detector | undefined> {
   chosen ??= (async () => {
-    const platform = native()
+    const platform = await native()
     // Returned before `zxing` is so much as mentioned. The test that counts calls to it is
     // the one thing standing between this and a bundle everyone downloads.
     if (platform !== undefined) return platform

@@ -163,6 +163,38 @@ async function decodeRendered(qr: Element): Promise<string> {
   return new BrowserQRCodeReader().decodeFromCanvas(canvas as HTMLCanvasElement).getText()
 }
 
+describe('when the device cannot be read', () => {
+  /** Repositories whose reads reject, the way a storage failure arrives. */
+  const failing = () =>
+    ({
+      devices: { get: async () => Promise.reject(new Error('indexed_db_went_bad')) },
+      rooms: { get: async () => Promise.reject(new Error('indexed_db_went_bad')) },
+    }) as never
+
+  it('says the device could not be read', async () => {
+    const element = (await fixture(
+      html`<device-view .repositories=${failing()} uuid=${'3fa85f64-5717-4562-b3fc-2c963f66afa6'}></device-view>`,
+    )) as HTMLElement & { failed: boolean }
+    await waitUntil(() => element.failed, 'the read never reported a failure')
+    await (element as unknown as { updateComplete: Promise<unknown> }).updateComplete
+
+    expect(element.querySelector('[data-read-failed]')).not.toBeNull()
+  })
+
+  it('does not say the device does not exist', async () => {
+    // **The message that must not appear.** "There is no device with that address" tells
+    // somebody their device is gone. It is not gone — this browser could not open its own
+    // database, and the difference is the whole reason there is a third state.
+    const element = (await fixture(
+      html`<device-view .repositories=${failing()} uuid=${'3fa85f64-5717-4562-b3fc-2c963f66afa6'}></device-view>`,
+    )) as HTMLElement & { failed: boolean }
+    await waitUntil(() => element.failed, 'the read never reported a failure')
+    await (element as unknown as { updateComplete: Promise<unknown> }).updateComplete
+
+    expect(element.textContent).not.toContain('no device with that address')
+  })
+})
+
 describe('the reproduced code', () => {
   it('decodes back to identical field values', async () => {
     // The scenario this whole milestone exists for. Everything else on this page is
