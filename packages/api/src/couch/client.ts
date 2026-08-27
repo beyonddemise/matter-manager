@@ -57,8 +57,8 @@ export interface WriteResult {
  * read-only access into read-write (lesson L2).
  */
 export interface Security {
-  readonly admins?: { readonly names?: string[]; readonly roles?: string[] }
-  readonly members?: { readonly names?: string[]; readonly roles?: string[] }
+  readonly admins?: { readonly names?: readonly string[]; readonly roles?: readonly string[] }
+  readonly members?: { readonly names?: readonly string[]; readonly roles?: readonly string[] }
   /**
    * Who may write, which CouchDB itself does not interpret.
    *
@@ -70,7 +70,7 @@ export interface Security {
    * Read access is `members`; write access is the subset also named here. A member who is not
    * a writer can read the project and change nothing.
    */
-  readonly writers?: { readonly names?: string[] }
+  readonly writers?: { readonly names?: readonly string[] }
 }
 
 /** The operations this service needs. Deliberately not "a CouchDB client" in general. */
