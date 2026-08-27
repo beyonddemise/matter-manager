@@ -148,8 +148,8 @@ function authenticationSetup(config) {
 `getInput` returns `""` for an input nobody supplied. So omitting the inputs is what overwrites
 the environment: both variables would be set to the empty string before wrangler ran, and the
 deploy would report no credentials however carefully the secrets were configured. The `env:`
-block stays, because the preflight check reads it — the inputs are fed from it, so the check and
-the step cannot read different values.
+block stays because the preflight check reads it. The deploy inputs repeat the same expressions,
+so both steps currently use the same values.
 
 **No SPA fallback is needed.** The router is hash-based (`#/devices/<uuid>`), so every request
 is for `/` and there are no deep paths for the host to rewrite. A `_redirects` file would be
