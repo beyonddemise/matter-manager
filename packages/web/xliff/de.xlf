@@ -346,6 +346,54 @@
   <source>Export <x id="0" equiv-text="${countSelected(this.groups(), { kind: 'devices', ids: this.selected })}"/> selected</source>
   <target><x id="0" equiv-text="${countSelected(this.groups(), { kind: 'devices', ids: this.selected })}"/> ausgewählte exportieren</target>
 </trans-unit>
+<trans-unit id="sbd65c5758efd65aa">
+  <source>Matter Manager labels</source>
+  <target>Matter-Manager-Etiketten</target>
+</trans-unit>
+<trans-unit id="s35baa5639f913c8f">
+  <source>Print labels</source>
+  <target>Etiketten drucken</target>
+</trans-unit>
+<trans-unit id="s3d1899df15537b0a">
+  <source>Label sheet</source>
+  <target>Etikettenbogen</target>
+</trans-unit>
+<trans-unit id="s5281e5ce79c867cb">
+  <source><x id="0" equiv-text="${candidate.code}"/> — <x id="1" equiv-text="${candidate.columns * candidate.rows}"/> per sheet</source>
+  <target><x id="0" equiv-text="${candidate.code}"/> — <x id="1" equiv-text="${candidate.columns * candidate.rows}"/> pro Bogen</target>
+</trans-unit>
+<trans-unit id="sd962db8c879e0bb4">
+  <source>Start at row</source>
+  <target>Beginnen in Zeile</target>
+</trans-unit>
+<trans-unit id="sfaf416c8e2304e20">
+  <source>and column</source>
+  <target>und Spalte</target>
+</trans-unit>
+<trans-unit id="sd57928c6004331d4">
+  <source>Print at 100% — not "fit to page" — or the labels will not line up with the sheet.</source>
+  <target>Mit 100 % drucken – nicht „an Seite anpassen“ –, sonst passen die Etiketten nicht zum Bogen.</target>
+</trans-unit>
+<trans-unit id="s49973ce2831b25f1">
+  <source>Create the sheet</source>
+  <target>Bogen erstellen</target>
+</trans-unit>
+<trans-unit id="s8a9eb438abac7c6a">
+  <source>Labels</source>
+  <target>Etiketten</target>
+</trans-unit>
+<trans-unit id="sb4d5a690c084aca3">
+  <source>The rooms already in this catalogue could not be read, so none are suggested below. You can still type a room name.</source>
+  <target>Die bereits vorhandenen Räume konnten nicht gelesen werden, daher werden unten keine vorgeschlagen. Sie können einen Raumnamen trotzdem eingeben.</target>
+</trans-unit>
+<trans-unit id="s04bffb7fd8963811">
+  <source>Your devices could not be read from this browser’s storage. Nothing has been lost — reload to try again.</source>
+  <target>Ihre Geräte konnten nicht aus dem Speicher dieses Browsers gelesen werden. Es ist nichts verloren gegangen – laden Sie die Seite neu, um es erneut zu versuchen.</target>
+</trans-unit>
+<trans-unit id="s381e1afa47b9490e">
+  <source>This device could not be read</source>
+  <target>Dieses Gerät konnte nicht gelesen werden</target>
+</trans-unit>
 </body>
 </file>
 </xliff>

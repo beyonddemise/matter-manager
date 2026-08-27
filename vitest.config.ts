@@ -55,8 +55,14 @@ export default defineConfig({
           include: ['test/**/*.test.ts'],
         },
       },
-      // api (node, against the devcontainer's CouchDB) is added by the milestone that
-      // introduces it.
+      {
+        test: {
+          name: 'api',
+          root: './packages/api',
+          environment: 'node',
+          include: ['test/**/*.test.ts'],
+        },
+      },
     ],
     coverage: {
       provider: 'v8',
@@ -86,6 +92,16 @@ export default defineConfig({
           lines: 90,
         },
         'packages/web/src/**': {
+          statements: 70,
+          branches: 70,
+          functions: 70,
+          lines: 70,
+        },
+        // `api` is held to 70% per CONTRIBUTING. Much of it is the boundary this project
+        // deliberately does not mock — a CouchDB client whose whole job is to make requests —
+        // and a bar that demanded every error branch of it be exercised would be a bar met by
+        // writing tests against a mock of `fetch`, which proves nothing about CouchDB.
+        'packages/api/src/**': {
           statements: 70,
           branches: 70,
           functions: 70,

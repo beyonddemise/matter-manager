@@ -21,6 +21,8 @@ import {
 } from '@matter-manager/core'
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib'
 import { renderQrPng } from './qr-image.js'
+import { winAnsiSafe } from './win-ansi.js'
+import { yieldToBrowser } from './yield.js'
 
 /** How large the code is drawn, in points. About 34mm — comfortably scannable off paper. */
 const QR_SIZE = 96
@@ -122,12 +124,23 @@ export async function buildInventoryPdf(
       if (options.cancelled?.() === true) throw new ExportCancelled('The export was cancelled.')
 
       await drawEntry(page, block, { yOf, geometry, regular, bold, ink, quiet, labels, pdf })
+      // `embedPng` is **lazy**: it registers an embedder and does the decoding and deflating
+      // at save time. Left alone, two hundred images are processed in one synchronous call at
+      // the end — which measured as a 5.6-second freeze *after* the last progress callback,
+      // with the loop above looking perfectly well-behaved. Flushing here does that work now,
+      // inside the loop, where the yield below can break it up.
+      await pdf.flush()
       done += 1
       options.onProgress?.({ done, total })
+      // Once per device, and it is what makes the progress callout above actually appear.
+      // Every `await` in this loop settles on a microtask, which continues the *same* task —
+      // so without this the whole export is one block and the interface is frozen for its
+      // duration. See `yield.ts`.
+      await yieldToBrowser()
     }
 
     if (laid.blocks.length === 0) {
-      page.drawText(labels.nothingToExport, {
+      page.drawText(winAnsiSafe(labels.nothingToExport), {
         x: geometry.margin,
         y: yOf(0),
         size: NAME_SIZE,
@@ -137,7 +150,7 @@ export async function buildInventoryPdf(
     }
 
     // The footer sits below the usable area, which is exactly what `footerHeight` reserved.
-    const footer = labels.pageNumber(laid.number, pages.length)
+    const footer = winAnsiSafe(labels.pageNumber(laid.number, pages.length))
     page.drawText(footer, {
       x: geometry.width - geometry.margin - regular.widthOfTextAtSize(footer, DETAIL_SIZE),
       y: geometry.margin - DETAIL_SIZE,
@@ -150,6 +163,14 @@ export async function buildInventoryPdf(
   pdf.setTitle(labels.title)
   // Deliberately no author, producer, or keywords beyond the title. Metadata is the quiet way
   // documents carry things nobody meant to publish, and this one is handed to other people.
+  //
+  // Object streams left on. They were briefly suspected of costing a second per forty pages,
+  // and that measurement was wrong: it saved the *same document* twice, and pdf-lib caches its
+  // normalisation, so whichever call ran second was fast because the first had done the work.
+  // Measured properly on two documents, object streams are the faster of the two (25ms against
+  // 61ms for sixty pages) as well as producing the smaller file.
+  //
+  // The real cost was the deferred image embedding flushed above.
   return pdf.save()
 }
 
@@ -169,7 +190,10 @@ function drawHeading(
   const path = block.path === '' ? labels.withoutRoom : block.path
   const text = block.continued ? labels.continued(path) : path
 
-  page.drawText(text, {
+  // Every string that reaches `drawText` goes through this. Missing one is not a rendering
+  // glitch: `pdf-lib` throws on a character WinAnsi cannot encode, so one Polish room name
+  // would lose the whole export. See `win-ansi.ts`.
+  page.drawText(winAnsiSafe(text), {
     x: geometry.margin,
     y: yOf(block.top + HEADING_SIZE),
     size: HEADING_SIZE,
@@ -220,7 +244,7 @@ async function drawEntry(
       borderColor: rgb(0.8, 0.82, 0.84),
       borderWidth: 0.5,
     })
-    page.drawText(labels.noQrCode, {
+    page.drawText(winAnsiSafe(labels.noQrCode), {
       x: left + 8,
       y: yOf(block.top + QR_SIZE / 2),
       size: DETAIL_SIZE,
@@ -235,7 +259,7 @@ async function drawEntry(
   const width = geometry.width - geometry.margin - textLeft
   let line = block.top + NAME_SIZE
 
-  page.drawText(device.name, {
+  page.drawText(winAnsiSafe(device.name), {
     x: textLeft,
     y: yOf(line),
     size: NAME_SIZE,
@@ -253,7 +277,7 @@ async function drawEntry(
 
   for (const detail of details) {
     line += DETAIL_SIZE + 4
-    page.drawText(detail, {
+    page.drawText(winAnsiSafe(detail), {
       x: textLeft,
       y: yOf(line),
       size: DETAIL_SIZE,
@@ -266,7 +290,7 @@ async function drawEntry(
   // The pairing code last and in bold: it is the one thing on the entry that still works when
   // the QR has been rained on, and the reason a code-only device is a complete record.
   line += DETAIL_SIZE + 8
-  page.drawText(`${labels.pairingCode}: ${device.manualCode}`, {
+  page.drawText(winAnsiSafe(`${labels.pairingCode}: ${device.manualCode}`), {
     x: textLeft,
     y: yOf(line),
     size: DETAIL_SIZE + 1,
