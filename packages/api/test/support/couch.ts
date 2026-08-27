@@ -98,11 +98,20 @@ export function fakeCouch(
     async putDoc<T extends Revision>(database: string, document: T): Promise<WriteResult> {
       record({ operation: 'putDoc', database, detail: document })
       if (failing('putDoc', database)) refuse(`write ${document._id}`)
-      documents.set(`${database}/${document._id}`, {
-        ...document,
-        _rev: '1-a',
-      } as unknown as Record<string, unknown>)
-      return { id: document._id, rev: '1-a' }
+
+      // **`_rev` is enforced, as CouchDB enforces it.** A fake that accepts any write makes a
+      // whole class of bug invisible: code that reads a document, forgets to carry its `_rev`
+      // and writes it back passes every test here and fails against a real server on the second
+      // write. The mutation probe found exactly that in `storeInvitation`.
+      const key = `${database}/${document._id}`
+      const existing = documents.get(key) as { _rev?: string } | undefined
+      if (existing !== undefined && existing._rev !== document._rev) {
+        throw new CouchError(409, 'conflict', `Document update conflict: ${document._id}`)
+      }
+
+      const rev = `${Number((existing?._rev ?? '0-x').split('-')[0]) + 1}-a`
+      documents.set(key, { ...document, _rev: rev } as unknown as Record<string, unknown>)
+      return { id: document._id, rev }
     },
 
     async createDb(database: string): Promise<boolean> {

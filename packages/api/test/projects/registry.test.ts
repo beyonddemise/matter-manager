@@ -41,6 +41,10 @@ async function runView(doc: Record<string, unknown>): Promise<EmittedRow[]> {
   const emit = (key: unknown, value: EmittedRow['value']) => rows.push({ key, value })
   // The source is this repository's own view function, installed into CouchDB verbatim.
   // Running it is the only way to test what it emits rather than what it contains.
+  // `new Function` on a constant this repository authors, never on input: the source is the
+  // module's own `map` string, which is what CouchDB is handed verbatim. Executing it is the
+  // only way to test what it emits rather than what it contains — asserting on the text is how
+  // a view that emits `undefined` passes a test named for the value it should emit.
   const map = new Function('emit', `return (${source})`)(emit) as (doc: unknown) => void
   map(doc)
 
