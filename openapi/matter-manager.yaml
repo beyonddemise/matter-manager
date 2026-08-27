@@ -104,6 +104,21 @@ paths:
                   expiresIn: { type: integer, description: Seconds until expiry }
         '401': { $ref: '#/components/responses/Unauthorized' }
 
+  /auth/signout:
+    post:
+      tags: [auth]
+      summary: End the session
+      description: |
+        Clears the session cookie. Necessary as a server operation because that cookie is
+        `HttpOnly` — the page cannot remove it, and a page that merely forgot its own token
+        would still be signed in on the next request.
+
+        Removing local databases is the browser's half and is not undone by this.
+      security: []
+      responses:
+        '204':
+          description: Signed out. Also the answer when there was no session to end.
+
   /profile:
     get:
       tags: [profile]
@@ -114,6 +129,34 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Profile' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+    put:
+      tags: [profile]
+      summary: Update the signed-in user's own settings
+      description: |
+        Only the fields a user may change about themselves. `sub` and `email` come from the
+        identity provider and are not writable here — a profile endpoint that accepted an
+        arbitrary `sub` would be an account-takeover primitive.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [locale]
+              properties:
+                locale:
+                  type: string
+                  enum: [auto, en, de]
+                displayName: { type: string }
+      responses:
+        '200':
+          description: The updated profile
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Profile' }
+        '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
 
   /projects:
@@ -230,8 +273,52 @@ paths:
                   enum: [read]
                   description: Retain read-only access after transfer. Omit to leave entirely.
       responses:
-        '204': { description: Transferred }
+        '204': { description: Offered; the recipient must accept before ownership moves }
+        '400': { $ref: '#/components/responses/BadRequest' }
         '403': { $ref: '#/components/responses/Forbidden' }
+
+  /transfers:
+    get:
+      tags: [projects]
+      summary: Projects being offered to the signed-in user
+      description: |
+        An offer of ownership is not a change of ownership. It waits here until the recipient
+        accepts it, because ownership carries responsibility for somebody's data and eventually
+        for a bill, and neither is a thing one person may assign to another (M5-5).
+      responses:
+        '200':
+          description: Offers awaiting an answer
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/TransferOffer' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /transfers/{projectId}:
+    parameters:
+      - name: projectId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      tags: [projects]
+      summary: Accept an offer of ownership
+      description: |
+        The recipient is identified by an email address the identity provider has **verified**,
+        never by possession of a link. A forwarded message therefore grants nothing.
+      responses:
+        '204': { description: Accepted; ownership has moved }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [projects]
+      summary: Decline an offer of ownership
+      responses:
+        '204': { description: Declined }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
 components:
   securitySchemes:
@@ -291,6 +378,21 @@ components:
         displayName: { type: string }
         role: { $ref: '#/components/schemas/Role' }
 
+    TransferOffer:
+      type: object
+      description: |
+        An offer of ownership awaiting an answer. Carries no token: acceptance is by signing in
+        with the address it was sent to.
+      required: [projectId, projectName, retainAccess, expiresAt]
+      properties:
+        projectId: { type: string, format: uuid }
+        projectName: { type: string }
+        retainAccess:
+          type: string
+          enum: [read, none]
+          description: What the current owner keeps once the offer is accepted.
+        expiresAt: { type: string, format: date-time }
+
     Problem:
       type: object
       description: RFC 9457 problem details.
@@ -302,6 +404,11 @@ components:
         detail: { type: string }
 
   responses:
+    BadRequest:
+      description: The request body is not one this operation accepts
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
     Unauthorized:
       description: Missing or invalid credentials
       content:
@@ -309,6 +416,14 @@ components:
           schema: { $ref: '#/components/schemas/Problem' }
     Forbidden:
       description: Authenticated but not permitted
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    NotFound:
+      description: |
+        No such thing, as far as this caller is concerned. Used in preference to 403 where a
+        403 would confirm that something exists — a project id is a uuid, so the only way to
+        hold one is to have been told it.
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }

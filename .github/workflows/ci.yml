@@ -106,6 +106,16 @@ jobs:
       - name: Tests
         run: npm run test:coverage
 
+      # The build is here for the check below rather than for its own sake — the deploy
+      # workflow builds what it deploys. Without it, "the QR fallback is not in the entry
+      # bundle" would be a claim no test could make: a unit test can prove the code does not
+      # *ask* for the fallback, and only the built output can prove it does not *ship* it.
+      - name: Build the site
+        run: npm run build
+
+      - name: The QR fallback is not in the bundle everyone downloads
+        run: npm run check:lazy
+
       - name: Upload coverage
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

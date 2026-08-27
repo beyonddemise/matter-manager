@@ -258,6 +258,142 @@
   <source>Nothing has been recorded about this device yet.</source>
   <target>Zu diesem Gerät wurde noch nichts erfasst.</target>
 </trans-unit>
+<trans-unit id="s3aae8e30897caca0">
+  <source>Scan the code</source>
+  <target>Code scannen</target>
+</trans-unit>
+<trans-unit id="sf78c048617264a07">
+  <source>This page has no permission to use a camera. Allow camera access for this site in your browser, or type the code instead.</source>
+  <target>Diese Seite hat keine Berechtigung, eine Kamera zu verwenden. Erlauben Sie den Kamerazugriff für diese Seite in Ihrem Browser, oder geben Sie den Code ein.</target>
+</trans-unit>
+<trans-unit id="s89220f0c63c6bb95">
+  <source>There is no camera this page can use. Type the code instead.</source>
+  <target>Es gibt keine Kamera, die diese Seite verwenden kann. Bitte geben Sie den Code ein.</target>
+</trans-unit>
+<trans-unit id="sc611e5288567bd05">
+  <source>The camera is being used by another application. Close it and try again, or type the code instead.</source>
+  <target>Die Kamera wird von einer anderen Anwendung verwendet. Schließen Sie diese und versuchen Sie es erneut, oder geben Sie den Code ein.</target>
+</trans-unit>
+<trans-unit id="sd9afa099cc06011f">
+  <source>The camera could not be started. Type the code instead.</source>
+  <target>Die Kamera konnte nicht gestartet werden. Bitte geben Sie den Code ein.</target>
+</trans-unit>
+<trans-unit id="s390cf7ed2baf42c1">
+  <source>Still looking — hold the QR code from the device in view.</source>
+  <target>Suche läuft — halten Sie den QR-Code des Geräts ins Bild.</target>
+</trans-unit>
+<trans-unit id="se1ff15b790979cfc">
+  <source>Scan the code on the device</source>
+  <target>Den Code am Gerät scannen</target>
+</trans-unit>
+<trans-unit id="s295750394c160fb5">
+  <source>Type the code instead</source>
+  <target>Code stattdessen eingeben</target>
+</trans-unit>
+<trans-unit id="scde3342a428aaee8">
+  <source>Offline</source>
+  <target>Offline</target>
+</trans-unit>
+<trans-unit id="s83af31f4d5a98f78">
+  <source>A new version of Matter Manager is ready.</source>
+  <target>Eine neue Version von Matter Manager steht bereit.</target>
+</trans-unit>
+<trans-unit id="sd5b6130b4937488c">
+  <source>Reload</source>
+  <target>Neu laden</target>
+</trans-unit>
+<trans-unit id="s40e889c01e752e7f">
+  <source>Matter Manager inventory</source>
+  <target>Matter-Manager-Bestandsliste</target>
+</trans-unit>
+<trans-unit id="s7d09afc329d9995b">
+  <source>Page <x id="0" equiv-text="${page}"/> of <x id="1" equiv-text="${total}"/></source>
+  <target>Seite <x id="0" equiv-text="${page}"/> von <x id="1" equiv-text="${total}"/></target>
+</trans-unit>
+<trans-unit id="sda6f502557bcfc1f">
+  <source><x id="0" equiv-text="${path}"/> (continued)</source>
+  <target><x id="0" equiv-text="${path}"/> (Fortsetzung)</target>
+</trans-unit>
+<trans-unit id="s96e557d8c59f7621">
+  <source>Filed from a pairing code</source>
+  <target>Über Kopplungscode erfasst</target>
+</trans-unit>
+<trans-unit id="s3d664fde80ed00f2">
+  <source>There are no devices to export.</source>
+  <target>Es gibt keine Geräte zum Exportieren.</target>
+</trans-unit>
+<trans-unit id="s0d7644c23c3661d1">
+  <source>Export PDF</source>
+  <target>PDF exportieren</target>
+</trans-unit>
+<trans-unit id="sec68251fdc9f54ca">
+  <source>Building the PDF: <x id="0" equiv-text="${this.exportProgress?.done ?? 0}"/> of <x id="1" equiv-text="${this.exportProgress?.total ?? 0}"/> devices.</source>
+  <target>PDF wird erstellt: <x id="0" equiv-text="${this.exportProgress?.done ?? 0}"/> von <x id="1" equiv-text="${this.exportProgress?.total ?? 0}"/> Geräten.</target>
+</trans-unit>
+<trans-unit id="s8b62ca15bbdcc282">
+  <source>The PDF could not be built. Nothing was saved; try again.</source>
+  <target>Das PDF konnte nicht erstellt werden. Es wurde nichts gespeichert; bitte erneut versuchen.</target>
+</trans-unit>
+<trans-unit id="s01924e0434d0960b">
+  <source>Select <x id="0" equiv-text="${device.name}"/></source>
+  <target><x id="0" equiv-text="${device.name}"/> auswählen</target>
+</trans-unit>
+<trans-unit id="see032876f36baf10">
+  <source>Export this room</source>
+  <target>Diesen Raum exportieren</target>
+</trans-unit>
+<trans-unit id="s9e143294067fa2be">
+  <source>Export <x id="0" equiv-text="${countSelected(this.groups(), { kind: 'devices', ids: this.selected })}"/> selected</source>
+  <target><x id="0" equiv-text="${countSelected(this.groups(), { kind: 'devices', ids: this.selected })}"/> ausgewählte exportieren</target>
+</trans-unit>
+<trans-unit id="sbd65c5758efd65aa">
+  <source>Matter Manager labels</source>
+  <target>Matter-Manager-Etiketten</target>
+</trans-unit>
+<trans-unit id="s35baa5639f913c8f">
+  <source>Print labels</source>
+  <target>Etiketten drucken</target>
+</trans-unit>
+<trans-unit id="s3d1899df15537b0a">
+  <source>Label sheet</source>
+  <target>Etikettenbogen</target>
+</trans-unit>
+<trans-unit id="s5281e5ce79c867cb">
+  <source><x id="0" equiv-text="${candidate.code}"/> — <x id="1" equiv-text="${candidate.columns * candidate.rows}"/> per sheet</source>
+  <target><x id="0" equiv-text="${candidate.code}"/> — <x id="1" equiv-text="${candidate.columns * candidate.rows}"/> pro Bogen</target>
+</trans-unit>
+<trans-unit id="sd962db8c879e0bb4">
+  <source>Start at row</source>
+  <target>Beginnen in Zeile</target>
+</trans-unit>
+<trans-unit id="sfaf416c8e2304e20">
+  <source>and column</source>
+  <target>und Spalte</target>
+</trans-unit>
+<trans-unit id="sd57928c6004331d4">
+  <source>Print at 100% — not "fit to page" — or the labels will not line up with the sheet.</source>
+  <target>Mit 100 % drucken – nicht „an Seite anpassen“ –, sonst passen die Etiketten nicht zum Bogen.</target>
+</trans-unit>
+<trans-unit id="s49973ce2831b25f1">
+  <source>Create the sheet</source>
+  <target>Bogen erstellen</target>
+</trans-unit>
+<trans-unit id="s8a9eb438abac7c6a">
+  <source>Labels</source>
+  <target>Etiketten</target>
+</trans-unit>
+<trans-unit id="sb4d5a690c084aca3">
+  <source>The rooms already in this catalogue could not be read, so none are suggested below. You can still type a room name.</source>
+  <target>Die bereits vorhandenen Räume konnten nicht gelesen werden, daher werden unten keine vorgeschlagen. Sie können einen Raumnamen trotzdem eingeben.</target>
+</trans-unit>
+<trans-unit id="s04bffb7fd8963811">
+  <source>Your devices could not be read from this browser’s storage. Nothing has been lost — reload to try again.</source>
+  <target>Ihre Geräte konnten nicht aus dem Speicher dieses Browsers gelesen werden. Es ist nichts verloren gegangen – laden Sie die Seite neu, um es erneut zu versuchen.</target>
+</trans-unit>
+<trans-unit id="s381e1afa47b9490e">
+  <source>This device could not be read</source>
+  <target>Dieses Gerät konnte nicht gelesen werden</target>
+</trans-unit>
 </body>
 </file>
 </xliff>
