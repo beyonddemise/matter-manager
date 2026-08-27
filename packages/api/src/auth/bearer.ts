@@ -36,11 +36,12 @@ export function bearerToken(header: string | undefined): string | undefined {
 }
 
 /**
- * The signed-in subject, or `undefined` when the caller is not signed in.
+ * Extracts and verifies the subject from an access token in the request's authorization header.
  *
- * Every failure is the same answer — no header, a malformed one, a bad signature, an expired
- * token. The caller gets 401 and nothing else: which of those it was is a fact about the
- * credential somebody presented, and telling them narrows the search.
+ * @param request - The request containing the authorization header
+ * @param key - The signing key used to verify the token
+ * @param now - Supplies the current time for token validation
+ * @returns The token subject, or `undefined` if the header is missing or malformed, or the token is invalid or expired
  */
 export function bearerSubject(
   request: FastifyRequest,

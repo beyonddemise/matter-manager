@@ -86,13 +86,12 @@ function applyHeaders(reply: FastifyReply, headers: Record<string, string>): voi
 }
 
 /**
- * Installs the security hooks.
+ * Registers security headers, CORS handling, and rate limiting for the application.
  *
- * Order matters and is the reason this is one function rather than three: the headers go on
- * **first**, so that they are already on the reply when the rate limiter short-circuits it. A
- * 429 without the cross-origin headers is reported to a page as a CORS failure, so the
- * application says "something went wrong" instead of "wait a minute" — and the user retries,
- * which is the one thing the limit was asking them not to do.
+ * CORS preflight requests receive a `204` response before routing. Authentication requests
+ * are rate limited by client IP, with a separate limit for token requests.
+ *
+ * @param options - Security policy, rate-limit, and clock configuration
  */
 export function registerSecurity(app: FastifyInstance, options: SecurityOptions): void {
   // Validated here rather than trusted: `corsPolicy` throws on a wildcard, on a value with a

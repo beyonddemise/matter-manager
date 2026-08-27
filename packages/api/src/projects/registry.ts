@@ -98,6 +98,11 @@ const registry = once(async (couch: CouchClient) => {
   })
 })
 
+/**
+ * Ensures that the projects registry database and its design document are initialized.
+ *
+ * @param couch - The CouchDB client used to initialize the registry
+ */
 export async function ensureRegistry(couch: CouchClient): Promise<void> {
   return registry.ensure(couch)
 }
