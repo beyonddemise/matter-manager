@@ -167,6 +167,35 @@ describe('the deployment caching contract', () => {
     }
   })
 
+  it('refuses an absolute URL as a rule rather than mis-parsing it', () => {
+    // Cloudflare accepts `https://site.pages.dev/sw.js` as a rule. This checker does not model
+    // host patterns — and the cost of not *saying* so is specific and silent: `https://…`
+    // contains a colon, so it parses as a header named "https", and every Cache-Control
+    // beneath it attaches to whichever rule came before. Verified before this was fixed: the
+    // checker blamed `/sw.js` at the line of an entirely correct rule.
+    const { code, output } = scan(
+      `${GOOD}\nhttps://matter-manager.pages.dev/sw.js\n  Cache-Control: public, max-age=31536000, immutable\n`,
+    )
+    expect(code).toBe(1)
+    expect(output).toContain('absolute URL')
+  })
+
+  it('names the line the absolute URL is on, not the rule above it', () => {
+    // The whole point of refusing it: the previous behaviour reported a line number belonging
+    // to somebody else's rule, which sends the reader to a line that is correct.
+    const { output } = scan(`${GOOD}\nhttps://example.test/x\n  Cache-Control: no-cache\n`)
+
+    expect(output).toContain('https://example.test/x')
+  })
+
+  it('still accepts a path pattern that merely contains a colon', () => {
+    // `:placeholder` is Cloudflare's own segment syntax and must keep working — the refusal
+    // above keys on the scheme, not on the colon.
+    const { code } = scan(GOOD.replace('/index.html', '/:page.html'))
+
+    expect(code).toBe(0)
+  })
+
   it('reads a comment as a comment', () => {
     const { code } = scan(`# why these rules exist\n${GOOD}`)
     expect(code).toBe(0)

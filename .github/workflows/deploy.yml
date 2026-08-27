@@ -39,21 +39,15 @@ jobs:
       # code at that point rather than data.
       BRANCH: ${{ github.head_ref || github.ref_name }}
 
-      # Held at the organisation, not the repository, so a second repository publishing to the
-      # same Cloudflare account does not mean a second copy of the token to rotate.
+      # The Cloudflare credentials are deliberately **not** here. They used to be, with a note
+      # arguing that `npm ci --ignore-scripts` meant no untrusted code ran in this job — which
+      # is true of *dependency* code and not of this repository's own. `npm run build` executes
+      # `vite.config.ts` and every plugin it loads, from the branch being built, and this
+      # workflow runs on `pull_request` for same-repo branches. So a job-level token is a token
+      # readable by anything a contributor can put in a build config.
       #
-      # Job-level rather than on the deploy step alone, because the preflight below has to read
-      # them too, and a check that reads different values from the step it guards is not a
-      # check. Unlike WEBAWESOME_NPM_TOKEN this is not narrowed to a single step: `npm ci`
-      # already runs with --ignore-scripts, so no dependency code executes in this job at all.
-      #
-      # The account id is read from either store. It is not a secret - it is in the path of
-      # every dashboard URL - so a variable is its more honest home, but it works as a secret
-      # too and which one an administrator reached for should not decide whether the site
-      # deploys. `||` yields the first non-empty operand, and an unset secret is "".
-      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || vars.CLOUDFLARE_ACCOUNT_ID }}
-      # The token is a secret in the sense that matters and is only ever read as one.
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      # They are now on the two steps that need them: the preflight check and the deploy. Both
+      # read the same expressions, so the check still guards the values the deploy uses.
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -84,6 +78,13 @@ jobs:
       # never "as expected" - it means the organisation secret is not granted to this
       # repository, which is a settings change, not a code change.
       - name: Refuse to build without Cloudflare credentials
+        env:
+          # The account id is read from either store. It is not a secret — it is in the path of
+          # every dashboard URL — so a variable is its more honest home, but it works as a
+          # secret too, and which one an administrator reached for should not decide whether the
+          # site deploys. `||` yields the first non-empty operand, and an unset secret is "".
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
           missing=
           [ -n "$CLOUDFLARE_ACCOUNT_ID" ] || missing="$missing CLOUDFLARE_ACCOUNT_ID"
@@ -141,11 +142,25 @@ jobs:
         id: deploy
         uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0
         with:
-          # No apiToken/accountId inputs: the action's authenticationSetup() assigns
-          # process.env.CLOUDFLARE_API_TOKEN = getInput("apiToken") unconditionally, and an
-          # input nobody supplied is "" rather than undefined. Supplying them here as well
-          # would not be belt and braces, it would be the braces cutting the belt - an empty
-          # input overwrites the environment above and wrangler reports no token at all.
+          # Passed as inputs, and they have to be. This comment previously claimed the opposite
+          # — that supplying them would overwrite the job environment with empty strings — and
+          # had the mechanism exactly backwards. Read from the pinned action's own source at
+          # ebbaa15 (dist/index.mjs):
+          #
+          #     CLOUDFLARE_API_TOKEN: getInput("apiToken"),
+          #     ...
+          #     function authenticationSetup(config) {
+          #       process.env.CLOUDFLARE_API_TOKEN = config["CLOUDFLARE_API_TOKEN"]
+          #       process.env.CLOUDFLARE_ACCOUNT_ID = config["CLOUDFLARE_ACCOUNT_ID"]
+          #     }
+          #
+          # `authenticationSetup` is the first thing `main()` calls, it assigns
+          # unconditionally, and `@actions/core`'s `getInput` returns `""` for an input nobody
+          # supplied. So *omitting* these is what wipes the environment: the action would set
+          # both variables to the empty string before wrangler ever runs, and the deploy would
+          # fail reporting no credentials however carefully the secrets were configured.
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || vars.CLOUDFLARE_ACCOUNT_ID }}
           gitHubToken: ${{ secrets.GITHUB_TOKEN }}
           # `--branch` is what decides production from preview: a deployment whose branch is
           # the project's production branch (main) is production, anything else is a preview

@@ -115,10 +115,25 @@ access list, and a repository left off it reads `secrets.CLOUDFLARE_API_TOKEN` a
 string rather than failing. That is why the deploy job checks both values before it builds,
 instead of letting wrangler report a missing token four minutes later.
 
-**They are passed through `env:`, not through the action's `apiToken`/`accountId` inputs.**
-`wrangler-action` sets `process.env.CLOUDFLARE_API_TOKEN` from `getInput("apiToken")`
-unconditionally, and an unsupplied input is `""`, not undefined — so passing them both ways
-is not redundancy, it is the input silently overwriting the environment.
+**They are passed through the action's `apiToken`/`accountId` inputs.** An earlier version of
+this record said the opposite, and had the mechanism backwards; it is corrected here rather than
+quietly, because the reasoning is worth keeping. From the pinned action's own source:
+
+```js
+CLOUDFLARE_API_TOKEN: getInput("apiToken"),
+// …
+function authenticationSetup(config) {
+  process.env.CLOUDFLARE_API_TOKEN = config["CLOUDFLARE_API_TOKEN"]
+  process.env.CLOUDFLARE_ACCOUNT_ID = config["CLOUDFLARE_ACCOUNT_ID"]
+}
+```
+
+`authenticationSetup` is the first thing `main()` calls and it assigns **unconditionally**, and
+`getInput` returns `""` for an input nobody supplied. So omitting the inputs is what overwrites
+the environment: both variables would be set to the empty string before wrangler ran, and the
+deploy would report no credentials however carefully the secrets were configured. The `env:`
+block stays, because the preflight check reads it — the inputs are fed from it, so the check and
+the step cannot read different values.
 
 **No SPA fallback is needed.** The router is hash-based (`#/devices/<uuid>`), so every request
 is for `/` and there are no deep paths for the host to rewrite. A `_redirects` file would be
