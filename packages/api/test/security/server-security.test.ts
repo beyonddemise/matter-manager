@@ -348,3 +348,74 @@ describe('the body limit', () => {
     expect(response.statusCode).toBe(200)
   })
 })
+
+describe('the rate-limit key', () => {
+  it('does not let one client fill the limiter with paths it invented', async () => {
+    // The hook runs **before routing**, so `pathOf(request.url)` is any string a client cares
+    // to send under /auth/. Keyed on the path, each distinct one is a new entry in a map that
+    // refuses new keys once it is full and never evicts within a window — so one address can
+    // spend the whole table on paths that route nowhere, and every client not already counted
+    // is refused until the window expires. That is a denial of sign-in for everybody, from one
+    // address, at the cost of a few thousand 404s.
+    const built = buildServer({
+      logger: false,
+      security: {
+        origins: ['https://matter.example'],
+        // Small enough to fill, for the same reason the limits above are small.
+        limits: {
+          auth: { max: 3, windowSeconds: 60, maxClients: 4 },
+          token: { max: 6, windowSeconds: 60 },
+        },
+      },
+    })
+    app = built
+
+    for (const nonsense of ['/auth/a', '/auth/b', '/auth/c', '/auth/d', '/auth/e']) {
+      await built.inject({
+        method: 'GET',
+        url: nonsense,
+        remoteAddress: '203.0.113.9',
+      })
+    }
+
+    // A different address, arriving for the first time, asking for a route that exists.
+    const victim = await built.inject({
+      method: 'GET',
+      url: '/auth/google',
+      remoteAddress: '198.51.100.4',
+    })
+
+    expect(victim.statusCode).not.toBe(429)
+  })
+
+  it('still counts one address against its own budget', async () => {
+    // The positive control for the test above: keying on the address alone would also pass it,
+    // and would be a limiter that limits nothing.
+    const built = server()
+    const responses = []
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      responses.push(
+        await built.inject({ method: 'GET', url: '/auth/google', remoteAddress: '203.0.113.7' }),
+      )
+    }
+
+    expect(responses.map((response) => response.statusCode)).toContain(429)
+  })
+
+  it('keeps the two budgets apart', async () => {
+    // `/auth/token` has its own, larger allowance. Merging the keys would spend one on the
+    // other, so replication would exhaust the sign-in budget or the reverse.
+    const built = server()
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      await built.inject({ method: 'GET', url: '/auth/google', remoteAddress: '203.0.113.8' })
+    }
+
+    const token = await built.inject({
+      method: 'POST',
+      url: '/auth/token',
+      remoteAddress: '203.0.113.8',
+    })
+
+    expect(token.statusCode).not.toBe(429)
+  })
+})

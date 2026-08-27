@@ -41,17 +41,11 @@ export class KeyInstallationError extends Error {
 }
 
 /**
- * Publishes the public key and confirms CouchDB accepts a token signed with its private half.
+ * Installs a signing key in CouchDB and verifies that CouchDB accepts tokens signed with it.
  *
- * The confirmation is the point, and it is why this cannot be a fire-and-forget `PUT`. Writing a
- * key to `[jwt_keys]` succeeds for a value CouchDB cannot parse — a PEM with its banner lines
- * still attached is accepted into the config and then fails to load — so the configuration looks
- * correct while every token is refused. The only honest check is to mint one and ask.
- *
- * @throws {KeyInstallationError} rather than starting. A service that serves traffic knowing its
- *   tokens do not work is a service whose users see replication fail with no explanation,
- *   intermittently, for as long as it runs. Failing to start is loud, immediate, and points at
- *   the right thing.
+ * @param key - The signing key to install and validate
+ * @param probePath - The CouchDB path used to verify token authentication
+ * @throws KeyInstallationError if CouchDB rejects the signed token or is unavailable
  */
 export async function installSigningKey(
   admin: CouchAdmin,
@@ -63,6 +57,7 @@ export async function installSigningKey(
   await admin.putConfig('jwt_keys', `ec:${key.kid}`, publicKeyForCouch(key.publicKey))
 
   const probe = mintToken(key, {
+    purpose: 'access',
     sub: `startup-probe-${key.kid}`,
     exp: Math.floor(Date.now() / 1000) + 60,
   })

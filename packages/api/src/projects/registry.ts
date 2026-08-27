@@ -12,6 +12,7 @@
 
 import type { Participant } from '@matter-manager/core'
 import type { CouchClient } from '../couch/client.js'
+import { installDesign, once } from '../couch/design.js'
 
 /** The registry database. Named once: a typo would create a second one that merely looked empty. */
 export const REGISTRY_DATABASE = 'projects'
@@ -78,8 +79,6 @@ const BY_USER_MAP = `function (doc) {
 }`
 
 /** Whether this process has already established that the registry is there. */
-let established = false
-
 /**
  * Creates the registry and its view if they are not already there.
  *
@@ -89,24 +88,28 @@ let established = false
  * Remembered **only on success**. A failed attempt that marked itself done would leave every
  * later project creation writing pointers into a database that is not there.
  */
-export async function ensureRegistry(couch: CouchClient): Promise<void> {
-  if (established) return
-
+const registry = once(async (couch: CouchClient) => {
   await couch.createDb(REGISTRY_DATABASE)
-  await couch.putDoc(REGISTRY_DATABASE, {
-    _id: `_design/${BY_PARTICIPANT_DESIGN}`,
-    // Rewritten on every fresh process, which is deliberate: it is how a change to the map
-    // function reaches a deployment. CouchDB only rebuilds the index when the source differs.
-    views: { [BY_USER_VIEW]: { map: BY_USER_MAP } },
-    language: 'javascript',
-  } as unknown as { _id: string })
+  // Rewritten when the map function has changed, which is how a change to it reaches a
+  // deployment, and left alone when it has not. `installDesign` carries the existing `_rev`:
+  // without one this is a create, and CouchDB refuses it on every process after the first.
+  await installDesign(couch, REGISTRY_DATABASE, `_design/${BY_PARTICIPANT_DESIGN}`, {
+    [BY_USER_VIEW]: { map: BY_USER_MAP },
+  })
+})
 
-  established = true
+/**
+ * Ensures that the projects registry database and its design document are initialized.
+ *
+ * @param couch - The CouchDB client used to initialize the registry
+ */
+export async function ensureRegistry(couch: CouchClient): Promise<void> {
+  return registry.ensure(couch)
 }
 
 /** Forgets that the registry was established. For tests, and for nothing else. */
 export function forgetRegistry(): void {
-  established = false
+  registry.forget()
 }
 
 /** Writes a pointer. Overwrites by `_id`, so a caller supplies `_rev` when replacing one. */

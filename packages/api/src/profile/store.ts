@@ -88,6 +88,11 @@ function toProfile(document: UserDocument): Profile {
   }
 }
 
+/**
+ * Creates a profile store backed by CouchDB's `_users` database.
+ *
+ * @returns A store for reading, creating, and updating user profiles
+ */
 export function profileStore(couch: CouchClient): ProfileStore {
   const load = (sub: string) => couch.getDoc<UserDocument>(USERS, userDocumentId(sub))
 
@@ -99,6 +104,13 @@ export function profileStore(couch: CouchClient): ProfileStore {
 
     async remember(identity: Identity): Promise<void> {
       const existing = await load(identity.sub)
+
+      // The provider's address when it sends one, the stored address otherwise — never
+      // nothing. `email` is optional in OIDC and `identityFrom` drops an empty one, so a later
+      // sign-in without the claim is ordinary rather than malformed; dropping the field here
+      // would unindex the account in `users.ts`, and sharing a project with that person would
+      // answer "nobody with that address has an account yet".
+      const email = identity.email ?? existing?.email
 
       // A returning user keeps their settings. The identity provider is authoritative about
       // who they are and says nothing about what they prefer — so `locale` is carried through
@@ -112,7 +124,7 @@ export function profileStore(couch: CouchClient): ProfileStore {
         // sign-in is not the moment to grant any — M5 adds project roles deliberately.
         roles: existing?.roles ?? [],
         type: 'user',
-        ...(identity.email === undefined ? {} : { email: identity.email }),
+        ...(email === undefined ? {} : { email }),
         // The provider's name is a default, not an override: someone who has set their own
         // display name should not have it replaced every time they sign in.
         displayName: existing?.displayName ?? identity.name ?? identity.sub,

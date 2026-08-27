@@ -33,7 +33,25 @@ export const ACCESS_TOKEN_TTL = 3600
 /** What the routes need that this module does not own. */
 export interface AuthDependencies {
   readonly provider: Provider
+  /**
+   * The key CouchDB validates.
+   *
+   * Its public half is installed in CouchDB's `[jwt_keys]` by `keys.ts`, so **anything signed
+   * with it is a database credential**. Only the access token is, and only for an hour.
+   */
   readonly key: SigningKey
+  /**
+   * The key for credentials CouchDB must never accept: the session cookie and the PKCE carrier.
+   *
+   * A separate key rather than a `purpose` claim, because **CouchDB does not evaluate claims it
+   * was not taught about** — it checks a signature and an expiry, and nothing else. So a
+   * thirty-day session signed with the key above was a thirty-day database credential however
+   * carefully this service refused to accept one. A claim cannot fix that; a key CouchDB has
+   * never been given can, because CouchDB cannot verify the signature at all.
+   *
+   * Its public half is never installed anywhere.
+   */
+  readonly sessionKey: SigningKey
   /** Verifies a provider ID token. Injected so the routes test without a JWKS endpoint. */
   readonly verifyIdToken: (idToken: string) => Promise<Identity>
   /** Where the browser is sent after a successful sign-in. */
@@ -86,14 +104,19 @@ function setCookie(reply: FastifyReply, value: string): void {
   reply.header('set-cookie', [...all, value])
 }
 
-/** Registers the sign-in operations. */
+/**
+ * Registers Google sign-in, callback, sign-out, and access-token routes.
+ *
+ * @param app - The Fastify application to which the routes are added
+ * @param deps - Authentication providers, keys, callbacks, and runtime dependencies
+ */
 export function registerAuthRoutes(app: FastifyInstance, deps: AuthDependencies): void {
   const secure = !deps.appOrigin.startsWith('http://localhost')
   const now = deps.now ?? (() => Math.floor(Date.now() / 1000))
 
   app.get('/auth/google', async (request, reply) => {
     const returnTo = (request.query as { returnTo?: string }).returnTo ?? '/'
-    const { authorizeUrl, carrier } = beginSignIn(deps.provider, deps.key, returnTo, now)
+    const { authorizeUrl, carrier } = beginSignIn(deps.provider, deps.sessionKey, returnTo, now)
 
     setCookie(
       reply,
@@ -116,7 +139,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthDependencies)
     let identity: Identity
     let returnTo = '/'
     try {
-      const flow = readFlowState(cookie(request, FLOW_COOKIE), query.state, deps.key, now)
+      const flow = readFlowState(cookie(request, FLOW_COOKIE), query.state, deps.sessionKey, now)
       returnTo = flow.returnTo
       identity = await completeSignIn(
         deps.provider,
@@ -142,7 +165,11 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthDependencies)
 
     // The session, as an httpOnly cookie the page cannot read. Its only use is to authorise
     // `POST /auth/token`, which is what hands the page something it *can* read.
-    const session = mintToken(deps.key, { sub: identity.sub, exp: now() + 30 * 24 * 3600 })
+    const session = mintToken(deps.sessionKey, {
+      purpose: 'session',
+      sub: identity.sub,
+      exp: now() + 30 * 24 * 3600,
+    })
     setCookie(reply, `${FLOW_COOKIE}=; ${cookieAttributes(0, secure)}`)
     setCookie(
       reply,
@@ -176,6 +203,8 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthDependencies)
     }
 
     const accessToken = mintToken(deps.key, {
+      // Not interchangeable with the session cookie above, deliberately. See `TokenPurpose`.
+      purpose: 'access',
       sub,
       exp: now() + ACCESS_TOKEN_TTL,
       iat: now(),
@@ -188,17 +217,21 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthDependencies)
 }
 
 /**
- * Reads the session cookie, throwing if it is not one this service issued and still valid.
+ * Verifies a session token and extracts its subject.
  *
- * Deliberately the same verification a CouchDB token gets: same algorithm guard, same wrapped
- * signature check, same expiry rule. A separate one here would be a second place to forget the
- * algorithm check — and a session cookie is exactly the token an attacker would most like to
- * present with `alg: none`.
+ * @param session - The session token to verify
+ * @returns The subject contained in the valid session token
  */
 function verifySession(session: string, deps: AuthDependencies, now: () => number): string {
-  return verifyToken(session, deps.key.publicKey, now).sub
+  return verifyToken(session, deps.sessionKey.publicKey, 'session', now).sub
 }
 
+/**
+ * Clears the authentication flow and session cookies.
+ *
+ * @param reply - The response to which expired cookie headers are appended
+ * @param secure - Whether the cookies require the `Secure` attribute
+ */
 function clearCookies(reply: FastifyReply, secure: boolean): void {
   setCookie(reply, `${FLOW_COOKIE}=; ${cookieAttributes(0, secure)}`)
   setCookie(reply, `${SESSION_COOKIE}=; ${cookieAttributes(0, secure)}`)

@@ -188,6 +188,7 @@ describe('checking the callback', () => {
 
 describe('exchanging the code', () => {
   const flow: FlowState = {
+    purpose: 'flow',
     state: 's',
     verifier: 'the-verifier',
     returnTo: '/',

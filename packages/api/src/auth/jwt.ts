@@ -39,7 +39,34 @@ const encode = (value: string | object): string =>
 const decode = (value: string): unknown => JSON.parse(Buffer.from(value, 'base64url').toString())
 
 /** What CouchDB is told about the bearer. */
+/**
+ * What a token is for.
+ *
+ * Every token this service signs carries one, and every verification states which it expects.
+ * Without it the three credentials are the same bytes with different lifetimes and are
+ * therefore **mutually substitutable**, which costs in both directions:
+ *
+ * - the access token is handed to page scripts on purpose (PouchDB needs it in a header), so a
+ *   script that exfiltrates one could present it as a session and mint fresh access tokens for
+ *   as long as it liked — making the one-hour lifetime a limit on nothing;
+ * - the session lasts thirty days, so a session presented as a bearer would be a thirty-day
+ *   direct database credential.
+ *
+ * A claim is the cheapest way to say which is which, and checking it is one comparison.
+ *
+ * **It is not sufficient on its own, and the second case is why.** CouchDB validates these
+ * tokens itself, checking a signature and an expiry and evaluating no claim it was not taught
+ * about — so a `purpose` mismatch stops this service and says nothing to the database. What
+ * closes that is a *second key*: sessions and flow carriers are signed with a key whose public
+ * half is never installed in `[jwt_keys]`, so CouchDB cannot verify one at all. See
+ * `AuthDependencies.sessionKey`. The claim still earns its place, because within this service
+ * the three credentials are otherwise interchangeable.
+ */
+export type TokenPurpose = 'access' | 'session' | 'flow'
+
 export interface Claims {
+  /** What this token may be presented as. See {@link TokenPurpose}. */
+  readonly purpose: TokenPurpose
   /** The identity provider's subject. CouchDB maps this to a user name. */
   readonly sub: string
   /** Seconds since the epoch. */
@@ -94,12 +121,11 @@ export function mintToken(key: SigningKey, claims: Claims): string {
 }
 
 /**
- * Signs any claims as a compact ES256 JWT.
+ * Signs claims as a compact ES256 JWT.
  *
- * Exported because the sign-in flow needs a signed, short-lived carrier for its PKCE verifier
- * and state, and that carrier is a JWT with different claims rather than a different mechanism.
- * One implementation of the ES256 detail below, used by both — two would be two chances to get
- * `dsaEncoding` wrong, in the same service, months apart.
+ * @param key - The signing key and key ID included in the JWT header
+ * @param claims - The claims to encode in the JWT payload
+ * @returns The signed compact JWT
  */
 export function signCompact(key: SigningKey, claims: object): string {
   const header = encode({ alg: 'ES256', typ: 'JWT', kid: key.kid })
@@ -116,7 +142,14 @@ export function signCompact(key: SigningKey, claims: object): string {
 }
 
 /** Why a token was not accepted. A code rather than a sentence: some of these are not for users. */
-export type TokenProblem = 'malformed' | 'algorithm' | 'signature' | 'expired' | 'not-yet-valid'
+export type TokenProblem =
+  | 'malformed'
+  | 'algorithm'
+  | 'signature'
+  | 'expired'
+  | 'not-yet-valid'
+  /** The token is genuine and is for something else. See {@link TokenPurpose}. */
+  | 'purpose'
 
 export class TokenError extends Error {
   override readonly name = 'TokenError'
@@ -141,35 +174,43 @@ export function kidOf(token: string): string | undefined {
 }
 
 /**
- * Verifies a token and returns its claims.
+ * Validates a token and returns its claims when it identifies a subject and matches the expected purpose.
  *
- * This service does not strictly need to verify its own tokens — CouchDB does that — but the
- * startup check in `keys.ts` does, and so does anything that reads a bearer on an API request.
- * More to the point: a minting function with no verifier is a minting function whose output
- * nobody has read back, and the failure mode of ES256 signature encoding is precisely that the
- * bytes look fine.
- *
- * @param now injected so expiry is testable without waiting an hour
- * @throws {TokenError} naming the problem
+ * @param expected - The purpose the token must declare
+ * @param now - Function providing the current Unix time in seconds
+ * @returns The validated token claims
+ * @throws TokenError If the token is invalid or does not identify a subject
  */
 export function verifyToken(
   token: string,
   publicKey: KeyObject,
+  expected: TokenPurpose,
   now: () => number = () => Math.floor(Date.now() / 1000),
 ): Claims {
-  return verifyCompact<Claims>(token, publicKey, now)
+  const claims = verifyCompact<Claims>(token, publicKey, expected, now)
+  // Every caller of this function immediately reads `.sub` and treats it as an identity. A
+  // token whose `sub` is missing or empty would become an empty user name, which CouchDB is
+  // perfectly willing to hold documents for.
+  if (typeof claims.sub !== 'string' || claims.sub === '') {
+    throw new TokenError('purpose', 'The token identifies nobody.')
+  }
+  return claims
 }
 
 /**
- * Verifies any compact ES256 JWT and returns its claims.
+ * Verifies an ES256 compact JWT and returns its claims.
  *
- * The generic half of {@link verifyToken}, so that the sign-in flow's carrier gets the same
- * algorithm-confusion guard, the same wrapped `verify`, and the same expiry rule as a CouchDB
- * token. A separate implementation for it would be a second place to forget one of them.
+ * @param token - The compact JWT to verify
+ * @param publicKey - The public key used to verify the signature
+ * @param expected - The purpose the token must have
+ * @param now - Function that supplies the current Unix timestamp
+ * @returns The verified JWT claims
+ * @throws TokenError If the token is malformed, uses an unsupported algorithm, has an invalid signature, is expired, is for a different purpose, or is not yet valid
  */
-export function verifyCompact<T extends { exp: number; iat?: number }>(
+export function verifyCompact<T extends { exp: number; iat?: number; purpose: TokenPurpose }>(
   token: string,
   publicKey: KeyObject,
+  expected: TokenPurpose,
   now: () => number = () => Math.floor(Date.now() / 1000),
 ): T {
   const parts = token.split('.')
@@ -218,6 +259,12 @@ export function verifyCompact<T extends { exp: number; iat?: number }>(
   if (typeof claims.exp !== 'number' || claims.exp <= at) {
     throw new TokenError('expired', 'The token has expired.')
   }
+  // After the signature, because an unsigned token's claims are not worth reading, and before
+  // the caller sees them, because the caller is what would use the wrong one.
+  if (claims.purpose !== expected) {
+    throw new TokenError('purpose', `This token is for ${String(claims.purpose)}, not ${expected}.`)
+  }
+
   if (typeof claims.iat === 'number' && claims.iat > at + 60) {
     // A minute of tolerance, because two machines' clocks differ and a token minted a moment
     // ago by a slightly fast server is not an attack.

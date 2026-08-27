@@ -40,6 +40,8 @@ export interface Provider {
 
 /** What is carried across the redirect, signed, so this service holds no session state. */
 export interface FlowState {
+  /** Always `flow`, so this carrier cannot be presented as a session. See `TokenPurpose`. */
+  readonly purpose: 'flow'
   /** Random, and compared on the way back. */
   readonly state: string
   /** The PKCE verifier. **Never leaves this service and never reaches the browser.** */
@@ -106,9 +108,10 @@ export function codeChallenge(verifier: string): string {
 const FLOW_TTL = 600
 
 /**
- * Starts a sign-in.
+ * Creates an authorization request and signed flow carrier for sign-in.
  *
- * @returns where to send the browser, and the signed carrier to set as a cookie
+ * @param returnTo - Application-relative path to use after sign-in; invalid values default to `/`.
+ * @returns The authorization URL and signed carrier containing the flow state.
  */
 export function beginSignIn(
   provider: Provider,
@@ -129,6 +132,7 @@ export function beginSignIn(
   url.searchParams.set('code_challenge_method', 'S256')
 
   const carrier = signCompact(key, {
+    purpose: 'flow',
     state,
     verifier,
     // Only a path, never a full URL. An open redirect here is a phishing primitive that
@@ -151,11 +155,12 @@ function equals(a: string, b: string): boolean {
 }
 
 /**
- * Reads and checks the carrier against the state the provider sent back.
+ * Validates a signed sign-in flow carrier and matches it to the provider's returned state.
  *
- * @throws {SignInError} on `state` for a missing, expired, forged or mismatched carrier. All
- *   four are the same answer to the user — start again — and distinguishing them in the response
- *   would tell an attacker which part of their attempt was wrong.
+ * @param carrier - The signed flow carrier received from the application
+ * @param returnedState - The state value returned by the identity provider
+ * @returns The validated flow state
+ * @throws SignInError If the carrier or returned state is missing, invalid, expired, or mismatched
  */
 export function readFlowState(
   carrier: string | undefined,
@@ -169,7 +174,7 @@ export function readFlowState(
 
   let flow: FlowState
   try {
-    flow = verifyCompact<FlowState>(carrier, key.publicKey, now)
+    flow = verifyCompact<FlowState>(carrier, key.publicKey, 'flow', now)
   } catch (error) {
     // Includes expiry, a forged signature and a wrong algorithm — `verifyCompact` makes the
     // same checks a CouchDB token gets, which is the point of sharing it.

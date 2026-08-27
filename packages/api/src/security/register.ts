@@ -86,13 +86,12 @@ function applyHeaders(reply: FastifyReply, headers: Record<string, string>): voi
 }
 
 /**
- * Installs the security hooks.
+ * Registers security headers, CORS handling, and rate limiting for the application.
  *
- * Order matters and is the reason this is one function rather than three: the headers go on
- * **first**, so that they are already on the reply when the rate limiter short-circuits it. A
- * 429 without the cross-origin headers is reported to a page as a CORS failure, so the
- * application says "something went wrong" instead of "wait a minute" — and the user retries,
- * which is the one thing the limit was asking them not to do.
+ * CORS preflight requests receive a `204` response before routing. Authentication requests
+ * are rate limited by client IP, with a separate limit for token requests.
+ *
+ * @param options - Security policy, rate-limit, and clock configuration
  */
 export function registerSecurity(app: FastifyInstance, options: SecurityOptions): void {
   // Validated here rather than trusted: `corsPolicy` throws on a wildcard, on a value with a
@@ -118,8 +117,15 @@ export function registerSecurity(app: FastifyInstance, options: SecurityOptions)
     const path = pathOf(request.url)
     if (!path.startsWith(AUTH_PREFIX)) return
 
-    const limiter = path === TOKEN_PATH ? tokenLimiter : authLimiter
-    const decision = limiter.check(`${path}:${request.ip}`)
+    const isToken = path === TOKEN_PATH
+    const limiter = isToken ? tokenLimiter : authLimiter
+    // Keyed on the **bucket** and the address, never on the path. This hook runs before the
+    // router, so the path is any string the client sent — and a per-path key lets one address
+    // create an unbounded number of entries in a map that refuses *new* keys once it is full
+    // and evicts nothing within a window. A few thousand requests to `/auth/<random>` would
+    // then deny sign-in to every client not already counted, for as long as the attacker keeps
+    // refilling it. Bounded by the number of addresses, this cannot happen.
+    const decision = limiter.check(`${isToken ? 'token' : 'auth'}:${request.ip}`)
     if (decision.allowed) return
 
     reply.header('retry-after', String(decision.retryAfterSeconds))

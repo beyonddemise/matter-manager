@@ -60,6 +60,7 @@ const server = (): Server => {
         scopes: ['openid', 'email', 'profile'],
       },
       key,
+      sessionKey: key,
       verifyIdToken: async () => ({ sub: 'google|1234', email: 'ada@example.test', name: 'Ada' }),
       appOrigin: 'https://app.test',
       rememberUser: async () => undefined,
@@ -70,7 +71,7 @@ const server = (): Server => {
         write: async () => undefined,
         rememberUser: async () => undefined,
       } as unknown as ProfileDependencies['store'],
-      key,
+      sessionKey: key,
     },
     projects: {
       couch: fakeCouch().couch,

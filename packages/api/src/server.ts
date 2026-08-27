@@ -97,6 +97,12 @@ export interface RegisteredRoute {
 /** A server that can say what it registered. */
 export type Server = FastifyInstance & { readonly registeredRoutes: () => RegisteredRoute[] }
 
+/**
+ * Creates an unlistening HTTP server with configured security, health, and optional service routes.
+ *
+ * @param options - Server configuration and optional route dependencies
+ * @returns The configured server instance
+ */
 export function buildServer(options: ServerOptions = {}): Server {
   const app = Fastify({
     logger:
@@ -105,7 +111,7 @@ export function buildServer(options: ServerOptions = {}): Server {
         : {
             // Structured, and redacting from the first commit rather than after an incident —
             // see `logging.ts` for what is on the list and why the Matter fields are on it.
-            redact: redactionOptions(),
+            ...redactionOptions(),
             // A request id per line, so a report of "it failed" can be traced to the request
             // that failed rather than to the minute it happened in.
             level: process.env.LOG_LEVEL ?? 'info',

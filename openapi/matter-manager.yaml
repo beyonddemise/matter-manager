@@ -239,9 +239,18 @@ paths:
               required: [email, role]
               properties:
                 email: { type: string, format: email }
-                role: { $ref: '#/components/schemas/Role' }
+                # Deliberately not a reference to `Role`: `owner` is missing, and its absence
+                # is the point. This route is open to managers, so allowing `owner` would let
+                # a manager promote anybody - themselves included - and bypass the transfer
+                # flow entirely. Ownership moves through /projects/{projectId}/transfer.
+                role:
+                  type: string
+                  enum: [manage, write, read]
       responses:
         '204': { description: Applied }
+        # A missing address, a role outside the enum above, or `owner` - which this route
+        # refuses because ownership moves through /projects/{projectId}/transfer.
+        '400': { $ref: '#/components/responses/BadRequest' }
         '403': { $ref: '#/components/responses/Forbidden' }
 
   /projects/{projectId}/transfer:
