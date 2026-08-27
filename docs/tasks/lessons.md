@@ -927,3 +927,33 @@ as one of the two states — and which one it lands in is an accident.
 was already written down in this repository — carefully, with the right reasoning — on the path
 it did not need to cover most. A codebase that has thought hard about one direction is a
 codebase where the other direction is worth reading immediately.
+## L29 · A `textContent` assertion tests the whole subtree, including the thing it is about
+
+**Context:** PR #84, review comment from CodeRabbit. The device list has three empty states, and
+the third — every device disabled, filter on — has to *name the control* so the remedy is
+findable. The test asserted:
+
+```ts
+expect(element.textContent).toContain('Show disabled devices')
+```
+
+The view renders `<wa-checkbox data-include-disabled>Show disabled devices</wa-checkbox>` a few
+lines above the empty message. So `element.textContent` contains that string **whatever the
+message says**, including when it says nothing useful. The mutation probe confirmed it: replacing
+the entire message with "Nothing to show." left all thirteen tests passing.
+
+The reviewer was right and the finding was worth acting on even though the PR had already merged.
+
+**Rule:** assert against the smallest element that can carry the claim. `element.textContent` on
+a component root is a search of everything the component renders — labels, hints, other empty
+states, sibling controls — so a `toContain` against it says only "this string appears somewhere
+on screen", which is rarely what the test is named for.
+
+**Corollary:** the negative form is fine and often better. `expect(element.textContent).not
+.toContain('Nothing matches')` is a *stronger* claim when unscoped, because absence from the
+whole subtree implies absence from the part. Scope the positives; leave the negatives broad.
+
+**How this got past review the first time:** the assertion is true, the test passes, and the
+string in it is the string the message is supposed to contain. Nothing about it reads as wrong.
+Only asking "what else on this page says that?" — or running the probe — distinguishes it from a
+test that works.
