@@ -96,12 +96,25 @@ set at creation, or afterwards through the Update Project API. Getting it wrong 
 means every deploy is a preview and nothing is ever live, which looks like a broken workflow
 rather than a wrong setting.
 
-**Two repository secrets are required**, in addition to the existing `WEBAWESOME_NPM_TOKEN`:
+**Two organisation secrets are required**, in addition to the existing repository-level
+`WEBAWESOME_NPM_TOKEN`:
 
 | Secret | What |
 |---|---|
 | `CLOUDFLARE_API_TOKEN` | An API token with **Account → Cloudflare Pages → Edit**. Nothing else; this token can only publish the site. |
 | `CLOUDFLARE_ACCOUNT_ID` | The Cloudflare account the project lives in. |
+
+They are held at the organisation because the account is the organisation's, not this
+repository's: a second repository publishing to it should not mean a second copy of the token
+to rotate. The cost is one more way to be wrong — an organisation secret has a repository
+access list, and a repository left off it reads `secrets.CLOUDFLARE_API_TOKEN` as the empty
+string rather than failing. That is why the deploy job checks both values before it builds,
+instead of letting wrangler report a missing token four minutes later.
+
+**They are passed through `env:`, not through the action's `apiToken`/`accountId` inputs.**
+`wrangler-action` sets `process.env.CLOUDFLARE_API_TOKEN` from `getInput("apiToken")`
+unconditionally, and an unsupplied input is `""`, not undefined — so passing them both ways
+is not redundancy, it is the input silently overwriting the environment.
 
 **No SPA fallback is needed.** The router is hash-based (`#/devices/<uuid>`), so every request
 is for `/` and there are no deep paths for the host to rewrite. A `_redirects` file would be

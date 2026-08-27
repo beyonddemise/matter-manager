@@ -39,6 +39,16 @@ jobs:
       # code at that point rather than data.
       BRANCH: ${{ github.head_ref || github.ref_name }}
 
+      # Organisation secrets, not repository ones - so a second repository that deploys to the
+      # same Cloudflare account does not need its own copy of the token to rotate.
+      #
+      # Job-level rather than on the deploy step alone, because the preflight below has to read
+      # them too, and a check that reads different values from the step it guards is not a
+      # check. Unlike WEBAWESOME_NPM_TOKEN this is not narrowed to a single step: `npm ci`
+      # already runs with --ignore-scripts, so no dependency code executes in this job at all.
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -61,6 +71,23 @@ jobs:
             exit 1
           fi
           echo "name=$BRANCH" >> "$GITHUB_OUTPUT"
+
+      # Fails in eleven seconds with a sentence naming the cause, rather than after a four
+      # minute install-and-build with wrangler's generic "it's necessary to set a
+      # CLOUDFLARE_API_TOKEN". Forks are already excluded above, so an empty value here is
+      # never "as expected" - it means the organisation secret is not granted to this
+      # repository, which is a settings change, not a code change.
+      - name: Refuse to build without Cloudflare credentials
+        run: |
+          missing=
+          [ -n "$CLOUDFLARE_ACCOUNT_ID" ] || missing="$missing CLOUDFLARE_ACCOUNT_ID"
+          [ -n "$CLOUDFLARE_API_TOKEN" ] || missing="$missing CLOUDFLARE_API_TOKEN"
+          if [ -n "$missing" ]; then
+            echo "Not deploying: no value for$missing." >&2
+            echo "These are organisation secrets. Check that beyonddemise has them and that" >&2
+            echo "their repository access includes this one." >&2
+            exit 1
+          fi
 
       - name: Reject a literal token in .npmrc
         run: node scripts/check-npmrc.mjs
@@ -107,8 +134,11 @@ jobs:
         id: deploy
         uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0
         with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          # No apiToken/accountId inputs: the action's authenticationSetup() assigns
+          # process.env.CLOUDFLARE_API_TOKEN = getInput("apiToken") unconditionally, and an
+          # input nobody supplied is "" rather than undefined. Supplying them here as well
+          # would not be belt and braces, it would be the braces cutting the belt - an empty
+          # input overwrites the environment above and wrangler reports no token at all.
           gitHubToken: ${{ secrets.GITHUB_TOKEN }}
           # `--branch` is what decides production from preview: a deployment whose branch is
           # the project's production branch (main) is production, anything else is a preview

@@ -90,6 +90,7 @@ property. And `pull_request_target` is not used, will not be, and the workflow s
 PouchDB bundles tested against it, and one written without that would either be too loose to be
 worth having or break in production only. It belongs with #47.
 
-**Needs a human once:** the two Cloudflare repository secrets, and
+**Needs a human once:** the two Cloudflare organisation secrets — granted to this repository,
+not merely present on the organisation — and
 `npx wrangler pages project create matter-manager --production-branch=main`. Until then the
 deploy job fails on a missing token; everything it gates is green.
