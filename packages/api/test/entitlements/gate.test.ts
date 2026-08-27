@@ -1,7 +1,11 @@
-import { ACTIONS, type Principal } from '@matter-manager/core'
+import { generateKeyPairSync } from 'node:crypto'
+import { ACTIONS, type Action, type Principal } from '@matter-manager/core'
 import { afterEach, describe, expect, it } from 'vitest'
+import { mintToken, type SigningKey } from '../../src/auth/jwt.js'
 import { ENFORCEMENT, gate, gatedRoutes, NotEntitledError } from '../../src/entitlements/gate.js'
+import { forgetRegistry } from '../../src/projects/registry.js'
 import { buildServer, type Server } from '../../src/server.js'
+import { fakeCouch } from '../support/couch.js'
 
 const ADA: Principal = { sub: 'google|1234', plan: 'free' }
 
@@ -42,6 +46,62 @@ describe('the seam itself', () => {
   })
 })
 
+/**
+ * How to reach each gated route, so this file can watch the gate being called.
+ *
+ * The enumeration is only worth anything if it *drives* the routes. A gated route with no entry
+ * here fails loudly below — which is the point: the next one to be implemented (M5-3's
+ * membership endpoint) cannot be added without somebody arriving at this file.
+ */
+const DRIVERS: Readonly<Record<string, (built: Server, key: SigningKey) => Promise<unknown>>> = {
+  'POST /projects': (built, key) =>
+    built.inject({
+      method: 'POST',
+      url: '/projects',
+      headers: {
+        authorization: `Bearer ${mintToken(key, {
+          sub: ADA.sub,
+          exp: Math.floor(Date.now() / 1000) + 3600,
+        })}`,
+      },
+      payload: { name: 'Musterstraße 12' },
+    }),
+  'PUT /projects/:projectId/members': (built, key) =>
+    built.inject({
+      method: 'PUT',
+      url: '/projects/8f14e45f-ceea-467a-9c0e-1b2c3d4e5f60/members',
+      headers: {
+        authorization: `Bearer ${mintToken(key, {
+          sub: ADA.sub,
+          exp: Math.floor(Date.now() / 1000) + 3600,
+        })}`,
+      },
+      payload: { email: 'grace@example.test', role: 'read' },
+    }),
+}
+
+/** A server with every gated route wired, and a gate that records what it was asked. */
+function serverWithGatedRoutes() {
+  const { privateKey, publicKey } = generateKeyPairSync('ec', { namedCurve: 'prime256v1' })
+  const key: SigningKey = { kid: 'test', privateKey, publicKey }
+  const calls: Action[] = []
+
+  forgetRegistry()
+  app = buildServer({
+    logger: false,
+    projects: {
+      couch: fakeCouch().couch,
+      key,
+      validator: () => 'function (doc) { return doc }',
+      gate: (_principal, action) => {
+        calls.push(action)
+      },
+    },
+  })
+
+  return { built: app, key, calls }
+}
+
 describe('the enumeration that makes the seam real', () => {
   // The issue: "a test enumerates gated actions and asserts each route calls the seam. That
   // enumeration test is what makes the seam real rather than decorative."
@@ -68,48 +128,61 @@ describe('the enumeration that makes the seam real', () => {
     ])
   })
 
-  it('has no gated route implemented yet, and says so deliberately', () => {
-    // The list that must shrink on purpose. Both gated operations are M5's, so today the
-    // correct state is that neither is registered — and asserting it is what makes implementing
-    // one *without* the gate fail here rather than ship ungated.
-    //
-    // When M5-1 adds `POST /projects`, this test goes red. The fix is to call `gate()` in that
-    // handler and move the route into the case below, which is exactly the moment somebody
-    // should be thinking about entitlement.
-    app = buildServer({ logger: false })
+  it('has exactly the gated routes that are implemented, and no others', () => {
+    // The list that shrinks on purpose, and has now shrunk to nothing: `POST /projects` arrived
+    // with M5-1 and the membership endpoint with M5-3. Both are gated, both are driven below.
+    // A new gated action added to `ENFORCEMENT` puts an entry back here.
+    const { built } = serverWithGatedRoutes()
     const registered = new Set(
-      app.registeredRoutes().map((route) => `${route.method} ${route.url}`),
+      built.registeredRoutes().map((route) => `${route.method} ${route.url}`),
     )
 
     const implemented = gatedRoutes()
       .map((entry) => `${entry.method} ${entry.path}`)
       .filter((route) => registered.has(route))
 
-    expect(implemented).toEqual([])
+    expect(implemented).toEqual(['POST /projects', 'PUT /projects/:projectId/members'])
   })
 
-  it('asserts the gate is called by every gated route that exists', () => {
-    // Empty today, and written now rather than later: the shape of this check is the thing that
-    // has to exist before the first gated route does, or it will be written afterwards by
-    // somebody reading a handler that already works.
-    app = buildServer({ logger: false })
+  it('watches the gate being called by every gated route that exists', async () => {
+    // Not "a gate is available" — that a request through this route reaches it. A handler that
+    // forgot the call would answer 201 and provision a database, which is indistinguishable
+    // from correct behaviour in every other test.
+    const { built, key, calls } = serverWithGatedRoutes()
     const registered = new Set(
-      app.registeredRoutes().map((route) => `${route.method} ${route.url}`),
+      built.registeredRoutes().map((route) => `${route.method} ${route.url}`),
     )
 
     for (const entry of gatedRoutes()) {
-      if (!registered.has(`${entry.method} ${entry.path}`)) continue
+      const route = `${entry.method} ${entry.path}`
+      if (!registered.has(route)) continue
 
-      // A gated route that exists must take an injectable gate, so that this test can watch it
-      // being called. Failing loudly here beats asserting nothing.
-      throw new Error(
-        `${entry.method} ${entry.path} is implemented and gated by ${entry.action}, but this ` +
-          'test has no way to observe the gate being called. Give the route an injectable ' +
-          '`gate` dependency and assert it here.',
-      )
+      const drive = DRIVERS[route]
+      if (drive === undefined) {
+        // Loud, and deliberately not a skip. A gated route this file cannot drive is a gated
+        // route nobody is watching.
+        throw new Error(
+          `${route} is implemented and gated by ${entry.action}, but DRIVERS has no entry for ` +
+            'it, so this test cannot watch the gate being called. Add one.',
+        )
+      }
+
+      calls.length = 0
+      await drive(built, key)
+      expect(calls, `${route} did not call the gate`).toContain(entry.action)
     }
+  })
 
-    expect(true).toBe(true)
+  it('would notice a route that stopped calling the gate', async () => {
+    // The positive control. Without it, the assertion above passes just as happily when
+    // `calls` is never written to — and a suite of "the gate was called" assertions that all
+    // pass against a gate nobody wired up reads exactly like a suite that works.
+    const { built, key, calls } = serverWithGatedRoutes()
+    await DRIVERS['POST /projects']?.(built, key)
+    expect(calls).toContain('project.create')
+
+    calls.length = 0
+    expect(calls).not.toContain('project.create')
   })
 })
 

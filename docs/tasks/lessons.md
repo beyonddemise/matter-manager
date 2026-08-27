@@ -851,3 +851,79 @@ uses the same source on both sides asserts self-consistency, which every wrong a
 **Corollary:** a function that coverage reports as never called is not merely untested — it is
 usually the one whose only observable behaviour is a unit, a default, or an ambient dependency,
 which is exactly the class this lesson is about.
+
+---
+
+## L27 · A constructor that succeeds is not a working feature
+
+**Context:** `#87`/`#88`, `packages/web/src/scan/detector.ts`. `nativeDetector()` decided that a
+browser could read QR codes if `'BarcodeDetector' in globalThis` and `new BarcodeDetector(…)`
+did not throw. Both are true on **Android without Play Services** — Huawei devices, de-Googled
+builds, Fire OS, or Play Services older than 19.7.42 — where there is no barcode service behind
+the API at all. Blink exposes the interface on Android unconditionally, and its constructor
+validates nothing: it drops unrecognised format strings, keeps the rest as a *hint*, and hands
+them to a service that may not exist.
+
+The result was the worst shape a failure can take: the scan control renders, the camera opens,
+the loop runs, and nothing is ever read. Every `detect()` rejects with `NotSupportedError`, and
+`readFrame()`'s catch — correctly written for "most frames have no code in them" — swallowed it
+on every frame forever. Silent, unreportable, and indistinguishable from a bad camera, on the
+one platform where people are most likely to be scanning.
+
+Nothing in the test suite could have caught it: CI is Linux Chromium, which has no
+`BarcodeDetector` at all, so the native path was never taken there.
+
+**Rule:** feature detection has to detect the *feature*, not the *interface*. When an API is a
+shim over a platform service — barcode detection, speech, NFC, payments — the object's existence
+is a fact about the browser build, not about the device it is running on. Find the call that
+asks whether the service is actually there (`getSupportedFormats()` returning `[]`, here) and
+ask it once, at the point where the answer changes what is offered to the user.
+
+**Corollary:** a catch that is right about the common case can be wrong about a rare one in a way
+that hides it completely. "Most frames have no code in them" is true and "this browser will never
+read a code" is also true, and the second arrives through the same channel. Discriminate at the
+layer where the difference is knowable — here, before the control is offered — rather than adding
+a second guard inside the loop.
+
+---
+
+## L28 · The care taken over writes did not reach the reads
+
+**Context:** `packages/web/src/views/`. `device-form.ts`'s write path has a careful comment:
+
+> A rejected write is reported rather than thrown. Left to propagate out of a submit handler it
+> becomes an unhandled rejection: the button un-busies, nothing appears on screen, and the user
+> cannot tell whether their device was saved — which for a form whose whole purpose is not
+> losing a code is the worst possible way to fail.
+
+That reasoning is exactly right, and it was applied to writes only. Every **read** in the
+application — `device-list.ts`'s `load()`, `device.ts`'s `load()`, `device-form.ts`'s
+`loadRooms()` — awaited a repository with no `catch`. A rejection left `loaded === false`
+forever, produced an unhandled rejection, and rendered a page with a header, a search box and
+nothing else.
+
+The `loaded` flag itself carries a comment identifying the right distinction — "one is *you have
+no devices*, the other is *we have not looked yet*" — and there was no third state for *we
+looked and could not*. Two states where three were needed, so the third failure quietly rendered
+as one of the other two.
+
+This was not exotic. PouchDB flattens every IndexedDB failure into one rejection, its task queue
+makes an open failure sticky so *every* later operation rejects, and the reachable causes include
+a quota exceeded by embedded photos and a database evicted between sessions. An offline-first
+catalogue rendering a blank page to somebody standing in a basement in front of the device they
+came to look up is the exact scenario ADR 0002 exists for.
+
+**Rule:** when a piece of reasoning about failure is written down for one direction of I/O, go
+and apply it to the other direction the same day. The reads in a read-mostly application are the
+paths a user meets most often, and they are the ones most likely to have been written first —
+before the failure handling was thought about at all.
+
+**Corollary:** a two-state flag (`loading` / `loaded`) is a design that cannot express failure.
+If the code has a boolean for "have we got the data", the failure case is already being rendered
+as one of the two states — and which one it lands in is an accident.
+
+**How to find the next one, cheaply:** grep for comments that explain how a failure should be
+*reported*, and for each one ask which side of the I/O boundary it was written for. This lesson
+was already written down in this repository — carefully, with the right reasoning — on the path
+it did not need to cover most. A codebase that has thought hard about one direction is a
+codebase where the other direction is worth reading immediately.

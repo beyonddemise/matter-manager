@@ -9,7 +9,7 @@
  * @module
  */
 
-import { originsFromEnv } from './security/config.js'
+import { serverOptions } from './composition.js'
 import { buildServer } from './server.js'
 
 const port = Number(process.env.PORT ?? 3000)
@@ -18,9 +18,12 @@ const port = Number(process.env.PORT ?? 3000)
 // and a process that looks perfectly healthy from inside.
 const host = process.env.HOST ?? '0.0.0.0'
 
-// A bad origin throws here, before anything listens. That is the point: the alternative is a
-// service that starts, looks healthy, and refuses the application it exists to serve.
-const app = buildServer({ security: { origins: originsFromEnv(process.env) } })
+// Everything that can be wrong with the configuration is discovered here, before anything
+// listens — a bad origin, a signing key that is not an EC key, missing design documents. That
+// is the point: the alternative is a service that starts, looks healthy, and fails at the
+// moment somebody presses a button, which reads as a broken application rather than an
+// incomplete deployment. See `composition.ts`.
+const app = buildServer(serverOptions(process.env))
 
 /**
  * Stops accepting connections, finishes what is in flight, and exits.

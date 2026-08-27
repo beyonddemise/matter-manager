@@ -19,6 +19,7 @@ import { type AuthDependencies, registerAuthRoutes } from './auth/routes.js'
 import type { paths } from './generated/openapi.js'
 import { redactionOptions } from './logging.js'
 import { type ProfileDependencies, registerProfileRoutes } from './profile/routes.js'
+import { type ProjectDependencies, registerProjectRoutes } from './projects/routes.js'
 import { registerSecurity, type SecurityOptions } from './security/register.js'
 
 /** The response body for an operation, straight from the contract. */
@@ -53,6 +54,15 @@ export interface ServerOptions {
    * is being brought up.
    */
   readonly profile?: ProfileDependencies
+  /**
+   * Project provisioning and listing.
+   *
+   * Separate from `profile` for the same reason `profile` is separate from `auth`: they need
+   * different things, and a deployment can have one configured and not the other while it is
+   * being brought up. Absent means the routes are absent, which the contract-drift check reads
+   * as unimplemented — which is true.
+   */
+  readonly projects?: ProjectDependencies
   /**
    * Rate limits, cross-origin access and the headers on every response.
    *
@@ -154,6 +164,7 @@ export function buildServer(options: ServerOptions = {}): Server {
 
   if (options.auth !== undefined) registerAuthRoutes(app, options.auth)
   if (options.profile !== undefined) registerProfileRoutes(app, options.profile)
+  if (options.projects !== undefined) registerProjectRoutes(app, options.projects)
 
   return Object.assign(app, { registeredRoutes: () => [...routes] })
 }

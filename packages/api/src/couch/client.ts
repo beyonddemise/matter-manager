@@ -57,8 +57,20 @@ export interface WriteResult {
  * read-only access into read-write (lesson L2).
  */
 export interface Security {
-  readonly admins?: { readonly names?: string[]; readonly roles?: string[] }
-  readonly members?: { readonly names?: string[]; readonly roles?: string[] }
+  readonly admins?: { readonly names?: readonly string[]; readonly roles?: readonly string[] }
+  readonly members?: { readonly names?: readonly string[]; readonly roles?: readonly string[] }
+  /**
+   * Who may write, which CouchDB itself does not interpret.
+   *
+   * Not a CouchDB concept: the server understands `admins` and `members` and preserves any
+   * other key it is given. `_design/access`'s `validate_doc_update` receives the whole
+   * `_security` object as its fourth argument and enforces this one — see
+   * `docs/SECURITY-MODEL.md` and `infra/couchdb/design-docs/access.js`.
+   *
+   * Read access is `members`; write access is the subset also named here. A member who is not
+   * a writer can read the project and change nothing.
+   */
+  readonly writers?: { readonly names?: readonly string[] }
 }
 
 /** The operations this service needs. Deliberately not "a CouchDB client" in general. */
@@ -68,6 +80,14 @@ export interface CouchClient {
   putDoc<T extends Revision>(database: string, document: T): Promise<WriteResult>
   /** Creates a database. `false` when it already existed, which is not an error. */
   createDb(database: string): Promise<boolean>
+  /**
+   * Deletes a database. `false` when there was none, which is not an error.
+   *
+   * Exists for one caller: the rollback in `projects/provision.ts`. A database created without
+   * its `_security` is readable by anyone with an account, so leaving one behind is a security
+   * hole rather than clutter.
+   */
+  deleteDb(database: string): Promise<boolean>
   putSecurity(database: string, security: Security): Promise<void>
   getSecurity(database: string): Promise<Security>
   /** A view query. `include_docs` and friends go in `params`. */
@@ -175,6 +195,16 @@ export function couchClient(config: CouchConfig, fetchImpl: typeof fetch = fetch
       // thrown, so a caller can be idempotent without inspecting an error's status code.
       if (result.status === 412) return false
       expect(result, [201, 202], `create ${database}`)
+      return true
+    },
+
+    async deleteDb(database: string): Promise<boolean> {
+      const result = await request('DELETE', `/${encode(database)}`)
+      // 404 is `not_found`, and it is the expected answer when a rollback runs for a database
+      // whose creation is what failed. Reported as `false` for the same reason `createDb`
+      // reports 412 that way: the caller wants to be idempotent, not to read status codes.
+      if (result.status === 404) return false
+      expect(result, [200, 202], `delete ${database}`)
       return true
     },
 
