@@ -88,6 +88,11 @@ function toProfile(document: UserDocument): Profile {
   }
 }
 
+/**
+ * Creates a profile store backed by CouchDB's `_users` database.
+ *
+ * @returns A store for reading, creating, and updating user profiles
+ */
 export function profileStore(couch: CouchClient): ProfileStore {
   const load = (sub: string) => couch.getDoc<UserDocument>(USERS, userDocumentId(sub))
 

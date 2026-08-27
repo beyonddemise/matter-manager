@@ -27,7 +27,13 @@ interface DesignDocument {
 /** The views a design document holds, keyed by view name. */
 export type Views = Record<string, { readonly map: string }>
 
-/** Whether what is stored already says exactly what we are about to write. */
+/**
+ * Determines whether the stored views match the requested views exactly.
+ *
+ * @param stored - The views currently stored in the design document
+ * @param wanted - The views that should be stored
+ * @returns `true` if both sets contain the same view names with identical map functions, `false` otherwise.
+ */
 function unchanged(stored: DesignDocument['views'], wanted: Views): boolean {
   if (stored === undefined) return false
   const names = Object.keys(wanted)
@@ -36,14 +42,9 @@ function unchanged(stored: DesignDocument['views'], wanted: Views): boolean {
 }
 
 /**
- * Writes a design document, creating it or replacing it as required.
+ * Installs a CouchDB design document when its views differ from the stored document.
  *
- * **Skips the write when the stored map functions already match.** Not an optimisation: a design
- * document that is written back identically still gets a new `_rev` and still replicates, and
- * on a deployment with several nodes that is a stream of no-op updates every time anything
- * restarts. Writing only on a real change is also what makes "rewritten on every fresh process"
- * safe to say — the rewrite is how a changed map function reaches a deployment, and an
- * unchanged one has nothing to reach it with.
+ * @param views - The JavaScript view definitions to install
  */
 export async function installDesign(
   couch: CouchClient,
@@ -88,15 +89,13 @@ export async function installDesign(
 }
 
 /**
- * Runs an installation once per process, and shares it with whoever asks while it is in flight.
+ * Coordinates one in-flight installation and shares its result among callers.
  *
- * A boolean set *after* the write does not do this: two callers that arrive together both see
- * `false`, both write, and the second is refused with the conflict this module exists to avoid.
- * `findUser` awaits one of these on the path of every invitation, so that race is reachable
- * from two people sharing a project at the same moment.
+ * Failed installations are cleared so later callers can retry. The stored installation can also
+ * be cleared explicitly.
  *
- * **A failure is forgotten**, so a transient CouchDB error is retried by the next caller rather
- * than remembered as a permanent one — the behaviour the boolean had, kept deliberately.
+ * @param install - Installation operation to run at most once while it is in flight
+ * @returns Methods for starting or sharing the installation and clearing it
  */
 export function once(install: (couch: CouchClient) => Promise<void>): {
   ensure: (couch: CouchClient) => Promise<void>

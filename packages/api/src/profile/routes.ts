@@ -40,7 +40,12 @@ function cookie(request: FastifyRequest, name: string): string | undefined {
   return undefined
 }
 
-/** The signed-in subject, or `undefined`. */
+/**
+ * Identifies the authenticated subject from the session cookie.
+ *
+ * @param now - Supplies the current Unix time for token verification.
+ * @returns The subject identifier if the session token is valid, `undefined` otherwise.
+ */
 function subjectOf(
   request: FastifyRequest,
   sessionKey: SigningKey,

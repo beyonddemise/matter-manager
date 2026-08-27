@@ -97,6 +97,12 @@ export interface RegisteredRoute {
 /** A server that can say what it registered. */
 export type Server = FastifyInstance & { readonly registeredRoutes: () => RegisteredRoute[] }
 
+/**
+ * Creates an unlistening HTTP server with configured security, health, and optional service routes.
+ *
+ * @param options - Server configuration and optional route dependencies
+ * @returns The configured server instance
+ */
 export function buildServer(options: ServerOptions = {}): Server {
   const app = Fastify({
     logger:
