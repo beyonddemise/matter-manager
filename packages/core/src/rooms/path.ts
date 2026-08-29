@@ -25,6 +25,16 @@ import { foldForComparison } from '../text/fold.js'
 /** Segments are separated by `/`. Chosen over `.` in ADR 0006, which collides with `No. 2`. */
 export const ROOM_PATH_SEPARATOR = '/'
 
+/**
+ * The room a device ends up in when it has nowhere else to be.
+ *
+ * Lives here rather than beside either of its users. `sync/merge.ts` resurrects a deleted room
+ * beneath it, and `rooms/list.ts` moves devices into it when their room is deleted — two
+ * features, arriving at different milestones, that must name the same room. A second constant
+ * with the same value would be two rooms the day somebody changed one of them.
+ */
+export const UNASSIGNED_ROOM_PREFIX = 'Unassigned'
+
 /** Why a room path cannot be used. A code rather than a sentence, so the interface can translate it. */
 export type RoomPathProblem =
   /** Nothing but whitespace. */

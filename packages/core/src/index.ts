@@ -162,6 +162,15 @@ export {
   type TransferProblem,
 } from './projects/transfer.js'
 export {
+  devicesInRoom,
+  planRoomDeletion,
+  type RoomDeletionPlan,
+  type RoomDestination,
+  renameRoom,
+  reorderRooms,
+  roomsInOrder,
+} from './rooms/list.js'
+export {
   isNearDuplicateRoomPath,
   isValidRoomPath,
   isWithinRoom,
