@@ -486,6 +486,26 @@
   <source>A manufacturer and a product must be given together, or neither given at all.</source>
   <target>Hersteller und Produkt müssen zusammen angegeben werden oder beide entfallen.</target>
 </trans-unit>
+<trans-unit id="sdf58636ca9f496a9">
+  <source>This browser has agreed to keep your devices. They will not be removed unless you delete them.</source>
+  <target>Dieser Browser hat zugesagt, Ihre Geräte zu behalten. Sie werden nur entfernt, wenn Sie sie selbst löschen.</target>
+</trans-unit>
+<trans-unit id="s9f775c575cc829dd">
+  <source>This browser has not promised to keep your devices, and may remove them if it runs short of space. Installing this application to your home screen or desktop makes that much less likely.</source>
+  <target>Dieser Browser hat nicht zugesagt, Ihre Geräte zu behalten, und entfernt sie möglicherweise, wenn der Speicherplatz knapp wird. Wenn Sie diese Anwendung auf dem Startbildschirm oder dem Schreibtisch installieren, wird das deutlich unwahrscheinlicher.</target>
+</trans-unit>
+<trans-unit id="scfde380babd56313">
+  <source>This browser does not say whether your devices are kept.</source>
+  <target>Dieser Browser gibt nicht an, ob Ihre Geräte behalten werden.</target>
+</trans-unit>
+<trans-unit id="sf62138b53ab5a555">
+  <source>Storage on this device</source>
+  <target>Speicher auf diesem Gerät</target>
+</trans-unit>
+<trans-unit id="sab0752a788606876">
+  <source>Space used</source>
+  <target>Belegter Speicher</target>
+</trans-unit>
 </body>
 </file>
 </xliff>

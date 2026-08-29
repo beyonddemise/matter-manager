@@ -44,6 +44,7 @@ import { negotiateLocale, readLocalePreference } from './i18n/locale.js'
 import { activateLocale } from './i18n/localization.js'
 import { registerServiceWorker } from './register-sw.js'
 import { applyScheme, readPreference, resolveScheme } from './scheme.js'
+import { requestPersistence } from './storage.js'
 import { checkForUpdate, watchForUpdate } from './updates.js'
 
 // Applied from this deferred module, after the CSS and component imports above and after
@@ -78,6 +79,20 @@ activateLocale(
 ).catch((error: unknown) => {
   console.error('The translation catalogue could not be loaded; continuing in English.', error)
 })
+
+// Asks the browser to keep this data, once (#112). Everything here is local first (ADR 0002),
+// and storage that has not been marked persistent is evictable under pressure, across origins,
+// without the user being told.
+//
+// Not awaited, and nothing on screen waits for it. On Firefox this raises a permission prompt
+// that does not settle until the user answers; on Chromium and Safari it is decided silently
+// from how the user has engaged with the site. Neither outcome changes what the application
+// does next, and a refusal is an ordinary state rather than a failure - most users on most
+// browsers will be in it.
+void requestPersistence(
+  () => navigator.storage,
+  () => localStorage,
+)
 
 // Last, and not awaited. The worker is what makes the application open with no connectivity on
 // the *next* visit; it does nothing for this one, so holding anything back on it would trade a

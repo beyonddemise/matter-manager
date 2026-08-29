@@ -43,13 +43,51 @@ Already-granted is checked first, so an origin that is persisted never asks at a
 
 ## Tasks
 
-- [ ] Red: a test asserting nothing currently requests persistence
-- [ ] `storage.ts` — `readStorageReport`, `requestPersistence`, against a supplier
-- [ ] Asked once, from `main.ts` at first launch
-- [ ] Refusal is an ordinary state: no error, no warning the user cannot act on
-- [ ] `persisted()` and `estimate()` surfaced in Settings, since the answer differs per browser
+- [x] Red: a test asserting nothing currently requests persistence
+- [x] `storage.ts` — `readStorageReport`, `requestPersistence`, against a supplier
+- [x] Asked once, from `main.ts` at first launch
+- [x] Refusal is an ordinary state: no error, no warning the user cannot act on
+- [x] `persisted()` and `estimate()` surfaced in Settings, since the answer differs per browser
       and per device and nothing else reveals it
-- [ ] Tests against a stubbed `navigator.storage`, including refusal, absence, and a throw
-- [ ] German for every new string
+- [x] Tests against a stubbed `navigator.storage`, including refusal, absence, and a throw
+- [x] German for every new string
 
 ## Review
+
+**Done.** `npm run verify` clean, 2079 tests pass, `storage.ts` at 96% and the settings view at
+97%.
+
+### The part worth a reviewer's attention
+
+**The asked-once flag is written before the `await`, not after.** `persist()` on Firefox does not
+settle until the user answers the prompt. A flag written afterwards means somebody who ignores
+the prompt and reloads is asked again, and again, forever — the application nagging for a
+permission the user has been declining by silence.
+
+So the flag records that the question was **put**, not that it was answered. That is L31's
+"a flag set after an await is a race" in the form a user actually meets, and it has its own test:
+the promise is held open and the flag is asserted present before it resolves.
+
+### Three states, not two
+
+`unknown` exists because an engine with no Storage API has not said anything, and reporting
+`best-effort` there would state a fact the browser never stated — the interface would be telling
+somebody their data is at risk on the strength of a question nobody asked.
+
+That distinction is also why `requestPersistence` has two guards rather than one around the lot.
+A `persisted()` that throws leaves the standing genuinely unknown; a `persist()` that throws
+leaves it known and unchanged. One `try` would have collapsed those into the same answer.
+
+### The refusal path is the one that needed a stub
+
+A real browser cannot be made to refuse persistence, and refusal is what most users on most
+engines will get. So the common case is only reachable through an injectable supplier — which is
+why the settings view takes a `storageManager` the way the device forms take `repositories`.
+Without it the tests would cover only the state that is rarest.
+
+### What the message says, and why
+
+`best-effort` is the ordinary case, so it must not read as a fault, and it names the one thing
+the user can act on — installing the application, which every engine weighs when deciding. A
+status with no remedy is only an anxiety. There is a test for each half of that: no danger
+callout, and the word "install" present.
