@@ -202,6 +202,52 @@ paths:
         '403':
           description: Entitlement check refused (see ADR 0009)
 
+  /projects/{projectId}:
+    parameters:
+      - name: projectId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+
+    patch:
+      tags: [projects]
+      summary: Change a project's name or address
+      description: |
+        A settings change, not a permission change. Requires `owner` or `manage` — the role
+        that may decide who has access may certainly correct a name.
+
+        Both fields are optional and independent, so a client may send either alone. `address`
+        may be `null`, which removes it; that is spelled as a value rather than as a missing
+        field, so that a body which simply forgot the address does not erase one.
+
+        Answers 404 rather than 403 to a caller who is not a participant, for the reason the
+        member operations do: a 403 would confirm that a project with this id exists, which is
+        a fact about somebody else's home.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              minProperties: 1
+              properties:
+                name: { type: string, minLength: 1, maxLength: 200 }
+                address:
+                  type: [string, 'null']
+                  maxLength: 500
+      responses:
+        '200':
+          description: The project as it now stands
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectSummary' }
+        '400':
+          description: Nothing to change, or a name that is not a name
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: Read or write access does not include changing settings
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /projects/{projectId}/members:
     parameters:
       - name: projectId
@@ -375,6 +421,15 @@ components:
         projectId: { type: string, format: uuid }
         dbName: { type: string, description: 'CouchDB database to replicate, e.g. project_<uuid>' }
         name: { type: string }
+        address:
+          type: string
+          description: |
+            The street address of the building. Optional, and absent rather than empty when
+            there is none.
+
+            Accepted by `POST /projects` since M5-1 and, until #128, silently discarded: the
+            length was checked and the value went no further. For a catalogue whose purpose is
+            finding a device in a building years later, this is not decoration.
         role: { $ref: '#/components/schemas/Role' }
         owner: { $ref: '#/components/schemas/Principal' }
 

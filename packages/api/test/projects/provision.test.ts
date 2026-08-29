@@ -74,6 +74,29 @@ describe('creating a project', () => {
     })
   })
 
+  it('stores the address, rather than checking its length and dropping it', async () => {
+    // What #128 was about. The field was in the contract, the route read it, and this function
+    // validated it and returned only the name — so somebody typing the address of the house
+    // they were commissioning got a 201 and lost it, with the length check as the only evidence
+    // the field had ever been meant to go anywhere.
+    const { fake, run } = provisioning()
+    await run('Musterstraße 12', 'Musterstraße 12, 10115 Berlin')
+
+    expect(fake.documents.get(`${REGISTRY_DATABASE}/${pointerId(PROJECT_ID)}`)).toMatchObject({
+      address: 'Musterstraße 12, 10115 Berlin',
+    })
+  })
+
+  it('leaves the address off entirely when there is none', async () => {
+    // Absent rather than empty, so no reader has to decide what an empty address means.
+    const { fake, run } = provisioning()
+    await run('Musterstraße 12', '   ')
+
+    expect(fake.documents.get(`${REGISTRY_DATABASE}/${pointerId(PROJECT_ID)}`)).not.toHaveProperty(
+      'address',
+    )
+  })
+
   it('answers with what the caller needs to start replicating', async () => {
     const { run } = provisioning()
 

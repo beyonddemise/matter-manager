@@ -40,6 +40,7 @@ import {
   provisionProject,
 } from './provision.js'
 import { pointerId, projectsFor, REGISTRY_DATABASE } from './registry.js'
+import { SettingsRefused, updateProjectSettings } from './settings.js'
 import {
   acceptTransfer,
   removeTransfer,
@@ -198,6 +199,12 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDepende
           projectId: row.projectId,
           dbName: row.dbName,
           name: row.projectName,
+          // Absent rather than null when the project has none. The view emits the field
+          // whatever the pointer holds, so this is the boundary that turns "no address" back
+          // into a missing key rather than a value every reader has to special-case.
+          ...(typeof row.address === 'string' && row.address !== ''
+            ? { address: row.address }
+            : {}),
           role: row.role,
           owner: { ownerType: 'user' as const, ownerId: row.ownerId },
         },
@@ -232,6 +239,39 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDepende
           },
         }),
   }
+
+  app.patch('/projects/:projectId', async (request, reply) => {
+    const sub = bearerSubject(request, deps.key, now)
+    if (sub === undefined) return reply.code(401).send({ title: 'Not signed in', status: 401 })
+
+    const { projectId } = request.params as { projectId: string }
+    const body = (request.body ?? {}) as { name?: unknown; address?: unknown }
+
+    // Read as three states, not two: absent leaves the field alone, `null` clears it, and a
+    // string sets it. Collapsing absent and null would make a body that forgot the address
+    // erase the one that is stored.
+    if (body.name !== undefined && typeof body.name !== 'string') {
+      return reply.code(400).send({ title: 'A project name is text.', status: 400 })
+    }
+    if (body.address !== undefined && body.address !== null && typeof body.address !== 'string') {
+      return reply
+        .code(400)
+        .send({ title: 'An address is text, or null to remove it.', status: 400 })
+    }
+
+    try {
+      const summary = await updateProjectSettings({ couch: deps.couch }, projectId, sub, {
+        ...(body.name === undefined ? {} : { name: body.name }),
+        ...(body.address === undefined ? {} : { address: body.address }),
+      })
+      return reply.code(200).send(summary)
+    } catch (error) {
+      if (error instanceof SettingsRefused) {
+        return reply.code(error.status).send({ title: error.message, status: error.status })
+      }
+      throw error
+    }
+  })
 
   app.get('/projects/:projectId/members', async (request, reply) => {
     const sub = bearerSubject(request, deps.key, now)

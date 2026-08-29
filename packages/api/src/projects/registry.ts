@@ -32,6 +32,13 @@ export interface ProjectPointer {
   readonly dbName: string
   /** The registry's own name for the field the API calls `name`. */
   readonly projectName: string
+  /**
+   * The street address of the building, when there is one.
+   *
+   * Absent rather than empty. Accepted by `POST /projects` since M5-1 and discarded until
+   * #128 — the length was checked and the value went no further.
+   */
+  readonly address?: string
   readonly participants: readonly Participant[]
   readonly addedAt: string
 }
@@ -41,6 +48,8 @@ export interface ProjectRow {
   readonly projectId: string
   readonly dbName: string
   readonly projectName: string
+  /** Absent when the project has none; see {@link ProjectPointer.address}. */
+  readonly address?: string
   readonly role: Participant['role']
   /**
    * Who owns the project, emitted alongside the row's own participant.
@@ -72,8 +81,8 @@ const BY_USER_MAP = `function (doc) {
     })
     doc.participants.forEach(function (p) {
       emit(p.userid, { projectId: doc.projectId, dbName: doc.dbName,
-                       projectName: doc.projectName, role: p.role,
-                       ownerId: ownerId })
+                       projectName: doc.projectName, address: doc.address,
+                       role: p.role, ownerId: ownerId })
     })
   }
 }`

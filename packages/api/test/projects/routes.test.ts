@@ -316,6 +316,58 @@ describe('listing projects', () => {
     ])
   })
 
+  it('carries an address when the project has one', async () => {
+    const { app: built, couch: fake } = server()
+    fake.rows = [
+      {
+        value: {
+          projectId: PROJECT_ID,
+          dbName: DATABASE,
+          projectName: 'Musterstraße 12',
+          address: 'Musterstraße 12, 10115 Berlin',
+          role: 'owner',
+          ownerId: OWNER,
+        },
+      },
+    ]
+
+    const response = await built.inject({
+      method: 'GET',
+      url: '/projects',
+      headers: { authorization: `Bearer ${tokenFor(OWNER)}` },
+    })
+
+    expect(response.json()[0]).toMatchObject({ address: 'Musterstraße 12, 10115 Berlin' })
+  })
+
+  it('leaves the address out when the project has none', async () => {
+    // `address: null`, because that is what the view emits — the map function names the field
+    // whatever the pointer holds, and CouchDB renders a missing one as null rather than
+    // omitting it. Seeding `undefined` here would prove nothing: `JSON.stringify` drops an
+    // undefined value, so the response is identical whether this boundary guards it or not.
+    const { app: built, couch: fake } = server()
+    fake.rows = [
+      {
+        value: {
+          projectId: PROJECT_ID,
+          dbName: DATABASE,
+          projectName: 'Musterstraße 12',
+          address: null,
+          role: 'owner',
+          ownerId: OWNER,
+        },
+      },
+    ]
+
+    const response = await built.inject({
+      method: 'GET',
+      url: '/projects',
+      headers: { authorization: `Bearer ${tokenFor(OWNER)}` },
+    })
+
+    expect(response.json()[0]).not.toHaveProperty('address')
+  })
+
   it('asks for the caller alone', async () => {
     // The registry holds every project in the deployment. The key is the caller's subject, and
     // it comes from the token — never from a query parameter, which is the shape of this bug
@@ -373,6 +425,93 @@ describe('listing projects', () => {
     })
 
     expect(JSON.parse(response.body)).toEqual([])
+  })
+})
+
+describe('changing a project settings', () => {
+  const patch = (built: Server, body: unknown, sub: string | null = OWNER) =>
+    built.inject({
+      method: 'PATCH',
+      url: `/projects/${PROJECT_ID}`,
+      headers: sub === null ? {} : { authorization: `Bearer ${tokenFor(sub)}` },
+      payload: body as Record<string, unknown>,
+    })
+
+  it('renames it and answers with the project', async () => {
+    const { app: built } = server()
+    await create(built, { name: 'Musterstraße 12' })
+
+    const response = await patch(built, { name: 'Lindenstraße 4' })
+
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toMatchObject({ projectId: PROJECT_ID, name: 'Lindenstraße 4' })
+  })
+
+  it('answers creation with the address, which used to be discarded', async () => {
+    // The reason #128 is a story and not a chore: the field was in the contract, the route read
+    // it, and provisioning checked its length and dropped it. A 201 said everything worked.
+    const { app: built } = server()
+
+    const created = await create(built, {
+      name: 'Musterstraße 12',
+      address: 'Musterstraße 12, 10115 Berlin',
+    })
+
+    expect(created.json()).toMatchObject({ address: 'Musterstraße 12, 10115 Berlin' })
+  })
+
+  it('records an address on a project that had none', async () => {
+    const { app: built } = server()
+    await create(built, { name: 'Musterstraße 12' })
+
+    const response = await patch(built, { address: 'Lindenstraße 4, 20095 Hamburg' })
+
+    expect(response.json()).toMatchObject({ address: 'Lindenstraße 4, 20095 Hamburg' })
+  })
+
+  it('removes one when the address is explicitly null', async () => {
+    const { app: built } = server()
+    await create(built, { name: 'Musterstraße 12', address: 'Musterstraße 12' })
+
+    const response = await patch(built, { address: null })
+
+    expect(response.json()).not.toHaveProperty('address')
+  })
+
+  it('refuses a name that is not text', async () => {
+    const { app: built } = server()
+    await create(built, { name: 'Musterstraße 12' })
+
+    expect((await patch(built, { name: 42 })).statusCode).toBe(400)
+  })
+
+  it('refuses an address that is neither text nor null', async () => {
+    const { app: built } = server()
+    await create(built, { name: 'Musterstraße 12' })
+
+    expect((await patch(built, { address: 42 })).statusCode).toBe(400)
+  })
+
+  it('refuses a body that changes nothing', async () => {
+    const { app: built } = server()
+    await create(built, { name: 'Musterstraße 12' })
+
+    expect((await patch(built, {})).statusCode).toBe(400)
+  })
+
+  it('needs somebody to be signed in', async () => {
+    const { app: built } = server()
+    await create(built, { name: 'Musterstraße 12' })
+
+    expect((await patch(built, { name: 'x' }, null)).statusCode).toBe(401)
+  })
+
+  it('tells a stranger there is no such project', async () => {
+    // 404 rather than 403, so that holding a uuid does not confirm a project behind it.
+    const { app: built } = server()
+    await create(built, { name: 'Musterstraße 12' })
+
+    expect((await patch(built, { name: 'x' }, 'google|stranger')).statusCode).toBe(404)
   })
 })
 
