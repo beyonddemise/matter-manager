@@ -135,9 +135,12 @@ describe('decodePayload rejects malformed input', () => {
   })
 
   it('does not repeat input-derived text in a missing-prefix error', () => {
+    // A digit-led prefix is not a scheme (RFC 3986), so nothing from the input is named. The
+    // case matters because this input is shaped like a manual pairing code, which is a secret;
+    // `secrets.test.ts` states that half of the claim.
     const input = '0123456789:'
 
-    expect(() => decodePayload(input)).toThrow('A Matter payload must begin with "MT:".')
+    expect(() => decodePayload(input)).toThrow('A Matter payload must begin with "MT:"')
     expect(() => decodePayload(input)).not.toThrow(input)
   })
 

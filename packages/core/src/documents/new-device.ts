@@ -74,7 +74,7 @@ export function planNewDevice(
     // mutation probe reports the rethrow as a survivor and a coverage report as a hole. Both
     // are correct, and both are the wrong reason to delete a guard against mislabelling a bug
     // as a user's mistake. `payload.ts` keeps the same branch for the same reason.
-    if (cause instanceof PayloadError && cause.problem !== undefined) {
+    if (cause instanceof PayloadError) {
       throw new DraftError('credential', cause.problem, cause.message, { cause })
     }
     throw cause

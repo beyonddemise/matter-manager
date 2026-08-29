@@ -130,20 +130,20 @@ export class PayloadError extends Error {
    *
    * The `message` is unchanged and stays the fallback for a caller with no interface: the API,
    * a log, a test. Neither replaces the other.
+   *
+   * **Required, deliberately.** Review suggested keeping a message-only overload so that
+   * `new PayloadError('text')` still compiled. It was tried and reverted: this package is
+   * `private` and unpublished, so the caller it protects cannot exist, and the compile error it
+   * removes is the whole mechanism guaranteeing every error carries a code. Making it optional
+   * meant three `problem !== undefined` guards at the read sites, none of which any caller
+   * could reach — a branch nothing can feed, added to the very change whose main test exists to
+   * catch that (L32).
    */
-  /** Absent only for the legacy message-only constructor. */
-  readonly problem?: PayloadProblem
+  readonly problem: PayloadProblem
 
-  constructor(message: string, options?: ErrorOptions)
-  constructor(problem: PayloadProblem, message: string, options?: ErrorOptions)
-  constructor(
-    problemOrMessage: PayloadProblem | string,
-    messageOrOptions?: string | ErrorOptions,
-    options?: ErrorOptions,
-  ) {
-    const hasProblem = typeof messageOrOptions === 'string'
-    super(hasProblem ? messageOrOptions : problemOrMessage, hasProblem ? options : messageOrOptions)
-    if (hasProblem) this.problem = problemOrMessage as PayloadProblem
+  constructor(problem: PayloadProblem, message: string, options?: ErrorOptions) {
+    super(message, options)
+    this.problem = problem
   }
 }
 
@@ -220,7 +220,25 @@ function writeBits(bytes: Uint8Array, offset: number, length: number, value: num
  */
 export function decodePayload(text: string): OnboardingPayload {
   if (!text.startsWith(PAYLOAD_PREFIX)) {
-    throw new PayloadError('missingPrefix', `A Matter payload must begin with "${PAYLOAD_PREFIX}".`)
+    // The scheme is echoed, never the body: everything after the prefix encodes the
+    // passcode among other fields, and this path is reached by a real payload with, say,
+    // a lower-case prefix.
+    //
+    // **The leading letter is load-bearing.** This pattern began `[A-Za-z0-9.+-]{0,10}:`,
+    // which accepts digits — so `3497011233:2` matched in full and the message echoed an
+    // entire manual pairing code body, which is a setup passcode. Found by review on #131,
+    // and confirmed by running it rather than reasoning about it.
+    //
+    // RFC 3986 requires a scheme to begin with a letter, so refusing a leading digit is the
+    // correct rule rather than a patch over the one example that was found. It closes the
+    // class and not the instance: the two secrets here are a payload, whose body is Base38
+    // and so cannot contain a colon at all, and a manual code, which is only digits. Neither
+    // can match a letter-led scheme beyond the harmless `mt:` this exists for.
+    const scheme = /^[A-Za-z][A-Za-z0-9.+-]{0,9}:/.exec(text)?.[0] ?? '(no scheme)'
+    throw new PayloadError(
+      'missingPrefix',
+      `A Matter payload must begin with "${PAYLOAD_PREFIX}"; received ${JSON.stringify(scheme)}.`,
+    )
   }
 
   const body = text.slice(PAYLOAD_PREFIX.length)

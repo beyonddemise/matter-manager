@@ -133,7 +133,7 @@ const problemFrom = (fn: () => unknown): PayloadProblem => {
   try {
     fn()
   } catch (error) {
-    if (error instanceof PayloadError && error.problem !== undefined) return error.problem
+    if (error instanceof PayloadError) return error.problem
     throw error
   }
   throw new Error('expected the call to throw a PayloadError, but it returned')
@@ -142,13 +142,6 @@ const problemFrom = (fn: () => unknown): PayloadProblem => {
 describe('a payload failure names which failure it is', () => {
   it.each(CASES)('reports %s for %s', (problem, _description, fn) => {
     expect(problemFrom(fn)).toBe(problem)
-  })
-
-  it('preserves the message-only constructor for existing callers', () => {
-    const error = new PayloadError('fallback')
-
-    expect(error.message).toBe('fallback')
-    expect(error.problem).toBeUndefined()
   })
 
   it('keeps the English sentence, for a caller with no interface', () => {

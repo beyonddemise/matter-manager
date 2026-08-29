@@ -110,10 +110,15 @@ describe('error messages stay useful without the secret', () => {
     expect(message).toContain('134217727')
   })
 
-  it('still identifies the required scheme without repeating the supplied text', () => {
+  it('still identifies the scheme it was given instead of MT:', () => {
+    // Restored after an autofix inverted it. A *scheme* is echoed and a body never is, which
+    // is the distinction this file is about: `mt:` is what the reader typed instead of `MT:`,
+    // and naming it is the difference between "that is not a Matter code" and "you typed the
+    // prefix in lower case". The leak the review found was digit-led text matching the scheme
+    // pattern, and that is fixed in the pattern rather than by saying less.
     const message = messageFrom(() => decodePayload(`mt:${REFERENCE_BODY}`))
     expect(message).toContain('MT:')
-    expect(message).not.toContain('mt:')
+    expect(message).toContain('mt:')
   })
 
   it('still locates the offending Base38 chunk', () => {
