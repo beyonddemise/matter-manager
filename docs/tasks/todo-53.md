@@ -11,7 +11,8 @@
 - [x] Scenario 2: concurrent field edits resolve identically on both devices, ties included
 - [x] Scenario 3: `_conflicts` empty afterwards on both devices **and the server**
 - [x] Mutation probes: 18/18 caught
-- [x] `npm run verify` — 1870 tests, 93 files
+- [x] Coverage: `data` at 98% statements, 96% branches, against a 90% gate
+- [x] `npm run verify` — 1876 tests, 93 files
 
 ---
 
@@ -120,6 +121,22 @@ The first fixture chosen for "the later write wins" also passed with the merge d
 CouchDB's arbitrary winner happened to be the correct one. The test now asserts its own premise
 — that left alone, CouchDB keeps the *earlier* write here — so it fails loudly if that ever
 stops being true instead of quietly proving nothing.
+
+## What the coverage gate found that the probes did not
+
+The probes ask "would a wrong implementation be caught". The gate asks "is this reachable at
+all", and it found three places where the answer was no:
+
+- a trailing `throw` after a counted retry loop, unreachable because every path out of the body
+  returns or throws — rewritten as an unbounded loop so the line does not exist;
+- a comparator arm for two identical object keys, which cannot happen;
+- a fallback for `JSON.stringify` returning `undefined`, on values that all came through JSON.
+
+All three were deleted rather than tested. The paths that *were* reachable and untested became
+tests: a document deleted mid-resolution (the merge is abandoned, not written back — nothing is
+resurrected), a retry that finds the conflict already resolved by the other device, a prune
+refused per row the way `validate_doc_update` refuses one, a room resolved through the change
+feed, a document this application did not write being left alone, and the feed itself failing.
 
 ## Dependency
 

@@ -53,9 +53,13 @@ const kitchen = (): Unsaved<RoomDocument> => ({
 /** What each wrapper may intercept. Everything else passes straight through. */
 interface Interception {
   /** Called before each `put`; throwing from it fails that write. */
-  readonly onPut?: () => void
+  readonly onPut?: () => void | Promise<void>
   /** Called before each `bulkDocs`; throwing from it fails that prune. */
-  readonly onBulkDocs?: () => void
+  readonly onBulkDocs?: () => void | Promise<void>
+  /** Replaces what `bulkDocs` answers, without changing what it did. */
+  readonly bulkDocsResult?: (results: unknown) => unknown
+  /** Handed each change feed as it is opened. */
+  readonly onChanges?: (feed: { emit(event: string, payload: unknown): void }) => void
 }
 
 /**
@@ -70,14 +74,27 @@ function watching(database: PouchDB.Database, interception: Interception): Pouch
     get(target, property, receiver): unknown {
       if (property === 'put' && interception.onPut !== undefined) {
         return async (...args: unknown[]): Promise<unknown> => {
-          interception.onPut?.()
+          await interception.onPut?.()
           return (target.put as (...rest: unknown[]) => Promise<unknown>)(...args)
         }
       }
-      if (property === 'bulkDocs' && interception.onBulkDocs !== undefined) {
+      if (
+        property === 'bulkDocs' &&
+        (interception.onBulkDocs !== undefined || interception.bulkDocsResult !== undefined)
+      ) {
         return async (...args: unknown[]): Promise<unknown> => {
-          interception.onBulkDocs?.()
-          return (target.bulkDocs as (...rest: unknown[]) => Promise<unknown>)(...args)
+          await interception.onBulkDocs?.()
+          const results = await (target.bulkDocs as (...rest: unknown[]) => Promise<unknown>)(
+            ...args,
+          )
+          return interception.bulkDocsResult?.(results) ?? results
+        }
+      }
+      if (property === 'changes' && interception.onChanges !== undefined) {
+        return (...args: unknown[]): unknown => {
+          const feed = (target.changes as (...rest: unknown[]) => unknown)(...args)
+          interception.onChanges?.(feed as { emit(event: string, payload: unknown): void })
+          return feed
         }
       }
       const value = Reflect.get(target, property, receiver) as unknown
@@ -271,6 +288,81 @@ describe('losing a race', () => {
   })
 })
 
+describe('the document goes away mid-resolution', () => {
+  it('does not resurrect a document somebody deleted', async () => {
+    await conflictingRemarks()
+
+    const before = await stored(three.deviceA, LAMP)
+    const leaves = [before._rev, ...(before._conflicts ?? [])]
+
+    let first = true
+    const database = watching(three.deviceA, {
+      onPut: async () => {
+        if (!first) return
+        first = false
+        // Deleted between the read and the write — every leaf, so the document is genuinely
+        // gone rather than merely down to one branch.
+        await three.deviceA.bulkDocs(
+          leaves.map((rev) => ({ _id: LAMP, _rev: rev, _deleted: true })),
+        )
+        throw conflictError()
+      },
+    })
+
+    // The merge had an answer and does not write it. Re-creating the document here would undo
+    // a deletion by way of a conflict resolution, which is not something a user could
+    // understand or reverse.
+    const returned = await on(database, '2026-08-20T11:00:00.000Z').devices.get(LAMP)
+
+    await expect(three.deviceA.get(LAMP)).rejects.toMatchObject({ status: 404 })
+
+    // The caller gets the snapshot it read, which is what any read that raced a delete would
+    // return — unmerged, because the merge was abandoned rather than applied.
+    expect(returned?.remarks).toHaveLength(1)
+  })
+
+  it('stops when the retry finds the conflict already resolved', async () => {
+    await conflictingRemarks()
+
+    let first = true
+    const database = watching(three.deviceA, {
+      onPut: async () => {
+        if (!first) return
+        first = false
+        // The other device got there first: merged, pruned, replicated back. The retry re-reads
+        // a document with nothing left to resolve, and must return it rather than merging an
+        // empty set of losers onto it.
+        await on(three.deviceA, '2026-08-20T10:30:00.000Z').devices.get(LAMP)
+        throw conflictError()
+      },
+    })
+
+    const resolved = await on(database, '2026-08-20T11:00:00.000Z').devices.get(LAMP)
+
+    expect(resolved?.remarks).toHaveLength(2)
+    expect((await stored(three.deviceA, LAMP))._conflicts).toBeUndefined()
+  })
+})
+
+describe('a prune the database refuses', () => {
+  it('is raised rather than leaving the conflict unreported', async () => {
+    await conflictingRemarks()
+
+    const database = watching(three.deviceA, {
+      // The shape CouchDB returns when `validate_doc_update` rejects a row — which is exactly
+      // what `_design/access` does to a writer who has just lost write access. `bulkDocs`
+      // reports it per row instead of rejecting, so a resolver that only caught thrown errors
+      // would treat this as a successful prune and leave `_conflicts` growing untouched.
+      bulkDocsResult: (results) =>
+        (results as unknown[]).map(() => ({ error: true, name: 'forbidden', reason: 'read only' })),
+    })
+
+    await expect(on(database, '2026-08-20T11:00:00.000Z').devices.get(LAMP)).rejects.toThrow(
+      /Losing revisions of .* could not be removed/,
+    )
+  })
+})
+
 describe('two resolutions of one document', () => {
   it('shares the work instead of racing to write it twice', async () => {
     await conflictingRemarks()
@@ -432,6 +524,77 @@ describe('the change feed', () => {
     expect(() => {
       watch.cancel()
     }).not.toThrow()
+  })
+
+  it('resolves a room, which merges by a different rule than a device', async () => {
+    // Devices and rooms arrive down one channel and the id is what says which is which. A watch
+    // that resolved only devices would leave every room conflict to a read that may not come.
+    const a = on(three.deviceA, '2026-08-20T11:00:00.000Z')
+    const watch = a.watchConflicts()
+
+    try {
+      const mine = await a.rooms.get(KITCHEN)
+      if (mine === undefined) throw new Error('the room should be here')
+      await a.rooms.save({ ...mine, path: 'Ground Floor/Kitchenette' })
+
+      const b = on(three.deviceB, '2026-08-20T09:00:00.000Z')
+      const theirs = await b.rooms.get(KITCHEN)
+      if (theirs === undefined) throw new Error('the room should be here')
+      await b.rooms.save({ ...theirs, path: 'Ground Floor/Kitchen Diner' })
+
+      await reconnect(three)
+
+      await eventually(async () => {
+        expect((await stored(three.deviceA, KITCHEN))._conflicts).toBeUndefined()
+      })
+      expect((await stored(three.deviceA, KITCHEN)).path).toBe('Ground Floor/Kitchenette')
+    } finally {
+      watch.cancel()
+    }
+  })
+
+  it('leaves alone a document this application did not write', async () => {
+    // The feed carries whatever is in the database — a design document, something a future
+    // version writes, something another tool put there. Guessing a merge strategy for an id
+    // whose shape is unknown would be rewriting a stranger's document.
+    const foreign = 'note:1'
+    await three.deviceA.put({ _id: foreign, text: 'from device A' })
+    await three.deviceB.put({ _id: foreign, text: 'from device B' })
+
+    const watch = on(three.deviceA, '2026-08-20T11:00:00.000Z').watchConflicts()
+    try {
+      await reconnect(three)
+      await new Promise((resume) => setTimeout(resume, 50))
+
+      const untouched = await three.deviceA.get(foreign, { conflicts: true })
+      expect((untouched as unknown as { _conflicts?: string[] })._conflicts).toHaveLength(1)
+    } finally {
+      watch.cancel()
+    }
+  })
+
+  it('reports a failure of the feed itself', async () => {
+    // PouchDB ends a live feed by emitting `error` on it. Unreported, the device simply stops
+    // resolving conflicts and looks exactly like one that has none — the same silence this
+    // whole milestone is about, one level up.
+    const failures: unknown[] = []
+    let feed: { emit(event: string, payload: unknown): void } | undefined
+    const database = watching(three.deviceA, {
+      onChanges: (opened) => {
+        feed = opened
+      },
+    })
+
+    const watch = on(database, '2026-08-20T11:00:00.000Z').watchConflicts((error) => {
+      failures.push(error)
+    })
+
+    try {
+      feed?.emit('error', new Error('the feed died'))
+      expect(failures).toEqual([new Error('the feed died')])
+    } finally {
+      watch.cancel()
+    }
   })
 
   it('writes nothing for an ordinary change', async () => {

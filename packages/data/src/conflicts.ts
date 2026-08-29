@@ -86,11 +86,15 @@ function canonical(value: unknown): string {
   if (value !== null && typeof value === 'object') {
     return `{${Object.entries(value as Record<string, unknown>)
       .filter(([key]) => key !== '_rev' && key !== '_conflicts')
-      .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+      // No equal case: the keys of one object are unique, so a comparator arm for "the same
+      // key twice" would be a branch nothing could ever take.
+      .sort(([left], [right]) => (left < right ? -1 : 1))
       .map(([key, entry]) => `${JSON.stringify(key)}:${canonical(entry)}`)
       .join(',')}}`
   }
-  return JSON.stringify(value) ?? 'undefined'
+  // `String` rather than a fallback for `undefined`: every value here came out of the database
+  // or is on its way in, so it survived JSON, so it is not `undefined`.
+  return String(JSON.stringify(value))
 }
 
 /** Whether two documents say the same thing, whatever revision each one is. */
@@ -185,8 +189,6 @@ export function conflictResolver(database: PouchDB.Database): ConflictResolver {
     try {
       return (await database.get(document._id, { conflicts: true })) as unknown as Conflicted<T>
     } catch (error) {
-      // Deleted while we were merging. There is no document to resolve any more, and inventing
-      // one by writing the merge back would resurrect something somebody removed.
       if (isMissing(error)) return undefined
       throw error
     }
@@ -197,19 +199,22 @@ export function conflictResolver(database: PouchDB.Database): ConflictResolver {
     merge: MergeStrategy<T>,
   ): Promise<T> => {
     let subject = document
-    for (let remaining = RESOLUTION_ATTEMPTS; remaining > 0; remaining -= 1) {
+    // Unbounded in form, bounded in fact: every path out of the body returns or throws, and the
+    // last attempt rethrows. Written this way rather than as a counted loop with a trailing
+    // `throw` after it, because that trailing line is unreachable — and an unreachable line is
+    // one no test can ever justify.
+    for (let remaining = RESOLUTION_ATTEMPTS; ; remaining -= 1) {
       try {
         return await attempt(subject, merge)
       } catch (error) {
-        if (!isConflict(error) || remaining === 1) throw error
+        if (!isConflict(error) || remaining <= 1) throw error
         const fresh = await reread(subject)
+        // Deleted while we were merging. There is nothing left to resolve, and writing the
+        // merge back would resurrect a document somebody removed.
         if (fresh === undefined) return withoutConflicts(subject)
         subject = fresh
       }
     }
-    // Unreachable: the loop either returns or throws on its final pass. Present because the
-    // compiler cannot see that, and a thrown error says more than an invented document would.
-    throw new Error(`Resolving ${JSON.stringify(document._id)} did not terminate.`)
   }
 
   return {
