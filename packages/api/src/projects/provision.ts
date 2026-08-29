@@ -26,11 +26,11 @@ import type { CouchClient } from '../couch/client.js'
 import { projectDatabaseName } from './names.js'
 import { ensureRegistry, pointerId, writePointer } from './registry.js'
 
-/** The longest name the contract allows. */
-const MAX_NAME = 200
+/** The longest name the contract allows. Shared with `settings.ts`, which enforces the same one. */
+export const MAX_NAME = 200
 
-/** The longest address the contract allows. */
-const MAX_ADDRESS = 500
+/** The longest address the contract allows. Shared with `settings.ts`. */
+export const MAX_ADDRESS = 500
 
 /** What provisioning needs. Everything impure is here, so the sequence itself is testable. */
 export interface ProvisionDependencies {
@@ -54,6 +54,8 @@ export interface ProjectSummary {
   readonly projectId: string
   readonly dbName: string
   readonly name: string
+  /** The building's street address, when there is one. Absent rather than empty. */
+  readonly address?: string
   readonly role: Participant['role']
   readonly owner: Owner
 }
@@ -92,8 +94,21 @@ export class OrphanedDatabaseError extends ProvisioningError {
   }
 }
 
-/** Checks what the caller sent, before anything exists to clean up. */
-function checkRequest(request: NewProject, owner: string): string {
+/** The name and address as they will be stored, once checked. */
+interface CheckedRequest {
+  readonly name: string
+  /** Absent rather than empty: an empty address is a value every reader has to special-case. */
+  readonly address?: string
+}
+
+/**
+ * Checks what the caller sent, before anything exists to clean up.
+ *
+ * Returns the address as well as the name, which it did not until #128 — the length was
+ * checked here and the value went no further, so a user typing the address of the house they
+ * were commissioning got a 201 and lost it.
+ */
+function checkRequest(request: NewProject, owner: string): CheckedRequest {
   if (owner === '') throw new ProvisioningError('A project needs an owner.')
 
   const name = request.name.trim()
@@ -101,11 +116,12 @@ function checkRequest(request: NewProject, owner: string): string {
   if (name.length > MAX_NAME) {
     throw new ProvisioningError(`A project name may be at most ${MAX_NAME} characters.`)
   }
-  if ((request.address ?? '').length > MAX_ADDRESS) {
+  const address = (request.address ?? '').trim()
+  if (address.length > MAX_ADDRESS) {
     throw new ProvisioningError(`An address may be at most ${MAX_ADDRESS} characters.`)
   }
 
-  return name
+  return { name, ...(address === '' ? {} : { address }) }
 }
 
 /**
@@ -120,7 +136,7 @@ export async function provisionProject(
   request: NewProject,
   owner: string,
 ): Promise<ProjectSummary> {
-  const name = checkRequest(request, owner)
+  const { name, address } = checkRequest(request, owner)
   const newId = deps.newId ?? (() => crypto.randomUUID())
   const now = deps.now ?? (() => new Date().toISOString())
 
@@ -158,6 +174,7 @@ export async function provisionProject(
       projectId,
       dbName,
       projectName: name,
+      ...(address === undefined ? {} : { address }),
       participants: [{ role: 'owner', userid: owner }],
       addedAt: now(),
     })
@@ -170,6 +187,7 @@ export async function provisionProject(
     projectId,
     dbName,
     name,
+    ...(address === undefined ? {} : { address }),
     role: 'owner',
     owner: { ownerType: 'user', ownerId: owner },
   }
