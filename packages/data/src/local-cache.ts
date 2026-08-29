@@ -104,6 +104,9 @@ const projectCacheId = (projectId: string): string => `${PROJECT_PREFIX}${projec
 /** A cached project as PouchDB stores it, with the bookkeeping a rewrite needs. */
 type StoredProject = CachedProject & { readonly _id: string; readonly _rev: string }
 
+/** How many times a cache mutation re-reads after losing a revision race. */
+const WRITE_ATTEMPTS = 3
+
 /** Reading and writing what the server said. Deliberately small. */
 export interface LocalCache {
   /** The cached profile, or `undefined` if the server has never been reached. */
@@ -156,6 +159,21 @@ function isMissing(error: unknown): boolean {
   )
 }
 
+/** PouchDB reports a lost revision race with `status: 409` or `name: 'conflict'`. */
+function isConflict(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    ((error as { status?: unknown }).status === 409 ||
+      (error as { name?: unknown }).name === 'conflict')
+  )
+}
+
+/** A row `bulkDocs` reports as a failure. */
+function isBulkFailure(result: unknown): boolean {
+  return typeof result === 'object' && result !== null && 'error' in result
+}
+
 /**
  * Builds the cache over an open database.
  *
@@ -190,21 +208,30 @@ export function localCache(database: PouchDB.Database): LocalCache {
    */
   const amend = async (
     projectId: string,
-    change: (project: CachedProject) => CachedProject,
+    change: (project: CachedProject) => CachedProject | undefined,
   ): Promise<void> => {
-    let stored: StoredProject | undefined
-    try {
-      stored = (await database.get(projectCacheId(projectId))) as unknown as StoredProject
-    } catch (error) {
-      if (isMissing(error)) return
-      throw error
-    }
+    for (let remaining = WRITE_ATTEMPTS; ; remaining -= 1) {
+      let stored: StoredProject | undefined
+      try {
+        stored = (await database.get(projectCacheId(projectId))) as unknown as StoredProject
+      } catch (error) {
+        if (isMissing(error)) return
+        throw error
+      }
 
-    await database.put({
-      ...change(asCachedProject(stored)),
-      _id: projectCacheId(projectId),
-      _rev: stored._rev,
-    } as unknown as PouchDB.Core.PutDocument<object>)
+      const changed = change(asCachedProject(stored))
+      try {
+        await database.put({
+          ...(changed ?? {}),
+          _id: projectCacheId(projectId),
+          _rev: stored._rev,
+          ...(changed === undefined ? { _deleted: true } : {}),
+        } as unknown as PouchDB.Core.PutDocument<object>)
+        return
+      } catch (error) {
+        if (!isConflict(error) || remaining <= 1) throw error
+      }
+    }
   }
 
   return {
@@ -244,45 +271,63 @@ export function localCache(database: PouchDB.Database): LocalCache {
     },
 
     async writeProjects(projects: readonly ServerProject[], fetchedAt: string): Promise<void> {
-      const held = new Map((await storedProjects()).map((project) => [project.projectId, project]))
+      for (let remaining = WRITE_ATTEMPTS; ; remaining -= 1) {
+        const held = new Map((await storedProjects()).map((project) => [project.projectId, project]))
 
-      const writes = projects.map((project) => {
-        const existing = held.get(project.projectId)
-        held.delete(project.projectId)
-        return {
-          ...project,
-          // The local half, carried across rather than defaulted. A refresh happens on every
-          // reconnection, and one that reset this would report every project as not downloaded
-          // moments after connectivity returned.
-          localState: existing?.localState ?? 'not-downloaded',
-          // Cleared, not carried: this project is in the list the server just sent.
-          accessRemoved: false,
-          fetchedAt,
-          _id: projectCacheId(project.projectId),
-          ...(existing === undefined ? {} : { _rev: existing._rev }),
-        }
-      })
+        const writes = projects.map((project) => {
+          const existing = held.get(project.projectId)
+          held.delete(project.projectId)
+          return {
+            ...project,
+            // The local half, carried across rather than defaulted. A refresh happens on every
+            // reconnection, and one that reset this would report every project as not downloaded
+            // moments after connectivity returned.
+            localState: existing?.localState ?? 'not-downloaded',
+            // Cleared, not carried: this project is in the list the server just sent.
+            accessRemoved: false,
+            fetchedAt,
+            _id: projectCacheId(project.projectId),
+            ...(existing === undefined ? {} : { _rev: existing._rev }),
+          }
+        })
 
-      // Whatever the server did not mention. Removed when this device holds nothing of it, and
-      // kept with the mark when it does — see `LocalCache.writeProjects`.
-      const departed = [...held.values()].map((project) =>
-        project.localState === 'downloaded'
-          ? { ...project, accessRemoved: true }
-          : { _id: project._id, _rev: project._rev, _deleted: true },
-      )
+        // Whatever the server did not mention. Removed when this device holds nothing of it, and
+        // kept with the mark when it does — see `LocalCache.writeProjects`.
+        const departed = [...held.values()].map((project) =>
+          project.localState === 'downloaded'
+            ? { ...project, accessRemoved: true }
+            : { _id: project._id, _rev: project._rev, _deleted: true },
+        )
 
-      await database.bulkDocs([
-        ...writes,
-        ...departed,
-      ] as unknown as PouchDB.Core.PutDocument<object>[])
+        const results = await database.bulkDocs([
+          ...writes,
+          ...departed,
+        ] as unknown as PouchDB.Core.PutDocument<object>[])
+        const failures = results.filter(isBulkFailure)
+        const conflict = failures.find(isConflict)
+        const failure = failures.find((result) => !isConflict(result))
+        if (failure !== undefined) throw failure
+        if (conflict === undefined) return
+        if (remaining <= 1) throw conflict
+      }
     },
 
     async setLocalState(projectId: string, state: ProjectLocalState): Promise<void> {
-      await amend(projectId, (project) => ({ ...project, localState: state }))
+      await amend(projectId, (project) =>
+        state === 'not-downloaded' && project.accessRemoved
+          ? undefined
+          : { ...project, localState: state },
+      )
     },
 
     async markAccessRemoved(projectId: string): Promise<void> {
+      // Mark first, then decide whether to prune against a fresh revision. Deleting directly
+      // from the first read could race with a replica becoming downloaded and hide data the
+      // device now holds.
       await amend(projectId, (project) => ({ ...project, accessRemoved: true }))
+      await amend(projectId, (project) =>
+        project.localState === 'not-downloaded' ? undefined : project,
+      )
     },
 
     async clear(): Promise<void> {

@@ -135,6 +135,16 @@ describe('revoked access is reported, not hidden', () => {
     expect((await cache.readProjects())[0]?.accessRemoved).toBe(true)
   })
 
+  it('forgets a revoked project when its replica is removed', async () => {
+    await cache.writeProjects([HOUSE], FETCHED)
+    await cache.setLocalState(HOUSE.projectId, 'downloaded')
+    await cache.markAccessRemoved(HOUSE.projectId)
+
+    await cache.setLocalState(HOUSE.projectId, 'not-downloaded')
+
+    expect(await cache.readProjects()).toEqual([])
+  })
+
   it('clears the mark when access comes back', async () => {
     // Being re-granted is ordinary — a mistake corrected, a role changed twice. A mark that
     // only ever went on would leave the project permanently labelled as lost.
@@ -174,6 +184,22 @@ describe('revoked access is reported, not hidden', () => {
     await cache.markAccessRemoved('p-unknown')
 
     expect(await cache.readProjects()).toEqual([])
+  })
+
+  it.each([
+    ['the replica is recorded first', true],
+    ['the refusal is recorded first', false],
+  ])('keeps both local changes when two tabs amend: %s', async (_description, stateFirst) => {
+    await cache.writeProjects([HOUSE], FETCHED)
+
+    const recordState = () => cache.setLocalState(HOUSE.projectId, 'downloaded')
+    const recordRefusal = () => cache.markAccessRemoved(HOUSE.projectId)
+    await Promise.all(stateFirst ? [recordState(), recordRefusal()] : [recordRefusal(), recordState()])
+
+    expect((await cache.readProjects())[0]).toMatchObject({
+      localState: 'downloaded',
+      accessRemoved: true,
+    })
   })
 })
 

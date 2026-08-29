@@ -19,8 +19,9 @@ because the application does not use any of the machinery they display. `project
 `syncManager`, `replicateProject` and `SyncState` exist, are tested, and are imported by nothing
 but their own tests — that is #120.
 
-#120 in turn is not a wiring task. It needs deployment decisions that have not been made: where
-the API lives, where CouchDB lives, and how two deployment values reach `public/_headers`, which
+Issue `#120` in turn is not a wiring task. It needs deployment decisions that have not been
+made: where the API lives, where CouchDB lives, and how two deployment values reach
+`public/_headers`, which
 is a static asset with no substitution step. That file already says so in a comment, and says
 that **both origins must be added in the same change that wires it** or replication fails in
 production only, reported as a CSP violation the application cannot see. There is also no
