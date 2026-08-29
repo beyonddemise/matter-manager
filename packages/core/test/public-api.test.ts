@@ -80,7 +80,6 @@ const EXPECTED: ReadonlyArray<
   ['MM', 'number'],
   ['countSelected', 'function'],
   // conflict merge
-  ['UNASSIGNED_ROOM_PREFIX', 'string'],
   ['compareRevisions', 'function'],
   ['latestRevision', 'function'],
   ['mergeDevice', 'function'],
@@ -98,7 +97,16 @@ const EXPECTED: ReadonlyArray<
   // room paths
   ['ROOM_PATH_SEPARATOR', 'string'],
   ['RoomPathError', 'function'],
+  // Named here rather than with the conflict merge: two features need the same room, and a
+  // second constant with the same value would be two rooms the day somebody changed one.
+  ['UNASSIGNED_ROOM_PREFIX', 'string'],
   ['isNearDuplicateRoomPath', 'function'],
+  // the room list
+  ['devicesInRoom', 'function'],
+  ['planRoomDeletion', 'function'],
+  ['renameRoom', 'function'],
+  ['reorderRooms', 'function'],
+  ['roomsInOrder', 'function'],
   ['foldEmail', 'function'],
   ['grantRole', 'function'],
   ['isOpen', 'function'],

@@ -25,7 +25,14 @@
  * @module
  */
 
-import { normaliseRoomPath, ROOM_PATH_SEPARATOR, splitRoomPath } from '../rooms/path.js'
+import {
+  normaliseRoomPath,
+  ROOM_PATH_SEPARATOR,
+  splitRoomPath,
+  UNASSIGNED_ROOM_PREFIX,
+} from '../rooms/path.js'
+
+export { UNASSIGNED_ROOM_PREFIX }
 
 /** A remark on a device. Embedded in the device document, per ADR 0010. */
 export interface Remark {
@@ -55,9 +62,6 @@ export interface RoomRevision extends Revision {
   readonly path?: string
   readonly _deleted?: boolean
 }
-
-/** Where a room goes when it is deleted but devices still point at it. */
-export const UNASSIGNED_ROOM_PREFIX = 'Unassigned'
 
 /** Splits `generation-hash`, tolerating a malformed revision rather than throwing in a comparator. */
 function parseRevision(rev: string): { readonly generation: number; readonly hash: string } {
