@@ -194,7 +194,9 @@ describe('revoked access is reported, not hidden', () => {
 
     const recordState = () => cache.setLocalState(HOUSE.projectId, 'downloaded')
     const recordRefusal = () => cache.markAccessRemoved(HOUSE.projectId)
-    await Promise.all(stateFirst ? [recordState(), recordRefusal()] : [recordRefusal(), recordState()])
+    await Promise.all(
+      stateFirst ? [recordState(), recordRefusal()] : [recordRefusal(), recordState()],
+    )
 
     expect((await cache.readProjects())[0]).toMatchObject({
       localState: 'downloaded',

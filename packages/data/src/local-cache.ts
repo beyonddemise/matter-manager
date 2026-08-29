@@ -272,7 +272,9 @@ export function localCache(database: PouchDB.Database): LocalCache {
 
     async writeProjects(projects: readonly ServerProject[], fetchedAt: string): Promise<void> {
       for (let remaining = WRITE_ATTEMPTS; ; remaining -= 1) {
-        const held = new Map((await storedProjects()).map((project) => [project.projectId, project]))
+        const held = new Map(
+          (await storedProjects()).map((project) => [project.projectId, project]),
+        )
 
         const writes = projects.map((project) => {
           const existing = held.get(project.projectId)
