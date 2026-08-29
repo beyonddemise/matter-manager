@@ -61,20 +61,20 @@ export function repository<T extends Revision>(
 ): Repository<T> {
   return {
     async get(id: string): Promise<T | undefined> {
+      let document: Conflicted<T>
       try {
         // `conflicts: true` on every read, not only where one is expected. A conflict is
         // created by replication rather than by this browser, so there is no read at which one
         // is *not* expected, and the resolver is what turns the annotation back into a
         // document — including stripping it, which must happen whether or not there was one.
-        return await resolve(
-          (await database.get(id, { conflicts: true })) as unknown as Conflicted<T>,
-        )
+        document = (await database.get(id, { conflicts: true })) as unknown as Conflicted<T>
       } catch (error) {
         // Only "not there". A closed database, a corrupt file or a failed request still
         // throws, because swallowing those would turn an outage into an empty catalogue.
         if (isMissing(error)) return undefined
         throw error
       }
+      return resolve(document)
     },
 
     async list(): Promise<T[]> {
