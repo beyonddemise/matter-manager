@@ -323,13 +323,7 @@ export function localCache(database: PouchDB.Database): LocalCache {
     },
 
     async markAccessRemoved(projectId: string): Promise<void> {
-      // Mark first, then decide whether to prune against a fresh revision. Deleting directly
-      // from the first read could race with a replica becoming downloaded and hide data the
-      // device now holds.
       await amend(projectId, (project) => ({ ...project, accessRemoved: true }))
-      await amend(projectId, (project) =>
-        project.localState === 'not-downloaded' ? undefined : project,
-      )
     },
 
     async clear(): Promise<void> {
