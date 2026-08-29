@@ -61,6 +61,11 @@ export interface ProjectRow {
   readonly ownerId: string | null
 }
 
+/** The serialized view value. CouchDB turns the map function's missing address into `null`. */
+interface ProjectViewRow extends Omit<ProjectRow, 'address'> {
+  readonly address: string | null
+}
+
 /** The document id for a project. Predictable, so a project can be found without a view. */
 export function pointerId(projectId: string): string {
   return `project:${projectId}`
@@ -140,11 +145,13 @@ export async function writePointer(couch: CouchClient, pointer: ProjectPointer):
 export async function projectsFor(couch: CouchClient, sub: string): Promise<readonly ProjectRow[]> {
   if (sub === '') throw new Error('No subject: cannot list projects for nobody.')
 
-  const result = await couch.view<{ value: ProjectRow }>(
+  const result = await couch.view<{ value: ProjectViewRow }>(
     REGISTRY_DATABASE,
     BY_PARTICIPANT_DESIGN,
     BY_USER_VIEW,
     { key: sub },
   )
-  return result.rows.map((row) => row.value)
+  return result.rows.map(({ value: { address, ...row } }) =>
+    address === null ? row : { ...row, address },
+  )
 }

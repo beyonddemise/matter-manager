@@ -253,6 +253,32 @@ describe('the projects somebody can see', () => {
     ])
   })
 
+  it('normalizes CouchDB null for an absent address', async () => {
+    const fake = fakeCouch()
+    fake.rows = [
+      {
+        value: {
+          projectId: PROJECT_ID,
+          dbName: `project_${PROJECT_ID}`,
+          projectName: 'Musterstraße 12',
+          address: null,
+          role: 'owner',
+          ownerId: 'google|1234',
+        },
+      },
+    ]
+
+    expect(await projectsFor(fake.couch, 'google|1234')).toEqual([
+      {
+        projectId: PROJECT_ID,
+        dbName: `project_${PROJECT_ID}`,
+        projectName: 'Musterstraße 12',
+        role: 'owner',
+        ownerId: 'google|1234',
+      },
+    ])
+  })
+
   it('returns nothing for somebody with no projects', async () => {
     const fake = fakeCouch()
 
