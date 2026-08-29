@@ -249,7 +249,7 @@ export class ScanDialog extends LitElement {
     if (this.cameraFailure !== undefined) {
       return html`
         <wa-callout variant="warning" data-camera-problem>
-          <wa-icon slot="icon" name="camera-slash"></wa-icon>
+          <wa-icon slot="icon" name="video-slash"></wa-icon>
           ${this.cameraMessage(this.cameraFailure)}
         </wa-callout>
       `

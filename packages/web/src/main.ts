@@ -11,6 +11,9 @@
 import '@awesome.me/webawesome-pro/dist/styles/webawesome.css'
 import '@awesome.me/webawesome-pro/dist/styles/themes/glossy.css'
 import '@awesome.me/webawesome-pro/dist/styles/color/palettes/anodized.css'
+// The theme's own webfont @import is stripped at build time; this replaces it with files
+// served from this origin, so the interface has its typography offline (#106).
+import './fonts/fonts.css'
 import '@awesome.me/webawesome-pro/dist/components/badge/badge.js'
 import '@awesome.me/webawesome-pro/dist/components/button/button.js'
 import '@awesome.me/webawesome-pro/dist/components/callout/callout.js'
@@ -29,6 +32,13 @@ import '@awesome.me/webawesome-pro/dist/components/select/select.js'
 import '@awesome.me/webawesome-pro/dist/components/tag/tag.js'
 import '@awesome.me/webawesome-pro/dist/components/textarea/textarea.js'
 import './styles/app.css'
+import { useBundledIcons } from './icons/library.js'
+
+// Before `app-shell.js`, and before anything else that renders. Registering the library
+// replaces Web Awesome's own `default` library, and an icon that renders first would already
+// have asked the CDN for its SVG (#106).
+useBundledIcons()
+
 import './app-shell.js'
 import { negotiateLocale, readLocalePreference } from './i18n/locale.js'
 import { activateLocale } from './i18n/localization.js'

@@ -216,7 +216,7 @@ export class AppShell extends LitElement {
               this.online
                 ? ''
                 : html`<wa-tag data-offline variant="neutral" size="s">
-                    <wa-icon slot="start" name="cloud-slash"></wa-icon>
+                    <wa-icon slot="start" name="plug-circle-xmark"></wa-icon>
                     ${msg('Offline')}
                   </wa-tag>`
             }
