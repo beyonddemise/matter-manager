@@ -134,6 +134,13 @@ describe('decodePayload rejects malformed input', () => {
     expect(() => decodePayload(input)).toThrow(/MT:/)
   })
 
+  it('does not repeat input-derived text in a missing-prefix error', () => {
+    const input = '0123456789:'
+
+    expect(() => decodePayload(input)).toThrow('A Matter payload must begin with "MT:".')
+    expect(() => decodePayload(input)).not.toThrow(input)
+  })
+
   it('rejects a body too short for the 11-byte struct, saying so', () => {
     expect(() => decodePayload('MT:Y.K90')).toThrow(/too short|11 bytes/i)
   })

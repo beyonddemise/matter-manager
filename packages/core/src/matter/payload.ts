@@ -131,11 +131,19 @@ export class PayloadError extends Error {
    * The `message` is unchanged and stays the fallback for a caller with no interface: the API,
    * a log, a test. Neither replaces the other.
    */
-  readonly problem: PayloadProblem
+  /** Absent only for the legacy message-only constructor. */
+  readonly problem?: PayloadProblem
 
-  constructor(problem: PayloadProblem, message: string, options?: ErrorOptions) {
-    super(message, options)
-    this.problem = problem
+  constructor(message: string, options?: ErrorOptions)
+  constructor(problem: PayloadProblem, message: string, options?: ErrorOptions)
+  constructor(
+    problemOrMessage: PayloadProblem | string,
+    messageOrOptions?: string | ErrorOptions,
+    options?: ErrorOptions,
+  ) {
+    const hasProblem = typeof messageOrOptions === 'string'
+    super(hasProblem ? messageOrOptions : problemOrMessage, hasProblem ? options : messageOrOptions)
+    if (hasProblem) this.problem = problemOrMessage as PayloadProblem
   }
 }
 
@@ -212,13 +220,9 @@ function writeBits(bytes: Uint8Array, offset: number, length: number, value: num
  */
 export function decodePayload(text: string): OnboardingPayload {
   if (!text.startsWith(PAYLOAD_PREFIX)) {
-    // The scheme is echoed, never the body: everything after the prefix encodes the
-    // passcode among other fields, and this path is reached by a real payload with, say,
-    // a lower-case prefix.
-    const scheme = /^[A-Za-z0-9.+-]{0,10}:/.exec(text)?.[0] ?? '(no scheme)'
     throw new PayloadError(
       'missingPrefix',
-      `A Matter payload must begin with "${PAYLOAD_PREFIX}"; received ${JSON.stringify(scheme)}.`,
+      `A Matter payload must begin with "${PAYLOAD_PREFIX}".`,
     )
   }
 

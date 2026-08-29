@@ -190,7 +190,7 @@ export class ScanDialog extends LitElement {
     try {
       readCredential(code)
     } catch (error) {
-      if (!(error instanceof PayloadError)) throw error
+      if (!(error instanceof PayloadError) || error.problem === undefined) throw error
       // Kept, and scanning continues. Someone holding a phone up to a device has not asked to
       // stop, and the wrong code is usually the other sticker on the same box.
       this.codeFailure = error.problem
