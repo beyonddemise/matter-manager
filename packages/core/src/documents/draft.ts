@@ -14,6 +14,7 @@
  * @module
  */
 
+import { PAYLOAD_PROBLEMS } from '../matter/payload.js'
 import {
   normaliseRoomPath,
   type RoomPathProblem,
@@ -27,18 +28,53 @@ import type { RoomDocument, Unsaved } from './types.js'
 export type DraftField = 'credential' | 'name' | 'room' | 'installedAt' | 'remark'
 
 /**
- * A form that cannot become a device, and the field responsible.
+ * Why a form cannot become a device.
+ *
+ * The form's own failures, plus every {@link PayloadProblem}: a setup code that cannot be read
+ * is a rejected *field*, and the reason it could not be read is the useful half. Flattening
+ * them all to one `credential` code would tell somebody who typed twelve digits exactly what it
+ * tells somebody who pasted a URL, which is nothing either of them can act on.
+ *
+ * Three of the payload codes describe *encoding* failures that no reader can reach. They are
+ * here because this union forwards whatever it is given rather than filtering it, which is a
+ * weaker claim than "a draft can produce all of these" and the honest one — see the test.
+ */
+export const DRAFT_PROBLEMS = [
+  /** The device has no name. */
+  'nameEmpty',
+  /** No room was typed or chosen. */
+  'roomPathEmpty',
+  /** A doubled, leading or trailing `/`, or a segment of only whitespace. */
+  'roomPathEmptySegment',
+  /** The installation date is not a date that exists. */
+  'installedAtNotACalendarDate',
+  /** A remark with nothing in it. */
+  'remarkEmpty',
+  ...PAYLOAD_PROBLEMS,
+] as const
+
+/** Why a form cannot become a device. See {@link DRAFT_PROBLEMS}. */
+export type DraftProblem = (typeof DRAFT_PROBLEMS)[number]
+
+/**
+ * A form that cannot become a device, the field responsible, and why.
  *
  * The field is the point. An error that can only say "something is wrong" makes the user hunt
  * across six controls, and this is a form where one of them contains a code they cannot read.
+ *
+ * The `problem` is what makes the sentence translatable. `core` holds no `msg()` — it is
+ * imported by the API too — so the English `message` cannot be German, and the interface maps
+ * the code instead. Both are kept: the code for a screen, the sentence for a log.
  */
 export class DraftError extends Error {
   override readonly name = 'DraftError'
   readonly field: DraftField
+  readonly problem: DraftProblem
 
-  constructor(field: DraftField, message: string, options?: ErrorOptions) {
+  constructor(field: DraftField, problem: DraftProblem, message: string, options?: ErrorOptions) {
     super(message, options)
     this.field = field
+    this.problem = problem
   }
 }
 
@@ -65,6 +101,12 @@ export interface DraftClock {
   readonly uuid: () => string
   /** An ISO-8601 UTC timestamp, for `addedAt`. */
   readonly now: () => string
+}
+
+/** The draft code for each room-path problem. Two unions, one mapping, no third name. */
+const ROOM_PATH_PROBLEM: Readonly<Record<RoomPathProblem, DraftProblem>> = {
+  empty: 'roomPathEmpty',
+  emptySegment: 'roomPathEmptySegment',
 }
 
 /** What each room-path problem means to someone looking at the field. */
@@ -95,7 +137,11 @@ function isCalendarDate(value: string): boolean {
 export function readName(value: string): string {
   const name = value.trim()
   if (name === '') {
-    throw new DraftError('name', 'A device needs a name; that is what makes it findable later.')
+    throw new DraftError(
+      'name',
+      'nameEmpty',
+      'A device needs a name; that is what makes it findable later.',
+    )
   }
   return name
 }
@@ -108,7 +154,9 @@ export function readName(value: string): string {
  */
 export function readRoomPath(value: string): string {
   const problem = roomPathProblem(value)
-  if (problem !== null) throw new DraftError('room', ROOM_PATH_MESSAGE[problem])
+  if (problem !== null) {
+    throw new DraftError('room', ROOM_PATH_PROBLEM[problem], ROOM_PATH_MESSAGE[problem])
+  }
   return normaliseRoomPath(value)
 }
 
@@ -121,6 +169,7 @@ export function readInstalledAt(value: string): string {
   if (!isCalendarDate(value)) {
     throw new DraftError(
       'installedAt',
+      'installedAtNotACalendarDate',
       'The installation date must be a real calendar date, written YYYY-MM-DD.',
     )
   }

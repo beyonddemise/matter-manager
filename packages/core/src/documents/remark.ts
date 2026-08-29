@@ -60,7 +60,11 @@ export function addRemark(
 ): Unsaved<DeviceDocument> {
   const said = text.trim()
   if (said === '') {
-    throw new DraftError('remark', 'A remark needs some text; there is nothing to record yet.')
+    throw new DraftError(
+      'remark',
+      'remarkEmpty',
+      'A remark needs some text; there is nothing to record yet.',
+    )
   }
 
   const remark: Remark = {

@@ -67,9 +67,84 @@ export interface OnboardingPayload {
   readonly extension: Uint8Array
 }
 
+/**
+ * Why a string is not a usable Matter setup code.
+ *
+ * A code rather than a sentence, for the reason `PasscodeProblem` and `RoomPathProblem` already
+ * are: these reach a user interface that is translated, and an English string decided in `core`
+ * could not be. The wording belongs with the translations; the reason belongs here.
+ *
+ * One union across the payload, the manual pairing code and the credential reader, because the
+ * interface has one field. A person typing into it does not first decide which of the three
+ * forms they are attempting, so the failures cannot be told apart by which module produced them.
+ *
+ * An array rather than a bare type so the set can be walked at run time. That is what lets a
+ * test prove every member is reachable from some input — a code nothing can produce is a
+ * sentence nobody will read, and it would otherwise look exactly like a working one.
+ */
+export const PAYLOAD_PROBLEMS = [
+  /** The text does not begin with `MT:`. */
+  'missingPrefix',
+  /** The prefix is there and nothing follows it. */
+  'emptyPayload',
+  /** The body contains a character outside the Base38 alphabet, or a chunk that overflows. */
+  'notBase38',
+  /** The body decodes to fewer bytes than the 88-bit struct needs. */
+  'payloadTooShort',
+  /** The reserved padding bits are not zero, so this is not a payload this version can read. */
+  'reservedPaddingSet',
+  /** A field does not fit the width it must occupy. Reachable when encoding, not when decoding. */
+  'fieldOutOfRange',
+  /** The commissioning flow is not one of the four the format defines. */
+  'unknownCommissioningFlow',
+  /** A named discovery flag contradicts the raw bitmask it is supposed to describe. */
+  'inconsistentDiscovery',
+  /** A manual pairing code with a length that is neither 11 nor 21 digits. */
+  'manualCodeLength',
+  /** A manual pairing code containing something that is not a digit or a separator. */
+  'manualCodeNotDigits',
+  /** The Verhoeff check digit does not match: the code was mistyped or misread. */
+  'manualCodeCheckDigit',
+  /** The leading digit selects a format this version does not define. */
+  'manualCodeUnknownFormat',
+  /** The leading digit's vendor/product flag disagrees with how many digits there are. */
+  'manualCodeLengthContradictsFlag',
+  /** Digits 2-6 decode above the 16 bits they occupy, so the code is malformed. */
+  'manualCodeGroupOutOfRange',
+  /** A vendor id was supplied without a product id, or the other way round. */
+  'vendorProductNotPaired',
+  /** The field was left empty. */
+  'emptySetupCode',
+  /** The text is neither a Matter payload nor a manual pairing code. */
+  'notASetupCode',
+] as const
+
+/** Why a string is not a usable Matter setup code. See {@link PAYLOAD_PROBLEMS}. */
+export type PayloadProblem = (typeof PAYLOAD_PROBLEMS)[number]
+
 /** Thrown when a string is not a usable Matter onboarding payload. */
 export class PayloadError extends Error {
   override readonly name = 'PayloadError'
+  /**
+   * Which failure this is, for an interface that has to say so in the reader's language.
+   *
+   * The `message` is unchanged and stays the fallback for a caller with no interface: the API,
+   * a log, a test. Neither replaces the other.
+   *
+   * **Required, deliberately.** Review suggested keeping a message-only overload so that
+   * `new PayloadError('text')` still compiled. It was tried and reverted: this package is
+   * `private` and unpublished, so the caller it protects cannot exist, and the compile error it
+   * removes is the whole mechanism guaranteeing every error carries a code. Making it optional
+   * meant three `problem !== undefined` guards at the read sites, none of which any caller
+   * could reach — a branch nothing can feed, added to the very change whose main test exists to
+   * catch that (L32).
+   */
+  readonly problem: PayloadProblem
+
+  constructor(problem: PayloadProblem, message: string, options?: ErrorOptions) {
+    super(message, options)
+    this.problem = problem
+  }
 }
 
 /** Every Matter onboarding payload begins with this. */
@@ -148,15 +223,30 @@ export function decodePayload(text: string): OnboardingPayload {
     // The scheme is echoed, never the body: everything after the prefix encodes the
     // passcode among other fields, and this path is reached by a real payload with, say,
     // a lower-case prefix.
-    const scheme = /^[A-Za-z0-9.+-]{0,10}:/.exec(text)?.[0] ?? '(no scheme)'
+    //
+    // **The leading letter is load-bearing.** This pattern began `[A-Za-z0-9.+-]{0,10}:`,
+    // which accepts digits — so `3497011233:2` matched in full and the message echoed an
+    // entire manual pairing code body, which is a setup passcode. Found by review on #131,
+    // and confirmed by running it rather than reasoning about it.
+    //
+    // RFC 3986 requires a scheme to begin with a letter, so refusing a leading digit is the
+    // correct rule rather than a patch over the one example that was found. It closes the
+    // class and not the instance: the two secrets here are a payload, whose body is Base38
+    // and so cannot contain a colon at all, and a manual code, which is only digits. Neither
+    // can match a letter-led scheme beyond the harmless `mt:` this exists for.
+    const scheme = /^[A-Za-z][A-Za-z0-9.+-]{0,9}:/.exec(text)?.[0] ?? '(no scheme)'
     throw new PayloadError(
+      'missingPrefix',
       `A Matter payload must begin with "${PAYLOAD_PREFIX}"; received ${JSON.stringify(scheme)}.`,
     )
   }
 
   const body = text.slice(PAYLOAD_PREFIX.length)
   if (body.length === 0) {
-    throw new PayloadError('The payload is empty: nothing follows the "MT:" prefix.')
+    throw new PayloadError(
+      'emptyPayload',
+      'The payload is empty: nothing follows the "MT:" prefix.',
+    )
   }
 
   let bytes: Uint8Array
@@ -164,7 +254,11 @@ export function decodePayload(text: string): OnboardingPayload {
     bytes = decodeBase38(body)
   } catch (cause) {
     if (cause instanceof Base38Error) {
-      throw new PayloadError(`The payload body is not valid Base38: ${cause.message}`, { cause })
+      throw new PayloadError(
+        'notBase38',
+        `The payload body is not valid Base38: ${cause.message}`,
+        { cause },
+      )
     }
     // Unreachable by construction - decodeBase38 throws only Base38Error - and deliberately
     // kept uncovered rather than removed. Wrapping everything would relabel a genuine bug
@@ -175,6 +269,7 @@ export function decodePayload(text: string): OnboardingPayload {
 
   if (bytes.length < STRUCT_BYTES) {
     throw new PayloadError(
+      'payloadTooShort',
       `The payload is too short: decoded ${bytes.length} bytes, but the struct needs ${STRUCT_BYTES} bytes.`,
     )
   }
@@ -200,6 +295,7 @@ export function decodePayload(text: string): OnboardingPayload {
   // code that differs from the one on the device, with nothing to indicate it.
   if (padding !== 0) {
     throw new PayloadError(
+      'reservedPaddingSet',
       `The reserved padding bits must be zero; received ${padding}. The payload is malformed or was not a Matter onboarding code.`,
     )
   }
@@ -250,6 +346,7 @@ export function requireInRange(name: string, value: number, width: number): numb
       ? 'the value supplied is outside it'
       : `received ${value}`
     throw new PayloadError(
+      'fieldOutOfRange',
       `${name} must be a whole number between 0 and ${max} (0x${max.toString(16)}); ${received}.`,
     )
   }
@@ -275,6 +372,7 @@ function requireConsistentDiscovery(discovery: DiscoveryCapabilities): number {
   for (const [flag, value] of Object.entries(expected)) {
     if (discovery[flag as keyof typeof expected] !== value) {
       throw new PayloadError(
+        'inconsistentDiscovery',
         `discovery.${flag} is ${discovery[flag as keyof typeof expected]} but the raw bitmask 0b${raw
           .toString(2)
           .padStart(8, '0')} says ${value}. They must be consistent; encoding follows raw.`,
@@ -309,6 +407,7 @@ export function encodePayload(payload: OnboardingPayload): string {
   const flow = CUSTOM_FLOWS.indexOf(payload.customFlow)
   if (flow < 0) {
     throw new PayloadError(
+      'unknownCommissioningFlow',
       `Unknown commissioning flow ${JSON.stringify(payload.customFlow)}; expected one of ${CUSTOM_FLOWS.join(', ')}.`,
     )
   }

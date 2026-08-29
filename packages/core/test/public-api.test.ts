@@ -29,6 +29,7 @@ const EXPECTED: ReadonlyArray<
   ['idRange', 'function'],
   ['uuidOf', 'function'],
   ['DraftError', 'function'],
+  ['DRAFT_PROBLEMS', 'object'],
   ['InvitationError', 'function'],
   ['TransferError', 'function'],
   ['MembershipError', 'function'],
@@ -45,6 +46,7 @@ const EXPECTED: ReadonlyArray<
   ['encodeBase38', 'function'],
   // payload
   ['PAYLOAD_PREFIX', 'string'],
+  ['PAYLOAD_PROBLEMS', 'object'],
   ['PayloadError', 'function'],
   ['decodePayload', 'function'],
   ['encodePayload', 'function'],

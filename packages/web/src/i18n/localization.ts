@@ -26,7 +26,18 @@ import type { Locale } from './locale.js'
  * `i18n.browser.test.ts` can assert the keys still match the generated locale codes.
  */
 const LOADERS: Readonly<Record<string, () => Promise<LocaleModule>>> = {
-  de: () => import('../generated/locales/de.js'),
+  de: async () => {
+    // Web Awesome keeps its own catalogue for the strings *it* renders — the combobox's
+    // `Create "…"`, the date picker's month names, the dialog's close label. Those never pass
+    // through `msg()`, so `check:i18n` cannot see them and the German build shipped them in
+    // English (#75). Importing this registers the catalogue; Web Awesome then resolves it from
+    // `lang`, which `activateLocale` sets below.
+    //
+    // Awaited inside the loader rather than imported at the top of the file so that a reader
+    // who never switches language never downloads it.
+    await import('@awesome.me/webawesome-pro/dist/translations/de.js')
+    return import('../generated/locales/de.js')
+  },
 }
 
 /** The loaders, exposed so the drift test can compare them against the generated codes. */

@@ -70,7 +70,10 @@ export function readCredential(text: string): DeviceCredential {
   const trimmed = text.trim()
 
   if (trimmed === '') {
-    throw new PayloadError('Enter the setup code printed on the device or its packaging.')
+    throw new PayloadError(
+      'emptySetupCode',
+      'Enter the setup code printed on the device or its packaging.',
+    )
   }
 
   // Case-insensitive on purpose: a lower-case `mt:` is a payload that was typed rather than
@@ -106,6 +109,7 @@ export function readCredential(text: string): DeviceCredential {
   }
 
   throw new PayloadError(
+    'notASetupCode',
     `A setup code is either a Matter payload beginning with "${PAYLOAD_PREFIX}" or a manual pairing code of 11 or 21 digits; this is neither.`,
   )
 }

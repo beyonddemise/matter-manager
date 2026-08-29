@@ -394,6 +394,98 @@
   <source>This device could not be read</source>
   <target>Dieses Gerät konnte nicht gelesen werden</target>
 </trans-unit>
+<trans-unit id="s14f88880ab0ab6c8">
+  <source>This could not be read. Check it against what is printed on the device.</source>
+  <target>Dies konnte nicht gelesen werden. Vergleichen Sie es mit dem Aufdruck auf dem Gerät.</target>
+</trans-unit>
+<trans-unit id="sf8113792b44d84dc">
+  <source>A device needs a name; that is what makes it findable later.</source>
+  <target>Ein Gerät braucht einen Namen; darüber finden Sie es später wieder.</target>
+</trans-unit>
+<trans-unit id="sf0b5a77a7af7527b">
+  <source>A device needs a room. Type a name to create one, or pick an existing room.</source>
+  <target>Ein Gerät braucht einen Raum. Tippen Sie einen Namen ein, um einen anzulegen, oder wählen Sie einen vorhandenen Raum.</target>
+</trans-unit>
+<trans-unit id="s3e156d332555cfda">
+  <source>A room path is one or more names separated by "/", so "Ground Floor/Kitchen" works but a doubled or trailing "/" does not.</source>
+  <target>Ein Raumpfad besteht aus einem oder mehreren Namen, getrennt durch „/“. „Erdgeschoss/Küche“ funktioniert, ein doppeltes oder abschließendes „/“ nicht.</target>
+</trans-unit>
+<trans-unit id="s50c9745cdd192091">
+  <source>The installation date must be a real calendar date.</source>
+  <target>Das Einbaudatum muss ein tatsächlich existierendes Datum sein.</target>
+</trans-unit>
+<trans-unit id="s92c06aad7a676504">
+  <source>A remark needs some text; there is nothing to record yet.</source>
+  <target>Eine Anmerkung braucht Text; es gibt noch nichts festzuhalten.</target>
+</trans-unit>
+<trans-unit id="s2d254be190431538">
+  <source>Enter the setup code printed on the device or its packaging.</source>
+  <target>Geben Sie den Einrichtungscode ein, der auf dem Gerät oder seiner Verpackung steht.</target>
+</trans-unit>
+<trans-unit id="s6e991f4a44188f59">
+  <source>A setup code is either a Matter code beginning with "MT:" or a manual pairing code of 11 or 21 digits. This is neither.</source>
+  <target>Ein Einrichtungscode ist entweder ein Matter-Code, der mit „MT:“ beginnt, oder ein manueller Kopplungscode aus 11 oder 21 Ziffern. Dies ist keines von beidem.</target>
+</trans-unit>
+<trans-unit id="s458eb63d1798dde7">
+  <source>A Matter code begins with "MT:". This one does not.</source>
+  <target>Ein Matter-Code beginnt mit „MT:“. Dieser nicht.</target>
+</trans-unit>
+<trans-unit id="sea470fd666fe4208">
+  <source>Nothing follows "MT:", so there is no code here to read.</source>
+  <target>Nach „MT:“ folgt nichts, es gibt hier also keinen Code zu lesen.</target>
+</trans-unit>
+<trans-unit id="s4582cce03681a427">
+  <source>This looks like a Matter code but contains characters one cannot contain. Compare it with the label.</source>
+  <target>Das sieht nach einem Matter-Code aus, enthält aber Zeichen, die darin nicht vorkommen können. Vergleichen Sie ihn mit dem Aufdruck.</target>
+</trans-unit>
+<trans-unit id="s9bafef617e812970">
+  <source>This Matter code is too short to be complete; part of it is missing.</source>
+  <target>Dieser Matter-Code ist zu kurz, um vollständig zu sein; ein Teil davon fehlt.</target>
+</trans-unit>
+<trans-unit id="s7a90628d47e6474f">
+  <source>This is not a Matter setup code that this version can read.</source>
+  <target>Dies ist kein Matter-Einrichtungscode, den diese Version lesen kann.</target>
+</trans-unit>
+<trans-unit id="sbe294870a557225c">
+  <source>A manual pairing code has 11 or 21 digits. Spaces and dashes do not count, so only the digits matter.</source>
+  <target>Ein manueller Kopplungscode hat 11 oder 21 Ziffern. Leerzeichen und Bindestriche zählen nicht mit, es kommt nur auf die Ziffern an.</target>
+</trans-unit>
+<trans-unit id="scec753705109f78a">
+  <source>A manual pairing code contains only digits, apart from spaces and dashes.</source>
+  <target>Ein manueller Kopplungscode enthält außer Leerzeichen und Bindestrichen nur Ziffern.</target>
+</trans-unit>
+<trans-unit id="s389ae4826dbf099e">
+  <source>This manual pairing code does not check out, so a digit was probably misread. Compare it with the label.</source>
+  <target>Dieser manuelle Kopplungscode geht nicht auf; vermutlich wurde eine Ziffer falsch gelesen. Vergleichen Sie ihn mit dem Aufdruck.</target>
+</trans-unit>
+<trans-unit id="s299f5d18909ac362">
+  <source>This manual pairing code uses a format that this version does not know.</source>
+  <target>Dieser manuelle Kopplungscode verwendet ein Format, das diese Version nicht kennt.</target>
+</trans-unit>
+<trans-unit id="sa67c93a1c049a976">
+  <source>This manual pairing code says it carries a manufacturer and product, but is not long enough to. A digit is probably missing.</source>
+  <target>Dieser manuelle Kopplungscode gibt an, Hersteller und Produkt zu enthalten, ist dafür aber nicht lang genug. Vermutlich fehlt eine Ziffer.</target>
+</trans-unit>
+<trans-unit id="s947a8c4ce97bc054">
+  <source>This manual pairing code is malformed; one of its groups holds an impossible value.</source>
+  <target>Dieser manuelle Kopplungscode ist fehlerhaft; eine seiner Gruppen enthält einen unmöglichen Wert.</target>
+</trans-unit>
+<trans-unit id="sedb9f1f5f08bb56e">
+  <source>One of the values in this code is outside the range the format allows.</source>
+  <target>Einer der Werte in diesem Code liegt außerhalb des vom Format erlaubten Bereichs.</target>
+</trans-unit>
+<trans-unit id="s39bd1154149065a1">
+  <source>This code names a commissioning method that the format does not define.</source>
+  <target>Dieser Code nennt ein Inbetriebnahmeverfahren, das das Format nicht definiert.</target>
+</trans-unit>
+<trans-unit id="s7ecf9c10b781225c">
+  <source>This code contradicts itself about how the device can be found.</source>
+  <target>Dieser Code widerspricht sich darin, wie das Gerät gefunden werden kann.</target>
+</trans-unit>
+<trans-unit id="se1833294557a218c">
+  <source>A manufacturer and a product must be given together, or neither given at all.</source>
+  <target>Hersteller und Produkt müssen zusammen angegeben werden oder beide entfallen.</target>
+</trans-unit>
 </body>
 </file>
 </xliff>
