@@ -60,6 +60,8 @@ interface Interception {
   readonly bulkDocsResult?: (results: unknown) => unknown
   /** Handed each change feed as it is opened. */
   readonly onChanges?: (feed: { emit(event: string, payload: unknown): void }) => void
+  /** Called before each read of one specific revision; throwing from it fails that read. */
+  readonly onGetRevision?: () => void
 }
 
 /**
@@ -88,6 +90,14 @@ function watching(database: PouchDB.Database, interception: Interception): Pouch
             ...args,
           )
           return interception.bulkDocsResult?.(results) ?? results
+        }
+      }
+      if (property === 'get' && interception.onGetRevision !== undefined) {
+        return async (id: string, options?: { rev?: string }): Promise<unknown> => {
+          // Only the by-revision form. The document's own read has to keep working, or the
+          // test would be about a missing document rather than a missing revision.
+          if (options?.rev !== undefined) interception.onGetRevision?.()
+          return (target.get as (...rest: unknown[]) => Promise<unknown>)(id, options)
         }
       }
       if (property === 'changes' && interception.onChanges !== undefined) {
@@ -341,6 +351,27 @@ describe('the document goes away mid-resolution', () => {
 
     expect(resolved?.remarks).toHaveLength(2)
     expect((await stored(three.deviceA, LAMP))._conflicts).toBeUndefined()
+  })
+})
+
+describe('a losing revision that cannot be read', () => {
+  it('is a failure, not an answer of "no such document"', async () => {
+    await conflictingRemarks()
+
+    const database = watching(three.deviceA, {
+      onGetRevision: () => {
+        // What a compacted-away revision raises, and what another resolver removing it first
+        // would raise once compaction had caught up.
+        throw Object.assign(new Error('missing'), { status: 404, name: 'not_found' })
+      },
+    })
+
+    // The device is right there. Reporting it absent because one of its *old* revisions is
+    // absent would empty the catalogue on exactly the databases that have been running longest
+    // — and the caller has no way to tell that apart from a device somebody deleted.
+    await expect(on(database, '2026-08-20T11:00:00.000Z').devices.get(LAMP)).rejects.toMatchObject({
+      status: 404,
+    })
   })
 })
 

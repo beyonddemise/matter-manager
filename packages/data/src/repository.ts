@@ -62,6 +62,7 @@ export function repository<T extends Revision>(
   return {
     async get(id: string): Promise<T | undefined> {
       let document: Conflicted<T>
+
       try {
         // `conflicts: true` on every read, not only where one is expected. A conflict is
         // created by replication rather than by this browser, so there is no read at which one
@@ -74,6 +75,11 @@ export function repository<T extends Revision>(
         if (isMissing(error)) return undefined
         throw error
       }
+
+      // Outside the guard, and that placement is the whole point. Resolving reads each losing
+      // revision by `_rev`, and one of those can be gone — compacted away, or removed by
+      // another resolver — which raises the same 404 this document's own absence would. Inside
+      // the guard that becomes "there is no such device", about a device that is right there.
       return resolve(document)
     },
 

@@ -95,9 +95,10 @@ Two consequences, both of which removed code rather than adding it:
   a tombstone retaining `manualCode` and `payload`, which `DeviceDocument` documents as secrets,
   readable on the deleted revision until compaction.
 
-**Worth raising as its own issue:** a deletion silently losing to a concurrent edit is correct
-here but invisible to the person who deleted the room. M5-9 owns room deletion and is where the
-choice should be made by a person rather than by a merge.
+**Raised as #125:** a deletion silently losing to a concurrent edit is correct here but
+invisible to the person who deleted the room, whose room reappears under a name they have never
+seen. #56 (M5-9) owns deleting a room that still holds devices, which is a different case — the
+choice made by a person rather than overruled by a merge.
 
 ## Mutation probes
 
@@ -137,6 +138,20 @@ tests: a document deleted mid-resolution (the merge is abandoned, not written ba
 resurrected), a retry that finds the conflict already resolved by the other device, a prune
 refused per row the way `validate_doc_update` refuses one, a room resolved through the change
 feed, a document this application did not write being left alone, and the feed itself failing.
+
+## Review
+
+CodeRabbit found one thing, and it was right. `resolve` ran **inside** `get`'s
+missing-document guard, so a 404 raised while reading a *losing revision* — compacted away, or
+removed by another resolver — was reported as "there is no such device", about a device that is
+right there. It would empty the catalogue on exactly the databases that have been running
+longest, and the caller could not tell it apart from a deletion.
+
+Resolving now happens outside that guard, so only the document's own read can answer
+`undefined`. The restructure itself arrived as an autofix commit (`400d4a8`) while the same fix
+was being written here; this branch keeps that commit and adds what it did not have — the reason
+in a comment, and a test. The test was checked against the pre-fix code and fails there, which
+is the only thing that makes it a regression test rather than a passing assertion.
 
 ## Dependency
 
