@@ -38,9 +38,10 @@ export class SettingsView extends LitElement {
    * Where the storage standing is read from.
    *
    * Bound by a test to a stub; left unset in the application, where it falls back to
-   * `navigator.storage`. A real browser cannot be made to *refuse* persistence, and refusal is
-   * the state most users on most engines are in - so the common case is only reachable through
-   * something injectable. Same reasoning as `repositories` on the device forms.
+   * `navigator.storage`. A browser refuses persistence when it decides to, and no test can make
+   * that decision go a particular way - yet refusal is the state most users on most engines are
+   * in, so the common case is only reachable through something injectable. Same reasoning as
+   * `repositories` on the device forms.
    */
   declare storageManager?: () => StorageManagerLike | undefined
 

@@ -5,9 +5,11 @@ import { readStorageReport, requestPersistence, STORAGE_ASKED_KEY } from '../src
  * #112: nothing asked the browser to keep this data, so everything the application holds sat in
  * best-effort storage — evictable under pressure, LRU across origins, and the user never told.
  *
- * Every case here is reached through a stub. That is not a convenience: a real browser cannot be
- * made to *refuse* persistence, and refusal is the state most users on most engines will be in.
- * Testing only what a real `navigator.storage` does would leave the common path uncovered.
+ * Every case here is reached through a stub. That is not a convenience: a browser refuses when
+ * *it* decides to — weighing engagement history, installation, and in Firefox's case a prompt —
+ * and no test can make that decision go a particular way. Yet refusal is the state most users on
+ * most engines will be in, so testing only what a real `navigator.storage` happens to answer
+ * would leave the common path uncovered.
  */
 
 /** A `StorageManager` that answers however a test needs it to. */
@@ -198,6 +200,20 @@ describe('what the interface can tell the user', () => {
     // `persisted()` and `estimate()` are read-only. A status display that could raise a
     // permission dialogue would be a surprise in the one place the user went to avoid one.
     expect(storage.persist).not.toHaveBeenCalled()
+  })
+
+  it('keeps a persistence answer the browser gave, when it declines to estimate', async () => {
+    // Found by review. `estimate()` is the figures; only `persisted()` decides the standing, so
+    // a failure here must not throw away an answer that had already arrived - reporting
+    // `unknown` would tell the user the browser said nothing when it had said something.
+    const storage = {
+      persisted: vi.fn(async () => true),
+      persist: vi.fn(async () => true),
+      estimate: vi.fn(async () => {
+        throw new Error('no')
+      }),
+    }
+    expect(await readStorageReport(() => storage)).toEqual({ persistence: 'persisted' })
   })
 
   it('reports unknown where there is no Storage API', async () => {

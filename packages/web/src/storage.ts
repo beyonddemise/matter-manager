@@ -17,8 +17,8 @@
  * `preferences.ts` sets out at length: on an origin that refuses storage the throwing site is
  * the property access itself, not the call, so accepting the object as a parameter would move
  * the throw to the call site where no guard is watching. It also makes refusal testable, which
- * matters more here than anywhere — a real browser cannot be made to say no, and "no" is the
- * answer most users on most engines will get.
+ * matters more here than anywhere: a browser refuses when *it* decides to, and no test can make
+ * that decision go a particular way — yet "no" is the answer most users on most engines get.
  *
  * @module
  */
@@ -87,6 +87,10 @@ export async function readStorageReport(
   const storage = storageManager(getStorage)
   if (storage === undefined) return { persistence: 'unknown' }
 
+  // Guarded separately, for the same reason `requestPersistence` guards its two calls apart:
+  // the failures mean different things. Only `persisted()` decides the standing, so an
+  // `estimate()` that rejects must not discard an answer the browser already gave - reporting
+  // `unknown` there would tell the user the browser said nothing when it had.
   let persistence: StoragePersistence
   try {
     persistence = (await storage.persisted()) ? 'persisted' : 'best-effort'
@@ -104,6 +108,7 @@ export async function readStorageReport(
       ...(quota === undefined ? {} : { quota }),
     }
   } catch {
+    // No figures, which the interface already renders as "no figures" rather than as zero.
     return { persistence }
   }
 }

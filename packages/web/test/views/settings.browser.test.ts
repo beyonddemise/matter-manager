@@ -11,9 +11,9 @@ import '../../src/views/settings.js'
  * #112 asked for `persisted()` to be surfaced "somewhere the user can see", because the answer
  * differs per browser and per device and nothing else reveals it.
  *
- * Every case is driven through a stubbed storage manager. A real browser cannot be made to
- * refuse persistence, and refusal is what most users on most engines will see — so the state
- * that matters most is the one only a stub can produce.
+ * Every case is driven through a stubbed storage manager. A browser refuses when it decides to,
+ * and no test can make that decision go a particular way — yet refusal is what most users on most
+ * engines will see, so the state that matters most is the one only a stub can produce on demand.
  */
 
 const stub = (answers: {

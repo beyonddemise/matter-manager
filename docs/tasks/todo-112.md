@@ -4,10 +4,10 @@ Closes #112.
 
 ## The gap
 
-Before this change, `grep -rn "navigator.storage" packages/*/src` returned nothing. Everything
-this application held was in best-effort storage: evicted under pressure, LRU across origins,
-and the user was not told. For a catalogue whose promise is that a device recorded is a device
-kept, that is the difference between best-effort and kept.
+**Before this change**, `grep -rn "navigator.storage" packages/*/src` returned nothing. Everything this application
+holds is in best-effort storage: evicted under pressure, LRU across origins, and the user is
+not told. For a catalogue whose promise is that a device recorded is a device kept, that is the
+difference between best-effort and kept.
 
 ## The decision the issue deferred
 
@@ -25,8 +25,7 @@ a prompt at all.
 `packages/web/src/storage.ts`, following the supplier convention `preferences.ts` establishes and
 explains: the storage object is reached **inside** the guard, because on an origin that refuses
 it the throwing site is the property access rather than the call. That also makes the whole thing
-testable against a stub, which is the only way to exercise a refusal — a real browser cannot be
-made to say no.
+testable against a stub.
 
 Three states, not two. `persisted` and `best-effort` are answers; `unknown` is what an engine
 without the Storage API gives, and calling that "not persisted" would be reporting a fact the
@@ -80,10 +79,9 @@ leaves it known and unchanged. One `try` would have collapsed those into the sam
 
 ### The refusal path is the one that needed a stub
 
-Tests cannot deterministically make a browser refuse persistence, and refusal is what most users
-on most engines will get. So the common case is reliably reachable only through an injectable
-supplier — which is why the settings view takes a `storageManager` the way the device forms take
-`repositories`.
+A browser refuses when *it* decides to, and no test can make that decision go a particular way —
+yet refusal is what most users on most engines will get. So the common case is only reachable through an injectable supplier — which is
+why the settings view takes a `storageManager` the way the device forms take `repositories`.
 Without it the tests would cover only the state that is rarest.
 
 ### What the message says, and why
