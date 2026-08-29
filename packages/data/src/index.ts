@@ -8,12 +8,21 @@
  * keeps these tests in Node, in milliseconds, like `core`'s.
  *
  * Merge *logic* is not here. Deciding how two conflicting remark arrays combine is a pure
- * function over plain data and lives in `core`. This package will find conflicts and apply the
- * decision (M5-6); it does not make it.
+ * function over plain data and lives in `core`. This package finds the conflicts and applies
+ * that decision — see `conflicts.ts` — but it does not make it.
  *
  * @module
  */
 
+export {
+  type Conflicted,
+  type ConflictResolver,
+  type ConflictWatch,
+  conflictResolver,
+  type MergeStrategy,
+  type WatchOptions,
+  watchConflicts,
+} from './conflicts.js'
 export {
   type CachedProfile,
   type LocalCache,

@@ -7,8 +7,10 @@
     "@types/node": "^26.2.0",
     "@types/pouchdb-adapter-memory": "^6.1.6",
     "@types/pouchdb-core": "^7.0.15",
+    "@types/pouchdb-replication": "^6.4.7",
     "pouchdb-adapter-memory": "^9.0.0",
-    "pouchdb-core": "^9.0.0"
+    "pouchdb-core": "^9.0.0",
+    "pouchdb-replication": "^9.0.0"
   },
   "description": "PouchDB repositories. Takes a database instance; constructs none.",
   "exports": {

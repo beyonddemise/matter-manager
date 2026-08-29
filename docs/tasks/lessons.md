@@ -1048,3 +1048,32 @@ helpers run on every process.
 … `established = true` lets two callers through. Memoise the in-flight promise instead, and forget
 it on failure so a transient error is retried rather than remembered. This one was reachable from
 two people sharing a project at the same moment, because `findUser` awaits it.
+
+## L32 — A merge branch you cannot feed is not implemented
+
+`mergeRoom` has resurrected a deleted room since M2, with tests, a paragraph in ADR 0010 and a
+parameter in its signature for the question it cannot answer alone. Wiring it up at M5-6 meant
+discovering that the branch **cannot be reached**: CouchDB prefers a live leaf over a deleted one
+whatever its generation, and a deleted *losing* branch is reported in neither `_conflicts` nor
+the change feed — those go in `_deleted_conflicts`, which PouchDB does not implement. When every
+branch is deleted the feed carries a bare tombstone with no conflicts on it at all.
+
+So the strategy was correct, tested, and unreachable. Nothing was wrong; nothing was connected.
+
+**Rule:** when wiring a decision to its inputs, verify that the inputs can actually take every
+value the decision distinguishes. A function tested exhaustively over its parameter space says
+nothing about which of that space the caller can produce, and "we handle that case" is a claim
+about the *mechanism*, not about the pure function.
+
+**Corollary — the discovery deletes code rather than adding it.** Two things went in the bin: a
+`devices.list()` on every room conflict, answering a question whose answer could not matter; and
+a change to `remove()` made half an hour earlier so that deletions could be *ordered by time in
+the merge*. That reason had evaporated — deletions never reach the merge — and re-reading it
+surfaced a cost never weighed, since a deleted revision retaining the document's fields keeps
+`manualCode` and `payload`, the setup secrets, readable until compaction. **A change whose
+justification stops being true is not neutral; it is a change nobody has now reviewed.**
+
+**Corollary — ask the platform, do not reason about it.** Every fact above came from a throwaway
+test that printed what PouchDB actually returned for `conflicts: true`, `deleted_conflicts`,
+`revs_info`, `open_revs` and the change feed. All of it was contrary to what the code — mine and
+the ADR's — assumed. The probe took four minutes.
