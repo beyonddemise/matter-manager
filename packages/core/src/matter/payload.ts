@@ -220,10 +220,7 @@ function writeBits(bytes: Uint8Array, offset: number, length: number, value: num
  */
 export function decodePayload(text: string): OnboardingPayload {
   if (!text.startsWith(PAYLOAD_PREFIX)) {
-    throw new PayloadError(
-      'missingPrefix',
-      `A Matter payload must begin with "${PAYLOAD_PREFIX}".`,
-    )
+    throw new PayloadError('missingPrefix', `A Matter payload must begin with "${PAYLOAD_PREFIX}".`)
   }
 
   const body = text.slice(PAYLOAD_PREFIX.length)
