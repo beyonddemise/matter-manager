@@ -7,7 +7,7 @@ Closes #106.
 `packages/web/dist` was served and loaded in Chromium with every request recorded. Twelve
 cross-origin requests, on a first visit, with no interaction beyond opening two screens:
 
-```
+```text
 https://fonts.bunny.net/css?family=chivo-mono:…|figtree:…|fraunces:…&display=swap
 https://fonts.bunny.net/figtree/files/figtree-latin-{400,600,800}-normal.woff2
 https://ka-f.fontawesome.com/releases/v7.3.0/svgs/solid/{bars,circle-half-stroke,circle-info,

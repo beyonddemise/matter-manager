@@ -84,7 +84,11 @@ const violations = []
 page.on('request', (request) => {
   const url = request.url()
   // `data:` and `blob:` never leave the page; the policy allows both deliberately.
-  if (!url.startsWith(origin) && !url.startsWith('data:') && !url.startsWith('blob:')) {
+  if (
+    !url.startsWith('data:') &&
+    !url.startsWith('blob:') &&
+    new URL(url).origin !== origin
+  ) {
     external.add(url)
   }
 })

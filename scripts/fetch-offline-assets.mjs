@@ -121,7 +121,10 @@ const fresh = (directory) => {
 console.log(`Fonts: ${FONTS}`)
 const css = await get(`https://fonts.bunny.net/css?family=${FONTS}&display=swap`)
 
-fresh(fontsDir)
+mkdirSync(fontsDir, { recursive: true })
+for (const file of readdirSync(fontsDir)) {
+  if (file === 'fonts.css' || file.endsWith('.woff2')) rmSync(join(fontsDir, file))
+}
 const blocks = []
 let downloaded = 0
 
