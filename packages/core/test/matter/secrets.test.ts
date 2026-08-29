@@ -95,10 +95,10 @@ describe('error messages stay useful without the secret', () => {
     expect(message).toContain('134217727')
   })
 
-  it('still identifies the scheme it was given instead of MT:', () => {
+  it('still identifies the required scheme without repeating the supplied text', () => {
     const message = messageFrom(() => decodePayload(`mt:${REFERENCE_BODY}`))
     expect(message).toContain('MT:')
-    expect(message).toContain('mt:')
+    expect(message).not.toContain('mt:')
   })
 
   it('still locates the offending Base38 chunk', () => {
