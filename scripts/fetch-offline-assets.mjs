@@ -112,19 +112,32 @@ const get = async (url, as = 'text') => {
   return as === 'text' ? response.text() : Buffer.from(await response.arrayBuffer())
 }
 
-/** Replaces a directory's contents, so a removed icon or weight actually disappears. */
-const fresh = (directory) => {
-  rmSync(directory, { recursive: true, force: true })
+/**
+ * Removes what a previous run generated, so a dropped icon or weight actually disappears.
+ *
+ * Selective rather than a recursive delete of the directory. The first version wiped the whole
+ * thing, which also took `fonts/LICENCE.md` with it — the file recording that these are OFL
+ * fonts and where they came from. The OFL asks for the licence to travel with the files, so a
+ * routine regeneration would have quietly removed the one thing that must not be removed. The
+ * icons directory survived the same treatment only by accident, its licence happening to sit one
+ * level up.
+ *
+ * Naming the extensions this script writes means anything else in the directory is somebody's
+ * deliberate addition, and stays.
+ */
+const clearGenerated = (directory, extensions) => {
   mkdirSync(directory, { recursive: true })
+  for (const entry of readdirSync(directory)) {
+    if (extensions.some((extension) => entry.endsWith(extension))) {
+      rmSync(join(directory, entry), { force: true })
+    }
+  }
 }
 
 console.log(`Fonts: ${FONTS}`)
 const css = await get(`https://fonts.bunny.net/css?family=${FONTS}&display=swap`)
 
-mkdirSync(fontsDir, { recursive: true })
-for (const file of readdirSync(fontsDir)) {
-  if (file === 'fonts.css' || file.endsWith('.woff2')) rmSync(join(fontsDir, file))
-}
+clearGenerated(fontsDir, ['.woff2', '.css'])
 const blocks = []
 let downloaded = 0
 
@@ -168,7 +181,7 @@ const faVersion = JSON.parse(
 ).version
 
 console.log(`Icons: ${ICONS.length}, Font Awesome Free v${faVersion}`)
-fresh(iconsDir)
+clearGenerated(iconsDir, ['.svg'])
 for (const name of ICONS) {
   const source = join(FA_FREE, `${name}.svg`)
   if (!existsSync(source)) {

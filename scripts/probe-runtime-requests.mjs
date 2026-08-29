@@ -84,13 +84,21 @@ const violations = []
 page.on('request', (request) => {
   const url = request.url()
   // `data:` and `blob:` never leave the page; the policy allows both deliberately.
-  if (
-    !url.startsWith('data:') &&
-    !url.startsWith('blob:') &&
-    new URL(url).origin !== origin
-  ) {
+  if (url.startsWith('data:') || url.startsWith('blob:')) return
+
+  // Parsed, not prefix-matched. `http://localhost:1234@example.test/icon.svg` begins with the
+  // origin string and is a request to example.test - the `localhost:1234` is userinfo. A check
+  // whose whole job is to notice a request going somewhere else should not be fooled by the
+  // oldest trick for making a URL look like it goes somewhere it does not.
+  let requested
+  try {
+    requested = new URL(url).origin
+  } catch {
+    // Not parseable, so not same-origin either. Reported rather than ignored.
     external.add(url)
+    return
   }
+  if (requested !== origin) external.add(url)
 })
 // A blocked request reports itself here and nowhere the application can see, which is exactly
 // why a too-tight policy is worth catching before a user finds it.
