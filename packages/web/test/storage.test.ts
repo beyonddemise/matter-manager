@@ -182,6 +182,16 @@ describe('what the interface can tell the user', () => {
     expect(await readStorageReport(() => storage)).toEqual({ persistence: 'best-effort' })
   })
 
+  it('preserves persistence when the storage estimate rejects', async () => {
+    const storage = {
+      ...storageManager({ persisted: true }),
+      estimate: vi.fn(async () => {
+        throw new Error('unavailable')
+      }),
+    }
+    expect(await readStorageReport(() => storage)).toEqual({ persistence: 'persisted' })
+  })
+
   it('asks nothing of the user: reading never prompts', async () => {
     const storage = storageManager({ persisted: false })
     await readStorageReport(() => storage)

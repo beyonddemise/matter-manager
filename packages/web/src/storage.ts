@@ -87,10 +87,14 @@ export async function readStorageReport(
   const storage = storageManager(getStorage)
   if (storage === undefined) return { persistence: 'unknown' }
 
+  let persistence: StoragePersistence
   try {
-    const persistence: StoragePersistence = (await storage.persisted())
-      ? 'persisted'
-      : 'best-effort'
+    persistence = (await storage.persisted()) ? 'persisted' : 'best-effort'
+  } catch {
+    return { persistence: 'unknown' }
+  }
+
+  try {
     const { usage, quota } = await storage.estimate()
     // Spread conditionally: `exactOptionalPropertyTypes` keeps "the browser did not say" and
     // "the browser said zero" apart, and they are different facts.
@@ -100,7 +104,7 @@ export async function readStorageReport(
       ...(quota === undefined ? {} : { quota }),
     }
   } catch {
-    return { persistence: 'unknown' }
+    return { persistence }
   }
 }
 

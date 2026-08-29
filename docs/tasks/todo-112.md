@@ -4,10 +4,10 @@ Closes #112.
 
 ## The gap
 
-`grep -rn "navigator.storage" packages/*/src` returns nothing. Everything this application
-holds is in best-effort storage: evicted under pressure, LRU across origins, and the user is
-not told. For a catalogue whose promise is that a device recorded is a device kept, that is the
-difference between best-effort and kept.
+Before this change, `grep -rn "navigator.storage" packages/*/src` returned nothing. Everything
+this application held was in best-effort storage: evicted under pressure, LRU across origins,
+and the user was not told. For a catalogue whose promise is that a device recorded is a device
+kept, that is the difference between best-effort and kept.
 
 ## The decision the issue deferred
 
@@ -80,9 +80,10 @@ leaves it known and unchanged. One `try` would have collapsed those into the sam
 
 ### The refusal path is the one that needed a stub
 
-A real browser cannot be made to refuse persistence, and refusal is what most users on most
-engines will get. So the common case is only reachable through an injectable supplier — which is
-why the settings view takes a `storageManager` the way the device forms take `repositories`.
+Tests cannot deterministically make a browser refuse persistence, and refusal is what most users
+on most engines will get. So the common case is reliably reachable only through an injectable
+supplier — which is why the settings view takes a `storageManager` the way the device forms take
+`repositories`.
 Without it the tests would cover only the state that is rarest.
 
 ### What the message says, and why
