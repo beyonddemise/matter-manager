@@ -25,9 +25,12 @@ export {
 } from './conflicts.js'
 export {
   type CachedProfile,
+  type CachedProject,
   type LocalCache,
   localCache,
   PROFILE_ID,
+  type ProjectLocalState,
+  type ServerProject,
 } from './local-cache.js'
 export { type ProjectRepositories, projectRepositories } from './project-database.js'
 export { type Repository, repository } from './repository.js'

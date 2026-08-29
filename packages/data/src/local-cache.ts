@@ -43,12 +43,102 @@ export interface CachedProfile {
 /** The document id the profile is cached under. One user per browser profile. */
 export const PROFILE_ID = 'cache:profile'
 
+/** Whether this device holds a replica of a project, as opposed to being allowed to. */
+export type ProjectLocalState =
+  /** The replica is here and the project opens with no connectivity. */
+  | 'downloaded'
+  /** Listed by the server, never opened on this device. */
+  | 'not-downloaded'
+
+/**
+ * A project as the server described it.
+ *
+ * Deliberately **not** the whole of `GET /projects`. This is a cache of the questions an
+ * offline list has to answer — what is it called, may I write to it, which database is it —
+ * and every field beyond those is a second copy of a schema to keep in step for no reader.
+ */
+export interface ServerProject {
+  readonly projectId: string
+  readonly dbName: string
+  readonly name: string
+  readonly role: 'owner' | 'manage' | 'write' | 'read'
+}
+
+/**
+ * A cached project: what the server said, plus what this device knows about its own copy.
+ *
+ * The two halves have **different owners and different lifetimes**, which is the whole reason
+ * this type is not simply {@link ServerProject}. The server's half is replaced wholesale every
+ * time the list is fetched; the local half is written by this device and has to survive that.
+ */
+export interface CachedProject extends ServerProject {
+  /**
+   * What this device actually has.
+   *
+   * Not redundant with being listed at all: the server says what you *may* open, and this says
+   * what you can open *right now, here*. They diverge constantly, and only this one answers the
+   * question a user asks when the train goes into a tunnel.
+   */
+  readonly localState: ProjectLocalState
+  /**
+   * Whether access to this project has gone while a copy of it is still on this device.
+   *
+   * Set from either direction — a list that no longer mentions it, or a replication the server
+   * refused — because a user whose project vanishes without explanation concludes the
+   * application lost it.
+   */
+  readonly accessRemoved: boolean
+  /** When the server's half was last fetched, ISO-8601. For saying how stale a list is. */
+  readonly fetchedAt: string
+}
+
+/** The id prefix that makes cached projects a contiguous, listable key range. */
+const PROJECT_PREFIX = 'cache:project:'
+
+/** Higher than anything a project id can contain; CouchDB's documented convention. */
+const HIGHEST_ID_CHARACTER = '\uFFF0'
+
+/** The document id one project is cached under. */
+const projectCacheId = (projectId: string): string => `${PROJECT_PREFIX}${projectId}`
+
+/** A cached project as PouchDB stores it, with the bookkeeping a rewrite needs. */
+type StoredProject = CachedProject & { readonly _id: string; readonly _rev: string }
+
 /** Reading and writing what the server said. Deliberately small. */
 export interface LocalCache {
   /** The cached profile, or `undefined` if the server has never been reached. */
   readProfile(): Promise<CachedProfile | undefined>
   /** Replaces the cached profile. */
   writeProfile(profile: CachedProfile): Promise<void>
+  /**
+   * Every project this browser knows of, in id order.
+   *
+   * Id order rather than anything a person would recognise: display order is a question about
+   * locale and about what the list is sorted by that day, and answering it here would put a
+   * collation decision in the storage layer.
+   */
+  readProjects(): Promise<CachedProject[]>
+  /**
+   * Replaces the server's half of the list, leaving each project's local half alone.
+   *
+   * A project the list no longer mentions is **removed if this device holds nothing of it**,
+   * and kept but marked {@link CachedProject.accessRemoved} if it does. A project that
+   * reappears has that mark cleared, because being re-granted is ordinary.
+   *
+   * @param projects the list exactly as the server gave it
+   * @param fetchedAt when it was fetched; this package holds no clock
+   */
+  writeProjects(projects: readonly ServerProject[], fetchedAt: string): Promise<void>
+  /** Records that this device has, or no longer has, a replica. */
+  setLocalState(projectId: string, state: ProjectLocalState): Promise<void>
+  /**
+   * Records that the server refused replication of this project.
+   *
+   * Does nothing for a project the cache has never heard of: there is no name to show and
+   * nothing on this device to explain, so inventing an entry would put a row in the list that
+   * says only that something went wrong somewhere.
+   */
+  markAccessRemoved(projectId: string): Promise<void>
   /**
    * Removes everything.
    *
@@ -73,6 +163,50 @@ function isMissing(error: unknown): boolean {
  *   none, for the reason in `index.ts`
  */
 export function localCache(database: PouchDB.Database): LocalCache {
+  /** A stored document as the cached project it is, without the PouchDB bookkeeping. */
+  const asCachedProject = (document: unknown): CachedProject => {
+    const { _id, _rev, ...project } = document as CachedProject & {
+      _id: string
+      _rev: string
+    }
+    return project as CachedProject
+  }
+
+  /** Every cached project as stored, its bookkeeping included, for the writes that replace them. */
+  const storedProjects = async (): Promise<StoredProject[]> => {
+    const { rows } = await database.allDocs({
+      startkey: PROJECT_PREFIX,
+      endkey: `${PROJECT_PREFIX}${HIGHEST_ID_CHARACTER}`,
+      include_docs: true,
+    })
+    return rows.flatMap((row) => (row.doc ? [row.doc as unknown as StoredProject] : []))
+  }
+
+  /**
+   * Changes one cached project in place, doing nothing if it is not there.
+   *
+   * Read for the `_rev` each time rather than held in memory, for the reason `writeProfile`
+   * gives: two tabs writing this cache is ordinary.
+   */
+  const amend = async (
+    projectId: string,
+    change: (project: CachedProject) => CachedProject,
+  ): Promise<void> => {
+    let stored: StoredProject | undefined
+    try {
+      stored = (await database.get(projectCacheId(projectId))) as unknown as StoredProject
+    } catch (error) {
+      if (isMissing(error)) return
+      throw error
+    }
+
+    await database.put({
+      ...change(asCachedProject(stored)),
+      _id: projectCacheId(projectId),
+      _rev: stored._rev,
+    } as unknown as PouchDB.Core.PutDocument<object>)
+  }
+
   return {
     async readProfile(): Promise<CachedProfile | undefined> {
       try {
@@ -103,6 +237,52 @@ export function localCache(database: PouchDB.Database): LocalCache {
         _id: PROFILE_ID,
         ...(rev === undefined ? {} : { _rev: rev }),
       } as unknown as PouchDB.Core.PutDocument<object>)
+    },
+
+    async readProjects(): Promise<CachedProject[]> {
+      return (await storedProjects()).map(asCachedProject)
+    },
+
+    async writeProjects(projects: readonly ServerProject[], fetchedAt: string): Promise<void> {
+      const held = new Map((await storedProjects()).map((project) => [project.projectId, project]))
+
+      const writes = projects.map((project) => {
+        const existing = held.get(project.projectId)
+        held.delete(project.projectId)
+        return {
+          ...project,
+          // The local half, carried across rather than defaulted. A refresh happens on every
+          // reconnection, and one that reset this would report every project as not downloaded
+          // moments after connectivity returned.
+          localState: existing?.localState ?? 'not-downloaded',
+          // Cleared, not carried: this project is in the list the server just sent.
+          accessRemoved: false,
+          fetchedAt,
+          _id: projectCacheId(project.projectId),
+          ...(existing === undefined ? {} : { _rev: existing._rev }),
+        }
+      })
+
+      // Whatever the server did not mention. Removed when this device holds nothing of it, and
+      // kept with the mark when it does — see `LocalCache.writeProjects`.
+      const departed = [...held.values()].map((project) =>
+        project.localState === 'downloaded'
+          ? { ...project, accessRemoved: true }
+          : { _id: project._id, _rev: project._rev, _deleted: true },
+      )
+
+      await database.bulkDocs([
+        ...writes,
+        ...departed,
+      ] as unknown as PouchDB.Core.PutDocument<object>[])
+    },
+
+    async setLocalState(projectId: string, state: ProjectLocalState): Promise<void> {
+      await amend(projectId, (project) => ({ ...project, localState: state }))
+    },
+
+    async markAccessRemoved(projectId: string): Promise<void> {
+      await amend(projectId, (project) => ({ ...project, accessRemoved: true }))
     },
 
     async clear(): Promise<void> {

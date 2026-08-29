@@ -15,11 +15,34 @@ const PROFILE: Profile = {
   locale: 'de',
 }
 
+/**
+ * The project half of `mm-local`, which nothing in this file touches.
+ *
+ * Throwing rather than returning something empty: these tests are about the profile, and a
+ * silent `[]` here would let a future change start reading projects through this stub without
+ * anybody noticing the test no longer covers what its name says.
+ */
+const noProjects = {
+  readProjects: async (): Promise<never> => {
+    throw new Error('the profile tests do not use the project cache')
+  },
+  writeProjects: async (): Promise<never> => {
+    throw new Error('the profile tests do not use the project cache')
+  },
+  setLocalState: async (): Promise<never> => {
+    throw new Error('the profile tests do not use the project cache')
+  },
+  markAccessRemoved: async (): Promise<never> => {
+    throw new Error('the profile tests do not use the project cache')
+  },
+}
+
 /** A cache backed by a variable, so a test can start it full, empty or broken. */
 function fakeCache(initial?: CachedProfile, broken = false) {
   let stored = initial
   const writes: CachedProfile[] = []
   const cache: LocalCache = {
+    ...noProjects,
     async readProfile() {
       if (broken) throw new Error('the cache is unreadable')
       return stored
@@ -148,6 +171,7 @@ describe('resolving the locale to render with', () => {
 
   it('survives a cache that will not accept a write', async () => {
     const cache: LocalCache = {
+      ...noProjects,
       readProfile: async () => undefined,
       writeProfile: async () => {
         throw new Error('quota')

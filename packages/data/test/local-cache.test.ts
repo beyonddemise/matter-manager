@@ -105,7 +105,17 @@ describe('the cache is never replicated', () => {
     // cannot reach, and "nobody synced it" stops being a thing to remember.
     const cache = localCache(memoryDatabase())
 
-    expect(Object.keys(cache).sort()).toEqual(['clear', 'readProfile', 'writeProfile'])
+    // Listed exactly, not counted. Every name here reads or writes plain values; the moment
+    // one of them returns the database itself, this fails and says so by name.
+    expect(Object.keys(cache).sort()).toEqual([
+      'clear',
+      'markAccessRemoved',
+      'readProfile',
+      'readProjects',
+      'setLocalState',
+      'writeProfile',
+      'writeProjects',
+    ])
     for (const value of Object.values(cache)) {
       expect(typeof value).toBe('function')
     }
