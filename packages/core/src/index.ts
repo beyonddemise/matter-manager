@@ -23,9 +23,11 @@ export {
 // answers, which is the whole failure this module was extracted to prevent.
 export {
   type DeviceFields,
+  DRAFT_PROBLEMS,
   type DraftClock,
   DraftError,
   type DraftField,
+  type DraftProblem,
 } from './documents/draft.js'
 export {
   type DeviceUpdate,
@@ -88,7 +90,9 @@ export {
   encodePayload,
   type OnboardingPayload,
   PAYLOAD_PREFIX,
+  PAYLOAD_PROBLEMS,
   PayloadError,
+  type PayloadProblem,
 } from './matter/payload.js'
 export { isVerhoeffValid, VerhoeffError, verhoeffCheckDigit } from './matter/verhoeff.js'
 export {

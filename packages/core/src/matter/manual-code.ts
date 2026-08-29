@@ -95,6 +95,7 @@ export function deriveManualCode(input: ManualCodeInput): string {
   const hasProduct = input.productId !== undefined
   if (hasVendor !== hasProduct) {
     throw new PayloadError(
+      'vendorProductNotPaired',
       'vendorId and productId must be supplied together, or both omitted; the manual pairing code has no form carrying one without the other.',
     )
   }
@@ -134,12 +135,14 @@ export function parseManualCode(code: string): ManualCode {
 
   if (digits.length !== SHORT_LENGTH && digits.length !== LONG_LENGTH) {
     throw new PayloadError(
+      'manualCodeLength',
       `A manual pairing code has ${SHORT_LENGTH} or ${LONG_LENGTH} digits; received ${digits.length}.`,
     )
   }
 
   if (!/^\d+$/.test(digits)) {
     throw new PayloadError(
+      'manualCodeNotDigits',
       // The code is not echoed; it carries the passcode.
       `A manual pairing code contains only digits, separators aside; this one has other characters.`,
     )
@@ -149,6 +152,7 @@ export function parseManualCode(code: string): ManualCode {
   // value read out of it would be wrong in a way that still looks like a device.
   if (!isVerhoeffValid(digits)) {
     throw new PayloadError(
+      'manualCodeCheckDigit',
       'The check digit does not match; the manual pairing code was mistyped or misread.',
     )
   }
@@ -162,6 +166,7 @@ export function parseManualCode(code: string): ManualCode {
   // describing a plausible device that is not the one on the label.
   if ((first & RESERVED_FORMAT) !== 0) {
     throw new PayloadError(
+      'manualCodeUnknownFormat',
       `A manual pairing code beginning with ${first} uses a format this version does not define; only leading digits 0 to 7 are valid here.`,
     )
   }
@@ -170,6 +175,7 @@ export function parseManualCode(code: string): ManualCode {
   const expectedLength = vendorProductPresent ? LONG_LENGTH : SHORT_LENGTH
   if (digits.length !== expectedLength) {
     throw new PayloadError(
+      'manualCodeLengthContradictsFlag',
       `The leading digit says vendor and product ids ${
         vendorProductPresent ? 'follow' : 'do not follow'
       }, but the code has ${digits.length} digits rather than ${expectedLength}. Trusting the length instead would read the wrong fields.`,
@@ -179,6 +185,7 @@ export function parseManualCode(code: string): ManualCode {
   const group = Number(digits.slice(1, 6))
   if (group > 0xffff) {
     throw new PayloadError(
+      'manualCodeGroupOutOfRange',
       // The decoded group is not reported; its low 14 bits are the passcode's.
       `Digits 2-6 decode to a value above the 16 bits they occupy; the code is malformed.`,
     )
