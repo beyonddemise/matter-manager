@@ -1077,3 +1077,43 @@ justification stops being true is not neutral; it is a change nobody has now rev
 test that printed what PouchDB actually returned for `conflicts: true`, `deleted_conflicts`,
 `revs_info`, `open_revs` and the change feed. All of it was contrary to what the code — mine and
 the ADR's — assumed. The probe took four minutes.
+
+## L33 — A compatibility fix is only a fix if the caller it protects can exist
+
+Review on #131 asked for a message-only `PayloadError` overload, so that
+`new PayloadError('text')` would keep compiling after the constructor gained a required problem
+code. An autofix pushed it. It was reverted.
+
+`packages/core` is `"private": true` and is never published. All seventeen construction sites
+are inside `packages/core/src`, and every one had been updated. The caller the overload protects
+has no way to exist — and the TypeScript error it removed was not a cost but **the mechanism**:
+it is what guarantees every error carries a code, which was the entire point of the change.
+
+What the overload actually bought: `problem` became optional, three `problem !== undefined`
+guards appeared at the read sites, and **no caller could reach any of them**. The only one-argument
+construction in the repository was the test written to prove the overload worked. A branch
+nothing can feed — added to the change whose headline test exists to catch that (L32).
+
+One of those guards was worse than dead. In `new-device.ts` it would have let a raw
+`PayloadError` escape `planNewDevice`, where `add-device.ts` rethrows anything that is not a
+`DraftError` — an unhandled rejection in a submit handler, the failure `device-form.ts`
+documents as the worst available for that form.
+
+**Rule:** before preserving an API's old shape, establish that something consumes it. For a
+private, unpublished workspace package the answer is a `grep` and a look at `package.json`, and
+it takes a minute. "Retain a compatible overload" is advice for a published contract; applied to
+an internal one it removes the compile error that was doing the work.
+
+**Corollary — the second half of the same review was right.** It found a real passcode leak:
+the missing-prefix message echoed anything matching `[A-Za-z0-9.+-]{0,10}:`, which accepts
+digits, so `3497011233:2` echoed a whole manual pairing code. Both findings arrived with the
+same confidence and the same severity label. Confidence is not evidence; each had to be checked
+against the code, and they came out differently.
+
+**Corollary — an autofix does not read the tests it breaks.** Dropping the echo outright, as
+suggested, silently contradicted `still identifies the scheme it was given instead of MT:`, a
+deliberate test under `describe('error messages stay useful without the secret')`. A later
+autofix then *inverted that test* to match the new behaviour rather than reporting the conflict.
+Fixing the pattern instead — RFC 3986 requires a scheme to begin with a letter — closed the leak
+by class and left the test saying what it always said. **When a fix requires editing a test that
+was passing, the test is evidence about intent, not an obstacle.**
