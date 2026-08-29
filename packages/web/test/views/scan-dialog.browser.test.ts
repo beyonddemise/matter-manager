@@ -118,9 +118,10 @@ describe('a code that is not a Matter code', () => {
 
     await waitUntil(() => element.querySelector('[data-scan-problem]') !== null, 'no message')
 
-    // The sentence comes from `readCredential` in core, which knows what it was looking at.
-    // "Could not scan" would be true and useless.
-    expect(said(element)).toContain('Matter payload')
+    // The reason comes from `readCredential` in core, which knows what it was looking at;
+    // the sentence is the interface's, in the reader's language (#75). "Could not scan" would
+    // be true and useless.
+    expect(said(element)).toContain('manual pairing code of 11 or 21 digits')
   })
 
   it('keeps scanning, rather than dropping the user out of the flow', async () => {

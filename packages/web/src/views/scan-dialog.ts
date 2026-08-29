@@ -1,6 +1,7 @@
 import { msg, updateWhenLocaleChanges } from '@lit/localize'
-import { PayloadError, readCredential } from '@matter-manager/core'
+import { PayloadError, type PayloadProblem, readCredential } from '@matter-manager/core'
 import { html, LitElement, type PropertyValues, type TemplateResult } from 'lit'
+import { problemMessage } from '../i18n/problems.js'
 import type { CameraProblem } from '../scan/problem.js'
 import { cameraProblem } from '../scan/problem.js'
 import { cameraSource, type ScanSource } from '../scan/source.js'
@@ -57,7 +58,14 @@ export class ScanDialog extends LitElement {
    * The message from `core`, kept whole. Rewriting it here would be a second answer to a
    * question `readCredential` already answers, and the two would drift.
    */
-  declare codeFailure: string | undefined
+  /**
+   * Why the last code read was not a setup code, as a **code** rather than a sentence.
+   *
+   * Holding the sentence would freeze it into whichever language was active when the frame was
+   * decoded, so switching language mid-scan would leave this callout behind while the rest of
+   * the dialog changed. Holding the code means the render translates it every time (#75).
+   */
+  declare codeFailure: PayloadProblem | undefined
 
   constructor() {
     super()
@@ -185,7 +193,7 @@ export class ScanDialog extends LitElement {
       if (!(error instanceof PayloadError)) throw error
       // Kept, and scanning continues. Someone holding a phone up to a device has not asked to
       // stop, and the wrong code is usually the other sticker on the same box.
-      this.codeFailure = error.message
+      this.codeFailure = error.problem
       return false
     }
 
@@ -251,8 +259,8 @@ export class ScanDialog extends LitElement {
       return html`
         <wa-callout variant="neutral" data-scan-problem>
           <wa-icon slot="icon" name="circle-info"></wa-icon>
-          <!-- The sentence from core, whole. It knows what it was looking at; this does not. -->
-          ${this.codeFailure}
+          <!-- What core decided this was, said in the reader's language. -->
+          ${problemMessage(this.codeFailure)}
           <div>${msg('Still looking — hold the QR code from the device in view.')}</div>
         </wa-callout>
       `

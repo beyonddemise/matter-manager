@@ -11,6 +11,7 @@ import {
 import type { ProjectRepositories } from '@matter-manager/data'
 import { html, LitElement, type PropertyDeclarations, type TemplateResult } from 'lit'
 import { projectDatabase } from '../db/project-database.js'
+import { problemMessage } from '../i18n/problems.js'
 
 /**
  * Reads a form control's value defensively; controls report through DOM properties.
@@ -233,9 +234,12 @@ export abstract class DeviceFormView extends LitElement {
    * control that caused it, which is what stops the user hunting across six of them.
    * `DraftField` being a closed union is what makes a new field a type error here rather than
    * a silent gap.
+   *
+   * Translated from the error's `problem` rather than taken from its `message`: the message is
+   * English, decided in `core`, which holds no locale (#75).
    */
   protected messageFor(field: DraftField): string | undefined {
-    return this.error?.field === field ? this.error.message : undefined
+    return this.error?.field === field ? problemMessage(this.error.problem) : undefined
   }
 
   /**
@@ -264,7 +268,7 @@ export abstract class DeviceFormView extends LitElement {
       return html`
         <wa-callout variant="danger" data-error>
           <wa-icon slot="icon" name="circle-exclamation"></wa-icon>
-          ${this.error.message}
+          ${problemMessage(this.error.problem)}
         </wa-callout>
       `
     }
