@@ -63,18 +63,19 @@
   #                                  carries one inline <style>. A hash covers the second, not
   #                                  the first. Note this does NOT relax script-src, which is
   #                                  where 'unsafe-inline' would matter.
-  #   https://fonts.bunny.net        webawesome.css @imports its webfonts from there.
-  #   https://ka-f.fontawesome.com   <wa-icon> fetches each icon from Font Awesome's CDN at use.
-  #   data: in connect-src           some icons are bundled as data: URLs and fetched the same way.
+  #   data: in connect-src           <wa-icon> fetches its SVG through the network stack, and
+  #                                  the bundled icons are small enough that Vite inlines them
+  #                                  as data: URLs - so that fetch never leaves the page.
   #
-  # The last three are third-party requests made on every visit, which for an offline-first
-  # application is a bug rather than a policy question: see #106. When they are gone, delete
-  # them from here — scripts/check-deploy-headers.mjs treats this as a floor, so tightening it
-  # is not a change the checker will object to.
+  # **No third-party origin is named any more.** fonts.bunny.net and ka-f.fontawesome.com were
+  # both here until #106, which bundled the webfonts and the icons, so an offline application
+  # now has its typography and its icons rather than neither. The policy was re-measured against
+  # the built bundle the same way #47 measured it in the first place: zero cross-origin requests
+  # on a first visit. `scripts/check-offline-assets.mjs` is what keeps that true.
   #
   # **No API origin and no CouchDB origin is wired yet** - which is narrower than saying
-  # nothing cross-origin is, because the Font Awesome and data: exceptions above are real and
-  # are used on every visit (#106). What is absent is this application's own back end: M5 wrote
+  # nothing cross-origin is: the data: exception above is real and is used on every visit
+  # for icons. What is absent is this application's own back end: M5 wrote
   # packages/web/src/sync/, and **nothing in the application imports it** — only its own tests
   # do (#120). No code in the shipped bundle makes a request to the API or to CouchDB, so
   # there is no origin to allow and no request being blocked.
@@ -84,4 +85,4 @@
   # this application can see. They are deployment values (the API host and the CouchDB host),
   # so that change also needs a way to get them into this file at build time - it is a static
   # asset today, with no substitution step.
-  Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.bunny.net; font-src 'self' data: https://fonts.bunny.net; img-src 'self' data: blob:; connect-src 'self' data: https://ka-f.fontawesome.com; manifest-src 'self'; worker-src 'self'; media-src 'self' blob:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'
+  Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: blob:; connect-src 'self' data:; manifest-src 'self'; worker-src 'self'; media-src 'self' blob:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'

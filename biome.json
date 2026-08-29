@@ -9,7 +9,9 @@
       "!**/playwright-report",
       "!**/test-results",
       "!infra/couchdb/design-docs",
-      "!packages/web/src/generated"
+      "!packages/web/src/generated",
+      "!packages/web/src/fonts",
+      "!packages/web/src/icons/svg"
     ]
   },
   "formatter": {

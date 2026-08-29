@@ -116,6 +116,23 @@ jobs:
       - name: The QR fallback is not in the bundle everyone downloads
         run: npm run check:lazy
 
+      # #106 shipped an offline-first application whose icons and typography arrived from two
+      # CDNs on every visit. Finding that took serving `dist` under a strict CSP and reading the
+      # violations by hand, which nobody does twice - so both halves are checked here instead.
+      #
+      # The static one reads the built files: in CSS a URL *is* a fetch, so any absolute URL
+      # there is a finding with no allowlist.
+      - name: Nothing in the built site is fetched from a third party
+        run: npm run check:offline
+
+      # And the runtime one runs it. A bundle contains the strings of code paths it never takes,
+      # so the static check has to allow Font Awesome's CDN template - which Web Awesome ships
+      # whether or not the icon library is overridden. This is what proves the override happens.
+      # It serves the real `_headers` policy too, so a policy that has drifted from what the
+      # application needs fails here rather than in front of a user.
+      - name: The running site makes no cross-origin request
+        run: npm run probe:runtime
+
       - name: Upload coverage
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

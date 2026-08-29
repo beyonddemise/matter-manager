@@ -37,10 +37,14 @@
     "i18n": "npm run i18n:extract && npm run i18n:build",
     "check:i18n": "node scripts/check-i18n.mjs",
     "check:deploy": "node scripts/check-deploy-headers.mjs",
-    "check:lazy": "node scripts/check-lazy-fallback.mjs"
+    "check:lazy": "node scripts/check-lazy-fallback.mjs",
+    "check:offline": "node scripts/check-offline-assets.mjs",
+    "probe:runtime": "node scripts/probe-runtime-requests.mjs",
+    "assets:fetch": "node scripts/fetch-offline-assets.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.10",
+    "@fortawesome/fontawesome-free": "^7.3.1",
     "@lit/localize-tools": "^0.8.2",
     "@vitest/browser-playwright": "^4.1.11",
     "@vitest/coverage-v8": "^4.1.11",
