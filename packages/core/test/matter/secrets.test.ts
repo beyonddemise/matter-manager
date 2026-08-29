@@ -57,6 +57,21 @@ describe('error messages never carry the passcode', () => {
     expect(message).not.toContain(REFERENCE_BODY)
   })
 
+  it('does not echo a manual pairing code that happens to contain a colon', () => {
+    // Found by review on #75, and confirmed by running it rather than reasoning about it.
+    //
+    // The missing-prefix message echoed whatever looked like a URL scheme, on the argument
+    // that a scheme is not a secret. It is not - but the pattern matching it accepted digits,
+    // so any secret-bearing string with a colon in the first eleven characters was echoed
+    // whole. `3497011233:2` returned the entire manual code body.
+    //
+    // The test above only covers a payload typed with a lower-case `mt:`, which is why this
+    // survived: the guarantee was checked for the input the author had in mind rather than for
+    // every input that reaches the line.
+    const message = messageFrom(() => decodePayload(`${MANUAL_BODY}:2`))
+    expect(message).not.toContain(MANUAL_BODY)
+  })
+
   it('does not echo the decoded value when a Base38 chunk overflows', () => {
     // '.....' decodes to 79235167, beyond what three bytes hold. For a Matter payload those
     // three bytes can span the passcode.
