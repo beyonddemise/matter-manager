@@ -530,6 +530,14 @@
   <source>Sign in</source>
   <target>Anmelden</target>
 </trans-unit>
+<trans-unit id="s2ac6cb3c74c928f4">
+  <source>Waiting to sync</source>
+  <target>Wartet auf Abgleich</target>
+</trans-unit>
+<trans-unit id="s3c78ac5747dbe7e6">
+  <source>Syncing</source>
+  <target>Wird abgeglichen</target>
+</trans-unit>
 </body>
 </file>
 </xliff>

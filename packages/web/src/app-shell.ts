@@ -1,7 +1,17 @@
 import { msg, updateWhenLocaleChanges } from '@lit/localize'
 import { html, LitElement, type TemplateResult } from 'lit'
-import { beginSignIn, endSession, readSessionState } from './composition.js'
+import {
+  beginSignIn,
+  endSession,
+  followProfileLocale,
+  projectSync,
+  projects,
+  type ReplicatingProject,
+  readSessionState,
+} from './composition.js'
 import { type ConnectivitySource, watchConnectivity } from './connectivity.js'
+import { negotiateLocale } from './i18n/locale.js'
+import { activateLocale } from './i18n/localization.js'
 import { matchRoute } from './router/match.js'
 import { NAV_ROUTES, ROUTES } from './router/routes.js'
 import {
@@ -12,6 +22,8 @@ import {
   writePreference,
 } from './scheme.js'
 import type { SessionState } from './session.js'
+import type { SyncManager } from './sync/manager.js'
+import type { SyncState } from './sync/replication.js'
 import { applyUpdate } from './updates.js'
 import './views/add-device.js'
 import './views/device-list.js'
@@ -80,7 +92,11 @@ export class AppShell extends LitElement {
 
   static override properties = {
     session: { state: true },
+    syncing: { state: true },
     readSession: { attribute: false },
+    listProjects: { attribute: false },
+    makeSync: { attribute: false },
+    followLocale: { attribute: false },
     signIn: { attribute: false },
     signOutOf: { attribute: false },
     hash: { state: true },
@@ -103,8 +119,20 @@ export class AppShell extends LitElement {
    */
   declare session: SessionState | undefined
 
+  /**
+   * What replication is doing across every project, or `undefined` when none is running.
+   *
+   * The worst state wins, because a summary that reported `idle` while one project was
+   * unreachable would be reassuring and wrong. `offline` is not an error - the local database
+   * is complete and usable - so it is shown as quietly as the connectivity tag beside it.
+   */
+  declare syncing: SyncState | undefined
+
   /** Injected by tests. Unset in the application, where these reach the real API. */
   declare readSession?: () => Promise<SessionState>
+  declare listProjects?: () => Promise<readonly ReplicatingProject[]>
+  declare makeSync?: (onState: (id: string, state: SyncState) => void) => SyncManager
+  declare followLocale?: (onChange: (locale: string) => void) => Promise<unknown>
   declare signIn?: () => void
   declare signOutOf?: () => Promise<readonly string[]>
   /** What the browser last said about the network. See `connectivity.ts` on trusting it. */
@@ -162,6 +190,7 @@ export class AppShell extends LitElement {
     // interface to answer a question that changes one button.
     void (this.readSession ?? readSessionState)().then((state) => {
       this.session = state
+      if (state === 'signed-in') void this.startSyncing()
     })
   }
 
@@ -230,6 +259,23 @@ export class AppShell extends LitElement {
    * different facts, and the first one reassures somebody whose data is still on the device
    * that nothing has been lost.
    */
+  /**
+   * What replication is doing, when it is doing anything.
+   *
+   * Nothing at all when it is `idle`: the steady state is everything being fine, and a badge
+   * that is always present says nothing when it matters. Same reasoning as the offline tag.
+   */
+  private renderSyncing(): TemplateResult | '' {
+    if (this.syncing === undefined || this.syncing === 'idle') return ''
+
+    return html`
+      <wa-tag data-syncing variant="neutral" size="s">
+        <wa-icon slot="start" name="arrows-rotate"></wa-icon>
+        ${this.syncing === 'offline' ? msg('Waiting to sync') : msg('Syncing')}
+      </wa-tag>
+    `
+  }
+
   private renderSession(): TemplateResult | '' {
     if (this.session === undefined) return ''
 
@@ -248,6 +294,41 @@ export class AppShell extends LitElement {
     `
   }
 
+  /**
+   * Starts replicating this account's projects, and follows the profile's locale.
+   *
+   * Both are deliberately fire-and-forget. Every view works from the local database, so holding
+   * the interface back on either would delay everything to improve something that is already
+   * correct - which is the same trade the locale and the scheme make at startup.
+   *
+   * A failure to list projects is not reported. There is nothing the reader can do about it and
+   * nothing they lose by it: their devices are on this device, and replication resuming later is
+   * what `offline` in the summary is for.
+   */
+  private async startSyncing(): Promise<void> {
+    void (this.followLocale ?? followProfileLocale)((locale) => {
+      void activateLocale(negotiateLocale(locale as never, navigator.languages))
+    })
+
+    let mine: readonly ReplicatingProject[]
+    try {
+      mine = await (this.listProjects ?? (() => projects().list()))()
+    } catch {
+      return
+    }
+    if (mine.length === 0) return
+
+    this.sync = (this.makeSync ?? ((onState) => projectSync(onState)))((projectId, state) => {
+      this.states.set(projectId, state)
+      this.syncing = worstOf([...this.states.values()])
+    })
+    this.sync.set(mine.map((project) => ({ projectId: project.projectId, dbName: project.dbName })))
+  }
+
+  /** One replication per project, and what each is doing. */
+  private sync: SyncManager | undefined
+  private states = new Map<string, SyncState>()
+
   private onSignIn = (): void => {
     ;(this.signIn ?? beginSignIn)()
   }
@@ -257,6 +338,14 @@ export class AppShell extends LitElement {
     // browser signed out: it forgets the token first, unconditionally, and every later step is
     // attempted regardless of the ones before it. Leaving the button saying "Sign out" after
     // that would be the interface disagreeing with itself.
+    // Before the sign-out, not after. Replication holds an access token and a live connection
+    // to a database this browser is about to be told it may not read; leaving it running would
+    // mean requests going out on behalf of somebody who has just left.
+    this.sync?.stopAll()
+    this.sync = undefined
+    this.states.clear()
+    this.syncing = undefined
+
     await (this.signOutOf ?? endSession)()
     this.session = 'signed-out'
   }
@@ -286,6 +375,7 @@ export class AppShell extends LitElement {
                     ${msg('Offline')}
                   </wa-tag>`
             }
+            ${this.renderSyncing()}
             ${this.renderSession()}
             <wa-button data-scheme-toggle appearance="plain" @click=${this.cycleScheme}>
               <wa-icon name=${SCHEME_ICON[this.schemePreference]} label=${this.schemeToggleLabel()}></wa-icon>
@@ -335,3 +425,15 @@ export class AppShell extends LitElement {
 }
 
 customElements.define('app-shell', AppShell)
+
+/**
+ * The state worth reporting when several replications disagree.
+ *
+ * Worst wins. A summary saying `idle` while one project cannot reach the server would be
+ * reassuring and wrong, and the reader's question is "is everything through?" rather than "is
+ * anything through?".
+ */
+function worstOf(states: readonly SyncState[]): SyncState | undefined {
+  const order: readonly SyncState[] = ['offline', 'stopped', 'active', 'idle']
+  return order.find((state) => states.includes(state))
+}
