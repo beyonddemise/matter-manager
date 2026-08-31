@@ -42,6 +42,7 @@ export class SettingsView extends LitElement {
 
   static override properties = {
     storageManager: { attribute: false },
+    lookLoader: { attribute: false },
     preference: { state: true },
     theme: { state: true },
     palette: { state: true },
@@ -59,13 +60,29 @@ export class SettingsView extends LitElement {
    */
   declare storageManager?: () => StorageManagerLike | undefined
 
+  /**
+   * How a theme's and palette's stylesheets are fetched.
+   *
+   * Bound by a test, unset in the application. Injectable for one reason: the guard against a
+   * stale load applying its classes last is only reachable when two loads overlap *and* the
+   * older one resolves second, and nothing about a real `import()` lets a test arrange that.
+   * A guard with no test that can fail is a guard nobody will notice removing.
+   */
+  declare lookLoader?: (theme: Theme, palette: Palette) => Promise<unknown>
+
   declare preference: LocalePreference
   declare theme: Theme
   declare palette: Palette
+
+  /**
+   * Counts look changes, so a load that finishes late can tell it is no longer wanted.
+   *
+   * A plain field rather than a reactive property: nothing renders it, and assigning a reactive
+   * property from inside an update schedules a second update for no reason.
+   */
+  private lookRequest = 0
   /** Undefined until the first read resolves; the section renders nothing until then. */
   declare storage: StorageReport | undefined
-
-  private lookRequest = 0
 
   constructor() {
     super()
@@ -86,12 +103,20 @@ export class SettingsView extends LitElement {
    * on the one screen where somebody is looking at how it is styled.
    */
   private async changeLook(theme: Theme, palette: Palette): Promise<void> {
-    const request = ++this.lookRequest
+    // Found by review. Two changes in quick succession are two loads in flight, and the first
+    // to be asked for is not necessarily the first to arrive - a theme already cached resolves
+    // in a microtask while one being fetched does not. Without this the older load applies its
+    // classes last, so the document shows one look while storage holds another, and the picker
+    // disagrees with both. `device.ts` guards its saves the same way.
+    const token = ++this.lookRequest
+    // Set before the await, so the picker shows what was chosen at once rather than after a
+    // stylesheet arrives. The last change to *start* is the last to assign, and starts happen in
+    // the order the user made them, so this is always the newest choice.
     this.theme = theme
     this.palette = palette
 
-    await loadLook(theme, palette)
-    if (request !== this.lookRequest) return
+    await (this.lookLoader ?? loadLook)(theme, palette)
+    if (token !== this.lookRequest) return
 
     applyLook(document.documentElement, theme, palette)
   }

@@ -50,8 +50,15 @@ async function settings(
   return element
 }
 
+/** What `index.html` ships, so a test that changes the look puts it back. */
+const ORIGINAL_LOOK = document.documentElement.className
+
 afterEach(async () => {
   await activateLocale('en')
+  // The look is applied to the real document element, not to the fixture, because that is where
+  // it belongs in the application. Leaving it changed would make the next test's starting state
+  // depend on which tests ran before it.
+  document.documentElement.className = ORIGINAL_LOOK
 })
 
 describe('what the user is told about storage on this device', () => {
@@ -158,5 +165,39 @@ describe('choosing a theme and a palette', () => {
     const palette = element.querySelector('[data-field="palette"]') as { value?: string }
     expect(theme.value).toBe(DEFAULT_THEME)
     expect(palette.value).toBe(DEFAULT_PALETTE)
+  })
+})
+
+describe('two look changes in quick succession', () => {
+  it('leaves the one the user asked for last, not the one that arrived last', async () => {
+    // The stale-load race. Two changes are two loads in flight, and the first asked for is not
+    // necessarily the first to arrive - a cached stylesheet resolves in a microtask while one
+    // being fetched does not. Arranged deterministically here by holding the first load open
+    // until after the second has finished.
+    const pending: Array<() => void> = []
+    const element = (await fixture(
+      html`<settings-view
+        .storageManager=${stub({ persisted: true })}
+        .lookLoader=${() => new Promise<void>((resolve) => pending.push(resolve))}
+      ></settings-view>`,
+    )) as SettingsView
+    await element.updateComplete
+
+    const select = element.querySelector('[data-field="theme"]') as HTMLElement & { value: string }
+    select.value = 'mellow'
+    select.dispatchEvent(new Event('change', { bubbles: true }))
+    select.value = 'premium'
+    select.dispatchEvent(new Event('change', { bubbles: true }))
+
+    // The second load lands first, then the first - the order the guard exists for.
+    pending[1]?.()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    pending[0]?.()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await element.updateComplete
+
+    expect(element.theme).toBe('premium')
+    expect(document.documentElement.classList.contains('wa-theme-premium')).toBe(true)
+    expect(document.documentElement.classList.contains('wa-theme-mellow')).toBe(false)
   })
 })

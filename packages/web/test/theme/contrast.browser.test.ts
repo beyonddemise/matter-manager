@@ -80,11 +80,16 @@ describe('the themes withheld for contrast', () => {
     }
   })
 
-  it('withholds nothing that Web Awesome no longer ships', () => {
-    // An excluded theme that has been removed upstream would silently make the list longer than
-    // the problem.
-    const known = new Set([...THEMES, ...Object.keys(EXCLUDED_THEMES)])
-    expect([...known].sort()).toEqual([...WA_THEMES].sort())
-    expect(known.size).toBe(THEMES.length + Object.keys(EXCLUDED_THEMES).length)
+  it('accounts for every theme this file measures, offering it or withholding it', () => {
+    // Found by review. The first version compared two counts, which only catches a theme in
+    // *both* lists - and the risk worth catching is the opposite one: a theme that is in
+    // neither, silently never offered and never measured. The test was named for the check it
+    // did not make (L29).
+    //
+    // `WA_THEMES` is what `support/contrast.ts` imports and measures, so a theme Web Awesome
+    // adds has to be listed there before it can be checked at all. That makes this the boundary
+    // worth asserting against: everything measured is deliberately offered or deliberately not.
+    const accounted = new Set([...THEMES, ...Object.keys(EXCLUDED_THEMES)])
+    expect([...accounted].sort()).toEqual([...WA_THEMES].sort())
   })
 })
