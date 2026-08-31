@@ -28,7 +28,12 @@ import {
   type SessionState,
   signOut,
 } from './session.js'
-import { type AccessTokenResponse, forgetTokens, rememberAccessToken } from './tokens.js'
+import {
+  type AccessTokenResponse,
+  EXPIRY_MARGIN_SECONDS,
+  forgetTokens,
+  rememberAccessToken,
+} from './tokens.js'
 
 /** The API, behind the application's own origin. See the module note. */
 export const API_BASE = '/api'
@@ -119,7 +124,11 @@ function isAccessToken(body: unknown): body is AccessTokenResponse {
   // `Number.isFinite` rather than a type check alone. `expiresIn` becomes `now() + expiresIn`,
   // so a NaN or an Infinity there is an expiry that either never passes or has already passed,
   // and both are worse than having no token at all.
-  return typeof expiresIn === 'number' && Number.isFinite(expiresIn) && expiresIn > 0
+  return (
+    typeof expiresIn === 'number' &&
+    Number.isFinite(expiresIn) &&
+    expiresIn > EXPIRY_MARGIN_SECONDS
+  )
 }
 
 /**

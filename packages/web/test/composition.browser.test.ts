@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { API_BASE, beginSignIn, COUCH_BASE, readSessionState } from '../src/composition.js'
-import { accessToken, forgetTokens } from '../src/tokens.js'
+import { accessToken, EXPIRY_MARGIN_SECONDS, forgetTokens } from '../src/tokens.js'
 
 /**
  * #120: seven modules were written, tested, and imported by nothing but their own tests. Every
@@ -106,6 +106,14 @@ describe('finding out whether this browser has a session', () => {
     // A status code is not a session. Reporting `signed-in` here would leave the application
     // making requests with no token and blaming the user's session for the 401s that follow.
     const fetchImpl = vi.fn(async () => response(200, {}))
+    expect(await readSessionState(fetchImpl as unknown as typeof fetch)).toBe('signed-out')
+    expect(accessToken()).toBeUndefined()
+  })
+
+  it('does not believe a token that expires inside the safety margin', async () => {
+    const fetchImpl = vi.fn(async () =>
+      response(200, { accessToken: 'a.b.c', expiresIn: EXPIRY_MARGIN_SECONDS }),
+    )
     expect(await readSessionState(fetchImpl as unknown as typeof fetch)).toBe('signed-out')
     expect(accessToken()).toBeUndefined()
   })
