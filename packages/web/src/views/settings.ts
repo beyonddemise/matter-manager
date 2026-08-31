@@ -11,6 +11,17 @@ import {
 } from '../i18n/locale.js'
 import { activateLocale, getLocale } from '../i18n/localization.js'
 import { readStorageReport, type StorageManagerLike, type StorageReport } from '../storage.js'
+import {
+  loadAndApplyLook,
+  PALETTES,
+  type Palette,
+  readPalettePreference,
+  readThemePreference,
+  THEMES,
+  type Theme,
+  writePalettePreference,
+  writeThemePreference,
+} from '../theme.js'
 
 /**
  * Application settings: the language, and what the browser has promised about this data.
@@ -30,7 +41,10 @@ export class SettingsView extends LitElement {
 
   static override properties = {
     storageManager: { attribute: false },
+    lookLoader: { attribute: false },
     preference: { state: true },
+    theme: { state: true },
+    palette: { state: true },
     storage: { state: true },
   }
 
@@ -45,7 +59,20 @@ export class SettingsView extends LitElement {
    */
   declare storageManager?: () => StorageManagerLike | undefined
 
+  /**
+   * How a theme's and palette's stylesheets are fetched.
+   *
+   * Bound by a test, unset in the application. Injectable for one reason: the guard against a
+   * stale load applying its classes last is only reachable when two loads overlap *and* the
+   * older one resolves second, and nothing about a real `import()` lets a test arrange that.
+   * A guard with no test that can fail is a guard nobody will notice removing.
+   */
+  declare lookLoader?: (theme: Theme, palette: Palette) => Promise<unknown>
+
   declare preference: LocalePreference
+  declare theme: Theme
+  declare palette: Palette
+
   /** Undefined until the first read resolves; the section renders nothing until then. */
   declare storage: StorageReport | undefined
 
@@ -55,6 +82,72 @@ export class SettingsView extends LitElement {
     // very control that did the picking.
     updateWhenLocaleChanges(this)
     this.preference = readLocalePreference(() => localStorage)
+    this.theme = readThemePreference(() => localStorage)
+    this.palette = readPalettePreference(() => localStorage)
+  }
+
+  /**
+   * Applies a chosen look, loading its stylesheet first.
+   *
+   * The order matters and is the whole subtlety here: swapping the class before the stylesheet
+   * has arrived leaves the document naming a theme nothing defines, which renders as Web
+   * Awesome's bare defaults for as long as the fetch takes - a flash of an unstyled application
+   * on the one screen where somebody is looking at how it is styled.
+   */
+  private async changeLook(theme: Theme, palette: Palette): Promise<void> {
+    // Set before the await, so the picker shows what was chosen at once rather than after a
+    // stylesheet arrives. The shared theme-level guard ensures the last look requested is also
+    // the one applied, including when the startup load is still pending.
+    this.theme = theme
+    this.palette = palette
+
+    await loadAndApplyLook(document.documentElement, theme, palette, this.lookLoader)
+  }
+
+  private async onThemeChange(event: Event): Promise<void> {
+    const value = (event.target as { value?: unknown }).value
+    // Read defensively: the value arrives from a DOM property rather than from our own code, so
+    // anything unrecognised is ignored rather than stored and applied.
+    if (typeof value !== 'string' || !(THEMES as readonly string[]).includes(value)) return
+    writeThemePreference(() => localStorage, value as Theme)
+    await this.changeLook(value as Theme, this.palette)
+  }
+
+  private async onPaletteChange(event: Event): Promise<void> {
+    const value = (event.target as { value?: unknown }).value
+    if (typeof value !== 'string' || !(PALETTES as readonly string[]).includes(value)) return
+    writePalettePreference(() => localStorage, value as Palette)
+    await this.changeLook(this.theme, value as Palette)
+  }
+
+  /**
+   * The theme and palette pickers.
+   *
+   * Names are not translated. They are Web Awesome's own product names for its themes and
+   * palettes, in the same category as the language names in `LOCALE_NAMES` - translating
+   * "glossy" to "glänzend" would name something the documentation does not.
+   */
+  private renderLook(): TemplateResult {
+    return html`
+      <wa-select
+        data-field="theme"
+        label=${msg('Theme')}
+        hint=${msg('Only combinations that meet the AA contrast standard are offered.')}
+        value=${this.theme}
+        @change=${this.onThemeChange}
+      >
+        ${THEMES.map((theme) => html`<wa-option value=${theme}>${theme}</wa-option>`)}
+      </wa-select>
+
+      <wa-select
+        data-field="palette"
+        label=${msg('Palette')}
+        value=${this.palette}
+        @change=${this.onPaletteChange}
+      >
+        ${PALETTES.map((palette) => html`<wa-option value=${palette}>${palette}</wa-option>`)}
+      </wa-select>
+    `
   }
 
   override connectedCallback(): void {
@@ -152,6 +245,7 @@ export class SettingsView extends LitElement {
             (locale) => html`<wa-radio value=${locale}>${LOCALE_NAMES[locale]}</wa-radio>`,
           )}
         </wa-radio-group>
+        ${this.renderLook()}
         ${this.renderStorage()}
       </div>
     `

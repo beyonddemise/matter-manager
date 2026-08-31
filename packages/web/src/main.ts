@@ -45,6 +45,7 @@ import { activateLocale } from './i18n/localization.js'
 import { registerServiceWorker } from './register-sw.js'
 import { applyScheme, readPreference, resolveScheme } from './scheme.js'
 import { requestPersistence } from './storage.js'
+import { loadAndApplyLook, readPalettePreference, readThemePreference } from './theme.js'
 import { checkForUpdate, watchForUpdate } from './updates.js'
 
 // Applied from this deferred module, after the CSS and component imports above and after
@@ -79,6 +80,17 @@ activateLocale(
 ).catch((error: unknown) => {
   console.error('The translation catalogue could not be loaded; continuing in English.', error)
 })
+
+// The stored theme and palette (#70). `index.html` hard-codes the default pair so the first
+// paint is styled rather than bare; this replaces it when the user has chosen otherwise, which
+// is a visible change for that one frame - the same trade the scheme above makes, and for the
+// same reason: deciding it earlier would mean blocking the document on storage and a stylesheet.
+//
+// The stylesheet is awaited before the class is swapped. The other order names a theme nothing
+// defines yet, which renders as Web Awesome's bare defaults until the fetch lands.
+const theme = readThemePreference(() => localStorage)
+const palette = readPalettePreference(() => localStorage)
+void loadAndApplyLook(document.documentElement, theme, palette)
 
 // Asks the browser to keep this data, once (#112). Everything here is local first (ADR 0002),
 // and storage that has not been marked persistent is evictable under pressure, across origins,

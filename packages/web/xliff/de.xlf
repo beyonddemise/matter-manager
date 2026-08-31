@@ -506,6 +506,18 @@
   <source>Space used</source>
   <target>Belegter Speicher</target>
 </trans-unit>
+<trans-unit id="saab875d8cfcfe712">
+  <source>Theme</source>
+  <target>Design</target>
+</trans-unit>
+<trans-unit id="s247c22e9516af7c0">
+  <source>Only combinations that meet the AA contrast standard are offered.</source>
+  <target>Es werden nur Kombinationen angeboten, die den Kontraststandard AA erfüllen.</target>
+</trans-unit>
+<trans-unit id="sc8af536e2084ade0">
+  <source>Palette</source>
+  <target>Farbpalette</target>
+</trans-unit>
 </body>
 </file>
 </xliff>
