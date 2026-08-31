@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { applyLook } from '../../src/theme.js'
+import { applyLook, loadAndApplyLook } from '../../src/theme.js'
 
 /**
  * In the browser project rather than beside the preference tests, because this is the half that
@@ -44,5 +44,22 @@ describe('putting the look on the document', () => {
       (name) => name.startsWith('wa-theme-') || name.startsWith('wa-palette-'),
     )
     expect(applied.sort()).toEqual(['wa-palette-vogue', 'wa-theme-mellow'])
+  })
+
+  it('does not let an older request overwrite a newer look', async () => {
+    const root = element()
+    const pending: Array<() => void> = []
+    const loader = () => new Promise<void>((resolve) => pending.push(resolve))
+
+    const startup = loadAndApplyLook(root, 'mellow', 'vogue', loader)
+    const selection = loadAndApplyLook(root, 'premium', 'bright', loader)
+    pending[1]?.()
+    await selection
+    pending[0]?.()
+    await startup
+
+    expect(root.classList.contains('wa-theme-premium')).toBe(true)
+    expect(root.classList.contains('wa-palette-bright')).toBe(true)
+    expect(root.classList.contains('wa-theme-mellow')).toBe(false)
   })
 })

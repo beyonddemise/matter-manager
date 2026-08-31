@@ -12,8 +12,7 @@ import {
 import { activateLocale, getLocale } from '../i18n/localization.js'
 import { readStorageReport, type StorageManagerLike, type StorageReport } from '../storage.js'
 import {
-  applyLook,
-  loadLook,
+  loadAndApplyLook,
   PALETTES,
   type Palette,
   readPalettePreference,
@@ -74,13 +73,6 @@ export class SettingsView extends LitElement {
   declare theme: Theme
   declare palette: Palette
 
-  /**
-   * Counts look changes, so a load that finishes late can tell it is no longer wanted.
-   *
-   * A plain field rather than a reactive property: nothing renders it, and assigning a reactive
-   * property from inside an update schedules a second update for no reason.
-   */
-  private lookRequest = 0
   /** Undefined until the first read resolves; the section renders nothing until then. */
   declare storage: StorageReport | undefined
 
@@ -103,22 +95,13 @@ export class SettingsView extends LitElement {
    * on the one screen where somebody is looking at how it is styled.
    */
   private async changeLook(theme: Theme, palette: Palette): Promise<void> {
-    // Found by review. Two changes in quick succession are two loads in flight, and the first
-    // to be asked for is not necessarily the first to arrive - a theme already cached resolves
-    // in a microtask while one being fetched does not. Without this the older load applies its
-    // classes last, so the document shows one look while storage holds another, and the picker
-    // disagrees with both. `device.ts` guards its saves the same way.
-    const token = ++this.lookRequest
     // Set before the await, so the picker shows what was chosen at once rather than after a
-    // stylesheet arrives. The last change to *start* is the last to assign, and starts happen in
-    // the order the user made them, so this is always the newest choice.
+    // stylesheet arrives. The shared theme-level guard ensures the last look requested is also
+    // the one applied, including when the startup load is still pending.
     this.theme = theme
     this.palette = palette
 
-    await (this.lookLoader ?? loadLook)(theme, palette)
-    if (token !== this.lookRequest) return
-
-    applyLook(document.documentElement, theme, palette)
+    await loadAndApplyLook(document.documentElement, theme, palette, this.lookLoader)
   }
 
   private async onThemeChange(event: Event): Promise<void> {

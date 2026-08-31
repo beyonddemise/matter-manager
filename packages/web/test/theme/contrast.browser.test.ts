@@ -89,7 +89,10 @@ describe('the themes withheld for contrast', () => {
     // `WA_THEMES` is what `support/contrast.ts` imports and measures, so a theme Web Awesome
     // adds has to be listed there before it can be checked at all. That makes this the boundary
     // worth asserting against: everything measured is deliberately offered or deliberately not.
-    const accounted = new Set([...THEMES, ...Object.keys(EXCLUDED_THEMES)])
+    const excluded = new Set(Object.keys(EXCLUDED_THEMES))
+    expect(THEMES.filter((theme) => excluded.has(theme))).toEqual([])
+
+    const accounted = new Set([...THEMES, ...excluded])
     expect([...accounted].sort()).toEqual([...WA_THEMES].sort())
   })
 })

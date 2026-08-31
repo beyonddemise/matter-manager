@@ -168,6 +168,20 @@ export async function loadLook(theme: Theme, palette: Palette): Promise<void> {
   await Promise.all([THEME_LOADERS[theme](), PALETTE_LOADERS[palette]()])
 }
 
+let lookRequest = 0
+
+/** Loads and applies a look unless a newer request started while its stylesheets were loading. */
+export async function loadAndApplyLook(
+  root: Element,
+  theme: Theme,
+  palette: Palette,
+  loader: (theme: Theme, palette: Palette) => Promise<unknown> = loadLook,
+): Promise<void> {
+  const token = ++lookRequest
+  await loader(theme, palette)
+  if (token === lookRequest) applyLook(root, theme, palette)
+}
+
 /**
  * Puts the theme and palette classes on the document element, removing whichever were there.
  *

@@ -45,7 +45,7 @@ import { activateLocale } from './i18n/localization.js'
 import { registerServiceWorker } from './register-sw.js'
 import { applyScheme, readPreference, resolveScheme } from './scheme.js'
 import { requestPersistence } from './storage.js'
-import { applyLook, loadLook, readPalettePreference, readThemePreference } from './theme.js'
+import { loadAndApplyLook, readPalettePreference, readThemePreference } from './theme.js'
 import { checkForUpdate, watchForUpdate } from './updates.js'
 
 // Applied from this deferred module, after the CSS and component imports above and after
@@ -90,9 +90,7 @@ activateLocale(
 // defines yet, which renders as Web Awesome's bare defaults until the fetch lands.
 const theme = readThemePreference(() => localStorage)
 const palette = readPalettePreference(() => localStorage)
-void loadLook(theme, palette).then(() => {
-  applyLook(document.documentElement, theme, palette)
-})
+void loadAndApplyLook(document.documentElement, theme, palette)
 
 // Asks the browser to keep this data, once (#112). Everything here is local first (ADR 0002),
 // and storage that has not been marked persistent is evictable under pressure, across origins,
