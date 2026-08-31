@@ -46,7 +46,19 @@ describe('putting the look on the document', () => {
     expect(applied.sort()).toEqual(['wa-palette-vogue', 'wa-theme-mellow'])
   })
 
+  it('applies the look when nothing has overtaken it', async () => {
+    // The positive control, and it earns its place: a guard that refused *everything* would
+    // pass the test below and never apply a look at all.
+    const root = element()
+    await loadAndApplyLook(root, 'mellow', 'vogue', async () => {})
+    expect(root.classList.contains('wa-theme-mellow')).toBe(true)
+  })
+
   it('does not let an older request overwrite a newer look', async () => {
+    // The case review named: `main.ts` applies the stored look at startup, and that load is
+    // slow enough that somebody can reach Settings and choose differently while it is in
+    // flight. A token counting only one caller's changes leaves the other outside it.
+
     const root = element()
     const pending: Array<() => void> = []
     const loader = () => new Promise<void>((resolve) => pending.push(resolve))

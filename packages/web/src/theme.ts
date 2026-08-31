@@ -168,9 +168,26 @@ export async function loadLook(theme: Theme, palette: Palette): Promise<void> {
   await Promise.all([THEME_LOADERS[theme](), PALETTE_LOADERS[palette]()])
 }
 
+/**
+ * Counts look changes across the whole application, so a slow load cannot undo a later choice.
+ *
+ * Module-scoped rather than held by a caller, because there is one document and its look is one
+ * thing. The first version of this guard lived in `SettingsView` and counted only the changes
+ * that view started, which left `main.ts` outside it entirely: the stored look is applied at
+ * startup through its own load, and that load is slow enough that somebody can reach Settings
+ * and choose differently while it is still in flight. The startup load would then resolve last
+ * and put the old classes back, leaving the controls and storage showing one look and the
+ * document another. A guard held by one of two callers was always going to be half a guard.
+ */
 let lookRequest = 0
 
-/** Loads and applies a look unless a newer request started while its stylesheets were loading. */
+/**
+ * Loads and applies a look unless a newer request started while its stylesheets were loading.
+ *
+ * @param loader how the stylesheets are fetched; injected by tests, because the case this
+ *   guards needs two loads in flight with the older resolving second, and nothing about a real
+ *   `import()` lets a test arrange that
+ */
 export async function loadAndApplyLook(
   root: Element,
   theme: Theme,
