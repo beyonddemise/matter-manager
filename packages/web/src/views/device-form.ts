@@ -10,6 +10,7 @@ import {
 } from '@matter-manager/core'
 import type { ProjectRepositories } from '@matter-manager/data'
 import { html, LitElement, type PropertyDeclarations, type TemplateResult } from 'lit'
+import { PROJECT_CHANGED } from '../current-project.js'
 import { projectDatabase } from '../db/project-database.js'
 import { problemMessage } from '../i18n/problems.js'
 
@@ -104,6 +105,23 @@ export abstract class DeviceFormView extends LitElement {
   protected repos(): ProjectRepositories {
     this.resolved ??= this.repositories ?? projectDatabase()
     return this.resolved
+  }
+
+  /** Re-reads the rooms when the reader moves to another project (#55). */
+  protected onProjectChanged = (): void => {
+    this.resolved = undefined
+    this.rooms = []
+    void this.loadRooms()
+  }
+
+  override connectedCallback(): void {
+    super.connectedCallback()
+    window.addEventListener(PROJECT_CHANGED, this.onProjectChanged)
+  }
+
+  override disconnectedCallback(): void {
+    window.removeEventListener(PROJECT_CHANGED, this.onProjectChanged)
+    super.disconnectedCallback()
   }
 
   protected async loadRooms(): Promise<void> {

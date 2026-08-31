@@ -1,3 +1,6 @@
+import '@awesome.me/webawesome-pro/dist/components/button/button.js'
+import '@awesome.me/webawesome-pro/dist/components/checkbox/checkbox.js'
+import '@awesome.me/webawesome-pro/dist/components/dialog/dialog.js'
 import { fixture, html, waitUntil } from '@open-wc/testing-helpers'
 import { describe, expect, it, vi } from 'vitest'
 import type { SessionState } from '../src/session.js'
@@ -14,6 +17,31 @@ import '../src/app-shell.js'
  * OAuth client, and without one the API serves no `/auth` routes at all. What is tested is
  * everything this application is responsible for on either side of that redirect.
  */
+
+/**
+ * Signs out through the confirmation.
+ *
+ * Two steps since #55, because signing out now asks a question: everything the account put here
+ * goes, and the catalogue that predates the account goes only if the reader says so.
+ */
+async function signOut(
+  element: HTMLElement,
+  options: { alsoRemoveLocal?: boolean } = {},
+): Promise<void> {
+  await waitUntil(() => element.querySelector('[data-sign-out]') !== null, 'not signed in')
+  ;(element.querySelector('[data-sign-out]') as HTMLElement).click()
+  await waitUntil(
+    () => element.querySelector('[data-confirm-sign-out]') !== null,
+    'no confirmation',
+  )
+
+  if (options.alsoRemoveLocal === true) {
+    const box = element.querySelector('[data-remove-local]') as HTMLElement & { checked: boolean }
+    box.checked = true
+  }
+  ;(element.querySelector('[data-confirm-sign-out]') as HTMLElement).click()
+  await waitUntil(() => element.querySelector('[data-sign-in]') !== null, 'still signed in')
+}
 
 const shell = async (session: SessionState, overrides: Record<string, unknown> = {}) => {
   const element = (await fixture(html`
@@ -77,9 +105,7 @@ describe('the sign-in control', () => {
     const element = await shell('signed-in', {
       signOutOf: async () => ['the local data could not be removed'],
     })
-    await waitUntil(() => element.querySelector('[data-sign-out]') !== null, 'no sign-out control')
-    ;(element.querySelector('[data-sign-out]') as HTMLElement).click()
-    await waitUntil(() => element.querySelector('[data-sign-in]') !== null, 'still signed in')
+    await signOut(element)
     expect(element.querySelector('[data-sign-out]')).toBeNull()
   })
 })
@@ -157,9 +183,7 @@ describe('what happens once there is a session', () => {
       ></app-shell>
     `)) as HTMLElement
 
-    await waitUntil(() => element.querySelector('[data-sign-out]') !== null, 'not signed in')
-    ;(element.querySelector('[data-sign-out]') as HTMLElement).click()
-    await waitUntil(() => element.querySelector('[data-sign-in]') !== null, 'still signed in')
+    await signOut(element)
     resolveProjects?.([{ projectId: 'p1', dbName: 'project_p1' }])
     await Promise.resolve()
 
@@ -229,9 +253,7 @@ describe('what happens once there is a session', () => {
         }}
       ></app-shell>
     `)) as HTMLElement
-    await waitUntil(() => element.querySelector('[data-sign-out]') !== null, 'not signed in')
-    ;(element.querySelector('[data-sign-out]') as HTMLElement).click()
-    await waitUntil(() => element.querySelector('[data-sign-in]') !== null, 'still signed in')
+    await signOut(element)
     expect(stoppedBeforeSignOut).toBe(true)
   })
 })
@@ -270,9 +292,7 @@ describe('a session that ends while startup is still in flight', () => {
       ></app-shell>
     `)) as HTMLElement
 
-    await waitUntil(() => element.querySelector('[data-sign-out]') !== null, 'not signed in')
-    ;(element.querySelector('[data-sign-out]') as HTMLElement).click()
-    await waitUntil(() => element.querySelector('[data-sign-in]') !== null, 'still signed in')
+    await signOut(element)
 
     // The project list arrives only now, after the sign-out has completed.
     release([{ projectId: 'p1', dbName: 'a' }])
@@ -302,9 +322,7 @@ describe('a session that ends while startup is still in flight', () => {
       ></app-shell>
     `)) as HTMLElement
 
-    await waitUntil(() => element.querySelector('[data-sign-out]') !== null, 'not signed in')
-    ;(element.querySelector('[data-sign-out]') as HTMLElement).click()
-    await waitUntil(() => element.querySelector('[data-sign-in]') !== null, 'still signed in')
+    await signOut(element)
 
     applyLocale('de')
     await new Promise((resolve) => setTimeout(resolve, 20))

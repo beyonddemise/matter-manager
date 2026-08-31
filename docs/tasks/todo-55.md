@@ -1,6 +1,6 @@
 # todo-55 — Switch and manage projects
 
-Closes #55 in three parts. **This is part one.**
+Closes #55 in three parts. **Parts one and two are done.**
 
 ## Why three parts
 
@@ -59,3 +59,61 @@ Three existing tests failed on the change, all asserting the exact response shap
 `toEqual`. That is the correct outcome and the reason to write them that way: a contract that
 grew a required field should break the assertions that describe it, rather than passing because
 they only checked the fields they knew about.
+
+---
+
+# Part two — switching, and what a read-only project offers
+
+## The switcher is in the header, not in Settings
+
+Moving between buildings is context you change while working, not a preference you set once.
+Putting it a page away would make it a navigation task. It appears only when there is more than
+one project, because a control offering one choice is not a choice.
+
+## "On this device" is a real entry
+
+`project_local` predates accounts and holds everything anybody recorded before signing in.
+Leaving it out of the switcher would make those devices vanish the moment somebody signed in —
+for an application whose promise is not losing a code, the worst possible first impression of
+having an account.
+
+It is always first, always writable, and its contents are never uploaded. Moving them into a
+project deliberately is part three.
+
+## Signing out now asks a question
+
+This is the part worth reviewing hardest, because it changes existing behaviour.
+
+Sign-out used to destroy `project_local`, which was right when it was the only catalogue and
+belonged to whoever used the browser. Once it is a catalogue you keep and switch to, that becomes:
+record devices while signed out, sign in, sign out, and they are gone — destroyed by leaving an
+account that never owned them.
+
+So the sign-out control asks, **unticked by default**. Everything the account put here goes
+either way.
+
+## Sign-out also removes the replicated project databases
+
+A gap #120 opened and nothing closed: replication gives this browser a database per project the
+account can see, and `removeLocalDatabases` only ever knew two fixed names. Signing out left
+every device of the previous user on a shared machine — precisely what signing out exists to
+prevent.
+
+The names come from the local cache rather than from `indexedDB.databases()`, which Firefox did
+not have before 126 and this application supports.
+
+## Absent, not disabled
+
+A disabled control says "this is possible and you are doing it wrong". On a project somebody may
+only read, neither half is true. So the add button, the edit, disable and delete actions, and the
+remark composer are **removed** on a read-only project — while the remarks themselves, the
+labels and the PDF export stay, because reading is what read access is for.
+
+There is a positive control for this: a view that rendered no add button at all would satisfy the
+absence assertion while being broken for everybody.
+
+## Views hear about a switch
+
+Each view resolves its repositories once and holds them — re-resolving per render would open a
+second handle on the same database and fire every change feed twice. So `useProjectDatabase`
+raises an event and the three views that read a database listen for it.

@@ -55,10 +55,17 @@ export const COUCH_BASE = '/db'
  * stay loadable outside a browser — which is what lets its tests run in plain Node — so it can
  * hold the *policy* and none of the PouchDB.
  */
-export function sessionDependencies(fetchImpl: typeof fetch = fetch): SessionDependencies {
+export function sessionDependencies(
+  fetchImpl: typeof fetch = fetch,
+  includeLocalCatalogue = false,
+): SessionDependencies {
   return {
     endServerSession: endServerSessionVia(API_BASE, fetchImpl),
-    removeLocalData: removeLocalDatabases,
+    // The catalogue on this device predates accounts and holds whatever was recorded before
+    // signing in, so it is kept unless the reader asked otherwise. On a shared machine somebody
+    // may well want it gone, which is why the sign-out control asks rather than this deciding
+    // (#55). Everything the *account* put on this browser goes either way.
+    removeLocalData: () => removeLocalDatabases({ includeLocalCatalogue }),
     forgetTokens,
   }
 }
@@ -164,8 +171,11 @@ export function beginSignIn(
  * whether they are signed out, and their reasonable next move, closing the tab, leaves them
  * signed in.
  */
-export async function endSession(fetchImpl: typeof fetch = fetch): Promise<readonly string[]> {
-  return signOut(sessionDependencies(fetchImpl))
+export async function endSession(
+  includeLocalCatalogue = false,
+  fetchImpl: typeof fetch = fetch,
+): Promise<readonly string[]> {
+  return signOut(sessionDependencies(fetchImpl, includeLocalCatalogue))
 }
 
 /**

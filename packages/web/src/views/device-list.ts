@@ -14,7 +14,8 @@ import {
 } from '@matter-manager/core'
 import type { ProjectRepositories } from '@matter-manager/data'
 import { html, LitElement } from 'lit'
-import { projectDatabase } from '../db/project-database.js'
+import { PROJECT_CHANGED } from '../current-project.js'
+import { projectDatabase, projectIsEditable } from '../db/project-database.js'
 import { getLocale } from '../i18n/localization.js'
 import {
   inventoryFilename,
@@ -146,6 +147,28 @@ export class DeviceListView extends LitElement {
   private repos(): ProjectRepositories {
     this.resolved ??= this.repositories ?? projectDatabase()
     return this.resolved
+  }
+
+  /**
+   * Re-reads everything when the reader moves to another project (#55).
+   *
+   * The repositories are resolved once and held, because re-resolving on every render would
+   * open a second handle on the same database and fire every change feed twice. So a switch has
+   * to say so, and this is where that is heard.
+   */
+  private onProjectChanged = (): void => {
+    this.resolved = undefined
+    void this.load()
+  }
+
+  override connectedCallback(): void {
+    super.connectedCallback()
+    window.addEventListener(PROJECT_CHANGED, this.onProjectChanged)
+  }
+
+  override disconnectedCallback(): void {
+    window.removeEventListener(PROJECT_CHANGED, this.onProjectChanged)
+    super.disconnectedCallback()
   }
 
   private async load(): Promise<void> {
@@ -514,10 +537,19 @@ export class DeviceListView extends LitElement {
               <wa-icon slot="start" name="file-pdf"></wa-icon>
               ${msg('Export PDF')}
             </wa-button>
-            <wa-button href="#/devices/new" variant="brand">
-              <wa-icon slot="start" name="plus"></wa-icon>
-              ${msg('Add a device')}
-            </wa-button>
+            ${
+              // Absent, not disabled. A disabled button says "this is possible and you are
+              // doing it wrong"; on a project somebody may only read, neither half is true
+              // (#55). Labels and the PDF export stay: reading is what read access is for.
+              projectIsEditable()
+                ? html`
+                    <wa-button data-add-device href="#/devices/new" variant="brand">
+                      <wa-icon slot="start" name="plus"></wa-icon>
+                      ${msg('Add a device')}
+                    </wa-button>
+                  `
+                : ''
+            }
           </div>
         </div>
 

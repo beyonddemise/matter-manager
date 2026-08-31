@@ -31,6 +31,15 @@ export interface Project {
   readonly name: string
   readonly role: 'owner' | 'manage' | 'write' | 'read'
   readonly owner: { readonly ownerType: 'user' | 'org'; readonly ownerId: string }
+  /**
+   * Whether the project has been put away (#55).
+   *
+   * Required, as the contract declares it, even though the stored field is optional: the API
+   * answers the question for every project, so nothing here has to read an absence as a `false`.
+   * Archived projects are still listed - a client that could not see what it had put away could
+   * not bring it back.
+   */
+  readonly archived: boolean
 }
 
 /** Why creating a project did not work. The view turns each of these into a sentence. */

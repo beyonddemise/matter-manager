@@ -12,7 +12,8 @@ import {
 } from '@matter-manager/core'
 import type { ProjectRepositories } from '@matter-manager/data'
 import { html, LitElement, type PropertyValues, type TemplateResult } from 'lit'
-import { projectDatabase } from '../db/project-database.js'
+import { PROJECT_CHANGED } from '../current-project.js'
+import { projectDatabase, projectIsEditable } from '../db/project-database.js'
 import { currentAuthor } from '../identity.js'
 import { fieldValue } from './device-form.js'
 
@@ -207,6 +208,28 @@ export class DeviceView extends LitElement {
    * and just as invisible.
    */
   private request = 0
+
+  /**
+   * Re-reads everything when the reader moves to another project (#55).
+   *
+   * The repositories are resolved once and held, because re-resolving on every render would
+   * open a second handle on the same database and fire every change feed twice. So a switch has
+   * to say so, and this is where that is heard.
+   */
+  private onProjectChanged = (): void => {
+    this.resolved = undefined
+    void this.load()
+  }
+
+  override connectedCallback(): void {
+    super.connectedCallback()
+    window.addEventListener(PROJECT_CHANGED, this.onProjectChanged)
+  }
+
+  override disconnectedCallback(): void {
+    window.removeEventListener(PROJECT_CHANGED, this.onProjectChanged)
+    super.disconnectedCallback()
+  }
 
   private async load(): Promise<void> {
     const token = ++this.request
@@ -414,6 +437,12 @@ export class DeviceView extends LitElement {
             : ''
         }
         <div class="wa-cluster wa-gap-s">
+        ${
+          // Absent, not disabled. A disabled control says "this is possible and you are doing
+          // it wrong"; on a project somebody may only read, neither half is true (#55).
+          !projectIsEditable()
+            ? ''
+            : html`
         <wa-button data-edit href="#/devices/${uuidOf(device._id) ?? ''}/edit" appearance="outlined">
           <wa-icon slot="start" name="pen"></wa-icon>
           ${msg('Edit')}
@@ -436,6 +465,8 @@ export class DeviceView extends LitElement {
           <wa-icon slot="start" name="trash"></wa-icon>
           ${msg('Delete')}
         </wa-button>
+        `
+        }
         </div>
       </div>
     `
@@ -578,6 +609,12 @@ export class DeviceView extends LitElement {
       <div class="wa-stack wa-gap-s">
         <h2>${msg('Remarks')}</h2>
 
+        ${
+          // The remarks themselves are still shown below - reading them is the point of a
+          // read-only project. It is writing one that is not on offer.
+          !projectIsEditable()
+            ? ''
+            : html`
         <div class="wa-stack wa-gap-2xs">
           <wa-textarea
             data-remark-text
@@ -608,6 +645,8 @@ export class DeviceView extends LitElement {
             </wa-button>
           </div>
         </div>
+        `
+        }
 
         ${
           remarks.length === 0

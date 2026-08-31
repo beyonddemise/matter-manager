@@ -16,6 +16,7 @@ import {
   projectRepositories,
 } from '@matter-manager/data'
 import PouchDB from 'pouchdb-browser'
+import { PROJECT_CHANGED } from '../current-project.js'
 
 /**
  * The local catalogue.
@@ -26,19 +27,77 @@ import PouchDB from 'pouchdb-browser'
  */
 export const PROJECT_DATABASE_NAME = 'project_local'
 
-let opened: ProjectRepositories | undefined
+/**
+ * One set of repositories per database, kept for as long as the page lives.
+ *
+ * Keyed by name rather than a single handle, because #55 lets the reader move between projects
+ * and switching back should not reopen what is already open. Memoised at all because a second
+ * `new PouchDB(name)` is a second handle on the same store, and the change feeds M2-6 attaches
+ * would then fire twice.
+ */
+const opened = new Map<string, ProjectRepositories>()
+
+/** Which database the views are reading. Changed only through {@link useProjectDatabase}. */
+let currentName: string = PROJECT_DATABASE_NAME
 
 /**
- * The repositories for the local catalogue, opening the database on first use.
+ * Whether the open project may be written to.
+ *
+ * Ambient, like the database itself, and for the same reason: the views that render editing
+ * controls are created by the router rather than by anything holding a project, so threading a
+ * role through them would mean every view taking a property it does not otherwise need.
+ *
+ * `true` by default, which is the local catalogue - always the reader's own.
+ */
+let currentEditable = true
+
+/**
+ * The repositories for the project currently open.
  *
  * Lazy rather than module-scoped: opening IndexedDB at import time would do it in every test
  * that touches anything in this package, including the ones with no interest in a database.
- * Memoised because a second `new PouchDB(name)` is a second handle on the same store, and the
- * change feeds that M2-6 attaches would then fire twice.
  */
 export function projectDatabase(): ProjectRepositories {
-  opened ??= projectRepositories(new PouchDB(PROJECT_DATABASE_NAME))
-  return opened
+  const existing = opened.get(currentName)
+  if (existing !== undefined) return existing
+
+  const repositories = projectRepositories(new PouchDB(currentName))
+  opened.set(currentName, repositories)
+  return repositories
+}
+
+/** Which database {@link projectDatabase} will open. Exported so a test can read it back. */
+export function currentProjectDatabaseName(): string {
+  return currentName
+}
+
+/**
+ * Points the views at another project, and says so.
+ *
+ * The event is the load-bearing half. Each view resolves its repositories once and holds them
+ * in a field - re-resolving on every render would open a second handle and double every change
+ * feed - so a switch that only changed this variable would be invisible until something
+ * happened to recreate the view.
+ *
+ * A no-op when the name is unchanged, so a list that re-reports the same project does not make
+ * every view throw away its data and read it again.
+ */
+export function useProjectDatabase(dbName: string, editable = true): void {
+  if (dbName === currentName && editable === currentEditable) return
+  currentName = dbName
+  currentEditable = editable
+  window.dispatchEvent(new CustomEvent(PROJECT_CHANGED))
+}
+
+/**
+ * Whether the open project may be edited.
+ *
+ * Read by the views that render editing controls, which **remove** them rather than disabling
+ * them: a disabled button is a promise that the thing is possible and the reader is doing it
+ * wrong, and on a project somebody may only read, neither is true (#55).
+ */
+export function projectIsEditable(): boolean {
+  return currentEditable
 }
 
 /**
@@ -83,7 +142,7 @@ export function forgetLocalProfileCache(): void {
  * what happens to be open would leave every device on disk while the interface said the user had
  * signed out.
  */
-const LOCAL_DATABASE_NAMES = [PROJECT_DATABASE_NAME, LOCAL_CACHE_DATABASE_NAME] as const
+const ACCOUNT_DATABASE_NAMES = [LOCAL_CACHE_DATABASE_NAME] as const
 
 /** Opens a database purely to destroy it. Opening one that does not exist is harmless. */
 async function destroyByName(name: string): Promise<void> {
@@ -105,15 +164,44 @@ async function destroyByName(name: string): Promise<void> {
  *   everything" rather than reporting a success the machine does not reflect
  */
 export async function removeLocalDatabases(
+  options: { readonly includeLocalCatalogue?: boolean } = {},
   destroy: (name: string) => Promise<void> = destroyByName,
 ): Promise<void> {
+  // The replicated projects, read before anything is destroyed. #120 gave this browser a
+  // database per project the account can see, and nothing removed them - so signing out left
+  // every device of the previous user on a shared machine, which is the one thing signing out
+  // exists to prevent.
+  //
+  // Taken from the cache rather than by enumerating IndexedDB: `indexedDB.databases()` is not
+  // in Firefox before 126 and this application supports it, and the cache is the record of what
+  // this browser actually replicated.
+  let replicated: readonly string[] = []
+  try {
+    replicated = (await localProfileCache().readProjects()).map((project) => project.dbName)
+  } catch {
+    // An unreadable cache means the fixed names below are all that can be removed. Reporting
+    // nothing removable would be worse: the two that are certain would survive as well.
+  }
+
+  // The local catalogue is only included when the reader asked. It predates accounts and holds
+  // whatever was recorded before signing in, so signing out of an unrelated account must not
+  // take it - but on a shared machine somebody may well want it gone, which is why the control
+  // asks rather than this deciding (#55).
+  const names = [
+    ...new Set([
+      ...ACCOUNT_DATABASE_NAMES,
+      ...replicated,
+      ...(options.includeLocalCatalogue === true ? [PROJECT_DATABASE_NAME] : []),
+    ]),
+  ]
+
   // Before the destroys, and unconditionally. A destroyed PouchDB handle does not come back, so
   // a memoised one that outlived its database fails every later read; and if a destroy fails,
   // the handle may point at a database that is now half gone.
-  opened = undefined
+  opened.clear()
   cache = undefined
 
-  const outcomes = await Promise.allSettled(LOCAL_DATABASE_NAMES.map((name) => destroy(name)))
+  const outcomes = await Promise.allSettled(names.map((name) => destroy(name)))
   const failures = outcomes.flatMap((outcome) =>
     outcome.status === 'rejected' ? [outcome.reason] : [],
   )

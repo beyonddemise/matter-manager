@@ -6,10 +6,19 @@ import {
   followProfileLocale,
   projectSync,
   projects,
-  type ReplicatingProject,
   readSessionState,
 } from './composition.js'
 import { type ConnectivitySource, watchConnectivity } from './connectivity.js'
+import {
+  canEdit,
+  currentDatabaseName,
+  LOCAL_PROJECT_ID,
+  readCurrentProjectId,
+  type SwitchableProject,
+  switchableProjects,
+  writeCurrentProjectId,
+} from './current-project.js'
+import { useProjectDatabase } from './db/project-database.js'
 import { negotiateLocale } from './i18n/locale.js'
 import { activateLocale } from './i18n/localization.js'
 import { matchRoute } from './router/match.js'
@@ -93,6 +102,9 @@ export class AppShell extends LitElement {
   static override properties = {
     session: { state: true },
     syncing: { state: true },
+    offered: { state: true },
+    currentProjectId: { state: true },
+    signingOut: { state: true },
     readSession: { attribute: false },
     listProjects: { attribute: false },
     makeSync: { attribute: false },
@@ -128,13 +140,19 @@ export class AppShell extends LitElement {
    */
   declare syncing: SyncState | undefined
 
+  /** The projects the switcher offers, the local catalogue always first. */
+  declare offered: readonly SwitchableProject[]
+  declare currentProjectId: string
+  /** Whether the sign-out confirmation is open. */
+  declare signingOut: boolean
+
   /** Injected by tests. Unset in the application, where these reach the real API. */
   declare readSession?: () => Promise<SessionState>
-  declare listProjects?: () => Promise<readonly ReplicatingProject[]>
+  declare listProjects?: () => Promise<readonly SwitchableProject[]>
   declare makeSync?: (onState: (id: string, state: SyncState) => void) => SyncManager
   declare followLocale?: (onChange: (locale: string) => void) => Promise<unknown>
   declare signIn?: () => void
-  declare signOutOf?: () => Promise<readonly string[]>
+  declare signOutOf?: (includeLocalCatalogue: boolean) => Promise<readonly string[]>
   /** What the browser last said about the network. See `connectivity.ts` on trusting it. */
   declare online: boolean
   /**
@@ -168,6 +186,9 @@ export class AppShell extends LitElement {
     // its old strings while its neighbours change - a silent failure, hence the test in
     // `i18n.browser.test.ts` that switches locale and checks each view's text.
     updateWhenLocaleChanges(this)
+    this.offered = []
+    this.currentProjectId = readCurrentProjectId(() => localStorage)
+    this.signingOut = false
     this.hash = window.location.hash
     // Read once at construction. The write side (`cycleScheme`) keeps this field and
     // storage in sync itself, so there is no need to re-read on every render.
@@ -270,6 +291,56 @@ export class AppShell extends LitElement {
    * Nothing at all when it is `idle`: the steady state is everything being fine, and a badge
    * that is always present says nothing when it matters. Same reasoning as the offline tag.
    */
+  /**
+   * The project switcher, when there is more than one project to switch between.
+   *
+   * Absent for somebody with no account, because a control offering one choice is not a choice.
+   * In the header rather than in Settings: this is context you change while working, not a
+   * preference you set once, and burying it a page away would make moving between buildings a
+   * navigation task.
+   */
+  private renderSwitcher(): TemplateResult | '' {
+    if (this.offered.length < 2) return ''
+
+    return html`
+      <wa-select
+        data-project-switcher
+        size="s"
+        label=${msg('Project')}
+        with-label="false"
+        value=${this.currentProjectId}
+        @change=${this.onProjectChange}
+      >
+        ${this.offered.map(
+          (project) => html`
+            <wa-option value=${project.projectId}>
+              ${project.name}${project.role === 'read' ? ` (${msg('read-only')})` : ''}
+            </wa-option>
+          `,
+        )}
+      </wa-select>
+    `
+  }
+
+  /**
+   * Moves to another project.
+   *
+   * The value is read defensively because it arrives from a DOM property: anything not on offer
+   * is ignored rather than stored, so a stray event cannot leave the interface pointing at a
+   * project this browser has no database for.
+   */
+  private onProjectChange = (event: Event): void => {
+    const value = (event.target as { value?: unknown }).value
+    if (typeof value !== 'string') return
+    if (!this.offered.some((project) => project.projectId === value)) return
+
+    writeCurrentProjectId(() => localStorage, value)
+    this.currentProjectId = value
+    // Tells every view to re-resolve. They hold their repositories in a field, so a switch that
+    // only changed the name would be invisible until something recreated them.
+    useProjectDatabase(currentDatabaseName(this.offered, value), canEdit(this.offered, value))
+  }
+
   private renderSyncing(): TemplateResult | '' {
     if (this.syncing === undefined || this.syncing === 'idle') return ''
 
@@ -286,9 +357,10 @@ export class AppShell extends LitElement {
 
     if (this.session === 'signed-in') {
       return html`
-        <wa-button data-sign-out appearance="plain" @click=${this.onSignOut}>
+        <wa-button data-sign-out appearance="plain" @click=${this.onAskSignOut}>
           ${msg('Sign out')}
         </wa-button>
+        ${this.renderSignOutConfirmation()}
       `
     }
 
@@ -327,13 +399,24 @@ export class AppShell extends LitElement {
       void activateLocale(negotiateLocale(locale as never, navigator.languages))
     })
 
-    let mine: readonly ReplicatingProject[]
+    let mine: readonly SwitchableProject[]
     try {
       mine = await (this.listProjects ?? (() => projects().list()))()
     } catch {
       return
     }
-    if (generation !== this.sessionGeneration || mine.length === 0) return
+    if (generation !== this.sessionGeneration) return
+
+    this.offered = switchableProjects(mine, msg('On this device'))
+    // Re-resolved against what is actually on offer, because the stored choice may name a
+    // project that has since been archived or whose access has gone. `currentDatabaseName`
+    // falls back to the catalogue that is definitely here rather than to nothing.
+    useProjectDatabase(
+      currentDatabaseName(this.offered, this.currentProjectId),
+      canEdit(this.offered, this.currentProjectId),
+    )
+
+    if (mine.length === 0) return
 
     this.sync = (this.makeSync ?? ((onState) => projectSync(onState)))((projectId, state) => {
       if (generation !== this.sessionGeneration) return
@@ -354,11 +437,50 @@ export class AppShell extends LitElement {
    */
   private sessionGeneration = 0
 
+  /**
+   * The sign-out confirmation.
+   *
+   * It exists because signing out now has a question in it. Everything the *account* put on this
+   * browser goes either way; the catalogue on this device predates accounts and holds whatever
+   * was recorded before signing in, so taking it would be destroying data the account never
+   * owned. Unticked by default: the safe answer is the one that keeps things.
+   */
+  private renderSignOutConfirmation(): TemplateResult | '' {
+    if (!this.signingOut) return ''
+
+    return html`
+      <wa-dialog data-sign-out-dialog open label=${msg('Sign out')}>
+        <p>${msg('Everything this account put on this browser will be removed.')}</p>
+        <wa-checkbox data-remove-local>
+          ${msg('Also remove the devices stored only on this device')}
+        </wa-checkbox>
+        <wa-button slot="footer" data-cancel-sign-out @click=${this.onCancelSignOut}>
+          ${msg('Cancel')}
+        </wa-button>
+        <wa-button slot="footer" variant="brand" data-confirm-sign-out @click=${this.onSignOut}>
+          ${msg('Sign out')}
+        </wa-button>
+      </wa-dialog>
+    `
+  }
+
+  private onAskSignOut = (): void => {
+    this.signingOut = true
+  }
+
+  private onCancelSignOut = (): void => {
+    this.signingOut = false
+  }
+
   private onSignIn = (): void => {
     ;(this.signIn ?? beginSignIn)()
   }
 
   private onSignOut = async (): Promise<void> => {
+    const box = this.querySelector('[data-remove-local]') as { checked?: boolean } | null
+    const includeLocalCatalogue = box?.checked === true
+    this.signingOut = false
+
     // The state is set whatever happened, because `signOut` never throws and always leaves the
     // browser signed out: it forgets the token first, unconditionally, and every later step is
     // attempted regardless of the ones before it. Leaving the button saying "Sign out" after
@@ -376,8 +498,15 @@ export class AppShell extends LitElement {
     this.states.clear()
     this.syncing = undefined
 
-    await (this.signOutOf ?? endSession)()
+    await (this.signOutOf ?? endSession)(includeLocalCatalogue)
     this.session = 'signed-out'
+    // Back to the catalogue that is certainly here. The account's projects are gone from this
+    // browser, so leaving the switcher pointing at one would show an empty list that looks
+    // exactly like having lost everything.
+    this.offered = []
+    this.currentProjectId = LOCAL_PROJECT_ID
+    writeCurrentProjectId(() => localStorage, LOCAL_PROJECT_ID)
+    useProjectDatabase(currentDatabaseName([], LOCAL_PROJECT_ID), true)
   }
 
   override render() {
@@ -405,6 +534,7 @@ export class AppShell extends LitElement {
                     ${msg('Offline')}
                   </wa-tag>`
             }
+            ${this.renderSwitcher()}
             ${this.renderSyncing()}
             ${this.renderSession()}
             <wa-button data-scheme-toggle appearance="plain" @click=${this.cycleScheme}>
