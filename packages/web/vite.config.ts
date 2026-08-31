@@ -1,4 +1,5 @@
-import { defineConfig, type Plugin } from 'vite'
+import { join } from 'node:path'
+import { defineConfig, loadEnv, type Plugin } from 'vite'
 
 /**
  * The third-party font stylesheet every Web Awesome theme pulls in.
@@ -68,12 +69,66 @@ function stripThirdPartyFontImports(): Plugin {
   }
 }
 
-export default defineConfig({
-  // import.meta.dirname (not __dirname): this package is "type": "module", and under
-  // NodeNext module resolution __dirname does not exist in real ESM. import.meta.dirname
-  // is the direct equivalent, available since Node 20.11 and always present given this
-  // repo's node >=22 engine requirement.
-  root: import.meta.dirname,
-  plugins: [stripThirdPartyFontImports()],
-  build: { outDir: 'dist', emptyOutDir: true },
+export default defineConfig(({ mode }) => {
+  // From the repository root, where `.env` lives beside `.env.example` - the same file the API
+  // and the compose stack read, so there is one place to say where things are.
+  const env = loadEnv(mode, join(import.meta.dirname, '../..'), '')
+
+  return {
+    // import.meta.dirname (not __dirname): this package is "type": "module", and under
+    // NodeNext module resolution __dirname does not exist in real ESM. import.meta.dirname
+    // is the direct equivalent, available since Node 20.11 and always present given this
+    // repo's node >=22 engine requirement.
+    root: import.meta.dirname,
+    plugins: [stripThirdPartyFontImports()],
+    build: { outDir: 'dist', emptyOutDir: true },
+
+    server: {
+      // Fail rather than move. Vite picks the next free port when 5173 is taken, and everything
+      // around it is written down: `dev-stack.mjs` prints 5173, and the API's `APP_ORIGIN` names
+      // it as the one origin allowed to make a cross-origin request. A silent move leaves the
+      // application loading at an address the API refuses, which reads as a broken sign-in
+      // rather than as a busy port.
+      strictPort: true,
+      proxy: devProxy(env),
+    },
+  }
 })
+
+/**
+ * Where `/api` and `/db` go in development.
+ *
+ * Exported so a test can supply its own environment. Reading `loadEnv` inside the test instead
+ * would make the assertions depend on whichever `.env` the machine happens to have, which is
+ * exactly the sort of test that passes for its author and fails for everybody else.
+ */
+export function devProxy(env: Record<string, string>) {
+  return {
+    /**
+     * `/api` and `/db` are proxied so that development and production agree.
+     *
+     * In production the application keeps its Cloudflare Pages deployment and Pages Functions
+     * forward these two paths to the API and to CouchDB, so the browser only ever addresses its
+     * own origin - which is why `_headers` needs no third-party entry in `connect-src` and why
+     * nothing in `packages/web` has to know a hostname.
+     *
+     * Development has to match, or the relative URLs the application uses would work in exactly
+     * one of the two places, and the one they failed in would be the one nobody runs before
+     * deploying.
+     *
+     * The prefix is stripped, because the API serves `/projects` and `/auth/*` at its root and
+     * CouchDB serves databases at its own. Keeping it would push knowledge of the proxy into
+     * every route on both sides.
+     */
+    '/api': {
+      target: env.DEV_API_TARGET || 'http://localhost:3000',
+      changeOrigin: true,
+      rewrite: (path: string) => path.replace(/^\/api/, ''),
+    },
+    '/db': {
+      target: env.DEV_COUCHDB_TARGET || 'http://localhost:5985',
+      changeOrigin: true,
+      rewrite: (path: string) => path.replace(/^\/db/, ''),
+    },
+  }
+}
