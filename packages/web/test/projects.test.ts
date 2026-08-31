@@ -13,6 +13,9 @@ const PROJECT: Project = {
   name: 'Musterstraße 12',
   role: 'owner',
   owner: { ownerType: 'user', ownerId: 'google|1234' },
+  // Required by the contract since #55, even though the stored field is optional: the API
+  // answers the question for every project, so no client reads an absence as a `false`.
+  archived: false,
 }
 
 /** An API that records what it was asked, and can be told to fail. */

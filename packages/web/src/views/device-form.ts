@@ -10,6 +10,7 @@ import {
 } from '@matter-manager/core'
 import type { ProjectRepositories } from '@matter-manager/data'
 import { html, LitElement, type PropertyDeclarations, type TemplateResult } from 'lit'
+import { PROJECT_CHANGED } from '../current-project.js'
 import { projectDatabase } from '../db/project-database.js'
 import { problemMessage } from '../i18n/problems.js'
 
@@ -101,9 +102,40 @@ export abstract class DeviceFormView extends LitElement {
    * for no reason, and Lit says so in dev mode.
    */
   private resolved: ProjectRepositories | undefined
+  private projectGeneration = 0
   protected repos(): ProjectRepositories {
     this.resolved ??= this.repositories ?? projectDatabase()
     return this.resolved
+  }
+
+  /**
+   * Leaves the form when the reader moves to another project (#55).
+   *
+   * **Not a re-read.** Clearing only the repositories would leave every control holding what
+   * was typed under the old project, and the next save would write it into the new one — an add
+   * form creating a project-B device from input entered under project A, and an edit form
+   * saving project A's device into project B's database. Found by review; the first version of
+   * this handler did exactly that.
+   *
+   * The half-typed device is lost, which is the lesser harm: switching project mid-form is a
+   * deliberate act, and a device filed in the wrong building is a device nobody finds again.
+   */
+  protected onProjectChanged = (): void => {
+    this.projectGeneration++
+    this.resolved = undefined
+    this.rooms = []
+    this.error = undefined
+    window.location.hash = '#/'
+  }
+
+  override connectedCallback(): void {
+    super.connectedCallback()
+    window.addEventListener(PROJECT_CHANGED, this.onProjectChanged)
+  }
+
+  override disconnectedCallback(): void {
+    window.removeEventListener(PROJECT_CHANGED, this.onProjectChanged)
+    super.disconnectedCallback()
   }
 
   protected async loadRooms(): Promise<void> {
@@ -142,9 +174,12 @@ export abstract class DeviceFormView extends LitElement {
     readonly room?: Unsaved<RoomDocument>
     readonly device: Unsaved<DeviceDocument>
   }): Promise<boolean> {
+    const generation = this.projectGeneration
     try {
-      if (plan.room !== undefined) await this.repos().rooms.save(plan.room)
-      await this.repos().devices.save(plan.device)
+      const repositories = this.repos()
+      if (plan.room !== undefined) await repositories.rooms.save(plan.room)
+      if (generation !== this.projectGeneration) return false
+      await repositories.devices.save(plan.device)
       // Not observable today: a successful save always navigates away from the form, so
       // nothing renders this flag afterwards, and a mutation probe reports the line as a
       // survivor. It stays because it makes the flag a true statement about the last attempt

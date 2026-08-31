@@ -14,7 +14,8 @@ import {
 } from '@matter-manager/core'
 import type { ProjectRepositories } from '@matter-manager/data'
 import { html, LitElement } from 'lit'
-import { projectDatabase } from '../db/project-database.js'
+import { PROJECT_CHANGED } from '../current-project.js'
+import { projectDatabase, projectIsEditable } from '../db/project-database.js'
 import { getLocale } from '../i18n/localization.js'
 import {
   inventoryFilename,
@@ -148,7 +149,43 @@ export class DeviceListView extends LitElement {
     return this.resolved
   }
 
+  /**
+   * Re-reads everything when the reader moves to another project (#55).
+   *
+   * The repositories are resolved once and held, because re-resolving on every render would
+   * open a second handle on the same database and fire every change feed twice. So a switch has
+   * to say so, and this is where that is heard.
+   */
+  private onProjectChanged = (): void => {
+    this.resolved = undefined
+    // Cleared, not left showing the old project's devices while the new ones arrive. A list
+    // that keeps them is a list showing another building's contents under this building's name.
+    this.devices = []
+    this.rooms = []
+    void this.load()
+  }
+
+  /**
+   * Counts loads, so one from the previous project cannot land in this one.
+   *
+   * A switch starts a second `load` while the first is still reading, and the first can finish
+   * last — leaving project A's devices on screen with project B selected. The same guard
+   * `theme.ts` and `app-shell.ts` use, for the same reason.
+   */
+  private loadGeneration = 0
+
+  override connectedCallback(): void {
+    super.connectedCallback()
+    window.addEventListener(PROJECT_CHANGED, this.onProjectChanged)
+  }
+
+  override disconnectedCallback(): void {
+    window.removeEventListener(PROJECT_CHANGED, this.onProjectChanged)
+    super.disconnectedCallback()
+  }
+
   private async load(): Promise<void> {
+    const generation = ++this.loadGeneration
     const repositories = this.repos()
 
     try {
@@ -156,6 +193,10 @@ export class DeviceListView extends LitElement {
         repositories.devices.list(),
         repositories.rooms.list(),
       ])
+      // A read started under the previous project can finish after the new one has loaded, and
+      // assigning it here would put project A's devices on screen with project B selected.
+      if (generation !== this.loadGeneration) return
+
       this.devices = devices
       this.rooms = rooms
       this.loaded = true
@@ -514,10 +555,19 @@ export class DeviceListView extends LitElement {
               <wa-icon slot="start" name="file-pdf"></wa-icon>
               ${msg('Export PDF')}
             </wa-button>
-            <wa-button href="#/devices/new" variant="brand">
-              <wa-icon slot="start" name="plus"></wa-icon>
-              ${msg('Add a device')}
-            </wa-button>
+            ${
+              // Absent, not disabled. A disabled button says "this is possible and you are
+              // doing it wrong"; on a project somebody may only read, neither half is true
+              // (#55). Labels and the PDF export stay: reading is what read access is for.
+              projectIsEditable()
+                ? html`
+                    <wa-button data-add-device href="#/devices/new" variant="brand">
+                      <wa-icon slot="start" name="plus"></wa-icon>
+                      ${msg('Add a device')}
+                    </wa-button>
+                  `
+                : ''
+            }
           </div>
         </div>
 

@@ -6,6 +6,7 @@ import {
   PROJECT_DATABASE_NAME,
   projectDatabase,
   removeLocalDatabases,
+  useProjectDatabase,
 } from '../../src/db/project-database.js'
 
 /** A device, with the fields the repository requires and nothing this test cares about. */
@@ -32,7 +33,7 @@ async function documentCount(name: string): Promise<number> {
 }
 
 afterEach(async () => {
-  await removeLocalDatabases().catch(() => undefined)
+  await removeLocalDatabases({ includeLocalCatalogue: true }).catch(() => undefined)
 })
 
 describe('removing everything this browser holds', () => {
@@ -41,9 +42,44 @@ describe('removing everything this browser holds', () => {
     await projectDatabase().devices.save(device('device:lamp', 'Kitchen lamp'))
     expect(await documentCount(PROJECT_DATABASE_NAME)).toBeGreaterThan(0)
 
-    await removeLocalDatabases()
+    await removeLocalDatabases({ includeLocalCatalogue: true })
 
     expect(await documentCount(PROJECT_DATABASE_NAME)).toBe(0)
+  })
+
+  it('keeps the local catalogue unless the reader asked for it to go', async () => {
+    // #55. The catalogue on this device predates accounts and holds whatever was recorded
+    // before signing in, so signing out of an unrelated account must not take it. The sign-out
+    // control asks; this is what the default answer means.
+    await projectDatabase().devices.save(device('device:hall', 'Hall light'))
+
+    await removeLocalDatabases()
+
+    expect(await documentCount(PROJECT_DATABASE_NAME)).toBeGreaterThan(0)
+  })
+
+  it('removes a replicated project database', async () => {
+    // #120 gave this browser a database per project the account can see, and nothing removed
+    // them - so signing out left every device of the previous user on a shared machine, which
+    // is the one thing signing out exists to prevent.
+    const replicated: string[] = []
+    await localProfileCache().writeProjects(
+      [
+        {
+          projectId: 'p1',
+          dbName: 'project_p1',
+          name: 'Musterstraße 12',
+          role: 'owner',
+        },
+      ],
+      '2026-08-31T09:00:00.000Z',
+    )
+
+    await removeLocalDatabases({}, async (name) => {
+      replicated.push(name)
+    })
+
+    expect(replicated).toContain('project_p1')
   })
 
   it('removes the cached profile too', async () => {
@@ -71,7 +107,7 @@ describe('removing everything this browser holds', () => {
     await untouched.put({ _id: 'device:left-behind' })
     await untouched.close()
 
-    await removeLocalDatabases()
+    await removeLocalDatabases({ includeLocalCatalogue: true })
 
     expect(await documentCount(PROJECT_DATABASE_NAME)).toBe(0)
   })
@@ -82,7 +118,7 @@ describe('removing everything this browser holds', () => {
     // is ordinary, so the memoised handles have to go with the data.
     await projectDatabase().devices.save(device('device:sensor', 'Hall sensor'))
 
-    await removeLocalDatabases()
+    await removeLocalDatabases({ includeLocalCatalogue: true })
 
     await expect(projectDatabase().devices.list()).resolves.toEqual([])
   })
@@ -96,8 +132,8 @@ describe('removing everything this browser holds', () => {
       throw new Error(`storage refused ${name}`)
     }
 
-    await expect(removeLocalDatabases(failing)).rejects.toThrow()
-    expect(attempted).toEqual([PROJECT_DATABASE_NAME, LOCAL_CACHE_DATABASE_NAME])
+    await expect(removeLocalDatabases({ includeLocalCatalogue: true }, failing)).rejects.toThrow()
+    expect(attempted).toEqual([LOCAL_CACHE_DATABASE_NAME, PROJECT_DATABASE_NAME])
   })
 
   it('reports a failure rather than returning quietly', async () => {
@@ -105,7 +141,7 @@ describe('removing everything this browser holds', () => {
     // told, and a silent success here is a sign-out that says it worked on a machine still
     // holding the data.
     await expect(
-      removeLocalDatabases(async () => {
+      removeLocalDatabases({}, async () => {
         throw new Error('storage refused')
       }),
     ).rejects.toThrow()
@@ -115,10 +151,44 @@ describe('removing everything this browser holds', () => {
     // Otherwise a retry works through a handle pointing at a database that may be half gone.
     await projectDatabase().devices.save(device('device:porch', 'Porch light'))
 
-    await removeLocalDatabases(async () => {
+    await removeLocalDatabases({ includeLocalCatalogue: true }, async () => {
       throw new Error('storage refused')
     }).catch(() => undefined)
 
     await expect(projectDatabase().devices.list()).resolves.toHaveLength(1)
+  })
+})
+
+describe('signing out when the cache cannot be read', () => {
+  it('still removes a database this session opened', async () => {
+    // Found by review. The replicated names come from the local cache, so a cache that will not
+    // read leaves the list empty - and a database this page has been replicating into all along
+    // would survive the sign-out, silently, on a shared machine. What this session opened is
+    // the half the cache cannot lose.
+    const destroyed: string[] = []
+
+    // Open one, the way a switch does, so it is in the memoised map.
+    useProjectDatabase('project_replicated', true)
+    projectDatabase()
+    useProjectDatabase(PROJECT_DATABASE_NAME, true)
+
+    await removeLocalDatabases({}, async (name) => {
+      destroyed.push(name)
+    })
+
+    expect(destroyed).toContain('project_replicated')
+  })
+
+  it('still keeps the local catalogue when it was not asked for', async () => {
+    // The snapshot must not smuggle `project_local` back in: it is opened by every page that
+    // shows a device, so it is always in the map.
+    const destroyed: string[] = []
+    projectDatabase()
+
+    await removeLocalDatabases({}, async (name) => {
+      destroyed.push(name)
+    })
+
+    expect(destroyed).not.toContain(PROJECT_DATABASE_NAME)
   })
 })
