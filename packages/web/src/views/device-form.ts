@@ -102,6 +102,7 @@ export abstract class DeviceFormView extends LitElement {
    * for no reason, and Lit says so in dev mode.
    */
   private resolved: ProjectRepositories | undefined
+  private projectGeneration = 0
   protected repos(): ProjectRepositories {
     this.resolved ??= this.repositories ?? projectDatabase()
     return this.resolved
@@ -120,6 +121,7 @@ export abstract class DeviceFormView extends LitElement {
    * deliberate act, and a device filed in the wrong building is a device nobody finds again.
    */
   protected onProjectChanged = (): void => {
+    this.projectGeneration++
     this.resolved = undefined
     this.rooms = []
     this.error = undefined
@@ -172,9 +174,12 @@ export abstract class DeviceFormView extends LitElement {
     readonly room?: Unsaved<RoomDocument>
     readonly device: Unsaved<DeviceDocument>
   }): Promise<boolean> {
+    const generation = this.projectGeneration
     try {
-      if (plan.room !== undefined) await this.repos().rooms.save(plan.room)
-      await this.repos().devices.save(plan.device)
+      const repositories = this.repos()
+      if (plan.room !== undefined) await repositories.rooms.save(plan.room)
+      if (generation !== this.projectGeneration) return false
+      await repositories.devices.save(plan.device)
       // Not observable today: a successful save always navigates away from the form, so
       // nothing renders this flag afterwards, and a mutation probe reports the line as a
       // survivor. It stays because it makes the flag a true statement about the last attempt
