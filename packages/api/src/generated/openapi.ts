@@ -358,6 +358,89 @@ export interface paths {
     patch?: never
     trace?: never
   }
+  '/projects/{projectId}': {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        projectId: string
+      }
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    /**
+     * Change a project's name, address or archived state
+     * @description A settings change, not a permission change. Requires `owner` or `manage` — the role
+     *     that may decide who has access may certainly correct a name, or put the project away.
+     *
+     *     All three fields are optional and independent, so a client may send any one alone.
+     *     `address` may be `null`, which removes it; that is spelled as a value rather than as a
+     *     missing field, so that a body which simply forgot the address does not erase one.
+     *     `archived` has no such spelling because it has no third state: absent leaves it alone,
+     *     and `true` or `false` sets it.
+     *
+     *     Answers 404 rather than 403 to a caller who is not a participant, for the reason the
+     *     member operations do: a 403 would confirm that a project with this id exists, which is
+     *     a fact about somebody else's home.
+     */
+    patch: {
+      parameters: {
+        query?: never
+        header?: never
+        path: {
+          projectId: string
+        }
+        cookie?: never
+      }
+      requestBody: {
+        content: {
+          'application/json': {
+            name?: string
+            address?: string | null
+            /**
+             * @description Put the project away, or bring it back. A state rather than an event, so
+             *     it can be undone — a project that could be archived and not unarchived
+             *     would be deleted with extra steps.
+             */
+            archived?: boolean
+          }
+        }
+      }
+      responses: {
+        /** @description The project as it now stands */
+        200: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/json': components['schemas']['ProjectSummary']
+          }
+        }
+        /** @description Nothing to change, or a name that is not a name */
+        400: {
+          headers: {
+            [name: string]: unknown
+          }
+          content?: never
+        }
+        401: components['responses']['Unauthorized']
+        /** @description Read or write access does not include changing settings */
+        403: {
+          headers: {
+            [name: string]: unknown
+          }
+          content?: never
+        }
+        404: components['responses']['NotFound']
+      }
+    }
+    trace?: never
+  }
   '/projects/{projectId}/members': {
     parameters: {
       query?: never
@@ -426,6 +509,7 @@ export interface paths {
           }
           content?: never
         }
+        400: components['responses']['BadRequest']
         403: components['responses']['Forbidden']
       }
     }
@@ -640,8 +724,33 @@ export interface components {
       /** @description CouchDB database to replicate, e.g. project_<uuid> */
       dbName: string
       name: string
+      /**
+       * @description The street address of the building. Optional, and absent rather than empty when
+       *     there is none.
+       *
+       *     Accepted by `POST /projects` since M5-1 and, until #128, silently discarded: the
+       *     length was checked and the value went no further. For a catalogue whose purpose is
+       *     finding a device in a building years later, this is not decoration.
+       */
+      address?: string
       role: components['schemas']['Role']
       owner: components['schemas']['Principal']
+      /**
+       * @description Whether the project has been put away (#55).
+       *
+       *     **Not a deletion.** An archived project keeps its database, its members and its
+       *     name, and an owner or manager can bring it back. What changes is what a client
+       *     does with it: stop replicating it, and stop offering it in the switcher.
+       *
+       *     Archived projects are still returned by `GET /projects`. Filtering them out here
+       *     would leave a client unable to show what it had put away and therefore unable to
+       *     unarchive it, which would make archiving a deletion after all.
+       *
+       *     Always present, even for projects created before this field existed: the registry
+       *     view emits `doc.archived === true`, so an absent field reads as `false` rather
+       *     than as null. No migration of stored pointers was needed or performed.
+       */
+      archived: boolean
     }
     Member: {
       sub: string

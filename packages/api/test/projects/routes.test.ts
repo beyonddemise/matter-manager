@@ -95,6 +95,7 @@ describe('creating a project', () => {
       name: 'Musterstraße 12',
       role: 'owner',
       owner: { ownerType: 'user', ownerId: OWNER },
+      archived: false,
     })
   })
 
@@ -312,8 +313,67 @@ describe('listing projects', () => {
         name: 'Musterstraße 12',
         role: 'owner',
         owner: { ownerType: 'user', ownerId: OWNER },
+        archived: false,
       },
     ])
+  })
+
+  it('lists an archived project, so a client can bring it back', async () => {
+    // Not filtered here. A client that could not see what it had put away would have no way to
+    // unarchive it, which would make archiving a deletion - and #55 says explicitly that it is
+    // not one. Hiding it is the client's job, and it needs the flag to do it.
+    const { app: built, couch: fake } = server()
+    fake.rows = [
+      {
+        value: {
+          projectId: PROJECT_ID,
+          dbName: DATABASE,
+          projectName: 'Musterstraße 12',
+          address: null,
+          role: 'owner',
+          ownerId: OWNER,
+          archived: true,
+        },
+      },
+    ]
+
+    const response = await built.inject({
+      method: 'GET',
+      url: '/projects',
+      headers: { authorization: `Bearer ${tokenFor(OWNER)}` },
+    })
+
+    expect(JSON.parse(response.body)).toEqual([
+      expect.objectContaining({ projectId: PROJECT_ID, archived: true }),
+    ])
+  })
+
+  it('reports a pointer written before archiving existed as not archived', async () => {
+    // The absence of the field is the state of every project created before #55. The map
+    // function emits `doc.archived === true`, so it arrives as a real `false` rather than as a
+    // null the client would have to interpret - which is what makes this change need no
+    // migration over the registry.
+    const { app: built, couch: fake } = server()
+    fake.rows = [
+      {
+        value: {
+          projectId: PROJECT_ID,
+          dbName: DATABASE,
+          projectName: 'Musterstraße 12',
+          address: null,
+          role: 'owner',
+          ownerId: OWNER,
+        },
+      },
+    ]
+
+    const response = await built.inject({
+      method: 'GET',
+      url: '/projects',
+      headers: { authorization: `Bearer ${tokenFor(OWNER)}` },
+    })
+
+    expect(JSON.parse(response.body)[0]).toMatchObject({ archived: false })
   })
 
   it('carries an address when the project has one', async () => {

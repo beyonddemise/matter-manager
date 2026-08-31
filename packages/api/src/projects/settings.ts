@@ -32,6 +32,14 @@ export interface SettingsChange {
    * are indistinguishable once "missing" is allowed to mean "remove".
    */
   readonly address?: string | null
+  /**
+   * Whether to put the project away, or bring it back.
+   *
+   * A state rather than an event, so it can be undone. A project that could be archived and not
+   * unarchived would be deleted with extra steps, and #55 says explicitly that it is not
+   * deleted.
+   */
+  readonly archived?: boolean
 }
 
 /** A settings change that will not happen, carrying the status the route should answer with. */
@@ -106,7 +114,7 @@ export async function updateProjectSettings(
   caller: string,
   change: SettingsChange,
 ): Promise<ProjectSummary> {
-  if (change.name === undefined && change.address === undefined) {
+  if (change.name === undefined && change.address === undefined && change.archived === undefined) {
     // A client bug rather than a request. Writing a revision for it would replicate a document
     // to every device to announce that nothing happened.
     throw new SettingsRefused(400, 'Nothing to change.')
@@ -126,6 +134,14 @@ export async function updateProjectSettings(
   const name = change.name === undefined ? pointer.projectName : readName(change.name)
   const address = change.address === undefined ? pointer.address : readAddress(change.address)
 
+  // Checked here as well as at the route, because this function is the one with the invariant.
+  // A route is one caller; the next one would have to remember, and forgetting would write a
+  // string into a field every reader treats as a boolean.
+  if (change.archived !== undefined && typeof change.archived !== 'boolean') {
+    throw new SettingsRefused(400, 'Archiving a project is true or false.')
+  }
+  const archived = change.archived ?? pointer.archived ?? false
+
   // Spread from the pointer that was read, never rebuilt from arguments. `participants` is in
   // this document, and a rename that reconstructed it would drop every member of the project
   // with nothing to show for it.
@@ -133,6 +149,7 @@ export async function updateProjectSettings(
   await writePointer(deps.couch, {
     ...rest,
     projectName: name,
+    archived,
     // Absent rather than `undefined`: an explicit `address: undefined` serialises to a key
     // CouchDB stores as null, which reads back as a value where there should be none.
     ...(address === undefined ? {} : { address }),
@@ -145,6 +162,7 @@ export async function updateProjectSettings(
     // The caller's own role, not the owner's: it says what *they* may do next.
     role,
     owner: ownerOf(pointer),
+    archived,
     ...(address === undefined ? {} : { address }),
   }
 }

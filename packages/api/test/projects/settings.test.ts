@@ -266,3 +266,107 @@ describe('the summary it answers with', () => {
     })
   })
 })
+
+describe('archiving a project', () => {
+  it('records it, and says so in the summary', async () => {
+    const { deps, pointerNow } = project()
+
+    const summary = await updateProjectSettings(deps, PROJECT_ID, ADA, { archived: true })
+
+    expect(summary.archived).toBe(true)
+    expect(pointerNow().archived).toBe(true)
+  })
+
+  it('does not delete anything', async () => {
+    // The whole distinction #55 draws: "it stops syncing and is hidden, but is not deleted".
+    // The project database, the members and the name are all exactly where they were.
+    const { deps, pointerNow } = project([
+      { role: 'owner', userid: ADA },
+      { role: 'write', userid: GRACE },
+    ])
+
+    await updateProjectSettings(deps, PROJECT_ID, ADA, { archived: true })
+
+    const pointer = pointerNow()
+    expect(pointer.dbName).toBe(DATABASE)
+    expect(pointer.projectName).toBe('Musterstraße 12')
+    expect(pointer.participants).toHaveLength(2)
+  })
+
+  it('can be undone', async () => {
+    // Archiving is a state, not an event. A project that cannot be brought back is deleted
+    // with extra steps, and the scenario says explicitly that it is not.
+    const { deps, pointerNow } = project()
+
+    await updateProjectSettings(deps, PROJECT_ID, ADA, { archived: true })
+    const summary = await updateProjectSettings(deps, PROJECT_ID, ADA, { archived: false })
+
+    expect(summary.archived).toBe(false)
+    expect(pointerNow().archived).toBe(false)
+  })
+
+  it('leaves the name and address alone', async () => {
+    const { deps } = project(OWNER_ONLY, 'Musterstraße 12, 10115 Berlin')
+
+    const summary = await updateProjectSettings(deps, PROJECT_ID, ADA, { archived: true })
+
+    expect(summary.name).toBe('Musterstraße 12')
+    expect(summary.address).toBe('Musterstraße 12, 10115 Berlin')
+  })
+
+  it('can be set alongside a rename', async () => {
+    const { deps, pointerNow } = project()
+
+    const summary = await updateProjectSettings(deps, PROJECT_ID, ADA, {
+      name: 'Altbau',
+      archived: true,
+    })
+
+    expect(summary.name).toBe('Altbau')
+    expect(summary.archived).toBe(true)
+    expect(pointerNow().projectName).toBe('Altbau')
+  })
+
+  it('counts as something to change', async () => {
+    // `archived` alone must not be read as an empty body. The guard that refuses "nothing to
+    // change" listed the fields it knew about, and a new field not added to it would be
+    // rejected as a client bug - which is exactly the shape of drift this codebase keeps
+    // finding (L28).
+    const { deps } = project()
+
+    await expect(
+      updateProjectSettings(deps, PROJECT_ID, ADA, { archived: true }),
+    ).resolves.toBeDefined()
+  })
+
+  it('is refused for somebody who may only write', async () => {
+    // Same authority as the other settings: hiding a project from everyone who shares it is
+    // not a thing a contributor does.
+    const { deps } = project([
+      { role: 'owner', userid: ADA },
+      { role: 'write', userid: GRACE },
+    ])
+
+    await expect(
+      updateProjectSettings(deps, PROJECT_ID, GRACE, { archived: true }),
+    ).rejects.toBeInstanceOf(SettingsRefused)
+  })
+
+  it('is refused for somebody who is not a member at all', async () => {
+    const { deps } = project()
+
+    await expect(
+      updateProjectSettings(deps, PROJECT_ID, STRANGER, { archived: true }),
+    ).rejects.toMatchObject({ status: 404 })
+  })
+
+  it('refuses anything that is not a boolean', async () => {
+    const { deps } = project()
+
+    await expect(
+      updateProjectSettings(deps, PROJECT_ID, ADA, {
+        archived: 'yes' as unknown as boolean,
+      }),
+    ).rejects.toBeInstanceOf(SettingsRefused)
+  })
+})

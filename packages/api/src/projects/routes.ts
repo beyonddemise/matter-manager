@@ -206,6 +206,10 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDepende
             ? { address: row.address }
             : {}),
           role: row.role,
+          // Every project is listed, archived or not. Filtering here would leave a client no
+          // way to show what it has put away and therefore no way to bring it back - which
+          // would make archiving a deletion, and #55 says it is not one.
+          archived: row.archived === true,
           owner: { ownerType: 'user' as const, ownerId: row.ownerId },
         },
       ]
@@ -245,7 +249,7 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDepende
     if (sub === undefined) return reply.code(401).send({ title: 'Not signed in', status: 401 })
 
     const { projectId } = request.params as { projectId: string }
-    const body = (request.body ?? {}) as { name?: unknown; address?: unknown }
+    const body = (request.body ?? {}) as { name?: unknown; address?: unknown; archived?: unknown }
 
     // Read as three states, not two: absent leaves the field alone, `null` clears it, and a
     // string sets it. Collapsing absent and null would make a body that forgot the address
@@ -259,10 +263,15 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDepende
         .send({ title: 'An address is text, or null to remove it.', status: 400 })
     }
 
+    if (body.archived !== undefined && typeof body.archived !== 'boolean') {
+      return reply.code(400).send({ title: 'Archiving a project is true or false.', status: 400 })
+    }
+
     try {
       const summary = await updateProjectSettings({ couch: deps.couch }, projectId, sub, {
         ...(body.name === undefined ? {} : { name: body.name }),
         ...(body.address === undefined ? {} : { address: body.address }),
+        ...(body.archived === undefined ? {} : { archived: body.archived }),
       })
       return reply.code(200).send(summary)
     } catch (error) {

@@ -58,6 +58,13 @@ export interface ProjectSummary {
   readonly address?: string
   readonly role: Participant['role']
   readonly owner: Owner
+  /**
+   * Whether the project has been archived. Always present, unlike the stored field.
+   *
+   * The contract answers the question rather than leaving the client to read an absence, so a
+   * client cannot accidentally treat "not stated" as "archived".
+   */
+  readonly archived: boolean
 }
 
 /**
@@ -188,6 +195,9 @@ export async function provisionProject(
     dbName,
     name,
     ...(address === undefined ? {} : { address }),
+    // A project nobody has archived yet. Stated rather than left absent, because the contract
+    // answers the question and a client should never have to read an absence as a `false`.
+    archived: false,
     role: 'owner',
     owner: { ownerType: 'user', ownerId: owner },
   }
