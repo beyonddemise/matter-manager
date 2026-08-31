@@ -125,9 +125,7 @@ function isAccessToken(body: unknown): body is AccessTokenResponse {
   // so a NaN or an Infinity there is an expiry that either never passes or has already passed,
   // and both are worse than having no token at all.
   return (
-    typeof expiresIn === 'number' &&
-    Number.isFinite(expiresIn) &&
-    expiresIn > EXPIRY_MARGIN_SECONDS
+    typeof expiresIn === 'number' && Number.isFinite(expiresIn) && expiresIn > EXPIRY_MARGIN_SECONDS
   )
 }
 
