@@ -84,6 +84,24 @@ describe('finding out whether this browser has a session', () => {
     expect(await readSessionState(fetchImpl as unknown as typeof fetch)).toBe('signed-out')
   })
 
+  it.each([
+    ['an empty body', {}],
+    ['no token at all', { expiresIn: 3600 }],
+    ['an empty token', { accessToken: '', expiresIn: 3600 }],
+    ['no expiry', { accessToken: 'a.b.c' }],
+    ['an expiry that is not a number', { accessToken: 'a.b.c', expiresIn: 'soon' }],
+    ['an expiry of NaN', { accessToken: 'a.b.c', expiresIn: Number.NaN }],
+    ['an expiry already past', { accessToken: 'a.b.c', expiresIn: 0 }],
+  ])('does not believe a 200 carrying %s', async (_name, body) => {
+    // Found by review, and the failure it names is the one the code's own comment claimed to
+    // prevent. Guarding only against JSON that will not parse lets `{}` through: the token is
+    // stored as `undefined` with an expiry of `NaN`, so `accessToken()` reports none while the
+    // session reports `signed-in` - and every request that follows blames the user's session.
+    const fetchImpl = (async () => response(200, body)) as unknown as typeof fetch
+    expect(await readSessionState(fetchImpl)).toBe('signed-out')
+    expect(accessToken()).toBeUndefined()
+  })
+
   it('does not believe a 200 that carries no token', async () => {
     // A status code is not a session. Reporting `signed-in` here would leave the application
     // making requests with no token and blaming the user's session for the 401s that follow.

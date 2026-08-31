@@ -79,25 +79,47 @@ export async function readSessionState(fetchImpl: typeof fetch = fetch): Promise
   if (isSessionEnded(response.status)) return 'signed-out'
   if (!response.ok) return 'signed-out'
 
+  let body: unknown
   try {
-    const token = (await response.json()) as Partial<AccessTokenResponse>
-    if (
-      typeof token.accessToken !== 'string' ||
-      token.accessToken.length === 0 ||
-      typeof token.expiresIn !== 'number' ||
-      !Number.isFinite(token.expiresIn) ||
-      token.expiresIn <= 0
-    ) {
-      return 'signed-out'
-    }
-    rememberAccessToken({ accessToken: token.accessToken, expiresIn: token.expiresIn })
-    return 'signed-in'
+    body = await response.json()
   } catch {
-    // A 200 whose body is not a token is a server fault, not a session. Reporting `signed-in`
-    // on the strength of a status code would leave the application making requests with no
-    // token and blaming the user's session for the 401s that follow.
     return 'signed-out'
   }
+
+  // A 200 whose body is not a token is a server fault, not a session. Reporting `signed-in` on
+  // the strength of a status code would leave the application making requests with no token and
+  // blaming the user's session for the 401s that follow.
+  //
+  // Checked by shape, not merely by parsing. The first version guarded only against JSON that
+  // would not parse, which `{}` does perfectly well - and `rememberAccessToken({})` then stores
+  // an undefined token with an expiry of `NaN`, so `accessToken()` reports none while this
+  // function reports `signed-in`. The comment above described that guarantee; the code made a
+  // weaker one, and the test picked the case the code happened to cover.
+  if (!isAccessToken(body)) return 'signed-out'
+
+  rememberAccessToken(body)
+  return 'signed-in'
+}
+
+/**
+ * Whether a parsed response really is an access token.
+ *
+ * Here rather than in `tokens.ts` because this is the trust boundary: `tokens.ts` holds a token
+ * for the rest of the application and is entitled to assume it was given one. Something has to
+ * make that true, and the place where a response becomes a value is it.
+ */
+function isAccessToken(body: unknown): body is AccessTokenResponse {
+  if (typeof body !== 'object' || body === null) return false
+  const { accessToken: token, expiresIn } = body as Partial<AccessTokenResponse>
+
+  // An empty token is not a token: it would be sent as `Authorization: Bearer `, refused, and
+  // reported as an expiry - sending the user round a sign-in loop that cannot help them.
+  if (typeof token !== 'string' || token === '') return false
+
+  // `Number.isFinite` rather than a type check alone. `expiresIn` becomes `now() + expiresIn`,
+  // so a NaN or an Infinity there is an expiry that either never passes or has already passed,
+  // and both are worse than having no token at all.
+  return typeof expiresIn === 'number' && Number.isFinite(expiresIn) && expiresIn > 0
 }
 
 /**
