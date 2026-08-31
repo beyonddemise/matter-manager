@@ -280,8 +280,13 @@ export class SettingsView extends LitElement {
         <p>
           ${
             this.moved?.localCleared === false
-              ? msg('The devices were moved into the project, but they are still on this device. Try again to finish removing them from this device.', { id: 'migration-incomplete' })
-              : msg('These devices are stored only in this browser. Moving them into a project shares them with everyone who has access to it, and keeps them on your other devices.')
+              ? msg(
+                  'The devices were moved into the project, but they are still on this device. Try again to finish removing them from this device.',
+                  { id: 'migration-incomplete' },
+                )
+              : msg(
+                  'These devices are stored only in this browser. Moving them into a project shares them with everyone who has access to it, and keeps them on your other devices.',
+                )
           }
         </p>
         <wa-select data-move-target label=${msg('Move them into')} value=${this.movable[0]?.projectId ?? ''}>

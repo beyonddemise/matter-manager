@@ -287,7 +287,10 @@ describe('moving the catalogue on this device into a project', () => {
       })
       ;(element.querySelector('[data-move]') as HTMLElement).click()
       await waitUntil(
-        () => element.querySelector('[data-move-local]')?.textContent.includes('still on this device') === true,
+        () =>
+          element
+            .querySelector('[data-move-local]')
+            ?.textContent.includes('still on this device') === true,
         'no incomplete-cleanup result',
       )
 
