@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { EXCLUDED_THEMES, PALETTES, THEMES } from '../../src/theme.js'
-import { contrastRatio, PAIRS, type Pair, resolvePair } from './support/contrast.js'
+import { contrastRatio, PAIRS, type Pair, resolvePair, WA_THEMES } from './support/contrast.js'
 
 /**
  * #70 warned that `premium` rendered a pale brand button with a low-contrast label, and `matter`
@@ -84,6 +84,7 @@ describe('the themes withheld for contrast', () => {
     // An excluded theme that has been removed upstream would silently make the list longer than
     // the problem.
     const known = new Set([...THEMES, ...Object.keys(EXCLUDED_THEMES)])
+    expect([...known].sort()).toEqual([...WA_THEMES].sort())
     expect(known.size).toBe(THEMES.length + Object.keys(EXCLUDED_THEMES).length)
   })
 })

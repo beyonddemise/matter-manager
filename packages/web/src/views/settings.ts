@@ -65,6 +65,8 @@ export class SettingsView extends LitElement {
   /** Undefined until the first read resolves; the section renders nothing until then. */
   declare storage: StorageReport | undefined
 
+  private lookRequest = 0
+
   constructor() {
     super()
     // Without this the view keeps its English labels after the user picks German - from the
@@ -84,10 +86,14 @@ export class SettingsView extends LitElement {
    * on the one screen where somebody is looking at how it is styled.
    */
   private async changeLook(theme: Theme, palette: Palette): Promise<void> {
-    await loadLook(theme, palette)
-    applyLook(document.documentElement, theme, palette)
+    const request = ++this.lookRequest
     this.theme = theme
     this.palette = palette
+
+    await loadLook(theme, palette)
+    if (request !== this.lookRequest) return
+
+    applyLook(document.documentElement, theme, palette)
   }
 
   private async onThemeChange(event: Event): Promise<void> {
