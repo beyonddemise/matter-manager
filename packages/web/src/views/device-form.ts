@@ -107,11 +107,23 @@ export abstract class DeviceFormView extends LitElement {
     return this.resolved
   }
 
-  /** Re-reads the rooms when the reader moves to another project (#55). */
+  /**
+   * Leaves the form when the reader moves to another project (#55).
+   *
+   * **Not a re-read.** Clearing only the repositories would leave every control holding what
+   * was typed under the old project, and the next save would write it into the new one — an add
+   * form creating a project-B device from input entered under project A, and an edit form
+   * saving project A's device into project B's database. Found by review; the first version of
+   * this handler did exactly that.
+   *
+   * The half-typed device is lost, which is the lesser harm: switching project mid-form is a
+   * deliberate act, and a device filed in the wrong building is a device nobody finds again.
+   */
   protected onProjectChanged = (): void => {
     this.resolved = undefined
     this.rooms = []
-    void this.loadRooms()
+    this.error = undefined
+    window.location.hash = '#/'
   }
 
   override connectedCallback(): void {

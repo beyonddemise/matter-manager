@@ -193,3 +193,80 @@ describe('editing controls on a project somebody may only read', () => {
     expect(element.querySelector('[data-export]')).not.toBeNull()
   })
 })
+
+describe('what a project switch must not leave behind', () => {
+  /**
+   * All five of these came from one review, and all five are the same mistake: the first
+   * version of the switch cleared the repositories and nothing else, so every piece of state a
+   * view was holding stayed pointed at the project it came from.
+   */
+
+  it('forgets a device loaded under the previous project', async () => {
+    // The worst of them. The route's uuid does not change on a switch, so nothing else clears
+    // the loaded device - and a delete confirmation opened under project A would still hold
+    // project A's document when it fired against project B's repository. Two projects can hold
+    // the same `_id` and `_rev`, which is how that becomes a deletion in the wrong building.
+    await import('../src/views/device.js')
+    const element = (await fixture(html`<device-view uuid="abc"></device-view>`)) as HTMLElement & {
+      device?: unknown
+      confirmingDelete?: boolean
+      updateComplete: Promise<unknown>
+    }
+    await element.updateComplete
+
+    element.device = { _id: 'device:abc', _rev: '1-a', name: 'Kitchen lamp' }
+    element.confirmingDelete = true
+    await element.updateComplete
+
+    useProjectDatabase('project_elsewhere', true)
+    await element.updateComplete
+
+    expect(element.device).toBeUndefined()
+    expect(element.confirmingDelete).toBe(false)
+  })
+
+  it('leaves a half-filled form rather than saving it into the new project', async () => {
+    // An add form filled under project A and saved after switching to B would create the device
+    // in B. The typed input is lost, which is the lesser harm: switching mid-form is deliberate,
+    // and a device filed in the wrong building is a device nobody finds again.
+    await import('../src/views/add-device.js')
+    const element = (await fixture(html`<add-device-view></add-device-view>`)) as HTMLElement & {
+      updateComplete: Promise<unknown>
+    }
+    await element.updateComplete
+
+    window.location.hash = '#/devices/new'
+    useProjectDatabase('project_elsewhere', true)
+    await element.updateComplete
+
+    expect(window.location.hash).toBe('#/')
+  })
+
+  it('clears the list rather than showing the other project’s devices', async () => {
+    await import('../src/views/device-list.js')
+    const element = (await fixture(html`<device-list-view></device-list-view>`)) as HTMLElement & {
+      devices?: unknown[]
+      updateComplete: Promise<unknown>
+    }
+    await element.updateComplete
+
+    element.devices = [{ _id: 'device:one', name: 'Hall light' }]
+    await element.updateComplete
+
+    useProjectDatabase('project_elsewhere', true)
+    await element.updateComplete
+
+    expect(element.devices).toEqual([])
+  })
+
+  it('corrects the stored choice, not only the database', async () => {
+    // Opening the local catalogue while still holding an unavailable id leaves the switcher
+    // bound to a value none of its options carry - so it shows nothing selected, and does so
+    // again on every later load, because the id that caused it is still in storage.
+    localStorage.setItem(CURRENT_PROJECT_KEY, 'p9')
+    const element = await shell([project()])
+    await waitUntil(() => element.querySelector('[data-project-switcher]') !== null, 'no switcher')
+
+    expect(localStorage.getItem(CURRENT_PROJECT_KEY)).toBe(LOCAL_PROJECT_ID)
+  })
+})

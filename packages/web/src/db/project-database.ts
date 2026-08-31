@@ -175,6 +175,11 @@ export async function removeLocalDatabases(
   // Taken from the cache rather than by enumerating IndexedDB: `indexedDB.databases()` is not
   // in Firefox before 126 and this application supports it, and the cache is the record of what
   // this browser actually replicated.
+  // What this session actually opened, which is the half the cache cannot lose. Taken *first*:
+  // if the cache read below fails, `replicated` is empty, and a database this page has been
+  // replicating into all along would survive the sign-out - silently, on a shared machine.
+  const alsoOpened = [...opened.keys()].filter((name) => name !== PROJECT_DATABASE_NAME)
+
   let replicated: readonly string[] = []
   try {
     replicated = (await localProfileCache().readProjects()).map((project) => project.dbName)
@@ -191,6 +196,7 @@ export async function removeLocalDatabases(
     ...new Set([
       ...ACCOUNT_DATABASE_NAMES,
       ...replicated,
+      ...alsoOpened,
       ...(options.includeLocalCatalogue === true ? [PROJECT_DATABASE_NAME] : []),
     ]),
   ]

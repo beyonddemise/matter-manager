@@ -218,6 +218,14 @@ export class DeviceView extends LitElement {
    */
   private onProjectChanged = (): void => {
     this.resolved = undefined
+    // **Everything the old project put here goes first.** The route's uuid does not change on a
+    // switch, so nothing else clears `device` — and a delete confirmation opened under project
+    // A would still be holding project A's document when it fired against project B's
+    // repository. Two projects can hold the same `_id` and `_rev`, which is how that becomes a
+    // deletion in the wrong building rather than a harmless 404. Found by review.
+    this.device = undefined
+    this.confirmingDelete = false
+    this.remarkError = undefined
     void this.load()
   }
 

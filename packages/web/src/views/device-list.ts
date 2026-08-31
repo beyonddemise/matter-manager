@@ -158,8 +158,21 @@ export class DeviceListView extends LitElement {
    */
   private onProjectChanged = (): void => {
     this.resolved = undefined
+    // Cleared, not left showing the old project's devices while the new ones arrive. A list
+    // that keeps them is a list showing another building's contents under this building's name.
+    this.devices = []
+    this.rooms = []
     void this.load()
   }
+
+  /**
+   * Counts loads, so one from the previous project cannot land in this one.
+   *
+   * A switch starts a second `load` while the first is still reading, and the first can finish
+   * last — leaving project A's devices on screen with project B selected. The same guard
+   * `theme.ts` and `app-shell.ts` use, for the same reason.
+   */
+  private loadGeneration = 0
 
   override connectedCallback(): void {
     super.connectedCallback()
@@ -172,6 +185,7 @@ export class DeviceListView extends LitElement {
   }
 
   private async load(): Promise<void> {
+    const generation = ++this.loadGeneration
     const repositories = this.repos()
 
     try {
@@ -179,6 +193,10 @@ export class DeviceListView extends LitElement {
         repositories.devices.list(),
         repositories.rooms.list(),
       ])
+      // A read started under the previous project can finish after the new one has loaded, and
+      // assigning it here would put project A's devices on screen with project B selected.
+      if (generation !== this.loadGeneration) return
+
       this.devices = devices
       this.rooms = rooms
       this.loaded = true

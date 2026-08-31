@@ -6,6 +6,7 @@ import {
   PROJECT_DATABASE_NAME,
   projectDatabase,
   removeLocalDatabases,
+  useProjectDatabase,
 } from '../../src/db/project-database.js'
 
 /** A device, with the fields the repository requires and nothing this test cares about. */
@@ -155,5 +156,39 @@ describe('removing everything this browser holds', () => {
     }).catch(() => undefined)
 
     await expect(projectDatabase().devices.list()).resolves.toHaveLength(1)
+  })
+})
+
+describe('signing out when the cache cannot be read', () => {
+  it('still removes a database this session opened', async () => {
+    // Found by review. The replicated names come from the local cache, so a cache that will not
+    // read leaves the list empty - and a database this page has been replicating into all along
+    // would survive the sign-out, silently, on a shared machine. What this session opened is
+    // the half the cache cannot lose.
+    const destroyed: string[] = []
+
+    // Open one, the way a switch does, so it is in the memoised map.
+    useProjectDatabase('project_replicated', true)
+    projectDatabase()
+    useProjectDatabase(PROJECT_DATABASE_NAME, true)
+
+    await removeLocalDatabases({}, async (name) => {
+      destroyed.push(name)
+    })
+
+    expect(destroyed).toContain('project_replicated')
+  })
+
+  it('still keeps the local catalogue when it was not asked for', async () => {
+    // The snapshot must not smuggle `project_local` back in: it is opened by every page that
+    // shows a device, so it is always in the map.
+    const destroyed: string[] = []
+    projectDatabase()
+
+    await removeLocalDatabases({}, async (name) => {
+      destroyed.push(name)
+    })
+
+    expect(destroyed).not.toContain(PROJECT_DATABASE_NAME)
   })
 })

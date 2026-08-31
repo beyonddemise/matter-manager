@@ -409,8 +409,17 @@ export class AppShell extends LitElement {
 
     this.offered = switchableProjects(mine, msg('On this device'))
     // Re-resolved against what is actually on offer, because the stored choice may name a
-    // project that has since been archived or whose access has gone. `currentDatabaseName`
-    // falls back to the catalogue that is definitely here rather than to nothing.
+    // project that has since been archived or whose access has gone.
+    //
+    // The *choice* is corrected too, not only the database. Opening the local catalogue while
+    // still holding the unavailable id would leave the switcher bound to a value none of its
+    // options carry - so it would show nothing selected, and would do so again on every later
+    // load, because the id that caused it is still in storage.
+    if (!this.offered.some((project) => project.projectId === this.currentProjectId)) {
+      this.currentProjectId = LOCAL_PROJECT_ID
+      writeCurrentProjectId(() => localStorage, LOCAL_PROJECT_ID)
+    }
+
     useProjectDatabase(
       currentDatabaseName(this.offered, this.currentProjectId),
       canEdit(this.offered, this.currentProjectId),
