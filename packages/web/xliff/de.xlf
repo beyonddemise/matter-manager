@@ -570,6 +570,10 @@
   <source>The devices were moved into the project.</source>
   <target>Die Geräte wurden in das Projekt verschoben.</target>
 </trans-unit>
+<trans-unit id="migration-incomplete">
+  <source>The devices were moved into the project, but they are still on this device. Try again to finish removing them from this device.</source>
+  <target>Die Geräte wurden in das Projekt verschoben, befinden sich aber weiterhin auf diesem Gerät. Versuchen Sie es erneut, um sie vollständig von diesem Gerät zu entfernen.</target>
+</trans-unit>
 <trans-unit id="s53d9e1fa72cf3752">
   <source>These devices are stored only in this browser. Moving them into a project shares them with everyone who has access to it, and keeps them on your other devices.</source>
   <target>Diese Geräte sind nur in diesem Browser gespeichert. Wenn Sie sie in ein Projekt verschieben, sind sie für alle sichtbar, die Zugriff darauf haben, und bleiben auch auf Ihren anderen Geräten erhalten.</target>

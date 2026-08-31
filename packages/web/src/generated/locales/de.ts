@@ -149,6 +149,7 @@
 'sf0b5a77a7af7527b': `Ein Gerät braucht einen Raum. Tippen Sie einen Namen ein, um einen anzulegen, oder wählen Sie einen vorhandenen Raum.`,
 'sf0ef7644098b8a63': `Endgültig löschen`,
 'sf4c4e575fe36b271': `Die Geräte wurden in das Projekt verschoben.`,
+'migration-incomplete': `Die Geräte wurden in das Projekt verschoben, befinden sich aber weiterhin auf diesem Gerät. Versuchen Sie es erneut, um sie vollständig von diesem Gerät zu entfernen.`,
 'sf62138b53ab5a555': `Speicher auf diesem Gerät`,
 'sf78c048617264a07': `Diese Seite hat keine Berechtigung, eine Kamera zu verwenden. Erlauben Sie den Kamerazugriff für diese Seite in Ihrem Browser, oder geben Sie den Code ein.`,
 'sf8113792b44d84dc': `Ein Gerät braucht einen Namen; darüber finden Sie es später wieder.`,
