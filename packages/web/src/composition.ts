@@ -28,7 +28,11 @@ import {
   type SessionState,
   signOut,
 } from './session.js'
-import { forgetTokens, rememberAccessToken } from './tokens.js'
+import {
+  forgetTokens,
+  rememberAccessToken,
+  type AccessTokenResponse,
+} from './tokens.js'
 
 /** The API, behind the application's own origin. See the module note. */
 export const API_BASE = '/api'
@@ -80,7 +84,17 @@ export async function readSessionState(fetchImpl: typeof fetch = fetch): Promise
   if (!response.ok) return 'signed-out'
 
   try {
-    rememberAccessToken(await response.json())
+    const token = (await response.json()) as Partial<AccessTokenResponse>
+    if (
+      typeof token.accessToken !== 'string' ||
+      token.accessToken.length === 0 ||
+      typeof token.expiresIn !== 'number' ||
+      !Number.isFinite(token.expiresIn) ||
+      token.expiresIn <= 0
+    ) {
+      return 'signed-out'
+    }
+    rememberAccessToken({ accessToken: token.accessToken, expiresIn: token.expiresIn })
     return 'signed-in'
   } catch {
     // A 200 whose body is not a token is a server fault, not a session. Reporting `signed-in`

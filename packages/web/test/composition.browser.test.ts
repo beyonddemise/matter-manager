@@ -87,6 +87,12 @@ describe('finding out whether this browser has a session', () => {
   it('does not believe a 200 that carries no token', async () => {
     // A status code is not a session. Reporting `signed-in` here would leave the application
     // making requests with no token and blaming the user's session for the 401s that follow.
+    const fetchImpl = vi.fn(async () => response(200, {}))
+    expect(await readSessionState(fetchImpl as unknown as typeof fetch)).toBe('signed-out')
+    expect(accessToken()).toBeUndefined()
+  })
+
+  it('does not believe a 200 whose body is not JSON', async () => {
     const fetchImpl = vi.fn(async () => new Response('not json', { status: 200 }))
     expect(await readSessionState(fetchImpl as unknown as typeof fetch)).toBe('signed-out')
     expect(accessToken()).toBeUndefined()
