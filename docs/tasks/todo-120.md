@@ -1,6 +1,6 @@
 # todo-120 — Seven web modules are written, tested, and never imported
 
-Closes #120 in three parts. **Parts one and two are done.**
+Closes #120 in three parts. **All three are done.**
 
 ## Why three parts
 
@@ -143,3 +143,57 @@ also the reason nothing here can claim the round trip works.
 Everything on either side of that redirect is tested: what the application sends, what it does
 with each answer, and what it shows for each state. The redirect itself is a claim nobody has
 checked, and saying so is the point of writing it down.
+
+---
+
+# Part three — projects, replication, and the check that closes it
+
+## Wired means used, not constructed
+
+The temptation in this part was to import the remaining five modules into `composition.ts` and
+call the job done. That would have reproduced #120 one level up: a composition root holding
+things nothing calls is an orphan with a nicer name, and the reachability check below would have
+passed while the application still did nothing with them.
+
+So each is reached by something that has an effect:
+
+| Module | What uses it |
+| --- | --- |
+| `profile.ts` | the locale follows the profile, so a preference set on a phone reaches a laptop |
+| `projects.ts` | the account's projects are listed when a session is found |
+| `sync/manager.ts`, `sync/replication.ts`, `sync/remote.ts` | those projects replicate, and the header says what replication is doing |
+
+## The summary shows the worst state, and nothing when idle
+
+A summary saying everything is through while one project cannot reach the server would be
+reassuring and wrong — the reader's question is "is everything through?", not "is anything?".
+
+And nothing at all when every project is `idle`. The steady state is everything being fine, and a
+badge that is always present says nothing when it matters. Same reasoning as the offline tag it
+sits beside.
+
+`offline` is deliberately not an error. The local database is complete and usable; replication
+resuming later is exactly what that state means.
+
+## Replication stops before the sign-out, not after
+
+It holds an access token and a live connection to a database the browser is about to be told it
+may not read. There is a test that asserts the ordering rather than merely that both happen.
+
+## The check that would have caught this
+
+`scripts/check-module-graph.mjs` walks the import graph from `main.ts` and reports what it never
+arrives at. In CI and in `npm run verify`.
+
+**A graph walk rather than a grep**, because reachability is not local. A grep for a module's
+name finds its own tests, its own documentation, and the comment explaining why it exists — and
+finds an importer that is itself unreachable. That last one is the mechanism that hid these
+seven: `db/project-database.ts` mentions `accessToken`, which made `tokens.ts` look used.
+
+Dynamic imports count, and must: the QR fallback, the locale catalogues and every theme are
+reached that way on purpose, and treating them as unreachable would make the check fire on the
+code most deliberately written.
+
+Watched failing on a fixture where an orphan imports another orphan, which is the case that
+matters and the one a simpler check would miss. Both are reported, by name — a count is not
+actionable, because the answer differs per module: wire this one, delete that one.

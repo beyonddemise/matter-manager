@@ -20,7 +20,10 @@
  * @module
  */
 
-import { removeLocalDatabases } from './db/project-database.js'
+import PouchDB from 'pouchdb-browser'
+import { localProfileCache, removeLocalDatabases } from './db/project-database.js'
+import { type Locale, profileApi, resolveProfileLocale } from './profile.js'
+import { type Project, projectsApi } from './projects.js'
 import {
   endServerSessionVia,
   isSessionEnded,
@@ -28,8 +31,12 @@ import {
   type SessionState,
   signOut,
 } from './session.js'
+import { type ManagerDependencies, type SyncManager, syncManager } from './sync/manager.js'
+import { remoteProject } from './sync/remote.js'
+import type { SyncState } from './sync/replication.js'
 import {
   type AccessTokenResponse,
+  accessToken,
   EXPIRY_MARGIN_SECONDS,
   forgetTokens,
   rememberAccessToken,
@@ -160,3 +167,67 @@ export function beginSignIn(
 export async function endSession(fetchImpl: typeof fetch = fetch): Promise<readonly string[]> {
   return signOut(sessionDependencies(fetchImpl))
 }
+
+/**
+ * The projects this account has, from the API.
+ *
+ * The access token goes in an `Authorization` header rather than as a cookie, which is what the
+ * contract declares — see `projects.ts` for why the session cookie would not be sent here at all.
+ */
+export function projects(fetchImpl: typeof fetch = fetch): ReturnType<typeof projectsApi> {
+  return projectsApi(API_BASE, accessToken, fetchImpl)
+}
+
+/** The profile, which carries the locale preference across devices. */
+export function profile(fetchImpl: typeof fetch = fetch): ReturnType<typeof profileApi> {
+  return profileApi(API_BASE, fetchImpl)
+}
+
+/**
+ * Replication for whichever projects are handed to it.
+ *
+ * This is the one place PouchDB meets the sync modules. `sync/replication.ts` and
+ * `sync/manager.ts` deliberately declare the slivers of PouchDB they use as their own interfaces
+ * rather than importing it, which is what lets their tests run without a database — so something
+ * has to supply the real thing, and this is it.
+ */
+export function projectSync(
+  onState?: (projectId: string, state: SyncState) => void,
+  onIncoming?: (projectId: string) => void,
+): SyncManager {
+  return syncManager({
+    // `as unknown as` because `sync/replication.ts` declares only the sliver of PouchDB it
+    // uses - which is what lets its tests run without a database - and a structural match
+    // against PouchDB's much larger surface is not something TypeScript will infer.
+    local: (dbName) => new PouchDB(dbName) as unknown as ReturnType<ManagerDependencies['local']>,
+    remote: (dbName) =>
+      remoteProject(dbName, {
+        couchUrl: COUCH_BASE,
+        token: accessToken,
+        open: (url, options) => new PouchDB(url, { fetch: options.fetch }),
+      }),
+    ...(onState === undefined ? {} : { onState }),
+    ...(onIncoming === undefined ? {} : { onIncoming }),
+  })
+}
+
+/**
+ * Follows the locale the profile carries, so a preference set on a phone reaches a laptop.
+ *
+ * Returns the cached answer immediately and corrects it when the server replies, which is what
+ * keeps the first render right rather than corrected a moment later. Never throws: a profile
+ * that cannot be read is a reason to keep the local preference, not a reason to fail.
+ */
+export async function followProfileLocale(
+  onChange: (locale: Locale) => void,
+  fetchImpl: typeof fetch = fetch,
+): Promise<Locale | undefined> {
+  try {
+    return await resolveProfileLocale(profile(fetchImpl), localProfileCache(), onChange)
+  } catch {
+    return undefined
+  }
+}
+
+/** What replication needs to know about one project. */
+export type ReplicatingProject = Pick<Project, 'projectId' | 'dbName'>

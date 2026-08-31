@@ -97,6 +97,13 @@ jobs:
       - name: Caching contract
         run: npm run check:deploy
 
+      # #120 shipped seven modules that were written, tested, and imported by nothing but their
+      # own tests - so every suite passed while the features did not exist in the application.
+      # Nothing could have noticed: a test that imports its module directly proves the module
+      # works and says nothing about whether anything uses it.
+      - name: Every module reaches an entry point
+        run: npm run check:graph
+
       - name: Biome
         run: npm run check
 
