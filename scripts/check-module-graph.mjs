@@ -26,7 +26,6 @@
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import * as ts from 'typescript'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -68,37 +67,81 @@ function* modules(directory) {
  * reached that way on purpose, and treating them as unreachable would make this check fire on
  * the code most deliberately written.
  *
- * The compiler parser distinguishes imports from lookalikes in comments and string literals.
+ * **A tokeniser rather than a regular expression over the raw text.** The first version scanned
+ * the source directly, so a commented-out `// import './orphan.js'` marked that module reached -
+ * a false clean bill of health from the one check whose entire job is noticing absent code. A
+ * string containing the word had the same effect.
+ *
+ * **And not the TypeScript compiler API**, which would be the obvious answer: TypeScript 7 is
+ * the native rewrite and exposes no `preProcessFile` or `createSourceFile` to JavaScript at all.
+ *
+ * So the source is walked once, splitting it into code and string literals and discarding
+ * comments. A string is a specifier only when the code immediately before it ends in `from`,
+ * `import` or `import(` - which is what tells `import './x.js'` from `const s = "import './x.js'"`,
+ * because the second is a single string token whose preceding code ends in `=`.
  */
 function specifiersIn(source) {
-  const file = ts.createSourceFile(
-    'module.ts',
-    source,
-    ts.ScriptTarget.Latest,
-    false,
-    ts.ScriptKind.TS,
-  )
   const found = []
+  let code = ''
+  let index = 0
 
-  const visit = (node) => {
-    if (
-      (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
-      node.moduleSpecifier !== undefined &&
-      ts.isStringLiteral(node.moduleSpecifier)
-    ) {
-      found.push(node.moduleSpecifier.text)
-    } else if (
-      ts.isCallExpression(node) &&
-      node.expression.kind === ts.SyntaxKind.ImportKeyword &&
-      node.arguments.length === 1 &&
-      ts.isStringLiteral(node.arguments[0])
-    ) {
-      found.push(node.arguments[0].text)
+  /** Whether the code so far ends where an import specifier may follow. */
+  const expectsSpecifier = () => /(?:^|[^\w$])(?:from|import)\s*\(?\s*$/.test(code)
+
+  /** Reads a quoted run, returning its contents and the index after the closing quote. */
+  const readString = (quote) => {
+    let value = ''
+    let at = index + 1
+    while (at < source.length) {
+      const character = source[at]
+      // A backslash escapes whatever follows, including the closing quote.
+      if (character === '\\') {
+        value += source.slice(at, at + 2)
+        at += 2
+        continue
+      }
+      if (character === quote) return { value, next: at + 1 }
+      value += character
+      at += 1
     }
-    ts.forEachChild(node, visit)
+    // Unterminated. Not this script's business to complain - `tsc` will - so it stops here.
+    return { value, next: source.length }
   }
 
-  visit(file)
+  while (index < source.length) {
+    const two = source.slice(index, index + 2)
+
+    if (two === '//') {
+      index = source.indexOf('\n', index)
+      if (index === -1) break
+      // The newline is kept, so a `from` on the line above cannot join a string on the one below.
+      code += '\n'
+      continue
+    }
+
+    if (two === '/*') {
+      const end = source.indexOf('*/', index + 2)
+      index = end === -1 ? source.length : end + 2
+      code += ' '
+      continue
+    }
+
+    const character = source[index]
+
+    if (character === "'" || character === '"' || character === '`') {
+      const { value, next } = readString(character)
+      if (expectsSpecifier()) found.push(value)
+      index = next
+      // Replaced by a placeholder rather than kept: its contents are not code, and leaving them
+      // in would let a string ending in `from` make the *next* string look like a specifier.
+      code += '""'
+      continue
+    }
+
+    code += character
+    index += 1
+  }
+
   return found
 }
 

@@ -106,6 +106,55 @@ describe('walking the import graph', () => {
     expect(result.code).toBe(0)
   })
 
+  it('does not count a commented-out import', () => {
+    // Found by review, and it is this check's own blind spot: a false clean bill of health from
+    // the one thing whose entire job is noticing absent code. Commenting an import out is
+    // exactly how a module stops being used, so the scanner cannot read comments as code.
+    const result = walk({
+      'main.ts': "// import './orphan.js'\nexport const main = 1\n",
+      'orphan.ts': 'export const orphan = 1\n',
+    })
+    expect(result.code).toBe(1)
+    expect(result.output).toContain('orphan.ts')
+  })
+
+  it('does not count an import inside a block comment', () => {
+    const result = walk({
+      'main.ts': "/* import './orphan.js' */\nexport const main = 1\n",
+      'orphan.ts': 'export const orphan = 1\n',
+    })
+    expect(result.code).toBe(1)
+    expect(result.output).toContain('orphan.ts')
+  })
+
+  it('does not count an import written inside a string', () => {
+    // One string token whose preceding code ends in `=`, not in `from` or `import`.
+    const result = walk({
+      'main.ts': `const example = "import './orphan.js'"\nexport const main = example\n`,
+      'orphan.ts': 'export const orphan = 1\n',
+    })
+    expect(result.code).toBe(1)
+    expect(result.output).toContain('orphan.ts')
+  })
+
+  it('still counts a real import on the line after a comment', () => {
+    // The negative cases above must not be bought by discarding too much: a comment ends at its
+    // newline, and the import below it is code.
+    const result = walk({
+      'main.ts': "// nothing to see\nimport './used.js'\n",
+      'used.ts': 'export const used = 1\n',
+    })
+    expect(result.code).toBe(0)
+  })
+
+  it('counts an import whose specifier follows a multi-line clause', () => {
+    const result = walk({
+      'main.ts': "import {\n  used,\n} from './used.js'\nvoid used\n",
+      'used.ts': 'export const used = 1\n',
+    })
+    expect(result.code).toBe(0)
+  })
+
   it('says which modules, not merely that there were some', () => {
     // A count is not actionable. The report has to name them, because the answer differs per
     // module: wire this one, delete that one.

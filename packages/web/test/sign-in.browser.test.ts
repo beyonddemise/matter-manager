@@ -235,3 +235,83 @@ describe('what happens once there is a session', () => {
     expect(stoppedBeforeSignOut).toBe(true)
   })
 })
+
+describe('a session that ends while startup is still in flight', () => {
+  const stubSync = (record?: { set?: unknown[]; stopped?: boolean }) => ({
+    set: (projects: unknown[]) => {
+      if (record) record.set = projects
+    },
+    running: () => [],
+    stateOf: () => undefined,
+    stopAll: () => {
+      if (record) record.stopped = true
+    },
+  })
+
+  it('does not start replicating after the user has signed out', async () => {
+    // Found by review. `listProjects` is a network request that outlives the call: signing out
+    // while it is in flight would otherwise build a replication manager *after* the sign-out
+    // that stopped the previous one - replicating with a token that has been forgotten, against
+    // a database this browser has just been told it may not read.
+    let release: (projects: readonly unknown[]) => void = () => {}
+    const record: { set?: unknown[]; stopped?: boolean } = {}
+
+    const element = (await fixture(html`
+      <app-shell
+        .readSession=${async () => 'signed-in' as const}
+        .connectivity=${{ addEventListener: () => {}, removeEventListener: () => {}, onLine: true }}
+        .followLocale=${async () => undefined}
+        .listProjects=${() =>
+          new Promise((resolve) => {
+            release = resolve
+          })}
+        .makeSync=${() => stubSync(record)}
+        .signOutOf=${async () => []}
+      ></app-shell>
+    `)) as HTMLElement
+
+    await waitUntil(() => element.querySelector('[data-sign-out]') !== null, 'not signed in')
+    ;(element.querySelector('[data-sign-out]') as HTMLElement).click()
+    await waitUntil(() => element.querySelector('[data-sign-in]') !== null, 'still signed in')
+
+    // The project list arrives only now, after the sign-out has completed.
+    release([{ projectId: 'p1', dbName: 'a' }])
+    await new Promise((resolve) => setTimeout(resolve, 20))
+
+    expect(record.set).toBeUndefined()
+  })
+
+  it('ignores a locale the account it belonged to has left', async () => {
+    // The profile answers whenever it answers. Applying it afterwards would set the interface
+    // language from an account that is no longer signed in.
+    let applyLocale: (locale: string) => void = () => {}
+    let applied = false
+
+    const element = (await fixture(html`
+      <app-shell
+        .readSession=${async () => 'signed-in' as const}
+        .connectivity=${{ addEventListener: () => {}, removeEventListener: () => {}, onLine: true }}
+        .followLocale=${async (onChange: (locale: string) => void) => {
+          applyLocale = (locale) => {
+            applied = true
+            onChange(locale)
+          }
+        }}
+        .listProjects=${async () => []}
+        .signOutOf=${async () => []}
+      ></app-shell>
+    `)) as HTMLElement
+
+    await waitUntil(() => element.querySelector('[data-sign-out]') !== null, 'not signed in')
+    ;(element.querySelector('[data-sign-out]') as HTMLElement).click()
+    await waitUntil(() => element.querySelector('[data-sign-in]') !== null, 'still signed in')
+
+    applyLocale('de')
+    await new Promise((resolve) => setTimeout(resolve, 20))
+
+    // The callback ran; what matters is that the shell declined to act on it. Asserting the
+    // callback never fires would be testing the stub rather than the guard.
+    expect(applied).toBe(true)
+    expect(document.documentElement.lang).not.toBe('de')
+  })
+})

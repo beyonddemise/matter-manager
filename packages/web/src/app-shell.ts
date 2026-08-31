@@ -177,7 +177,6 @@ export class AppShell extends LitElement {
   }
 
   private stopWatchingNetwork: (() => void) | undefined
-  private sessionGeneration = 0
 
   override connectedCallback(): void {
     super.connectedCallback()
@@ -189,16 +188,18 @@ export class AppShell extends LitElement {
     // Not awaited, and nothing waits for it. The application is local-first: every view works
     // without a session, so holding the shell back on a network request would delay the whole
     // interface to answer a question that changes one button.
-    const generation = ++this.sessionGeneration
     void (this.readSession ?? readSessionState)().then((state) => {
-      if (generation !== this.sessionGeneration) return
       this.session = state
-      if (state === 'signed-in') void this.startSyncing(generation)
+      if (state === 'signed-in') void this.startSyncing()
     })
   }
 
   override disconnectedCallback(): void {
-    ++this.sessionGeneration
+    // The same guard, for a shell torn down rather than signed out of. A replication left
+    // running against a detached component is a request nobody will read the answer to.
+    this.sessionGeneration += 1
+    this.sync?.stopAll()
+    this.sync = undefined
     window.removeEventListener('hashchange', this.onHashChange)
     this.stopWatchingNetwork?.()
     this.stopWatchingNetwork = undefined
@@ -309,9 +310,20 @@ export class AppShell extends LitElement {
    * nothing they lose by it: their devices are on this device, and replication resuming later is
    * what `offline` in the summary is for.
    */
-  private async startSyncing(generation: number): Promise<void> {
+  private async startSyncing(): Promise<void> {
+    // Found by review. Both of these outlive the call: `listProjects` is a network request, and
+    // the locale callback fires whenever the profile answers. Somebody who signs out while
+    // either is in flight would otherwise get a replication manager built *after* the sign-out
+    // that stopped the previous one - replicating with a token that has been forgotten, against
+    // a database this browser has just been told it may not read - and a locale from the account
+    // they have left.
+    //
+    // The generation is the same guard `theme.ts` uses for stylesheet loads and `device.ts` for
+    // saves. Signing out increments it, so everything started before is answered by nobody.
+    const generation = this.sessionGeneration
+
     void (this.followLocale ?? followProfileLocale)((locale) => {
-      if (generation !== this.sessionGeneration || this.session !== 'signed-in') return
+      if (generation !== this.sessionGeneration) return
       void activateLocale(negotiateLocale(locale as never, navigator.languages))
     })
 
@@ -321,14 +333,10 @@ export class AppShell extends LitElement {
     } catch {
       return
     }
-    if (
-      generation !== this.sessionGeneration ||
-      this.session !== 'signed-in' ||
-      mine.length === 0
-    )
-      return
+    if (generation !== this.sessionGeneration || mine.length === 0) return
 
     this.sync = (this.makeSync ?? ((onState) => projectSync(onState)))((projectId, state) => {
+      if (generation !== this.sessionGeneration) return
       this.states.set(projectId, state)
       this.syncing = worstOf([...this.states.values()])
     })
@@ -338,13 +346,19 @@ export class AppShell extends LitElement {
   /** One replication per project, and what each is doing. */
   private sync: SyncManager | undefined
   private states = new Map<string, SyncState>()
+  /**
+   * Counts sessions, so work started under one cannot land under the next.
+   *
+   * A plain field rather than a reactive property: nothing renders it, and assigning a reactive
+   * property from inside an update schedules a second update for no reason.
+   */
+  private sessionGeneration = 0
 
   private onSignIn = (): void => {
     ;(this.signIn ?? beginSignIn)()
   }
 
   private onSignOut = async (): Promise<void> => {
-    ++this.sessionGeneration
     // The state is set whatever happened, because `signOut` never throws and always leaves the
     // browser signed out: it forgets the token first, unconditionally, and every later step is
     // attempted regardless of the ones before it. Leaving the button saying "Sign out" after
@@ -352,6 +366,11 @@ export class AppShell extends LitElement {
     // Before the sign-out, not after. Replication holds an access token and a live connection
     // to a database this browser is about to be told it may not read; leaving it running would
     // mean requests going out on behalf of somebody who has just left.
+    //
+    // The generation moves first of all, so a startup still in flight cannot finish into the
+    // session that is ending - stopping what is running says nothing about what is about to
+    // start.
+    this.sessionGeneration += 1
     this.sync?.stopAll()
     this.sync = undefined
     this.states.clear()
