@@ -216,7 +216,7 @@ paths:
         A settings change, not a permission change. Requires `owner` or `manage` — the role
         that may decide who has access may certainly correct a name, or put the project away.
 
-        Both fields are optional and independent, so a client may send either alone. `address`
+        All fields are optional and independent, so a client may send any alone. `address`
         may be `null`, which removes it; that is spelled as a value rather than as a missing
         field, so that a body which simply forgot the address does not erase one.
 
