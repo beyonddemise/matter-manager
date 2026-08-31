@@ -177,6 +177,7 @@ export class AppShell extends LitElement {
   }
 
   private stopWatchingNetwork: (() => void) | undefined
+  private sessionGeneration = 0
 
   override connectedCallback(): void {
     super.connectedCallback()
@@ -188,13 +189,16 @@ export class AppShell extends LitElement {
     // Not awaited, and nothing waits for it. The application is local-first: every view works
     // without a session, so holding the shell back on a network request would delay the whole
     // interface to answer a question that changes one button.
+    const generation = ++this.sessionGeneration
     void (this.readSession ?? readSessionState)().then((state) => {
+      if (generation !== this.sessionGeneration) return
       this.session = state
-      if (state === 'signed-in') void this.startSyncing()
+      if (state === 'signed-in') void this.startSyncing(generation)
     })
   }
 
   override disconnectedCallback(): void {
+    ++this.sessionGeneration
     window.removeEventListener('hashchange', this.onHashChange)
     this.stopWatchingNetwork?.()
     this.stopWatchingNetwork = undefined
@@ -305,8 +309,9 @@ export class AppShell extends LitElement {
    * nothing they lose by it: their devices are on this device, and replication resuming later is
    * what `offline` in the summary is for.
    */
-  private async startSyncing(): Promise<void> {
+  private async startSyncing(generation: number): Promise<void> {
     void (this.followLocale ?? followProfileLocale)((locale) => {
+      if (generation !== this.sessionGeneration || this.session !== 'signed-in') return
       void activateLocale(negotiateLocale(locale as never, navigator.languages))
     })
 
@@ -316,7 +321,12 @@ export class AppShell extends LitElement {
     } catch {
       return
     }
-    if (mine.length === 0) return
+    if (
+      generation !== this.sessionGeneration ||
+      this.session !== 'signed-in' ||
+      mine.length === 0
+    )
+      return
 
     this.sync = (this.makeSync ?? ((onState) => projectSync(onState)))((projectId, state) => {
       this.states.set(projectId, state)
@@ -334,6 +344,7 @@ export class AppShell extends LitElement {
   }
 
   private onSignOut = async (): Promise<void> => {
+    ++this.sessionGeneration
     // The state is set whatever happened, because `signOut` never throws and always leaves the
     // browser signed out: it forgets the token first, unconditionally, and every later step is
     // attempted regardless of the ones before it. Leaving the button saying "Sign out" after

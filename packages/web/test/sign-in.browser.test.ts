@@ -135,6 +135,37 @@ describe('what happens once there is a session', () => {
     expect(made).toBe(false)
   })
 
+  it('does not start replication when the project list arrives after sign-out', async () => {
+    let resolveProjects:
+      | ((projects: readonly { projectId: string; dbName: string }[]) => void)
+      | undefined
+    const projects = new Promise<readonly { projectId: string; dbName: string }[]>((resolve) => {
+      resolveProjects = resolve
+    })
+    let made = false
+    const element = (await fixture(html`
+      <app-shell
+        .readSession=${async () => 'signed-in' as const}
+        .connectivity=${{ addEventListener: () => {}, removeEventListener: () => {}, onLine: true }}
+        .followLocale=${async () => undefined}
+        .listProjects=${() => projects}
+        .makeSync=${() => {
+          made = true
+          return stubSync()
+        }}
+        .signOutOf=${async () => []}
+      ></app-shell>
+    `)) as HTMLElement
+
+    await waitUntil(() => element.querySelector('[data-sign-out]') !== null, 'not signed in')
+    ;(element.querySelector('[data-sign-out]') as HTMLElement).click()
+    await waitUntil(() => element.querySelector('[data-sign-in]') !== null, 'still signed in')
+    resolveProjects?.([{ projectId: 'p1', dbName: 'project_p1' }])
+    await Promise.resolve()
+
+    expect(made).toBe(false)
+  })
+
   it('carries on when the project list cannot be fetched', async () => {
     // There is nothing the reader can do about it and nothing they lose by it: their devices
     // are on this device. Replication resuming later is what the summary's `offline` is for.

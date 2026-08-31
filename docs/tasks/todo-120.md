@@ -150,7 +150,7 @@ checked, and saying so is the point of writing it down.
 
 ## Wired means used, not constructed
 
-The temptation in this part was to import the remaining four modules into `composition.ts` and
+The temptation in this part was to import the remaining five modules into `composition.ts` and
 call the job done. That would have reproduced #120 one level up: a composition root holding
 things nothing calls is an orphan with a nicer name, and the reachability check below would have
 passed while the application still did nothing with them.

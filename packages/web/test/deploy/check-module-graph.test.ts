@@ -65,6 +65,15 @@ describe('walking the import graph', () => {
     expect(result.code).toBe(0)
   })
 
+  it('ignores a commented-out import', () => {
+    const result = walk({
+      'main.ts': "// import './orphan.js'\n",
+      'orphan.ts': 'export const orphan = 1\n',
+    })
+    expect(result.code).toBe(1)
+    expect(result.output).toContain('orphan.ts')
+  })
+
   it('follows an import through several files', () => {
     const result = walk({
       'main.ts': "import './a.js'\n",

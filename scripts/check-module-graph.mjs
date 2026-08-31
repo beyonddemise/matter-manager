@@ -26,6 +26,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import ts from 'typescript'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -67,15 +68,37 @@ function* modules(directory) {
  * reached that way on purpose, and treating them as unreachable would make this check fire on
  * the code most deliberately written.
  *
- * A regular expression rather than the TypeScript compiler API. What is needed is the set of
- * specifiers, which is a lexical property - and a parser here would be a second thing to keep
- * working for an answer that does not need one.
+ * The compiler parser distinguishes imports from lookalikes in comments and string literals.
  */
 function specifiersIn(source) {
+  const file = ts.createSourceFile(
+    'module.ts',
+    source,
+    ts.ScriptTarget.Latest,
+    false,
+    ts.ScriptKind.TS,
+  )
   const found = []
-  for (const [, specifier] of source.matchAll(/(?:from|import)\s*\(?\s*['"]([^'"]+)['"]/g)) {
-    found.push(specifier)
+
+  const visit = (node) => {
+    if (
+      (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
+      node.moduleSpecifier !== undefined &&
+      ts.isStringLiteral(node.moduleSpecifier)
+    ) {
+      found.push(node.moduleSpecifier.text)
+    } else if (
+      ts.isCallExpression(node) &&
+      node.expression.kind === ts.SyntaxKind.ImportKeyword &&
+      node.arguments.length === 1 &&
+      ts.isStringLiteral(node.arguments[0])
+    ) {
+      found.push(node.arguments[0].text)
+    }
+    ts.forEachChild(node, visit)
   }
+
+  visit(file)
   return found
 }
 
