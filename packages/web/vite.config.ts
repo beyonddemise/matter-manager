@@ -84,6 +84,7 @@ export default defineConfig(({ mode }) => {
     build: { outDir: 'dist', emptyOutDir: true },
 
     server: {
+      strictPort: true,
       proxy: devProxy(env),
     },
   }

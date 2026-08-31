@@ -4,7 +4,7 @@ Closes #120 in three parts. **This is part one.**
 
 ## Why three parts
 
-#120's acceptance spans a composition root, build-time configuration, a generated `_headers`,
+Issue 120's acceptance spans a composition root, build-time configuration, a generated `_headers`,
 a test that catches an orphaned module, the API's missing Dockerfile, a runnable dev stack,
 sign-in and sign-out in the interface, and replication wiring. The issue says it plainly:
 *"This is not one bug."* A single change touching authentication is the shape review serves

@@ -32,8 +32,10 @@ COPY tsconfig.base.json tsconfig.json ./
 COPY packages/core packages/core
 COPY packages/api packages/api
 
-# `tsc --build` follows the project reference from api to core, so this emits both.
-RUN npx tsc --build packages/api
+# `tsc --build` follows the project reference from api to core, so this emits both. Prune the
+# compiler and other development dependencies before node_modules is copied into the runtime.
+RUN npx tsc --build packages/api \
+    && npm prune --omit=dev --ignore-scripts
 
 # ---- runtime ----------------------------------------------------------------------------
 FROM node:24-bookworm-slim AS runtime

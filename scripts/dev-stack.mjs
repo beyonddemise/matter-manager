@@ -134,10 +134,14 @@ GOOGLE_REDIRECT_URI=http://localhost:${API_PORT}/auth/google/callback
     (name) => !existing.includes(`${name}=`),
   )
   if (missing.length > 0) {
+    const targets = {
+      DEV_API_TARGET: `http://localhost:${API_PORT}`,
+      DEV_COUCHDB_TARGET: COUCHDB,
+    }
     appendFileSync(
       envFile,
       `\n# Added by scripts/dev-stack.mjs: where the Vite proxy forwards /api and /db.\n` +
-        `DEV_API_TARGET=http://localhost:${API_PORT}\nDEV_COUCHDB_TARGET=${COUCHDB}\n`,
+        `${missing.map((name) => `${name}=${targets[name]}`).join('\n')}\n`,
     )
     console.log(`  added ${missing.join(' and ')} to .env`)
   } else {
@@ -180,4 +184,9 @@ const stop = () => {
 
 for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, stop)
 // If either half dies the other is useless, and leaving it running hides which one failed.
-for (const child of children) child.on('exit', stop)
+for (const child of children) {
+  child.on('exit', (code) => {
+    if (code && process.exitCode === undefined) process.exitCode = code
+    stop()
+  })
+}
