@@ -95,4 +95,11 @@ describe('the themes withheld for contrast', () => {
     const accounted = new Set([...THEMES, ...excluded])
     expect([...accounted].sort()).toEqual([...WA_THEMES].sort())
   })
+
+  it('offers or withholds each theme, and never both', () => {
+    // The union above cannot make this claim: a `Set` drops the duplicate, so a theme in both
+    // lists still matches `WA_THEMES` exactly. Replacing the original count comparison with the
+    // union check lost a case rather than strengthening it - the count was weak, not useless.
+    expect(THEMES.filter((theme) => theme in EXCLUDED_THEMES)).toEqual([])
+  })
 })
