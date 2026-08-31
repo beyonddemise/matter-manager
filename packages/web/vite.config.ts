@@ -84,6 +84,11 @@ export default defineConfig(({ mode }) => {
     build: { outDir: 'dist', emptyOutDir: true },
 
     server: {
+      // Fail rather than move. Vite picks the next free port when 5173 is taken, and everything
+      // around it is written down: `dev-stack.mjs` prints 5173, and the API's `APP_ORIGIN` names
+      // it as the one origin allowed to make a cross-origin request. A silent move leaves the
+      // application loading at an address the API refuses, which reads as a broken sign-in
+      // rather than as a busy port.
       strictPort: true,
       proxy: devProxy(env),
     },

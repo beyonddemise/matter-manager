@@ -134,6 +134,9 @@ GOOGLE_REDIRECT_URI=http://localhost:${API_PORT}/auth/google/callback
     (name) => !existing.includes(`${name}=`),
   )
   if (missing.length > 0) {
+    // Only what is actually absent. Writing both would append a second `DEV_API_TARGET` to a
+    // file that already had a custom one, and `loadEnv` takes the later of two - so the helpful
+    // top-up would quietly point the proxy back at the default.
     const targets = {
       DEV_API_TARGET: `http://localhost:${API_PORT}`,
       DEV_COUCHDB_TARGET: COUCHDB,
@@ -184,6 +187,12 @@ const stop = () => {
 
 for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, stop)
 // If either half dies the other is useless, and leaving it running hides which one failed.
+//
+// The exit code is carried out with it. Without this the parent exits 0 after an API that never
+// started, so `npm run dev:stack` reports success for a stack that is not running - and the one
+// place that gets read is a script or a CI job, which is exactly where nobody is watching the
+// logs. The first failure wins; a child killed by our own SIGTERM reports a null code and so
+// leaves this alone, which is what makes an ordinary Ctrl-C still exit 0.
 for (const child of children) {
   child.on('exit', (code) => {
     if (code && process.exitCode === undefined) process.exitCode = code
