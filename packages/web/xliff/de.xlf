@@ -518,6 +518,18 @@
   <source>Palette</source>
   <target>Farbpalette</target>
 </trans-unit>
+<trans-unit id="s7cfe12cd14df9950">
+  <source>Sign out</source>
+  <target>Abmelden</target>
+</trans-unit>
+<trans-unit id="sa22220276c0e9798">
+  <source>Session ended - sign in again</source>
+  <target>Sitzung beendet – erneut anmelden</target>
+</trans-unit>
+<trans-unit id="s5e27738a2e8eb763">
+  <source>Sign in</source>
+  <target>Anmelden</target>
+</trans-unit>
 </body>
 </file>
 </xliff>
