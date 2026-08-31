@@ -92,6 +92,8 @@ describe('finding out whether this browser has a session', () => {
     ['an expiry that is not a number', { accessToken: 'a.b.c', expiresIn: 'soon' }],
     ['an expiry of NaN', { accessToken: 'a.b.c', expiresIn: Number.NaN }],
     ['an expiry already past', { accessToken: 'a.b.c', expiresIn: 0 }],
+    ['an expiry inside the margin', { accessToken: 'a.b.c', expiresIn: 10 }],
+    ['an expiry exactly at the margin', { accessToken: 'a.b.c', expiresIn: 30 }],
   ])('does not believe a 200 carrying %s', async (_name, body) => {
     // Found by review, and the failure it names is the one the code's own comment claimed to
     // prevent. Guarding only against JSON that will not parse lets `{}` through: the token is
@@ -100,6 +102,15 @@ describe('finding out whether this browser has a session', () => {
     const fetchImpl = (async () => response(200, body)) as unknown as typeof fetch
     expect(await readSessionState(fetchImpl)).toBe('signed-out')
     expect(accessToken()).toBeUndefined()
+  })
+
+  it('accepts a token with just over the margin left', async () => {
+    // The positive half of the boundary. Without it, a guard that rejected every expiry would
+    // pass every case above and never sign anybody in.
+    const fetchImpl = (async () =>
+      response(200, { accessToken: 'a.b.c', expiresIn: 31 })) as unknown as typeof fetch
+    expect(await readSessionState(fetchImpl)).toBe('signed-in')
+    expect(accessToken()).toBe('a.b.c')
   })
 
   it('does not believe a 200 that carries no token', async () => {

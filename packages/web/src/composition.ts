@@ -124,9 +124,16 @@ function isAccessToken(body: unknown): body is AccessTokenResponse {
   // `Number.isFinite` rather than a type check alone. `expiresIn` becomes `now() + expiresIn`,
   // so a NaN or an Infinity there is an expiry that either never passes or has already passed,
   // and both are worse than having no token at all.
-  return (
-    typeof expiresIn === 'number' && Number.isFinite(expiresIn) && expiresIn > EXPIRY_MARGIN_SECONDS
-  )
+  if (typeof expiresIn !== 'number' || !Number.isFinite(expiresIn)) return false
+
+  // Against the margin, not against zero. `accessToken()` withholds a token with less than
+  // `EXPIRY_MARGIN_SECONDS` left - a token that may die in flight produces a 401 that looks like
+  // a server fault rather than an expiry - so anything at or below the margin is a token this
+  // application will never send. Storing one and reporting `signed-in` would be the same
+  // divergence as believing an empty body: a session that says yes and a token that says no.
+  //
+  // Derived from the constant rather than repeating 30, so the two cannot drift apart.
+  return expiresIn > EXPIRY_MARGIN_SECONDS
 }
 
 /**
