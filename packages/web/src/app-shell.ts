@@ -1,5 +1,6 @@
 import { msg, updateWhenLocaleChanges } from '@lit/localize'
 import { html, LitElement, type TemplateResult } from 'lit'
+import { beginSignIn, endSession, readSessionState } from './composition.js'
 import { type ConnectivitySource, watchConnectivity } from './connectivity.js'
 import { matchRoute } from './router/match.js'
 import { NAV_ROUTES, ROUTES } from './router/routes.js'
@@ -10,6 +11,7 @@ import {
   type SchemePreference,
   writePreference,
 } from './scheme.js'
+import type { SessionState } from './session.js'
 import { applyUpdate } from './updates.js'
 import './views/add-device.js'
 import './views/device-list.js'
@@ -77,6 +79,10 @@ export class AppShell extends LitElement {
   }
 
   static override properties = {
+    session: { state: true },
+    readSession: { attribute: false },
+    signIn: { attribute: false },
+    signOutOf: { attribute: false },
     hash: { state: true },
     schemePreference: { state: true },
     online: { state: true },
@@ -87,6 +93,20 @@ export class AppShell extends LitElement {
 
   declare hash: string
   declare schemePreference: SchemePreference
+
+  /**
+   * What this browser believes about the session.
+   *
+   * `undefined` until the first answer arrives, which is why the control renders nothing at
+   * first: offering "Sign in" to somebody who *is* signed in, for the moment it takes to find
+   * out, is worse than offering nothing for that moment.
+   */
+  declare session: SessionState | undefined
+
+  /** Injected by tests. Unset in the application, where these reach the real API. */
+  declare readSession?: () => Promise<SessionState>
+  declare signIn?: () => void
+  declare signOutOf?: () => Promise<readonly string[]>
   /** What the browser last said about the network. See `connectivity.ts` on trusting it. */
   declare online: boolean
   /**
@@ -135,6 +155,13 @@ export class AppShell extends LitElement {
     window.addEventListener('hashchange', this.onHashChange)
     this.stopWatchingNetwork = watchConnectivity(this.connectivity ?? window, (online) => {
       this.online = online
+    })
+
+    // Not awaited, and nothing waits for it. The application is local-first: every view works
+    // without a session, so holding the shell back on a network request would delay the whole
+    // interface to answer a question that changes one button.
+    void (this.readSession ?? readSessionState)().then((state) => {
+      this.session = state
     })
   }
 
@@ -195,6 +222,45 @@ export class AppShell extends LitElement {
     }
   }
 
+  /**
+   * Signing in, or out, or nothing at all until the answer arrives.
+   *
+   * `expired` gets the same control as `signed-out` and a different word. The remedy is
+   * identical - sign in again - but "your session ended" and "you are not signed in" are
+   * different facts, and the first one reassures somebody whose data is still on the device
+   * that nothing has been lost.
+   */
+  private renderSession(): TemplateResult | '' {
+    if (this.session === undefined) return ''
+
+    if (this.session === 'signed-in') {
+      return html`
+        <wa-button data-sign-out appearance="plain" @click=${this.onSignOut}>
+          ${msg('Sign out')}
+        </wa-button>
+      `
+    }
+
+    return html`
+      <wa-button data-sign-in appearance="plain" @click=${this.onSignIn}>
+        ${this.session === 'expired' ? msg('Session ended - sign in again') : msg('Sign in')}
+      </wa-button>
+    `
+  }
+
+  private onSignIn = (): void => {
+    ;(this.signIn ?? beginSignIn)()
+  }
+
+  private onSignOut = async (): Promise<void> => {
+    // The state is set whatever happened, because `signOut` never throws and always leaves the
+    // browser signed out: it forgets the token first, unconditionally, and every later step is
+    // attempted regardless of the ones before it. Leaving the button saying "Sign out" after
+    // that would be the interface disagreeing with itself.
+    await (this.signOutOf ?? endSession)()
+    this.session = 'signed-out'
+  }
+
   override render() {
     const match = matchRoute(this.hash, ROUTES)
     const view = match ? VIEWS[match.route.view] : undefined
@@ -220,6 +286,7 @@ export class AppShell extends LitElement {
                     ${msg('Offline')}
                   </wa-tag>`
             }
+            ${this.renderSession()}
             <wa-button data-scheme-toggle appearance="plain" @click=${this.cycleScheme}>
               <wa-icon name=${SCHEME_ICON[this.schemePreference]} label=${this.schemeToggleLabel()}></wa-icon>
             </wa-button>

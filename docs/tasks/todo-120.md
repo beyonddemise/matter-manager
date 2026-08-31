@@ -1,6 +1,6 @@
 # todo-120 — Seven web modules are written, tested, and never imported
 
-Closes #120 in three parts. **This is part one.**
+Closes #120 in three parts. **Parts one and two are done.**
 
 ## Why three parts
 
@@ -93,3 +93,53 @@ mean writing it skipped.
 `connect-src`. The topology settled since: Pages Functions serve `/api` and `/db` from the
 application's own origin, so `connect-src 'self'` already covers it and there is no substitution
 step to build.
+
+---
+
+# Part two — signing in and out
+
+## The composition root
+
+`packages/web/src/composition.ts`, which is what #120 suggested and what was missing. Every one
+of the seven orphaned modules was correct in isolation; what nothing held was the file that
+constructs them. That is why each story closed honestly with its module reviewed and its suite
+green — from the inside, that is exactly what a finished feature looks like.
+
+Three of the seven are reachable now: `session.ts`, `tokens.ts`, and `endServerSessionVia`.
+`profile.ts`, `projects.ts` and the three `sync/` modules follow in part three, with the test
+that fails on a module no entry point reaches.
+
+## There is no "am I signed in" endpoint, and there does not need to be
+
+The session is an httpOnly cookie the page cannot read, so the only way to find out is to try to
+exchange it — and the exchange is worth doing anyway. Asking and getting are one request.
+
+`POST /api/auth/token` with `credentials: 'include'`. 200 with a token means signed in and the
+token is kept; 401 means signed out. **Anything else is not an answer**: being unable to reach
+the server is this application's ordinary state, not a session ending, so it reports `signed-out`
+without discarding anything rather than putting an error in front of somebody in a basement whose
+devices are all present.
+
+A 200 whose body is not a token is treated as signed out too. A status code is not a session, and
+believing one would leave the application making requests with no token and blaming the user's
+session for the 401s that followed.
+
+## Three states, two controls
+
+`expired` gets the same control as `signed-out` and a different word. The remedy is identical —
+sign in again — but "your session ended" and "you are not signed in" are different facts, and the
+first reassures somebody whose data is still on the device that nothing has been lost.
+
+Neither control renders until the first answer arrives. Offering "Sign in" to somebody who *is*
+signed in, for the moment it takes to find out, is worse than offering nothing for that moment.
+
+## What has not been executed
+
+**The Google handshake.** It needs an OAuth client, and without `GOOGLE_CLIENT_ID`,
+`GOOGLE_CLIENT_SECRET` and `GOOGLE_REDIRECT_URI` the API serves no `/auth` routes at all — so in
+the dev stack, pressing "Sign in" reaches a 404. That is the API behaving as designed, and it is
+also the reason nothing here can claim the round trip works.
+
+Everything on either side of that redirect is tested: what the application sends, what it does
+with each answer, and what it shows for each state. The redirect itself is a claim nobody has
+checked, and saying so is the point of writing it down.
