@@ -1,0 +1,15 @@
+# Keeps the build context small and keeps host state out of the image. Everything the API
+# image needs is copied explicitly in packages/api/Dockerfile.
+node_modules
+**/node_modules
+**/dist
+coverage
+.git
+.github
+.devcontainer
+.playwright-mcp
+e2e
+packages/web
+docs
+*.log
+.env

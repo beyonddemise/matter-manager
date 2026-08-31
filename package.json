@@ -39,6 +39,8 @@
     "check:deploy": "node scripts/check-deploy-headers.mjs",
     "check:lazy": "node scripts/check-lazy-fallback.mjs",
     "check:offline": "node scripts/check-offline-assets.mjs",
+    "dev:stack": "node scripts/dev-stack.mjs",
+    "dev:stack:down": "docker compose -f .devcontainer/docker-compose.yml down",
     "probe:runtime": "node scripts/probe-runtime-requests.mjs",
     "assets:fetch": "node scripts/fetch-offline-assets.mjs"
   },

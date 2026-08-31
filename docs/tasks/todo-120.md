@@ -40,11 +40,56 @@ key signs, so the dev stack can mint one.
 
 ## Tasks
 
-- [ ] `packages/api/Dockerfile` — the file `infra/compose.prod.yml` has referenced since M0
-- [ ] One command that brings up CouchDB, the API and the web application together
-- [ ] Dev keys generated on first run rather than pasted from a README
-- [ ] Vite proxies `/api` and `/db`
-- [ ] `.env.example` says how the two are reached, and something reads it
-- [ ] The stack verified running end to end, not merely started
+- [x] `packages/api/Dockerfile` — the file `infra/compose.prod.yml` has referenced since M0
+- [x] One command that brings up CouchDB, the API and the web application together
+- [x] Dev keys generated on first run rather than pasted from a README
+- [x] Vite proxies `/api` and `/db`
+- [x] `.env.example` says how the two are reached, and something reads it
+- [x] The stack verified running end to end, not merely started
 
 ## Review
+
+**Part one done.** `npm run verify` clean, 2112 tests pass, and the stack was run rather than
+merely written.
+
+### Verified running, not merely started
+
+`/healthz` returning 200 is what an *unconfigured* service returns — L28 is about exactly that
+test passing while the deployment served no project routes. So the checks were:
+
+| Through | Result |
+| --- | --- |
+| `docker run` the image against the CouchDB container | `/healthz` 200 |
+| the same container | `POST /projects` **401**, not 404 — the route is registered and wants a token |
+| the same container | `/auth/google` 404 — no Google client, exactly as designed |
+| `npm run dev:stack`, then the Vite origin | `/api/healthz` → `{"status":"ok"}` |
+| the same | `/db/` → CouchDB's welcome document |
+| the same | `/api/projects` → 401, so the proxy reaches the API and the API is configured |
+
+The 401 is the load-bearing one. A 404 there would mean the image starts, reports itself
+healthy, and serves nothing — which is the failure mode `main.ts` was written to avoid and the
+one a health check cannot see.
+
+### `devProxy` takes its environment as an argument
+
+The first version of the test read the resolved Vite config, which calls `loadEnv` — so the
+assertions depended on whichever `.env` the machine happened to have. It passed here because
+`dev-stack.mjs` had just written one with the default values in it. That is a test that passes
+for its author and fails for everybody else, so the proxy construction is a function taking an
+env object, and the test supplies its own.
+
+It also covers the case a deployment tool creates: `DEV_API_TARGET=` rendered empty for an unset
+value must fall back rather than produce an empty target, which is how `composition.ts` treats
+the API's own variables.
+
+### Two things deliberately not done here
+
+**No composition root yet, and no claim that anything is wired.** The seven modules are still
+orphaned. Part three brings them in along with the test that fails on a module no entry point
+reaches — a test that cannot pass before the last of them is reachable, so writing it now would
+mean writing it skipped.
+
+**Nothing generated into `_headers`.** The issue expected two deployment origins to be added to
+`connect-src`. The topology settled since: Pages Functions serve `/api` and `/db` from the
+application's own origin, so `connect-src 'self'` already covers it and there is no substitution
+step to build.
