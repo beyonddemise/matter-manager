@@ -69,10 +69,10 @@ export function planMigration(
     if (existing !== undefined) return existing
 
     const id = documentId('room', uuid())
-    // The path is carried across as the local catalogue spelled it. Case is the user's own
-    // decision (ADR 0006), and rewriting it to match the target's spelling would be this
-    // function having an opinion about somebody's house.
-    created.push({ _id: id, type: 'room', path: local.path })
+    // The room is carried across as the local catalogue stored it, including its manual sort
+    // position. Only database-owned fields and the old id are replaced.
+    const { _id: _localId, _rev: _revision, updatedAt: _stamp, ...room } = local
+    created.push({ _id: id, ...room })
     targetByKey.set(key, id)
     return id
   }

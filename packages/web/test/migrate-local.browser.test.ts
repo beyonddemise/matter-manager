@@ -116,6 +116,15 @@ describe('moving the catalogue on this device into a project', () => {
     expect(await local.repositories.devices.list()).toHaveLength(1)
   })
 
+  it('rejects moving a catalogue into itself without removing anything', async () => {
+    await local.repositories.rooms.save({ _id: 'room:kitchen', type: 'room', path: 'Kitchen' })
+    await local.repositories.devices.save(device('device:lamp', 'Kitchen lamp', 'room:kitchen'))
+
+    await expect(migrateLocalCatalogue(local.repositories, local.repositories)).rejects.toThrow()
+    expect(await local.repositories.devices.list()).toHaveLength(1)
+    expect(await local.repositories.rooms.list()).toHaveLength(1)
+  })
+
   it('does nothing at all for an empty catalogue', async () => {
     const result = await migrateLocalCatalogue(local.repositories, project.repositories)
     expect(result).toEqual({ devicesMoved: 0, roomsCreated: 0, localCleared: true })

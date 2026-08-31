@@ -81,6 +81,18 @@ describe('moving devices into a project that already has rooms', () => {
     expect(plan.devices[0]?.roomId).toBe(plan.rooms[0]?._id)
   })
 
+  it('keeps the room’s manual sort position', () => {
+    const localRoom = { ...room('room:local-porch', 'Porch'), sortKey: 3 }
+    const plan = planMigration(
+      [device('device:porch', 'Porch light', localRoom._id)],
+      [localRoom],
+      [],
+      counter(),
+    )
+
+    expect(plan.rooms[0]?.sortKey).toBe(3)
+  })
+
   it('creates a room once for several devices in it', () => {
     const plan = planMigration(
       [

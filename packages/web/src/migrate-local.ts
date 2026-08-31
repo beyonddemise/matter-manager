@@ -46,6 +46,8 @@ export async function migrateLocalCatalogue(
   to: ProjectRepositories,
   uuid: () => string = () => crypto.randomUUID(),
 ): Promise<MigrationResult> {
+  if (from === to) throw new Error('The source and target catalogues must be different')
+
   const [devices, rooms, targetRooms, targetDevices] = await Promise.all([
     from.devices.list(),
     from.rooms.list(),

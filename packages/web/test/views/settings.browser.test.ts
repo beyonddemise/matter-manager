@@ -275,6 +275,27 @@ describe('moving the catalogue on this device into a project', () => {
     })
   })
 
+  it('keeps the retry available when local cleanup is incomplete', async () => {
+    await withALocalDevice(async () => {
+      let attempts = 0
+      const element = await withMove({
+        listProjects: async () => [serverProject()],
+        moveLocal: async () => {
+          attempts += 1
+          return { devicesMoved: 1, localCleared: false }
+        },
+      })
+      ;(element.querySelector('[data-move]') as HTMLElement).click()
+      await waitUntil(
+        () => element.querySelector('[data-move-local]')?.textContent.includes('still on this device') === true,
+        'no incomplete-cleanup result',
+      )
+
+      ;(element.querySelector('[data-move]') as HTMLElement).click()
+      await waitUntil(() => attempts === 2, 'retry unavailable')
+    })
+  })
+
   it('says plainly when nothing moved', async () => {
     // A failed move leaves the local catalogue untouched, so the honest report is that nothing
     // happened - not an error the reader is expected to do something about.

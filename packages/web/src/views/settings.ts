@@ -240,8 +240,12 @@ export class SettingsView extends LitElement {
       const move =
         this.moveLocal ??
         ((dbName: string) => migrateLocalCatalogue(localCatalogue(), openProject(dbName)))
-      this.moved = await move(target.dbName)
-      this.localCount = 0
+      const moved = await move(target.dbName)
+      this.moved =
+        moved.localCleared && moved.devicesMoved === 0 && this.moved?.devicesMoved
+          ? { ...moved, devicesMoved: this.moved.devicesMoved }
+          : moved
+      if (moved.localCleared) this.localCount = 0
     } catch {
       // Reported as nothing having moved rather than as an error the reader can act on: the
       // local catalogue is untouched, and trying again later is the whole remedy.
@@ -253,7 +257,7 @@ export class SettingsView extends LitElement {
 
   /** The offer to move the local catalogue, when there is one worth making. */
   private renderMove(): TemplateResult | '' {
-    if (this.moved !== undefined) {
+    if (this.moved !== undefined && (this.moved.localCleared || this.moved.devicesMoved === 0)) {
       return html`
         <section class="wa-stack wa-gap-2xs" data-move-done>
           <h2>${msg('Devices on this device')}</h2>
@@ -274,7 +278,11 @@ export class SettingsView extends LitElement {
       <section class="wa-stack wa-gap-2xs" data-move-local>
         <h2>${msg('Devices on this device')}</h2>
         <p>
-          ${msg('These devices are stored only in this browser. Moving them into a project shares them with everyone who has access to it, and keeps them on your other devices.')}
+          ${
+            this.moved?.localCleared === false
+              ? msg('The devices were moved into the project, but they are still on this device. Try again to finish removing them from this device.')
+              : msg('These devices are stored only in this browser. Moving them into a project shares them with everyone who has access to it, and keeps them on your other devices.')
+          }
         </p>
         <wa-select data-move-target label=${msg('Move them into')} value=${this.movable[0]?.projectId ?? ''}>
           ${this.movable.map(
