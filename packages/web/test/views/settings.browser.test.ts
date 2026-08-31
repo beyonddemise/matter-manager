@@ -1,9 +1,19 @@
+import '@awesome.me/webawesome-pro/dist/components/option/option.js'
 import '@awesome.me/webawesome-pro/dist/components/radio/radio.js'
 import '@awesome.me/webawesome-pro/dist/components/radio-group/radio-group.js'
+import '@awesome.me/webawesome-pro/dist/components/select/select.js'
 import { fixture, html, waitUntil } from '@open-wc/testing-helpers'
 import { afterEach, describe, expect, it } from 'vitest'
 import { activateLocale } from '../../src/i18n/localization.js'
 import type { StorageManagerLike } from '../../src/storage.js'
+import {
+  DEFAULT_PALETTE,
+  DEFAULT_THEME,
+  EXCLUDED_THEMES,
+  PALETTES,
+  THEME_STORAGE_KEY,
+  THEMES,
+} from '../../src/theme.js'
 import type { SettingsView } from '../../src/views/settings.js'
 import '../../src/views/settings.js'
 
@@ -111,5 +121,42 @@ describe('what the user is told about storage on this device', () => {
     const said = element.querySelector('[data-storage-persistence]')?.textContent ?? ''
     expect(said).toContain('Browser')
     expect(said).not.toContain('has not promised')
+  })
+})
+
+describe('choosing a theme and a palette', () => {
+  it('offers every theme that passes the contrast measurement', async () => {
+    const element = await settings(stub({ persisted: true }))
+    const offered = [...element.querySelectorAll('[data-field="theme"] wa-option')].map((option) =>
+      option.getAttribute('value'),
+    )
+    expect(offered).toEqual([...THEMES])
+  })
+
+  it('offers none of the themes withheld for contrast', async () => {
+    const element = await settings(stub({ persisted: true }))
+    const offered = [...element.querySelectorAll('[data-field="theme"] wa-option')].map((option) =>
+      option.getAttribute('value'),
+    )
+    for (const withheld of Object.keys(EXCLUDED_THEMES)) {
+      expect(offered, withheld).not.toContain(withheld)
+    }
+  })
+
+  it('offers every palette', async () => {
+    const element = await settings(stub({ persisted: true }))
+    const offered = [...element.querySelectorAll('[data-field="palette"] wa-option')].map(
+      (option) => option.getAttribute('value'),
+    )
+    expect(offered).toEqual([...PALETTES])
+  })
+
+  it('shows the look currently in force', async () => {
+    localStorage.removeItem(THEME_STORAGE_KEY)
+    const element = await settings(stub({ persisted: true }))
+    const theme = element.querySelector('[data-field="theme"]') as { value?: string }
+    const palette = element.querySelector('[data-field="palette"]') as { value?: string }
+    expect(theme.value).toBe(DEFAULT_THEME)
+    expect(palette.value).toBe(DEFAULT_PALETTE)
   })
 })

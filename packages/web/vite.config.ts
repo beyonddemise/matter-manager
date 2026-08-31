@@ -20,17 +20,27 @@ const THIRD_PARTY_FONTS = /@import\s+url\(\s*['"]https:\/\/fonts\.bunny\.net\/[^
  * **It fails when it finds nothing.** A stripper that silently does nothing is worse than no
  * stripper: the fonts would quietly go back to being fetched from Bunny and everything would
  * still build, still pass, and still look right to anybody with a network. So a Web Awesome
- * release that renames or moves that import breaks the build and says so. `apply: 'build'`
- * because only a build loads the whole application - a unit test that imports one component
- * never reads the theme, and failing there would be a false alarm.
+ * release that renames or moves that import breaks the build and says so.
+ *
+ * **The transform runs in development too, and only the assertion is build-only.** It was
+ * `apply: 'build'` at first, which meant `npm run dev` still fetched fonts from Bunny while a
+ * build did not - dev and production disagreeing about typography. That was tolerable while one
+ * theme was involved; #70 makes eight selectable, seven of which fall back to the platform stack
+ * in production, so a developer would have been looking at fonts no user ever sees. What
+ * `apply: 'build'` was really protecting is the assertion below: a unit test that imports one
+ * component never reads a theme, and failing there would be a false alarm.
  */
 function stripThirdPartyFontImports(): Plugin {
   let stripped = 0
+  let building = false
 
   return {
     name: 'strip-third-party-font-imports',
     enforce: 'pre',
-    apply: 'build',
+
+    configResolved(config) {
+      building = config.command === 'build'
+    },
 
     transform(code, id) {
       if (!id.endsWith('.css')) return null
@@ -45,7 +55,7 @@ function stripThirdPartyFontImports(): Plugin {
     buildEnd(error) {
       // Only when the build itself succeeded: reporting this on top of a real failure would
       // bury the cause under a consequence.
-      if (error === undefined && stripped === 0) {
+      if (building && error === undefined && stripped === 0) {
         this.error(
           'No fonts.bunny.net @import was found in any stylesheet, so this plugin removed ' +
             'nothing.\nEither Web Awesome changed where its themes get webfonts - in which ' +
