@@ -39,6 +39,18 @@ export interface ProjectPointer {
    * #128 — the length was checked and the value went no further.
    */
   readonly address?: string
+  /**
+   * Whether the project has been put away.
+   *
+   * Absent means no, so every project written before #55 reads correctly without a migration -
+   * which matters because the alternative is rewriting every pointer in the registry to record
+   * a fact that is false for all of them.
+   *
+   * Not a deletion and not a permission: an archived project keeps its database, its members
+   * and its name, and an owner can bring it back. It is the client that stops replicating and
+   * stops listing it, which is what "stops syncing and is hidden, but is not deleted" means.
+   */
+  readonly archived?: boolean
   readonly participants: readonly Participant[]
   readonly addedAt: string
 }
@@ -51,6 +63,14 @@ export interface ProjectRow {
   /** Absent when the project has none; see {@link ProjectPointer.address}. */
   readonly address?: string
   readonly role: Participant['role']
+  /**
+   * Whether the project is archived.
+   *
+   * Emitted as a real boolean by the map function - `doc.archived === true` - so a pointer
+   * written before #55, which has no such field, reads as `false` here rather than as `null`.
+   * That is what lets the field be added without rewriting every document in the registry.
+   */
+  readonly archived: boolean
   /**
    * Who owns the project, emitted alongside the row's own participant.
    *
@@ -87,7 +107,8 @@ const BY_USER_MAP = `function (doc) {
     doc.participants.forEach(function (p) {
       emit(p.userid, { projectId: doc.projectId, dbName: doc.dbName,
                        projectName: doc.projectName, address: doc.address,
-                       role: p.role, ownerId: ownerId })
+                       role: p.role, ownerId: ownerId,
+                       archived: doc.archived === true })
     })
   }
 }`

@@ -211,10 +211,10 @@ paths:
 
     patch:
       tags: [projects]
-      summary: Change a project's name or address
+      summary: Change a project's name, address or archived state
       description: |
         A settings change, not a permission change. Requires `owner` or `manage` — the role
-        that may decide who has access may certainly correct a name.
+        that may decide who has access may certainly correct a name, or put the project away.
 
         Both fields are optional and independent, so a client may send either alone. `address`
         may be `null`, which removes it; that is spelled as a value rather than as a missing
@@ -235,6 +235,12 @@ paths:
                 address:
                   type: [string, 'null']
                   maxLength: 500
+                archived:
+                  type: boolean
+                  description: |
+                    Put the project away, or bring it back. A state rather than an event, so
+                    it can be undone — a project that could be archived and not unarchived
+                    would be deleted with extra steps.
       responses:
         '200':
           description: The project as it now stands
@@ -416,7 +422,7 @@ components:
 
     ProjectSummary:
       type: object
-      required: [projectId, dbName, name, role, owner]
+      required: [projectId, dbName, name, role, owner, archived]
       properties:
         projectId: { type: string, format: uuid }
         dbName: { type: string, description: 'CouchDB database to replicate, e.g. project_<uuid>' }
@@ -432,6 +438,22 @@ components:
             finding a device in a building years later, this is not decoration.
         role: { $ref: '#/components/schemas/Role' }
         owner: { $ref: '#/components/schemas/Principal' }
+        archived:
+          type: boolean
+          description: |
+            Whether the project has been put away (#55).
+
+            **Not a deletion.** An archived project keeps its database, its members and its
+            name, and an owner or manager can bring it back. What changes is what a client
+            does with it: stop replicating it, and stop offering it in the switcher.
+
+            Archived projects are still returned by `GET /projects`. Filtering them out here
+            would leave a client unable to show what it had put away and therefore unable to
+            unarchive it, which would make archiving a deletion after all.
+
+            Always present, even for projects created before this field existed: the registry
+            view emits `doc.archived === true`, so an absent field reads as `false` rather
+            than as null. No migration of stored pointers was needed or performed.
 
     Member:
       type: object

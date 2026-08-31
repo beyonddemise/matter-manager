@@ -106,6 +106,9 @@ describe('creating a project', () => {
       name: 'Musterstraße 12',
       role: 'owner',
       owner: { ownerType: 'user', ownerId: OWNER },
+      // A project nobody has archived yet (#55). Stated rather than absent, so a client never
+      // has to read a missing key as a `false`.
+      archived: false,
     })
   })
 
