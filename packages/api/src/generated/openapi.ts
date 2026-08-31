@@ -378,9 +378,11 @@ export interface paths {
      * @description A settings change, not a permission change. Requires `owner` or `manage` — the role
      *     that may decide who has access may certainly correct a name, or put the project away.
      *
-     *     Both fields are optional and independent, so a client may send either alone. `address`
-     *     may be `null`, which removes it; that is spelled as a value rather than as a missing
-     *     field, so that a body which simply forgot the address does not erase one.
+     *     All three fields are optional and independent, so a client may send any one alone.
+     *     `address` may be `null`, which removes it; that is spelled as a value rather than as a
+     *     missing field, so that a body which simply forgot the address does not erase one.
+     *     `archived` has no such spelling because it has no third state: absent leaves it alone,
+     *     and `true` or `false` sets it.
      *
      *     Answers 404 rather than 403 to a caller who is not a participant, for the reason the
      *     member operations do: a 403 would confirm that a project with this id exists, which is
