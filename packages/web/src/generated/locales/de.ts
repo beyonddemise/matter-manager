@@ -9,7 +9,8 @@
     /* eslint-disable @typescript-eslint/no-explicit-any */
 
     export const templates = {
-      's01924e0434d0960b': str`${0} auswählen`,
+      'migration-incomplete': `Die Geräte wurden in das Projekt verschoben, befinden sich aber weiterhin auf diesem Gerät. Versuchen Sie es erneut, um sie vollständig von diesem Gerät zu entfernen.`,
+'s01924e0434d0960b': str`${0} auswählen`,
 's0384e1e586dd5707': `Wie Sie es im Alltag nennen würden: „Deckenlampe Küche“.`,
 's04bffb7fd8963811': `Ihre Geräte konnten nicht aus dem Speicher dieses Browsers gelesen werden. Es ist nichts verloren gegangen – laden Sie die Seite neu, um es erneut zu versuchen.`,
 's0d7644c23c3661d1': `PDF exportieren`,
@@ -149,7 +150,6 @@
 'sf0b5a77a7af7527b': `Ein Gerät braucht einen Raum. Tippen Sie einen Namen ein, um einen anzulegen, oder wählen Sie einen vorhandenen Raum.`,
 'sf0ef7644098b8a63': `Endgültig löschen`,
 'sf4c4e575fe36b271': `Die Geräte wurden in das Projekt verschoben.`,
-'migration-incomplete': `Die Geräte wurden in das Projekt verschoben, befinden sich aber weiterhin auf diesem Gerät. Versuchen Sie es erneut, um sie vollständig von diesem Gerät zu entfernen.`,
 'sf62138b53ab5a555': `Speicher auf diesem Gerät`,
 'sf78c048617264a07': `Diese Seite hat keine Berechtigung, eine Kamera zu verwenden. Erlauben Sie den Kamerazugriff für diese Seite in Ihrem Browser, oder geben Sie den Code ein.`,
 'sf8113792b44d84dc': `Ein Gerät braucht einen Namen; darüber finden Sie es später wieder.`,
