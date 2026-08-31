@@ -1,6 +1,6 @@
 # todo-55 — Switch and manage projects
 
-Closes #55 in three parts. **Parts one and two are done.**
+Closes #55 in three parts. **All three are done.**
 
 ## Why three parts
 
@@ -117,3 +117,44 @@ absence assertion while being broken for everybody.
 Each view resolves its repositories once and holds them — re-resolving per render would open a
 second handle on the same database and fire every change feed twice. So `useProjectDatabase`
 raises an event and the three views that read a database listen for it.
+
+---
+
+# Part three — moving the local catalogue into a project
+
+## The hard part is the rooms
+
+Copying documents is arithmetic. Both catalogues name rooms by **path**, and ADR 0006 settled
+long ago that `Ground Floor/Kitchen` and `ground floor / kitchen` are the same room — so a move
+that copied rooms by id would put a second Kitchen into a project that has one. That is the
+duplicate M1-5 and M2-5 exist to prevent, walking back in through the door nobody was watching.
+
+`planMigration` lives in `core`, is pure, and reuses `roomPathKey` rather than answering the
+question a second time.
+
+## Written first, removed second, never the other way round
+
+PouchDB has no transactions, so a failure between the two has to leave *something*. Of the two
+possible half-finished states — the devices in both catalogues, or in neither — only one loses
+nothing. Duplicates are a tidying problem; a gap is the failure this application exists to
+prevent.
+
+## A retry does not duplicate, and the test proved I was wrong about why
+
+Each device keeps its id, so a move interrupted and retried writes the same document rather than
+a second one. The first version claimed that made a retry safe. It did not: the second write
+carries no `_rev`, and PouchDB answers **409**. The test written to demonstrate the property
+failed on it.
+
+Devices already in the target are now skipped rather than rewritten — which is also the right
+behaviour for a different reason. Carrying the target's `_rev` and overwriting would replace
+whatever has happened to the device *in the project* since (a remark added, a room corrected)
+with a stale copy from the catalogue it came from.
+
+## The offer appears only when it means something
+
+An empty local catalogue has nothing to move; an account with no writable, unarchived project has
+nowhere to put it. Neither is an error, so neither is reported — the section is simply absent.
+
+Every assertion about that is an absence, and all of them would pass against a section that never
+rendered at all, so there is a positive control alongside them.

@@ -58,11 +58,32 @@ let currentEditable = true
  * that touches anything in this package, including the ones with no interest in a database.
  */
 export function projectDatabase(): ProjectRepositories {
-  const existing = opened.get(currentName)
+  return openProject(currentName)
+}
+
+/**
+ * The catalogue that lives only on this device, whichever project is currently open.
+ *
+ * Named explicitly rather than reached through {@link projectDatabase}, because the one caller
+ * — moving its contents into a project (#55) — needs *both* at once, and asking for "the
+ * current one" would give it the same database twice.
+ */
+export function localCatalogue(): ProjectRepositories {
+  return openProject(PROJECT_DATABASE_NAME)
+}
+
+/**
+ * The repositories for a named database, whichever project is currently open.
+ *
+ * Shares the memo with {@link projectDatabase}, so opening a project here and then switching to
+ * it does not open it twice - two handles on one store means every change feed fires twice.
+ */
+export function openProject(dbName: string): ProjectRepositories {
+  const existing = opened.get(dbName)
   if (existing !== undefined) return existing
 
-  const repositories = projectRepositories(new PouchDB(currentName))
-  opened.set(currentName, repositories)
+  const repositories = projectRepositories(new PouchDB(dbName))
+  opened.set(dbName, repositories)
   return repositories
 }
 

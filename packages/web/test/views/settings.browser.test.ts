@@ -4,6 +4,7 @@ import '@awesome.me/webawesome-pro/dist/components/radio-group/radio-group.js'
 import '@awesome.me/webawesome-pro/dist/components/select/select.js'
 import { fixture, html, waitUntil } from '@open-wc/testing-helpers'
 import { afterEach, describe, expect, it } from 'vitest'
+import { localCatalogue } from '../../src/db/project-database.js'
 import { activateLocale } from '../../src/i18n/localization.js'
 import type { StorageManagerLike } from '../../src/storage.js'
 import {
@@ -199,5 +200,123 @@ describe('two look changes in quick succession', () => {
     expect(element.theme).toBe('premium')
     expect(document.documentElement.classList.contains('wa-theme-premium')).toBe(true)
     expect(document.documentElement.classList.contains('wa-theme-mellow')).toBe(false)
+  })
+})
+
+describe('moving the catalogue on this device into a project', () => {
+  /** Settings, with the project list and the move itself injected. */
+  const withMove = async (over: Record<string, unknown>) => {
+    const element = (await fixture(html`
+      <settings-view
+        .storageManager=${stub({ persisted: true })}
+        .listProjects=${over.listProjects ?? (async () => [])}
+        .moveLocal=${over.moveLocal ?? (async () => ({ devicesMoved: 0, localCleared: true }))}
+      ></settings-view>
+    `)) as SettingsView
+    await element.updateComplete
+    await new Promise((resolve) => setTimeout(resolve, 40))
+    await element.updateComplete
+    return element
+  }
+
+  const serverProject = (over: Record<string, unknown> = {}) => ({
+    projectId: 'p1',
+    dbName: 'project_p1',
+    name: 'Musterstraße 12',
+    role: 'owner',
+    archived: false,
+    ...over,
+  })
+
+  /** Puts one device in the catalogue on this device, and takes it out again afterwards. */
+  const withALocalDevice = async (body: () => Promise<void>) => {
+    const local = localCatalogue()
+    await local.devices.save({
+      _id: 'device:local-one',
+      type: 'device',
+      name: 'Hall light',
+      roomId: 'room:hall',
+      manualCode: '34970112332',
+      installedAt: '2026-08-31',
+      addedAt: '2026-08-31T09:00:00.000Z',
+      disabled: false,
+      remarks: [],
+    })
+    try {
+      await body()
+    } finally {
+      for (const device of await local.devices.list()) await local.devices.remove(device)
+    }
+  }
+
+  it('offers the move when there is something to move and somewhere to put it', async () => {
+    // The positive control. Every assertion below is an absence, and all of them would pass
+    // against a section that never rendered at all.
+    await withALocalDevice(async () => {
+      const element = await withMove({ listProjects: async () => [serverProject()] })
+      expect(element.querySelector('[data-move-local]')).not.toBeNull()
+    })
+  })
+
+  it('moves them into the project that was chosen', async () => {
+    await withALocalDevice(async () => {
+      let movedInto: string | undefined
+      const element = await withMove({
+        listProjects: async () => [serverProject()],
+        moveLocal: async (dbName: string) => {
+          movedInto = dbName
+          return { devicesMoved: 1, localCleared: true }
+        },
+      })
+      ;(element.querySelector('[data-move]') as HTMLElement).click()
+      await waitUntil(() => element.querySelector('[data-move-done]') !== null, 'no result')
+
+      expect(movedInto).toBe('project_p1')
+    })
+  })
+
+  it('says plainly when nothing moved', async () => {
+    // A failed move leaves the local catalogue untouched, so the honest report is that nothing
+    // happened - not an error the reader is expected to do something about.
+    await withALocalDevice(async () => {
+      const element = await withMove({
+        listProjects: async () => [serverProject()],
+        moveLocal: async () => {
+          throw new Error('storage refused')
+        },
+      })
+      ;(element.querySelector('[data-move]') as HTMLElement).click()
+      await waitUntil(() => element.querySelector('[data-move-done]') !== null, 'no result')
+
+      expect(element.querySelector('[data-move-done]')?.textContent).toContain(
+        'still on this device',
+      )
+    })
+  })
+
+  it('says nothing when the local catalogue is empty', async () => {
+    // Not an error, so not reported. There is simply nothing to offer.
+    const element = await withMove({ listProjects: async () => [serverProject()] })
+    expect(element.querySelector('[data-move-local]')).toBeNull()
+  })
+
+  it('says nothing when there is nowhere to move it to', async () => {
+    // An account with no writable project has nowhere to put it, which is also not an error.
+    const element = await withMove({ listProjects: async () => [] })
+    expect(element.querySelector('[data-move-local]')).toBeNull()
+  })
+
+  it('does not offer a project the reader may only read', async () => {
+    // Moving devices into a project you cannot write to would fail at the first save, after
+    // telling the reader it was possible.
+    const element = await withMove({ listProjects: async () => [serverProject({ role: 'read' })] })
+    expect(element.querySelector('[data-move-local]')).toBeNull()
+  })
+
+  it('does not offer an archived project', async () => {
+    const element = await withMove({
+      listProjects: async () => [serverProject({ archived: true })],
+    })
+    expect(element.querySelector('[data-move-local]')).toBeNull()
   })
 })

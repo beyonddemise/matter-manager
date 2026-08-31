@@ -1,5 +1,7 @@
 import { msg, updateWhenLocaleChanges } from '@lit/localize'
 import { html, LitElement, type TemplateResult } from 'lit'
+import { projects } from '../composition.js'
+import { localCatalogue, openProject } from '../db/project-database.js'
 import {
   isLocalePreference,
   LOCALE_NAMES,
@@ -10,6 +12,7 @@ import {
   writeLocalePreference,
 } from '../i18n/locale.js'
 import { activateLocale, getLocale } from '../i18n/localization.js'
+import { migrateLocalCatalogue } from '../migrate-local.js'
 import { readStorageReport, type StorageManagerLike, type StorageReport } from '../storage.js'
 import {
   loadAndApplyLook,
@@ -42,6 +45,12 @@ export class SettingsView extends LitElement {
   static override properties = {
     storageManager: { attribute: false },
     lookLoader: { attribute: false },
+    listProjects: { attribute: false },
+    moveLocal: { attribute: false },
+    localCount: { state: true },
+    movable: { state: true },
+    moving: { state: true },
+    moved: { state: true },
     preference: { state: true },
     theme: { state: true },
     palette: { state: true },
@@ -69,6 +78,25 @@ export class SettingsView extends LitElement {
    */
   declare lookLoader?: (theme: Theme, palette: Palette) => Promise<unknown>
 
+  /** Injected by tests; unset in the application, where these reach the real API and databases. */
+  declare listProjects?: () => Promise<
+    readonly {
+      projectId: string
+      dbName: string
+      name: string
+      role: string
+      archived: boolean
+    }[]
+  >
+  declare moveLocal?: (dbName: string) => Promise<{ devicesMoved: number; localCleared: boolean }>
+
+  /** How many devices are in the catalogue on this device. Zero means nothing to move. */
+  declare localCount: number
+  /** Projects this account may write to, which are the ones worth offering as a destination. */
+  declare movable: readonly { projectId: string; dbName: string; name: string }[]
+  declare moving: boolean
+  declare moved: { devicesMoved: number; localCleared: boolean } | undefined
+
   declare preference: LocalePreference
   declare theme: Theme
   declare palette: Palette
@@ -84,6 +112,9 @@ export class SettingsView extends LitElement {
     this.preference = readLocalePreference(() => localStorage)
     this.theme = readThemePreference(() => localStorage)
     this.palette = readPalettePreference(() => localStorage)
+    this.localCount = 0
+    this.movable = []
+    this.moving = false
   }
 
   /**
@@ -160,6 +191,103 @@ export class SettingsView extends LitElement {
     void readStorageReport(this.storageManager ?? (() => navigator.storage)).then((report) => {
       this.storage = report
     })
+
+    void this.readMovable()
+  }
+
+  /**
+   * Whether there is anything to move, and anywhere to move it.
+   *
+   * Both halves are needed before the offer is worth making: an empty local catalogue has
+   * nothing to move, and an account with no writable project has nowhere to put it. Neither is
+   * an error, so neither is reported - the section simply is not there.
+   */
+  private async readMovable(): Promise<void> {
+    try {
+      this.localCount = (await localCatalogue().devices.list()).length
+    } catch {
+      // An unreadable catalogue is not something to offer to move.
+      this.localCount = 0
+    }
+    if (this.localCount === 0) return
+
+    try {
+      const all = await (this.listProjects ?? (() => projects().list()))()
+      this.movable = all
+        .filter((project) => !project.archived && project.role !== 'read')
+        .map(({ projectId, dbName, name }) => ({ projectId, dbName, name }))
+    } catch {
+      // Offline, or signed out. Nowhere to move it to right now, which is not a failure.
+      this.movable = []
+    }
+  }
+
+  /**
+   * Moves the catalogue on this device into the chosen project.
+   *
+   * Nothing is lost if this fails: `migrateLocalCatalogue` writes before it removes, so the
+   * worst outcome is the devices existing in both places.
+   */
+  private async onMove(): Promise<void> {
+    const select = this.querySelector('[data-move-target]') as { value?: unknown } | null
+    const target = this.movable.find((project) => project.projectId === select?.value)
+    if (target === undefined) return
+
+    this.moving = true
+    try {
+      // The database chosen, not the one currently open. They are usually different: somebody
+      // moving their local catalogue into a project is, by definition, looking at the local one.
+      const move =
+        this.moveLocal ??
+        ((dbName: string) => migrateLocalCatalogue(localCatalogue(), openProject(dbName)))
+      this.moved = await move(target.dbName)
+      this.localCount = 0
+    } catch {
+      // Reported as nothing having moved rather than as an error the reader can act on: the
+      // local catalogue is untouched, and trying again later is the whole remedy.
+      this.moved = { devicesMoved: 0, localCleared: false }
+    } finally {
+      this.moving = false
+    }
+  }
+
+  /** The offer to move the local catalogue, when there is one worth making. */
+  private renderMove(): TemplateResult | '' {
+    if (this.moved !== undefined) {
+      return html`
+        <section class="wa-stack wa-gap-2xs" data-move-done>
+          <h2>${msg('Devices on this device')}</h2>
+          <p>
+            ${
+              this.moved.devicesMoved === 0
+                ? msg('Nothing was moved. Everything is still on this device.')
+                : msg('The devices were moved into the project.')
+            }
+          </p>
+        </section>
+      `
+    }
+
+    if (this.localCount === 0 || this.movable.length === 0) return ''
+
+    return html`
+      <section class="wa-stack wa-gap-2xs" data-move-local>
+        <h2>${msg('Devices on this device')}</h2>
+        <p>
+          ${msg('These devices are stored only in this browser. Moving them into a project shares them with everyone who has access to it, and keeps them on your other devices.')}
+        </p>
+        <wa-select data-move-target label=${msg('Move them into')} value=${this.movable[0]?.projectId ?? ''}>
+          ${this.movable.map(
+            (project) => html`<wa-option value=${project.projectId}>${project.name}</wa-option>`,
+          )}
+        </wa-select>
+        <div>
+          <wa-button data-move variant="brand" ?disabled=${this.moving} @click=${this.onMove}>
+            ${msg('Move them')}
+          </wa-button>
+        </div>
+      </section>
+    `
   }
 
   /**
@@ -246,6 +374,7 @@ export class SettingsView extends LitElement {
           )}
         </wa-radio-group>
         ${this.renderLook()}
+        ${this.renderMove()}
         ${this.renderStorage()}
       </div>
     `
