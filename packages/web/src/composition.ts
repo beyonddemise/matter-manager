@@ -28,11 +28,7 @@ import {
   type SessionState,
   signOut,
 } from './session.js'
-import {
-  forgetTokens,
-  rememberAccessToken,
-  type AccessTokenResponse,
-} from './tokens.js'
+import { type AccessTokenResponse, forgetTokens, rememberAccessToken } from './tokens.js'
 
 /** The API, behind the application's own origin. See the module note. */
 export const API_BASE = '/api'
