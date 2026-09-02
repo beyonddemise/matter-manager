@@ -38,6 +38,9 @@ const EXPECTED: ReadonlyArray<
   ['setDeviceDisabled', 'function'],
   ['addRemark', 'function'],
   ['planMigration', 'function'],
+  ['resurrectedRooms', 'function'],
+  ['worthRemembering', 'function'],
+  ['DELETION_MEMORY_DAYS', 'number'],
   ['remarksNewestFirst', 'function'],
   ['browseDevices', 'function'],
   // base38

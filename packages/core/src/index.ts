@@ -200,4 +200,11 @@ export {
   type RoomRevision,
   UNASSIGNED_ROOM_PREFIX,
 } from './sync/merge.js'
+export {
+  DELETION_MEMORY_DAYS,
+  type DeletedRoom,
+  type ResurrectedRoom,
+  resurrectedRooms,
+  worthRemembering,
+} from './sync/resurrection.js'
 export { foldForComparison } from './text/fold.js'
