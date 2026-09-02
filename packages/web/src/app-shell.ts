@@ -35,6 +35,7 @@ import type { SyncManager } from './sync/manager.js'
 import type { SyncState } from './sync/replication.js'
 import { applyUpdate } from './updates.js'
 import './views/add-device.js'
+import './views/rooms.js'
 import './views/device-list.js'
 import './views/device.js'
 import './views/edit-device.js'
@@ -54,11 +55,12 @@ import './views/settings.js'
  */
 type ViewParams = Readonly<Record<string, string>>
 
-const VIEWS: Readonly<Record<string, (params: ViewParams) => TemplateResult>> = {
+export const VIEWS: Readonly<Record<string, (params: ViewParams) => TemplateResult>> = {
   'add-device': () => html`<add-device-view></add-device-view>`,
   device: (params) => html`<device-view uuid=${params.id ?? ''}></device-view>`,
   'device-list': () => html`<device-list-view></device-list-view>`,
   'edit-device': (params) => html`<edit-device-view uuid=${params.id ?? ''}></edit-device-view>`,
+  rooms: () => html`<rooms-view></rooms-view>`,
   settings: () => html`<settings-view></settings-view>`,
 }
 

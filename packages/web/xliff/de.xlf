@@ -586,6 +586,62 @@
   <source>Move them</source>
   <target>Verschieben</target>
 </trans-unit>
+<trans-unit id="s6464c2a7a815108b">
+  <source>Rooms</source>
+  <target>Räume</target>
+</trans-unit>
+<trans-unit id="s64313212d2e974b6">
+  <source>That did not work. Nothing was changed — try again.</source>
+  <target>Das hat nicht geklappt. Es wurde nichts geändert – versuchen Sie es erneut.</target>
+</trans-unit>
+<trans-unit id="sf633b74af173a4e9">
+  <source>No rooms yet. A room is created when you type one on a device.</source>
+  <target>Noch keine Räume. Ein Raum entsteht, sobald Sie bei einem Gerät einen eintragen.</target>
+</trans-unit>
+<trans-unit id="s4020ae71422bf3cd">
+  <source>Room name</source>
+  <target>Raumname</target>
+</trans-unit>
+<trans-unit id="s6a30befa5dad9199">
+  <source>No devices</source>
+  <target>Keine Geräte</target>
+</trans-unit>
+<trans-unit id="s4ea0f21fc2a338a1">
+  <source>Move up</source>
+  <target>Nach oben</target>
+</trans-unit>
+<trans-unit id="sb233557012dcb328">
+  <source>Move down</source>
+  <target>Nach unten</target>
+</trans-unit>
+<trans-unit id="s60320a18282b2b33">
+  <source>Rename</source>
+  <target>Umbenennen</target>
+</trans-unit>
+<trans-unit id="s4d47128b2285b47a">
+  <source>Delete this room?</source>
+  <target>Diesen Raum löschen?</target>
+</trans-unit>
+<trans-unit id="s6f00bd734aa48490">
+  <source>This room holds no devices.</source>
+  <target>In diesem Raum sind keine Geräte.</target>
+</trans-unit>
+<trans-unit id="s55229fce3a8ea65b">
+  <source>The devices in this room have to go somewhere. Nothing is deleted.</source>
+  <target>Die Geräte in diesem Raum müssen irgendwohin. Es wird nichts gelöscht.</target>
+</trans-unit>
+<trans-unit id="s5294b8ad50e579a1">
+  <source>Move the devices to</source>
+  <target>Geräte verschieben nach</target>
+</trans-unit>
+<trans-unit id="s8a49b21a2c9c0022">
+  <source>Unassigned</source>
+  <target>Ohne Raum</target>
+</trans-unit>
+<trans-unit id="sd6614896b151e698">
+  <source>Delete the room</source>
+  <target>Raum löschen</target>
+</trans-unit>
 </body>
 </file>
 </xliff>
