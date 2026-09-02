@@ -11,7 +11,7 @@ is built on one.
 
 Probed against three replicating databases rather than reasoned about:
 
-```
+```text
 heardAboutIt: true   arrivedDeleted: false   isAliveOnA: true   pathOnA: "Cocina"
 ```
 
