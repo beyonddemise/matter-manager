@@ -87,7 +87,7 @@ databases, which is where #53 put it and where #125 proved the resurrection sign
 
 ## Review
 
-`npm run verify`, `check:offline`, `check:graph`, `probe:runtime` clean; 2262 unit tests and 8
+`npm run verify`, `check:offline`, `check:graph`, `probe:runtime` clean; 2295 unit tests and 8
 journeys pass.
 
 Both fixes were verified by reverting them and watching the suite go red, which is the only way
