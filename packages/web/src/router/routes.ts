@@ -28,6 +28,7 @@ export const ROUTES: readonly Route[] = [
   // segment counts before anything else, so a three-segment route and a two-segment one can
   // never shadow each other. `/devices/new` is the only ordering that carries weight here.
   { path: '/devices/:id/edit', view: 'edit-device' },
+  { path: '/rooms', view: 'rooms', label: () => msg('Rooms'), icon: 'tags' },
   { path: '/settings', view: 'settings', label: () => msg('Settings'), icon: 'gear' },
 ]
 

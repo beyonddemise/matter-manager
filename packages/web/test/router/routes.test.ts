@@ -73,15 +73,18 @@ describe('the route registry', () => {
     expect(NAV_ROUTES.map((route) => route.path)).not.toContain('/devices/new')
   })
 
-  it('registers no route whose view the shell cannot render', () => {
-    // M2 registers only views that exist. Registering /devices/:id before M2-7 builds
-    // its view would match a path and then fail to render, which is worse than not
-    // matching it — an unregistered path correctly falls through to not-found.
+  it('registers the views it is expected to, and no others', () => {
+    // A pin on the registry rather than a check that each view exists: this file runs in Node,
+    // and the shell's map of views cannot be imported here because loading it defines custom
+    // elements. `views.browser.test.ts` makes the stronger claim — that the shell has an entry
+    // for every route — and the two together are what stop a route matching a path and then
+    // failing to render, which is worse than not matching at all.
     expect(ROUTES.map((route) => route.view)).toEqual([
       'device-list',
       'add-device',
       'device',
       'edit-device',
+      'rooms',
       'settings',
     ])
   })
