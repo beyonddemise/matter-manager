@@ -40,6 +40,8 @@ interface FakeResponse {
   readonly status: number
   readonly type: string
   clone(): FakeResponse
+  /** The install reads the shell to find the assets it names. See `assetsNamedIn` in `sw.js`. */
+  text(): Promise<string>
 }
 
 const response = (body: string, extra: Partial<FakeResponse> = {}): FakeResponse => {
@@ -50,6 +52,7 @@ const response = (body: string, extra: Partial<FakeResponse> = {}): FakeResponse
     type: 'basic',
     ...extra,
     clone: () => made,
+    text: async () => body,
   }
   return made
 }
@@ -196,6 +199,43 @@ describe('installing', () => {
     await Promise.all(sw.waited)
 
     expect(await sw.caches.match('/')).toBeDefined()
+  })
+
+  it('precaches the assets the shell names, because the shell alone is not the application', async () => {
+    // A worker does not control the page that registered it, so the visit that installs it
+    // fetches its scripts and stylesheets outside the worker's reach and they never enter the
+    // cache. Caching only the shell meant the application opened offline from the *third* visit
+    // - one to install, one online to populate `/assets/`, and only then. Found by the
+    // end-to-end suite (#57).
+    const sw = load(async (target) =>
+      new URL(target.url, 'https://example.test').pathname === '/'
+        ? response('<script src="/assets/app-abc.js"></script><link href="/assets/app-abc.css">')
+        : response('asset'),
+    )
+    sw.fire('install', {})
+    await Promise.all(sw.waited)
+
+    expect(await sw.caches.match('/assets/app-abc.js')).toBeDefined()
+    expect(await sw.caches.match('/assets/app-abc.css')).toBeDefined()
+  })
+
+  it('still installs when one asset cannot be fetched', async () => {
+    // `cache.addAll` rejects if any single request fails, which would leave an install that
+    // cached *nothing* because one fingerprinted file was momentarily unavailable - strictly
+    // worse than the shell alone.
+    const sw = load(async (target) => {
+      const path = new URL(target.url, 'https://example.test').pathname
+      if (path === '/') {
+        return response('<script src="/assets/good.js"></script><script src="/assets/bad.js">')
+      }
+      if (path === '/assets/bad.js') throw new Error('offline')
+      return response('asset')
+    })
+    sw.fire('install', {})
+    await Promise.all(sw.waited)
+
+    expect(await sw.caches.match('/')).toBeDefined()
+    expect(await sw.caches.match('/assets/good.js')).toBeDefined()
   })
 
   it('fetches the shell past the HTTP cache', async () => {

@@ -48,3 +48,30 @@ export function watchConnectivity(
     source.removeEventListener('offline', report)
   }
 }
+
+/**
+ * The browser as a connectivity source: events from `window`, the state from `navigator`.
+ *
+ * **They are two different objects, and that is the whole reason this exists.** `online` and
+ * `offline` fire on `window`; `onLine` is a property of `navigator`. Passing `window` alone —
+ * which is what `app-shell.ts` did until the end-to-end suite caught it (#57) — makes
+ * `source.onLine` `undefined`, and `undefined !== false` is `true`, so the indicator reported a
+ * network however offline the browser was.
+ *
+ * The `!== false` default above is what made it silent. It is right — a source with no `onLine`
+ * should read as online, because assuming a network blocks nothing — and it turned a wiring
+ * mistake into a control that simply never appeared.
+ *
+ * A **getter**, not a captured value. `onLine: navigator.onLine` would freeze whatever was true
+ * when the object was built, and this object is built once at startup, so it would answer the
+ * same thing forever.
+ */
+export function browserConnectivity(): ConnectivitySource {
+  return {
+    get onLine(): boolean {
+      return navigator.onLine
+    },
+    addEventListener: (type, listener) => window.addEventListener(type, listener),
+    removeEventListener: (type, listener) => window.removeEventListener(type, listener),
+  }
+}
