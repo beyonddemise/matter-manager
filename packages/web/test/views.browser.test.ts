@@ -4,12 +4,15 @@ import { VIEWS } from '../src/app-shell.js'
 import { ROUTES } from '../src/router/routes.js'
 import '../src/views/not-found.js'
 
-it('has a view for every route the registry declares', () => {
+it('has a registered view for every route the registry declares', () => {
   // The claim `routes.test.ts` cannot make: that file runs in Node, where importing the shell
   // would define custom elements. A route whose view the shell does not know matches a path and
   // then renders nothing - worse than not matching, because an unregistered path falls through
   // to not-found and says so.
-  const missing = ROUTES.filter((route) => VIEWS[route.view] === undefined)
+  const missing = ROUTES.filter(
+    (route) =>
+      VIEWS[route.view] === undefined || customElements.get(`${route.view}-view`) === undefined,
+  )
   expect(missing.map((route) => `${route.path} -> ${route.view}`)).toEqual([])
 })
 

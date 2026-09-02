@@ -124,6 +124,9 @@ export class RoomsView extends LitElement {
       await write()
       await this.load()
     } catch {
+      // A plan can fail after an earlier write succeeded. Re-read before reporting it, so a
+      // retry is planned from what was actually saved rather than from the old snapshot.
+      await this.load()
       this.failed = true
     } finally {
       this.busy = false
@@ -222,7 +225,10 @@ export class RoomsView extends LitElement {
           this.failed
             ? html`<wa-callout variant="danger" data-rooms-failed>
                 <wa-icon slot="icon" name="triangle-exclamation"></wa-icon>
-                ${msg('That did not work. Nothing was changed — try again.')}
+                ${msg({
+                  id: 's64313212d2e974b6',
+                  str: 'That did not finish. Some changes may have been saved. Check and try again.',
+                })}
               </wa-callout>`
             : ''
         }

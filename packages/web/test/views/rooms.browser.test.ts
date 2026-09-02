@@ -6,6 +6,7 @@ import '@awesome.me/webawesome-pro/dist/components/input/input.js'
 import '@awesome.me/webawesome-pro/dist/components/option/option.js'
 import '@awesome.me/webawesome-pro/dist/components/select/select.js'
 import type { DeviceDocument, RoomDocument } from '@matter-manager/core'
+import type { ProjectRepositories } from '@matter-manager/data'
 import { fixture, html, waitUntil } from '@open-wc/testing-helpers'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { useProjectDatabase } from '../../src/db/project-database.js'
@@ -179,6 +180,36 @@ describe('deleting a room', () => {
     )
 
     expect(await database.repositories.devices.list()).toHaveLength(1)
+  })
+
+  it('reloads what was saved when a later write fails', async () => {
+    await database.repositories.rooms.save(room('room:k', 'Kitchen'))
+    await database.repositories.devices.save(device('device:one', 'Lamp', 'room:k'))
+
+    const repositories: ProjectRepositories = {
+      ...database.repositories,
+      devices: {
+        ...database.repositories.devices,
+        save: async () => {
+          throw new Error('later write failed')
+        },
+      },
+    }
+    const element = (await fixture(
+      html`<rooms-view .repositories=${repositories}></rooms-view>`,
+    )) as RoomsView
+    await waitUntil(() => element.loaded, 'never loaded')
+    ;(element.querySelector('[data-delete-room]') as HTMLElement).click()
+    await element.updateComplete
+    ;(element.querySelector('[data-confirm-delete-room]') as HTMLElement).click()
+
+    await waitUntil(() => element.querySelector('[data-rooms-failed]') !== null, 'no message')
+    await element.updateComplete
+
+    expect(paths(element)).toContain('Unassigned')
+    expect(element.querySelector('[data-rooms-failed]')?.textContent).toContain(
+      'Some changes may have been saved',
+    )
   })
 
   it('asks even when the room is empty', async () => {

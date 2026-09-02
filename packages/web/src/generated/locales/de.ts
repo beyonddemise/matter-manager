@@ -65,7 +65,7 @@
 's5e27738a2e8eb763': `Anmelden`,
 's601fb086b0961538': `Anmerkung speichern`,
 's60320a18282b2b33': `Umbenennen`,
-'s64313212d2e974b6': `Das hat nicht geklappt. Es wurde nichts geändert – versuchen Sie es erneut.`,
+'s64313212d2e974b6': `Das wurde nicht abgeschlossen. Einige Änderungen wurden möglicherweise gespeichert. Prüfen Sie das und versuchen Sie es erneut.`,
 's6464c2a7a815108b': `Räume`,
 's64de9eceb8172269': `Gerät bearbeiten`,
 's64ef2a6c2dd1d3d1': `Bearbeiten`,

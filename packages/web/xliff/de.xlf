@@ -591,8 +591,8 @@
   <target>Räume</target>
 </trans-unit>
 <trans-unit id="s64313212d2e974b6">
-  <source>That did not work. Nothing was changed — try again.</source>
-  <target>Das hat nicht geklappt. Es wurde nichts geändert – versuchen Sie es erneut.</target>
+  <source>That did not finish. Some changes may have been saved. Check and try again.</source>
+  <target>Das wurde nicht abgeschlossen. Einige Änderungen wurden möglicherweise gespeichert. Prüfen Sie das und versuchen Sie es erneut.</target>
 </trans-unit>
 <trans-unit id="sf633b74af173a4e9">
   <source>No rooms yet. A room is created when you type one on a device.</source>
