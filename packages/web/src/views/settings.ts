@@ -240,12 +240,18 @@ export class SettingsView extends LitElement {
       const move =
         this.moveLocal ??
         ((dbName: string) => migrateLocalCatalogue(localCatalogue(), openProject(dbName)))
-      const moved = await move(target.dbName)
-      this.moved =
-        moved.localCleared && moved.devicesMoved === 0 && this.moved?.devicesMoved
-          ? { ...moved, devicesMoved: this.moved.devicesMoved }
-          : moved
-      if (moved.localCleared) this.localCount = 0
+      const result = await move(target.dbName)
+
+      // A retry after an incomplete clean-up writes nothing - every device is already in the
+      // project - so it reports zero. Carrying the earlier count forward tells the reader what
+      // actually moved rather than what this attempt happened to write.
+      const devicesMoved =
+        result.devicesMoved === 0 ? (this.moved?.devicesMoved ?? 0) : result.devicesMoved
+
+      this.moved = { ...result, devicesMoved }
+      // Only when the local catalogue is genuinely empty. Zeroing it after a partial clean-up
+      // would withdraw the offer while the devices are still here, leaving no way to finish.
+      if (result.localCleared) this.localCount = 0
     } catch {
       // Reported as nothing having moved rather than as an error the reader can act on: the
       // local catalogue is untouched, and trying again later is the whole remedy.
