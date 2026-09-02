@@ -1117,3 +1117,36 @@ autofix then *inverted that test* to match the new behaviour rather than reporti
 Fixing the pattern instead — RFC 3986 requires a scheme to begin with a letter — closed the leak
 by class and left the test saying what it always said. **When a fix requires editing a test that
 was passing, the test is evidence about intent, not an obstacle.**
+
+## L34 — A test that injects the dependency cannot see the caller that passes the wrong one
+
+`watchConnectivity(source)` reads `source.onLine`. Every unit test injected a source, so every
+test passed. The application passed `window` — and `onLine` belongs to **`navigator`**, while the
+*events* fire on `window`. The offline indicator could never appear, in any browser, ever.
+
+The suites were not weak. They were complete for what they tested, and structurally incapable of
+observing the defect: injection is the technique that makes the module testable, and the bug
+lived at the one seam injection removes — the single line that chooses the real object. Coverage
+counted that line as covered, because it *executes*; nothing asserted what it hands over.
+
+It survived because the fallback is right on its own terms: *"a source that does not implement
+`onLine` reads as online, because assuming a network blocks nothing."* Good defaults absorb wiring
+mistakes. `undefined !== false` is `true`, so a missing property and a live network are the same
+answer, and the wrong object never announced itself.
+
+**Rule:** for anything injected, one test must construct the *real* production wiring and assert
+on it. Not the adapter's shape — its observed behaviour, from outside. Everything below that line
+can be a fake; the line itself cannot be, or nothing tests it.
+
+**Corollary — this is the shape of defect end-to-end tests exist for, and the only kind.** Both
+bugs #57's suite found were of it. The other, #147, was the service worker precaching only `/`:
+a worker does not control the page that registered it, so the installing visit's assets are
+fetched outside its reach. Every worker unit test drives the worker directly, which is precisely
+the condition that never occurs on the visit that matters. ADR 0002's central promise had never
+held, and 118 test files could not tell us.
+
+**Corollary — one symptom is not one cause.** Fixing the precache revealed a second, independent
+failure hiding behind it: `Vary: Origin` meant the precached assets still never matched the
+page's requests, because the worker's own fetch carries no `Origin` header and the page's script
+request does. The first fix changed nothing observable. **When a fix produces no visible change,
+that is evidence of a second cause, not evidence the fix was wrong.**
