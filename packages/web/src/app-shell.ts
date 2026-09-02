@@ -8,7 +8,7 @@ import {
   projects,
   readSessionState,
 } from './composition.js'
-import { type ConnectivitySource, watchConnectivity } from './connectivity.js'
+import { browserConnectivity, type ConnectivitySource, watchConnectivity } from './connectivity.js'
 import {
   canEdit,
   currentDatabaseName,
@@ -204,9 +204,12 @@ export class AppShell extends LitElement {
   override connectedCallback(): void {
     super.connectedCallback()
     window.addEventListener('hashchange', this.onHashChange)
-    this.stopWatchingNetwork = watchConnectivity(this.connectivity ?? window, (online) => {
-      this.online = online
-    })
+    this.stopWatchingNetwork = watchConnectivity(
+      this.connectivity ?? browserConnectivity(),
+      (online) => {
+        this.online = online
+      },
+    )
 
     // Not awaited, and nothing waits for it. The application is local-first: every view works
     // without a session, so holding the shell back on a network request would delay the whole

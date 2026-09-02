@@ -53,15 +53,58 @@ const SHELL = '/'
 /** Fingerprinted by the bundler: a given URL's bytes never change. */
 const ASSET_PATH = '/assets/'
 
+/**
+ * The fingerprinted assets the shell names, read out of the shell itself.
+ *
+ * **The reason this exists.** Precaching only the shell was not enough, and the reasoning that
+ * said it was is subtly wrong: "the first load fetches them, and cacheFirst keeps them from then
+ * on" assumes the first load's requests pass through this worker. They do not — a worker does
+ * not control the page that registered it, so the very visit that installs it fetches its
+ * scripts and stylesheets outside the worker's reach, and they never enter the cache.
+ *
+ * The consequence was that the application opened offline only from the *third* visit: one to
+ * install the worker, one online for `cacheFirst` to populate `/assets/`, and only then would
+ * an offline start work. The end-to-end suite added in #57 is what showed it — no unit test
+ * can, because the failure is in which requests a real browser routes where.
+ *
+ * Parsed rather than generated. The names are decided at build time and this file is not built;
+ * listing them would mean regenerating the worker on every build, which is the generated
+ * service worker this project decided against (ADR 0013). The shell already names its own
+ * assets, so the worker reads them from the copy it just precached.
+ *
+ * A regular expression rather than a parser: this looks at `src` and `href` attributes pointing
+ * into `/assets/`, in a document this build produced. Anything it misses is fetched from the
+ * network on a later visit and cached then, which is exactly where this started - so a miss
+ * costs what the old behaviour cost, and a hit is the fix.
+ */
+function assetsNamedIn(html) {
+  return [...html.matchAll(/(?:src|href)="(\/assets\/[^"]+)"/g)].map((match) => match[1])
+}
+
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE).then((cache) =>
+    caches.open(CACHE).then(async (cache) => {
       // `reload` so that installing a new worker cannot precache a shell the HTTP cache is
       // still holding from the previous deploy. The deployment sends `no-cache` for this
       // document (see `public/_headers`), and this makes the worker independent of that
       // having been got right.
-      cache.add(new Request(SHELL, { cache: 'reload' })),
-    ),
+      const request = new Request(SHELL, { cache: 'reload' })
+      const response = await fetch(request)
+      if (!response.ok) throw new Error(`The shell could not be precached (${response.status}).`)
+
+      // Cloned before reading: a body can be consumed once, and both the cache and the parser
+      // below need it.
+      await cache.put(request, response.clone())
+
+      // Each asset separately, and failures tolerated. `cache.addAll` rejects if any single
+      // request fails, which would leave an install that cached *nothing* because one
+      // fingerprinted file was momentarily unavailable - strictly worse than the shell alone.
+      await Promise.allSettled(
+        assetsNamedIn(await response.text()).map((url) =>
+          cache.add(new Request(url, { cache: 'reload' })),
+        ),
+      )
+    }),
   )
 })
 
@@ -142,7 +185,16 @@ async function networkFirst(request) {
  * file is a different URL, so a cache hit cannot be stale.
  */
 async function cacheFirst(request) {
-  const cached = await caches.match(request)
+  // `ignoreVary` because the URL is the whole identity here, which is the premise of the
+  // `/assets/` rule in the first place: these are fingerprinted, so the bytes behind one can
+  // never change.
+  //
+  // Without it the precache is useless. A server may answer an asset with `Vary: Origin` - the
+  // development preview does - and the worker's own precache fetch carries no `Origin` header
+  // while the page's script request does, so the two never match and every asset is fetched
+  // again from a network that may not be there. That is what kept the application from opening
+  // offline after a single visit, and it survived until the end-to-end suite in #57 looked.
+  const cached = await caches.match(request, { ignoreVary: true })
   if (cached !== undefined) return cached
 
   const response = await fetch(request)

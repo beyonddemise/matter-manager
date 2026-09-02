@@ -140,6 +140,18 @@ jobs:
       - name: The running site makes no cross-origin request
         run: npm run probe:runtime
 
+      # The job `e2e/README.md` promised in M2 and #57 finally added. It drives the *built*
+      # site, because what these journeys are for is what unit tests cannot reach: the service
+      # worker, the bundle that actually ships, and a real IndexedDB surviving a reload.
+      #
+      # It has already earned itself. Two defects it found on the way in: the offline indicator
+      # could never appear, because the shell passed `window` to a watcher reading `onLine` -
+      # which lives on `navigator`; and the application did not open offline after a single
+      # visit, because the worker precached the shell without the assets the shell names.
+      # Neither was reachable from any unit test.
+      - name: End-to-end journeys
+        run: npm run e2e
+
       - name: Upload coverage
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
