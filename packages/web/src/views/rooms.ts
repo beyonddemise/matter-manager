@@ -225,9 +225,8 @@ export class RoomsView extends LitElement {
           this.failed
             ? html`<wa-callout variant="danger" data-rooms-failed>
                 <wa-icon slot="icon" name="triangle-exclamation"></wa-icon>
-                ${msg({
+                ${msg('That did not finish. Some changes may have been saved. Check and try again.', {
                   id: 's64313212d2e974b6',
-                  str: 'That did not finish. Some changes may have been saved. Check and try again.',
                 })}
               </wa-callout>`
             : ''
