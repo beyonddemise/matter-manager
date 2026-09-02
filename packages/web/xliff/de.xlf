@@ -590,10 +590,6 @@
   <source>Rooms</source>
   <target>Räume</target>
 </trans-unit>
-<trans-unit id="s64313212d2e974b6">
-  <source>That did not finish. Some changes may have been saved. Check and try again.</source>
-  <target>Das wurde nicht abgeschlossen. Einige Änderungen wurden möglicherweise gespeichert. Prüfen Sie das und versuchen Sie es erneut.</target>
-</trans-unit>
 <trans-unit id="sf633b74af173a4e9">
   <source>No rooms yet. A room is created when you type one on a device.</source>
   <target>Noch keine Räume. Ein Raum entsteht, sobald Sie bei einem Gerät einen eintragen.</target>
@@ -641,6 +637,10 @@
 <trans-unit id="sd6614896b151e698">
   <source>Delete the room</source>
   <target>Raum löschen</target>
+</trans-unit>
+<trans-unit id="sea45c19a9a06883e">
+  <source>That did not finish. Some changes may have been saved. Check and try again.</source>
+  <target>Das wurde nicht abgeschlossen. Einige Änderungen wurden möglicherweise gespeichert. Prüfen Sie das und versuchen Sie es erneut.</target>
 </trans-unit>
 </body>
 </file>

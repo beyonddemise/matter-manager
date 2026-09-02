@@ -9,6 +9,14 @@ it('has a registered view for every route the registry declares', () => {
   // would define custom elements. A route whose view the shell does not know matches a path and
   // then renders nothing - worse than not matching, because an unregistered path falls through
   // to not-found and says so.
+  //
+  // **A key in the map is not enough**, which is what the first version of this test checked.
+  // Deleting `import './views/rooms.js'` from the shell leaves the map intact and `#/rooms`
+  // rendering an unregistered `<rooms-view>`, so the element registry is checked too.
+  //
+  // That rests on every view `x` defining `<x-view>`, which all six do. A view breaking the
+  // convention fails here rather than silently, which is the right way round for a convention
+  // nothing else enforces.
   const missing = ROUTES.filter(
     (route) =>
       VIEWS[route.view] === undefined || customElements.get(`${route.view}-view`) === undefined,
