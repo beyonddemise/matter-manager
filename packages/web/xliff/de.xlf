@@ -642,6 +642,22 @@
   <source>That did not finish. Some changes may have been saved. Check and try again.</source>
   <target>Das wurde nicht abgeschlossen. Einige Änderungen wurden möglicherweise gespeichert. Prüfen Sie das und versuchen Sie es erneut.</target>
 </trans-unit>
+<trans-unit id="sca29d7eb0a6eddce">
+  <source>“<x id="0" equiv-text="${entry.deleted.path}"/>” is back as “<x id="1" equiv-text="${entry.room.path}"/>”, because somebody else changed it while you were offline. Nothing was lost.</source>
+  <target>„<x id="0" equiv-text="${entry.deleted.path}"/>“ ist wieder da, jetzt als „<x id="1" equiv-text="${entry.room.path}"/>“, weil jemand anderes den Raum geändert hat, während Sie offline waren. Es ist nichts verloren gegangen.</target>
+</trans-unit>
+<trans-unit id="s6baf77377c829cd5">
+  <source>“<x id="0" equiv-text="${entry.deleted.path}"/>” is back, because somebody else changed it while you were offline. Nothing was lost.</source>
+  <target>„<x id="0" equiv-text="${entry.deleted.path}"/>“ ist wieder da, weil jemand anderes den Raum geändert hat, während Sie offline waren. Es ist nichts verloren gegangen.</target>
+</trans-unit>
+<trans-unit id="s343c7d58168f07bb">
+  <source>Delete it again</source>
+  <target>Erneut löschen</target>
+</trans-unit>
+<trans-unit id="s3defe022074e3bb5">
+  <source>Keep it</source>
+  <target>Behalten</target>
+</trans-unit>
 </body>
 </file>
 </xliff>

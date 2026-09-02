@@ -1,17 +1,24 @@
-import { msg, updateWhenLocaleChanges } from '@lit/localize'
+import { msg, str, updateWhenLocaleChanges } from '@lit/localize'
 import {
   devicesInRoom,
   planRoomDeletion,
+  type ResurrectedRoom,
   type RoomDestination,
   type RoomDocument,
   renameRoom,
   reorderRooms,
+  resurrectedRooms,
   roomsInOrder,
 } from '@matter-manager/core'
 import type { ProjectRepositories } from '@matter-manager/data'
 import { html, LitElement, type PropertyDeclarations, type TemplateResult } from 'lit'
 import { PROJECT_CHANGED } from '../current-project.js'
-import { projectDatabase, projectIsEditable } from '../db/project-database.js'
+import {
+  currentProjectDatabaseName,
+  projectDatabase,
+  projectIsEditable,
+} from '../db/project-database.js'
+import { forgetDeletion, readDeletedRooms, rememberDeletion } from '../deleted-rooms.js'
 
 /**
  * The rooms of a project: what order they are in, what they are called, and removing one.
@@ -38,6 +45,7 @@ export class RoomsView extends LitElement {
     loaded: { state: true },
     failed: { state: true },
     renaming: { state: true },
+    returned: { state: true },
     deleting: { state: true },
     busy: { state: true },
   }
@@ -50,6 +58,13 @@ export class RoomsView extends LitElement {
   declare failed: boolean
   /** The room being renamed, or `undefined`. One at a time; two would be two ways to collide. */
   declare renaming: string | undefined
+  /**
+   * Rooms this device deleted that are present again.
+   *
+   * The deletion was correct and lost anyway: a live leaf beats a deleted one, so somebody
+   * else's rename wins and the room comes back under a name this reader has never seen (#125).
+   */
+  declare returned: readonly ResurrectedRoom[]
   /** The room being deleted, which is where its devices have to be sent. */
   declare deleting: string | undefined
   declare busy: boolean
@@ -62,6 +77,7 @@ export class RoomsView extends LitElement {
     this.loaded = false
     this.failed = false
     this.busy = false
+    this.returned = []
   }
 
   private resolved: ProjectRepositories | undefined
@@ -110,6 +126,14 @@ export class RoomsView extends LitElement {
       this.devices = devices
       this.loaded = true
       this.failed = false
+
+      // A comparison against a list already read, rather than a subscription. It costs nothing
+      // extra and gives the same answer whether the room came back a second ago or while the
+      // tab was closed - which a change-feed listener would not.
+      this.returned = resurrectedRooms(
+        readDeletedRooms(() => localStorage, currentProjectDatabaseName()),
+        rooms,
+      )
     } catch {
       // Not logged: a device document carries a setup code. The message says the one thing
       // that is certainly true — the rooms were not read, and nothing has been lost.
@@ -207,6 +231,10 @@ export class RoomsView extends LitElement {
       if (plan.create !== undefined) await this.repos().rooms.save(plan.create)
       for (const device of plan.reassign) await this.repos().devices.save(device)
       await this.repos().rooms.remove(plan.remove)
+
+      // Remembered only once the removal succeeded. A record of a deletion that did not happen
+      // would report a resurrection for a room that never left (#125).
+      rememberDeletion(() => localStorage, currentProjectDatabaseName(), plan.remove, this.rooms)
     })
   }
 
@@ -230,6 +258,8 @@ export class RoomsView extends LitElement {
             : ''
         }
 
+        ${this.returned.map((entry) => this.renderReturned(entry))}
+
         ${
           this.loaded && rooms.length === 0
             ? html`<p class="app-empty" data-no-rooms>
@@ -241,6 +271,72 @@ export class RoomsView extends LitElement {
         }
       </div>
     `
+  }
+
+  /**
+   * A room this reader deleted, which is back.
+   *
+   * It names **both** names. "Kitchen is back as Cocina, because somebody else changed it" is an
+   * explanation; "Cocina is back" is a different puzzle. And it says who caused it, because the
+   * alternative reading — that the deletion did not save — is the one that makes somebody stop
+   * trusting the application.
+   *
+   * Deleting it again is one button, not a hunt through the list for a room under a name they
+   * did not choose.
+   */
+  private renderReturned(entry: ResurrectedRoom): TemplateResult {
+    const renamed = entry.room.path !== entry.deleted.path
+
+    return html`
+      <wa-callout variant="warning" data-room-returned data-returned-id=${entry.deleted.roomId}>
+        <wa-icon slot="icon" name="arrows-rotate"></wa-icon>
+        <div class="wa-stack wa-gap-2xs">
+          <span data-returned-message>
+            ${
+              renamed
+                ? msg(
+                    str`“${entry.deleted.path}” is back as “${entry.room.path}”, because somebody else changed it while you were offline. Nothing was lost.`,
+                  )
+                : msg(
+                    str`“${entry.deleted.path}” is back, because somebody else changed it while you were offline. Nothing was lost.`,
+                  )
+            }
+          </span>
+          ${
+            !projectIsEditable()
+              ? ''
+              : html`
+                  <div class="wa-cluster wa-gap-s">
+                    <wa-button
+                      data-delete-returned
+                      appearance="outlined"
+                      variant="danger"
+                      ?disabled=${this.busy}
+                      @click=${() => {
+                        this.deleting = entry.deleted.roomId
+                      }}
+                    >
+                      ${msg('Delete it again')}
+                    </wa-button>
+                    <wa-button
+                      data-dismiss-returned
+                      appearance="plain"
+                      @click=${() => this.onDismissReturned(entry.deleted.roomId)}
+                    >
+                      ${msg('Keep it')}
+                    </wa-button>
+                  </div>
+                `
+          }
+        </div>
+      </wa-callout>
+    `
+  }
+
+  /** The reader has decided to keep the room. The record has done its job. */
+  private onDismissReturned(roomId: string): void {
+    forgetDeletion(() => localStorage, currentProjectDatabaseName(), roomId)
+    this.returned = this.returned.filter((entry) => entry.deleted.roomId !== roomId)
   }
 
   private renderRoom(room: RoomDocument, index: number, total: number): TemplateResult {

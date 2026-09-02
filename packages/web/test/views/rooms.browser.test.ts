@@ -242,3 +242,105 @@ describe('a project somebody may only read', () => {
     expect(element.querySelector('[data-rename]')).toBeNull()
   })
 })
+
+describe('a room I deleted that comes back', () => {
+  /**
+   * #125. The deletion was correct and lost anyway: a live leaf beats a deleted one, so the
+   * other person's rename wins and the room returns under a name this reader has never seen.
+   * Without a word, the reasonable conclusion is that the deletion did not save.
+   */
+  const remember = (roomId: string, path: string) => {
+    localStorage.setItem(
+      `matter-manager.deleted-rooms.project_local`,
+      JSON.stringify([{ roomId, path, deletedAt: new Date().toISOString() }]),
+    )
+  }
+
+  beforeEach(() => {
+    localStorage.removeItem('matter-manager.deleted-rooms.project_local')
+  })
+
+  afterEach(() => {
+    localStorage.removeItem('matter-manager.deleted-rooms.project_local')
+  })
+
+  it('says it came back, and why', async () => {
+    remember('room:k', 'Kitchen')
+    await database.repositories.rooms.save(room('room:k', 'Cocina'))
+
+    const element = await view()
+    const said = element.querySelector('[data-returned-message]')?.textContent ?? ''
+    expect(said).toContain('Kitchen')
+    expect(said).toContain('Cocina')
+    expect(said).toContain('somebody else')
+  })
+
+  it('says nothing was lost, because nothing was', async () => {
+    // The alternative reading - that the application dropped the deletion - is the one that
+    // makes somebody stop trusting it.
+    remember('room:k', 'Kitchen')
+    await database.repositories.rooms.save(room('room:k', 'Cocina'))
+
+    const element = await view()
+    expect(element.querySelector('[data-returned-message]')?.textContent).toContain(
+      'Nothing was lost',
+    )
+  })
+
+  it('says nothing to a device that deleted nothing', async () => {
+    // The second scenario: the other person is unaffected. They have no record, so there is
+    // nothing to compare and nothing to show.
+    await database.repositories.rooms.save(room('room:k', 'Cocina'))
+    const element = await view()
+    expect(element.querySelector('[data-room-returned]')).toBeNull()
+  })
+
+  it('says nothing when the deletion stuck', async () => {
+    remember('room:gone', 'Cellar')
+    const element = await view()
+    expect(element.querySelector('[data-room-returned]')).toBeNull()
+  })
+
+  it('offers to delete it again in one action', async () => {
+    // "Deleting it again is one action, not a puzzle" - rather than hunting the list for a room
+    // under a name they did not choose.
+    remember('room:k', 'Kitchen')
+    await database.repositories.rooms.save(room('room:k', 'Cocina'))
+
+    const element = await view()
+    ;(element.querySelector('[data-delete-returned]') as HTMLElement).click()
+    await element.updateComplete
+
+    expect(element.querySelector('[data-delete-room-dialog]')).not.toBeNull()
+  })
+
+  it('stops mentioning it once the reader decides to keep it', async () => {
+    remember('room:k', 'Kitchen')
+    await database.repositories.rooms.save(room('room:k', 'Cocina'))
+
+    const element = await view()
+    ;(element.querySelector('[data-dismiss-returned]') as HTMLElement).click()
+    await element.updateComplete
+
+    expect(element.querySelector('[data-room-returned]')).toBeNull()
+    expect(localStorage.getItem('matter-manager.deleted-rooms.project_local')).toBe('[]')
+  })
+
+  it('remembers a deletion so a later return can be explained', async () => {
+    await database.repositories.rooms.save(room('room:k', 'Kitchen'))
+
+    const element = await view()
+    ;(element.querySelector('[data-delete-room]') as HTMLElement).click()
+    await element.updateComplete
+    ;(element.querySelector('[data-confirm-delete-room]') as HTMLElement).click()
+    await waitUntil(
+      () => localStorage.getItem('matter-manager.deleted-rooms.project_local') !== null,
+      'nothing remembered',
+    )
+
+    const stored = JSON.parse(
+      localStorage.getItem('matter-manager.deleted-rooms.project_local') ?? '[]',
+    ) as { roomId: string; path: string }[]
+    expect(stored.map((entry) => entry.path)).toContain('Kitchen')
+  })
+})
