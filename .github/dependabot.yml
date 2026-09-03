@@ -1,7 +1,25 @@
 version: 2
+
+# Web Awesome Pro is published only to Web Awesome's own registry, so the updater cannot
+# see its releases without a credential of its own. Without this block Dependabot reports
+# `private_source_authentication_failure` for @awesome.me/webawesome-pro and carries on
+# with the rest - and a component library that never appears in the update list is
+# indistinguishable from one that is already up to date.
+#
+# The token comes from the DEPENDABOT secret store, not the Actions one. They are separate
+# by design: a workflow run triggered by an update to an untrusted dependency must not be
+# able to reach the credentials the rest of CI holds. Both stores need the value.
+registries:
+  webawesome:
+    type: npm-registry
+    url: https://npm.webawesome.com
+    token: ${{secrets.WEBAWESOME_NPM_TOKEN}}
+
 updates:
   - package-ecosystem: npm
     directory: /
+    registries:
+      - webawesome
     schedule:
       interval: weekly
     open-pull-requests-limit: 5

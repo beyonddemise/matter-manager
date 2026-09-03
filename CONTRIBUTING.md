@@ -201,6 +201,30 @@ Two consequences worth stating plainly:
 - **Never** use `pull_request_target` to give fork workflows access to the secret. It runs
   untrusted code with credentials, trading an inconvenience for a credential compromise.
 
+### The token lives in two stores, not one
+
+`WEBAWESOME_NPM_TOKEN` has to be set **twice** in repository settings, under
+*Secrets and variables*:
+
+| Store | Read by | Set it or else |
+| --- | --- | --- |
+| **Actions** | every run triggered by a push, a **same-repository** pull request, or `workflow_dispatch` | `npm ci` fails with `E401` on the Pro package |
+| **Dependabot** | every run triggered by Dependabot, and the updater itself | every Dependabot pull request fails CI, *and* Web Awesome Pro is silently never offered for update |
+
+They are separate on purpose. An update to an untrusted dependency must not be able to reach
+the credentials the rest of CI holds, so a Dependabot-triggered run reads only the Dependabot
+store — `secrets.WEBAWESOME_NPM_TOKEN` resolves to the empty string if the value is missing
+there, however well populated the Actions store is. The run log names which store it used:
+`Secret source: Dependabot`.
+
+The updater needs it a second time, through `registries:` in `.github/dependabot.yml`, because
+resolving a version range on a private registry is a request Dependabot makes on its own behalf
+before any workflow starts. Without it the updater reports
+`private_source_authentication_failure` for `@awesome.me/webawesome-pro` and proceeds with the
+remaining packages — the failure appears only inside a run log that needs write access to read,
+so the visible symptom is no symptom at all: Web Awesome simply never appears in an update, which
+looks identical to already being current.
+
 Without a licence, please open an issue describing the change rather than a pull request you
 cannot build, and we will work out how to land it. Changes confined to `packages/core` — which
 is pure domain logic with no UI dependency — build and test without any of this.
