@@ -44,6 +44,7 @@
     "dev:stack": "node scripts/dev-stack.mjs",
     "dev:stack:down": "docker compose -f .devcontainer/docker-compose.yml down",
     "probe:runtime": "node scripts/probe-runtime-requests.mjs",
+    "probe:svg": "node scripts/probe-svg-rendering.mjs",
     "assets:fetch": "node scripts/fetch-offline-assets.mjs"
   },
   "devDependencies": {
