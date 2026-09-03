@@ -64,11 +64,23 @@ that broke the invariant. Hence `groups:` — one pull request per ecosystem, or
 `.github/dependabot.yml`: `directories:` listing the three Dockerfile locations, a
 `docker-compose` entry for `/infra` and `/.devcontainer`, and **two** groups on each.
 
-The second group per ecosystem carries `applies-to: security-updates`, and it is not
-belt-and-braces. A `groups:` entry covers version updates only unless it says otherwise, so with
-one group each the drift argument above would have held for routine version bumps and failed for
-a CouchDB *security* release — the single case where landing half of it matters most. The
-npm entries are deliberately left alone: `dev-tooling`, `lit` and `pouchdb` group for review
+Two details in `container-images` are what actually hold the drift invariant, and neither is
+obvious from reading `groups:`.
+
+**`group-by: dependency-name`.** With `directories:`, Dependabot's default is a separate pull
+request *per directory*. A plain group would therefore still have raised the two `couchdb` pins
+independently — it would have looked like it prevented the drift while not preventing it.
+
+**A second group carrying `applies-to: security-updates`.** A `groups:` entry covers version
+updates only unless it says otherwise, so with one group each the argument would have held for
+routine version bumps and failed for a CouchDB *security* release, the single case where landing
+half of it matters most.
+
+**The residual risk, stated rather than papered over:** `group-by` is version-updates-only, so a
+security release touching both directories can still arrive as two pull requests. They have to
+be landed together. No configuration removes this; naming it is the mitigation.
+
+The npm entries are deliberately left alone: `dev-tooling`, `lit` and `pouchdb` group for review
 convenience, and there is no invariant that an ungrouped security fix would break.
 
 `infra/compose.prod.yml` also loses a stale note claiming `packages/api/Dockerfile` does not
