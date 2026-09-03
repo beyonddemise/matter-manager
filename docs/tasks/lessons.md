@@ -1150,3 +1150,61 @@ failure hiding behind it: `Vary: Origin` meant the precached assets still never 
 page's requests, because the worker's own fetch carries no `Origin` header and the page's script
 request does. The first fix changed nothing observable. **When a fix produces no visible change,
 that is evidence of a second cause, not evidence the fix was wrong.**
+
+## L35 — A measurement without a control tells you the outcome, not the cause
+
+The #143 spike had to choose between rendering an uploaded floor plan through
+`<img src="blob:">` and rendering it inline. Run the hostile SVG under the deployed
+Content-Security-Policy and both come back clean: nothing executes, nothing reaches off-origin.
+On that evidence either choice is safe, and inline is the better feature.
+
+Running it a second time with **no policy at all** says something different. `<img>` is still
+inert — that is the browser's own rule for SVG in an image context, and it holds whatever the
+headers say. Inline SVG executes a `foreignObject onerror=` and a `javascript:` href in the
+application's origin. Identical outcomes in the first run; completely different reasons.
+
+The distinction is the whole decision. One option is safe by construction. The other is safe by
+a line in `packages/web/public/_headers` that someone will edit one day for an unrelated reason,
+and the failure would then be silent, in a feature nobody was touching.
+
+**Rule:** when a measurement comes back clean, run it again with the protection removed. If the
+result does not change, the protection was not what was protecting you — and you have learned
+which of your defences is actually load-bearing, which is the thing worth knowing.
+
+**Corollary — the control also corrects what you thought you were testing.** The same run showed
+that `<svg><script>` never executed *even with no policy*, because `innerHTML` does not run
+script elements. "Strip `<script>`" is the most repeated sanitiser advice there is, and here it
+targets the one vector that was already harmless, while the two that did run were an
+event-handler *attribute* and a `javascript:` *URL*. An allowlist written from intuition would
+have been confidently wrong in both directions.
+
+**Corollary — check that the instrument can detect the thing.** The first version of that probe
+pointed its external references at `example.invalid` and treated "the request failed" as "the
+policy blocked it". An unresolvable host fails DNS whether the policy blocked it or not, so that
+half of the assertion passed for the wrong reason and could never have failed for the right one.
+CodeRabbit caught it. The fix was to point at a second local server on another port — a different
+origin to the policy, and one that *answers* — and assert on what it actually received. The
+result was identical; only now it means something. The probe now also fails if the control run
+reaches that origin **not at all**, because "nothing got through" would otherwise be equally true
+of a probe that was never wired up.
+
+**Corollary — a failure with nowhere to appear is the same as no failure.** In the same session,
+two updaters had been failing since the repository was created. `Dependabot Updates` could never
+resolve `@awesome.me/webawesome-pro`, because the credential lived in the Actions secret store
+and a Dependabot-triggered run reads a different one (#153). Its docker ecosystem aborted on
+every run with `No Dockerfiles nor Kubernetes YAML found in /infra`, because `directory:` does
+not recurse and the Dockerfile is a level down — so two CouchDB images and a Node image had
+never been checked (#156).
+
+Both runs are marked **failed**. That is worth being precise about, because the first version of
+this lesson said they looked successful, and they do not. What hides them is everything around
+the mark: a `Dependabot Updates` run is not a pull request check, so it blocks nothing and
+notifies nobody; each ecosystem is its own job, so `github_actions … success` sits in the list
+beside `docker … failure`; the reason is only in a log needing write access to read; and the
+pull request list, which is where anyone actually looks, fills up as usual from the ecosystems
+that did work.
+
+So the state to watch for is not an unnoticed red mark. It is that **a dependency which can
+never be resolved never appears in an update, which is exactly what a dependency that is already
+current looks like.** Ask what the symptom of the failure would be before trusting the absence
+of one — and when the answer is "nothing", that is the finding.
