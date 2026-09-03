@@ -57,7 +57,8 @@ stayed unwatched even with the path corrected.
 
 Pointing Dependabot at both directories without grouping them would let it raise a pull request
 for one and not the other. The tool meant to keep dependencies current would then be the thing
-that broke the invariant. Hence `groups:` — one pull request per ecosystem, or none.
+that broke the invariant. Hence `groups:` — and, as the next section explains, a group alone
+does not achieve it.
 
 ## Change
 
@@ -88,8 +89,11 @@ exist. It landed with #120.
 
 ## Verification
 
-The configuration parses to the expected shape, and the three paths are the three directories
-that actually contain a Dockerfile — checked with `find`, not assumed.
+The three paths are the three directories that actually contain a Dockerfile — from `git
+ls-files`, not from memory. The configuration itself is validated by GitHub rather than by us:
+the pull request carries a `.github/dependabot.yml` check from `dependabot-api.githubapp.com`,
+and it passes, so `docker-compose`, `group-by` and `applies-to` are all accepted keys and values
+rather than plausible ones.
 
 **What is not verified from here, and what to look for on the first run after merge.** The
 evidence is the next `Dependabot Updates` run, and two things in it are genuinely uncertain:
