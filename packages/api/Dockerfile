@@ -12,7 +12,7 @@
 # ---- build ------------------------------------------------------------------------------
 # Pinned to the same major as .nvmrc. A runtime that differs from the one the tests ran on is
 # the kind of difference that shows up only in production.
-FROM node:24-bookworm-slim AS build
+FROM node:26-bookworm-slim AS build
 
 WORKDIR /app
 
@@ -38,7 +38,7 @@ RUN npx tsc --build packages/api \
     && npm prune --omit=dev --ignore-scripts
 
 # ---- runtime ----------------------------------------------------------------------------
-FROM node:24-bookworm-slim AS runtime
+FROM node:26-bookworm-slim AS runtime
 
 # Not root. The process needs to read its own code and talk to CouchDB, and nothing else.
 USER node
