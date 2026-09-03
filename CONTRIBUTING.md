@@ -208,7 +208,7 @@ Two consequences worth stating plainly:
 
 | Store | Read by | Set it or else |
 | --- | --- | --- |
-| **Actions** | every run triggered by a push, a human's pull request, or `workflow_dispatch` | `npm ci` fails with `E401` on the Pro package |
+| **Actions** | every run triggered by a push, a **same-repository** pull request, or `workflow_dispatch` | `npm ci` fails with `E401` on the Pro package |
 | **Dependabot** | every run triggered by Dependabot, and the updater itself | every Dependabot pull request fails CI, *and* Web Awesome Pro is silently never offered for update |
 
 They are separate on purpose. An update to an untrusted dependency must not be able to reach
