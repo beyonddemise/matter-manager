@@ -77,9 +77,15 @@ updates only unless it says otherwise, so with one group each the argument would
 routine version bumps and failed for a CouchDB *security* release, the single case where landing
 half of it matters most.
 
-**The residual risk, stated rather than papered over:** `group-by` is version-updates-only, so a
-security release touching both directories can still arrive as two pull requests. They have to
-be landed together. No configuration removes this; naming it is the mitigation.
+**One thing genuinely unknown, and it is better recorded than guessed.** `group-by` is
+version-updates-only and has no security-update equivalent, which leaves the multi-directory
+behaviour of a security group *unstated* rather than stated either way — GitHub's reference
+describes `group-by` as the mechanism for combining across directories, and also says it does not
+apply to security updates. Whether a security group combines across `directories:` on its own is
+not something this change can establish from here.
+
+So: treat a CouchDB security release as possibly arriving in two pull requests, and land both
+halves together if it does. The first one to appear is the evidence.
 
 The npm entries are deliberately left alone: `dev-tooling`, `lit` and `pouchdb` group for review
 convenience, and there is no invariant that an ungrouped security fix would break.
