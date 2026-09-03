@@ -38,7 +38,15 @@ needs the credential through `registries:` in `.github/dependabot.yml`, which di
 The CI failure is loud: three red pull requests. The updater failure is the one to worry about.
 
 It is reported inside a run log that needs write access to read, and Dependabot carries on and
-opens pull requests for everything else — so the run *looks* successful from the outside. The
+opens pull requests for everything else.
+
+*(Corrected after this landed: an earlier version of this line said the run "looks successful
+from the outside". It does not — the conclusion is `failure`, plainly visible in `gh run list`.
+What hides it is everything around the mark. A `Dependabot Updates` run is not a pull request
+check, so it blocks nothing and notifies nobody; each ecosystem is its own job, so
+`github_actions … success` sits in the list beside the failure; and the pull request list, which
+is where anyone actually looks, fills up as usual from the ecosystems that worked. See
+[todo-156](todo-156.md), the same failure in the docker ecosystem.)* The
 observable effect of Web Awesome Pro never being resolvable is that Web Awesome Pro never
 appears in an update. Which is indistinguishable from it already being current.
 
