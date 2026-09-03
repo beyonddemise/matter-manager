@@ -155,7 +155,7 @@ implementation's pull request, where it has something to protect.
 It was observed failing before being trusted. Pointed at the control run instead of the policy
 run, it exits 1 and names every vector:
 
-```
+```text
 A hostile SVG got through the deployed policy:
   - inline in document: executed foreignObject onerror=
   - inline in document: executed javascript: href
