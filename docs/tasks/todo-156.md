@@ -25,10 +25,19 @@ Three base images were never looked at:
 | `.devcontainer/couchdb/Dockerfile` | `couchdb:3.5.2.1` |
 | `packages/api/Dockerfile` | `node:24-bookworm-slim`, both stages |
 
-Found while writing up #153, which is the same failure in a different ecosystem, and it is worth
-naming the pattern rather than the two instances: **a configured updater that cannot read what it
-was pointed at fails inside a run log and produces no other symptom.** Nothing appears in the
-pull request list, which is exactly what nothing-to-update looks like.
+Found while writing up #153, which is the same failure in a different ecosystem, and the pattern
+is worth naming rather than the two instances.
+
+The run **is** marked failed — that part is not hidden. What hides it is everything around the
+mark. A `Dependabot Updates` run is not a pull request check, so it blocks nothing and notifies
+nobody; each ecosystem runs as its own job, so `github_actions` succeeding sits in the same list
+as `docker` failing; and the pull request list, which is where anyone actually looks, fills up
+as usual from the ecosystems that did work. The reason for the failure is only in a log that
+needs write access to read.
+
+So the state to watch for is not a red mark nobody saw. It is that **nothing appearing in the
+pull request list is exactly what nothing-to-update looks like** — and for three base images
+over two weeks, that was indistinguishable from the truth.
 
 ## Two things beyond the path
 
