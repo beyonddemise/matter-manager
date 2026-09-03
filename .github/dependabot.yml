@@ -81,6 +81,15 @@ updates:
       - /.devcontainer
     schedule:
       interval: monthly
+    # Both of these sit beside a `build:` block in the same file - they name images this
+    # repository produces, not images it consumes, and they are published nowhere. Dependabot
+    # resolves them against Docker Hub regardless, is refused with UNAUTHORIZED, and reports
+    # private_source_authentication_failure for the whole run (#161). Note that string is the
+    # same one #153 produced for a completely different reason: there a credential existed and
+    # was in the wrong store, here there is nothing to authenticate to at all.
+    ignore:
+      - dependency-name: matter-manager/couchdb
+      - dependency-name: matter-manager/couchdb-dev
     groups:
       compose-images:
         patterns: ['*']
