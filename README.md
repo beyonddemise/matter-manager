@@ -169,9 +169,15 @@ Full rationale, including the caching contract and why it is enforced by a check
 
 | Secret | Scope | What | Where |
 |---|---|---|---|
-| `WEBAWESOME_NPM_TOKEN` | repository | Web Awesome Pro registry token | CI and deploy |
+| `WEBAWESOME_NPM_TOKEN` | repository, **twice** | Web Awesome Pro registry token | CI and deploy |
 | `CLOUDFLARE_API_TOKEN` | organisation | API token with **Account → Cloudflare Pages → Edit**, and nothing else | deploy |
 | `CLOUDFLARE_ACCOUNT_ID` | organisation | The account the Pages project lives in. Secret *or* variable — it is not sensitive | deploy |
+
+`WEBAWESOME_NPM_TOKEN` goes into the **Actions** store *and* the **Dependabot** store — the
+same value in both. A Dependabot-triggered run cannot read the Actions store, so with the
+value in only one place every Dependabot pull request fails `npm ci`, and the updater never
+sees a Web Awesome release at all. [CONTRIBUTING](CONTRIBUTING.md#the-token-lives-in-two-stores-not-one)
+explains why the stores are separate.
 
 The two Cloudflare values are organisation secrets, so one rotation covers every repository
 that deploys to the account. An organisation secret still has to *grant* this repository
