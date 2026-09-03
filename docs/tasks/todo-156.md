@@ -62,7 +62,17 @@ that broke the invariant. Hence `groups:` — one pull request per ecosystem, or
 ## Change
 
 `.github/dependabot.yml`: `directories:` listing the three Dockerfile locations, a
-`docker-compose` entry for `/infra` and `/.devcontainer`, and a group on each.
+`docker-compose` entry for `/infra` and `/.devcontainer`, and **two** groups on each.
+
+The second group per ecosystem carries `applies-to: security-updates`, and it is not
+belt-and-braces. A `groups:` entry covers version updates only unless it says otherwise, so with
+one group each the drift argument above would have held for routine version bumps and failed for
+a CouchDB *security* release — the single case where landing half of it matters most. The
+npm entries are deliberately left alone: `dev-tooling`, `lit` and `pouchdb` group for review
+convenience, and there is no invariant that an ungrouped security fix would break.
+
+`infra/compose.prod.yml` also loses a stale note claiming `packages/api/Dockerfile` does not
+exist. It landed with #120.
 
 ## Verification
 
