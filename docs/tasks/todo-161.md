@@ -49,8 +49,10 @@ fix in entirely the wrong direction.
 
 ## Verification
 
-The configuration parses to the expected shape, and GitHub's own
-`.github/dependabot.yml` check on the pull request validates the `ignore:` keys.
+The configuration parses to the expected shape. Note that GitHub's
+`.github/dependabot.yml` validator check, which did run on #157 and passed there, **did not run
+on this pull request** — so unlike #157, the keys here are documented rather than validated. It
+appears inconsistently and is not something to rely on.
 
 Whether it silences the failure is a claim about the next run, not about this diff, and that run
 is the evidence. What to look for: `docker_compose in /.devcontainer, /infra` concluding
