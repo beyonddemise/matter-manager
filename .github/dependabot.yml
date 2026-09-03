@@ -38,7 +38,35 @@ updates:
     schedule:
       interval: monthly
 
+  # `directory: /infra` matched only /infra itself, which holds a Caddyfile and a compose file;
+  # Dependabot does not recurse. Every docker run since the repository was created aborted with
+  # "No Dockerfiles nor Kubernetes YAML found in /infra", so no base image here has ever been
+  # offered an update - see #156.
+  #
+  # Grouped into one pull request, and that is not tidiness. infra/couchdb/Dockerfile and
+  # .devcontainer/couchdb/Dockerfile pin the same CouchDB tag on purpose: replication and
+  # validate_doc_update behaviour differ between minor versions, so dev/prod drift there
+  # surfaces as sync bugs that reproduce nowhere. Ungrouped, Dependabot could raise one and not
+  # the other and break the invariant it exists to maintain.
   - package-ecosystem: docker
-    directory: /infra
+    directories:
+      - /infra/couchdb
+      - /.devcontainer/couchdb
+      - /packages/api
     schedule:
       interval: monthly
+    groups:
+      container-images:
+        patterns: ['*']
+
+  # A separate ecosystem: `docker` reads Dockerfiles and Kubernetes YAML, never compose files.
+  # Without this, caddy:2-alpine and the devcontainer's node image are pinned and unwatched.
+  - package-ecosystem: docker-compose
+    directories:
+      - /infra
+      - /.devcontainer
+    schedule:
+      interval: monthly
+    groups:
+      compose-images:
+        patterns: ['*']
