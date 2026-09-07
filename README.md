@@ -33,16 +33,16 @@ Two consequences shape the whole application:
 
 ## Features
 
-| | |
-|---|---|
-| **Scan** | Camera capture with a manual-entry fallback for codes a camera cannot reach |
-| **Catalogue** | Name, room, device type, installation date, serial, photos, timestamped remarks |
-| **Rooms** | Hierarchical paths like `Ground Floor/Kitchen`, created inline while adding a device |
-| **Reproduce** | On-screen QR plus the numeric manual pairing code |
-| **PDF** | Label sheets or a full inventory, grouped by room, all or selected devices |
-| **Offline-first** | Everything works with no connectivity — the basement is exactly where you need this |
-| **Projects** | One per house or apartment, shared read-only or read-write with others |
-| **Multilingual** | English and German, following browser language, overridable in your profile |
+|                   |                                                                                      |
+| ----------------- | ------------------------------------------------------------------------------------ |
+| **Scan**          | Camera capture with a manual-entry fallback for codes a camera cannot reach          |
+| **Catalogue**     | Name, room, device type, installation date, serial, photos, timestamped remarks      |
+| **Rooms**         | Hierarchical paths like `Ground Floor/Kitchen`, created inline while adding a device |
+| **Reproduce**     | On-screen QR plus the numeric manual pairing code                                    |
+| **PDF**           | Label sheets or a full inventory, grouped by room, all or selected devices           |
+| **Offline-first** | Everything works with no connectivity — the basement is exactly where you need this  |
+| **Projects**      | One per house or apartment, shared read-only or read-write with others               |
+| **Multilingual**  | English and German, following browser language, overridable in your profile          |
 
 ---
 
@@ -97,15 +97,15 @@ every project's address and participant list to every user
 
 ### Packages
 
-| Package | Contains | Depends on |
-|---|---|---|
-| `packages/core` | Pure domain: Matter codec, room paths, entitlements, conflict merge | nothing |
-| `packages/data` | PouchDB repositories, sync manager | `core` |
-| `packages/web` | Lit SPA | `core`, `data` |
-| `packages/api` | Fastify backend | `core` |
+| Package         | Contains                                                            | Depends on     |
+| --------------- | ------------------------------------------------------------------- | -------------- |
+| `packages/core` | Pure domain: Matter codec, room paths, entitlements, conflict merge | nothing        |
+| `packages/data` | PouchDB repositories, sync manager                                  | `core`         |
+| `packages/web`  | Lit SPA                                                             | `core`, `data` |
+| `packages/api`  | Fastify backend                                                     | `core`         |
 
 `core` has no I/O, no DOM and no network — it is where almost all the logic that can be
-*wrong* lives, and it runs in milliseconds with zero setup. If something needs a browser or
+_wrong_ lives, and it runs in milliseconds with zero setup. If something needs a browser or
 a database to test, that is a signal it belongs elsewhere.
 
 ---
@@ -140,16 +140,16 @@ npm run verify        # lint + typecheck + tests
 npm run dev           # Vite dev server with HMR on http://localhost:5173
 ```
 
-| Command | Does |
-|---|---|
-| `npm run dev` | Vite dev server for `packages/web` with hot module replacement. Builds `core` and `data` first, because the web app resolves them through their emitted `dist/`. |
-| `npm run build` | Production bundle into `packages/web/dist`. Same two steps the deploy workflow runs. |
-| `npm run preview` | Serve the built bundle, to check it before deploying. |
-| `npm run verify` | Dependency policy, `.npmrc` guard, Biome, typecheck, tests. CI additionally runs coverage gates and the CouchDB contract checks, which need a live CouchDB. |
-| `npm test` | Unit and integration tests |
-| `npm run test:watch` | Test watcher for red-green-refactor |
-| `npm run check:fix` | Auto-fix formatting and lint |
-| `npm run e2e` | Playwright end-to-end suite |
+| Command              | Does                                                                                                                                                             |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `npm run dev`        | Vite dev server for `packages/web` with hot module replacement. Builds `core` and `data` first, because the web app resolves them through their emitted `dist/`. |
+| `npm run build`      | Production bundle into `packages/web/dist`. Same two steps the deploy workflow runs.                                                                             |
+| `npm run preview`    | Serve the built bundle, to check it before deploying.                                                                                                            |
+| `npm run verify`     | Dependency policy, `.npmrc` guard, Biome, typecheck, tests. CI additionally runs coverage gates and the CouchDB contract checks, which need a live CouchDB.      |
+| `npm test`           | Unit and integration tests                                                                                                                                       |
+| `npm run test:watch` | Test watcher for red-green-refactor                                                                                                                              |
+| `npm run check:fix`  | Auto-fix formatting and lint                                                                                                                                     |
+| `npm run e2e`        | Playwright end-to-end suite                                                                                                                                      |
 
 ---
 
@@ -167,20 +167,20 @@ Full rationale, including the caching contract and why it is enforced by a check
 
 ### Secrets
 
-| Secret | Scope | What | Where |
-|---|---|---|---|
-| `WEBAWESOME_NPM_TOKEN` | repository, **twice** | Web Awesome Pro registry token | CI and deploy |
-| `CLOUDFLARE_API_TOKEN` | organisation | API token with **Account → Cloudflare Pages → Edit**, and nothing else | deploy |
-| `CLOUDFLARE_ACCOUNT_ID` | organisation | The account the Pages project lives in. Secret *or* variable — it is not sensitive | deploy |
+| Secret                  | Scope                 | What                                                                               | Where         |
+| ----------------------- | --------------------- | ---------------------------------------------------------------------------------- | ------------- |
+| `WEBAWESOME_NPM_TOKEN`  | repository, **twice** | Web Awesome Pro registry token                                                     | CI and deploy |
+| `CLOUDFLARE_API_TOKEN`  | organisation          | API token with **Account → Cloudflare Pages → Edit**, and nothing else             | deploy        |
+| `CLOUDFLARE_ACCOUNT_ID` | organisation          | The account the Pages project lives in. Secret _or_ variable — it is not sensitive | deploy        |
 
-`WEBAWESOME_NPM_TOKEN` goes into the **Actions** store *and* the **Dependabot** store — the
+`WEBAWESOME_NPM_TOKEN` goes into the **Actions** store _and_ the **Dependabot** store — the
 same value in both. A Dependabot-triggered run cannot read the Actions store, so with the
 value in only one place every Dependabot pull request fails `npm ci`, and the updater never
 sees a Web Awesome release at all. [CONTRIBUTING](CONTRIBUTING.md#the-token-lives-in-two-stores-not-one)
 explains why the stores are separate.
 
 The two Cloudflare values are organisation secrets, so one rotation covers every repository
-that deploys to the account. An organisation secret still has to *grant* this repository
+that deploys to the account. An organisation secret still has to _grant_ this repository
 access — a secret that exists but is scoped to other repositories reads as empty here, which
 looks identical to one that was never created. The deploy job checks for both before it builds
 anything and says which is missing.

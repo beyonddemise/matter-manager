@@ -38,8 +38,7 @@ permissions:
 jobs:
   deploy:
     name: Cloudflare Pages
-    runs-on: blacksmith-2vcpu-ubuntu-2404
-
+    runs-on: ubuntu-latest
     env:
       # Read through the environment rather than interpolated straight into a `run:` block.
       # `${{ }}` substitution happens before the shell sees the script, so a branch name is

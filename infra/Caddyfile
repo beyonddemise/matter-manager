@@ -1,6 +1,6 @@
 # Caddy handles TLS automatically. Replace the hostnames before deploying.
 #
-# The blocked paths below are not defence in depth - they are the primary control.
+# The blocked paths below are not defense in depth - they are the primary control.
 # Because setup passcodes are stored unencrypted (ADR 0005), database enumeration is
 # the difference between "an attacker needs to know a project id" and "an attacker
 # lists every project on the server".

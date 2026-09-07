@@ -1,88 +1,146 @@
+<!-- markdownlint-disable -->
+
 # The caching contract, published with the site and enforced by
+
 # `npm run check:deploy` (scripts/check-deploy-headers.mjs).
+
 #
+
 # Read the checker before changing anything here. A single-page application cached wrongly
+
 # does not break — it keeps working, on last week's code, and the person who deployed sees the
+
 # new version immediately because their own browser revalidated.
 
 # Fingerprinted by Vite: the bytes behind a given URL never change, so nothing ever needs to
+
 # ask again. A year is the conventional ceiling.
-/assets/*
-  Cache-Control: public, max-age=31536000, immutable
+
+/assets/\*
+Cache-Control: public, max-age=31536000, immutable
 
 # The shell names which fingerprinted bundle to load. Cached, it names an old one forever, and
+
 # every immutable asset around it then correctly serves the wrong application.
+
 /index.html
-  Cache-Control: no-cache
+Cache-Control: no-cache
 
 /
-  Cache-Control: no-cache
+Cache-Control: no-cache
 
 # The one that cannot be recovered from. A cached service worker cannot be replaced by a newer
+
 # one, so a long max-age here is not "stale until it expires" — it is stale until the user
+
 # clears storage, which they have no reason to think of doing. The worker itself arrives in
+
 # M2b-3; this rule is here first, deliberately, so that it cannot arrive into a deployment
+
 # that has already made updating it impossible.
+
 /sw.js
-  Cache-Control: no-cache
+Cache-Control: no-cache
 
 # Not fingerprinted, and read by the platform rather than by the application: a stale one is an
+
 # installed app pointing at the wrong start URL or the wrong icons, which the user cannot fix
+
 # by reloading because the platform decides when to look again.
+
 /manifest.webmanifest
-  Cache-Control: no-cache
+Cache-Control: no-cache
 
 # Fixed names rather than fingerprinted, so they cannot be immutable. A week is the trade: an
+
 # icon changed today is wrong on a home screen for at most that long, which is a cosmetic
+
 # problem, and the alternative is re-fetching them on every visit.
+
 /icon-192.png
-  Cache-Control: public, max-age=604800
+Cache-Control: public, max-age=604800
 
 /icon-512.png
-  Cache-Control: public, max-age=604800
+Cache-Control: public, max-age=604800
 
 /icon-maskable-512.png
-  Cache-Control: public, max-age=604800
+Cache-Control: public, max-age=604800
 
 /apple-touch-icon.png
-  Cache-Control: public, max-age=604800
+Cache-Control: public, max-age=604800
 
 # Applies to everything, including the fingerprinted assets, and states nothing about caching
+
 # — so it does not contradict the rules above.
-/*
-  X-Content-Type-Options: nosniff
-  Referrer-Policy: no-referrer
-  # This catalogue is never a frame in someone else's page, and framing it is the setup for
-  # clickjacking a delete.
-  X-Frame-Options: DENY
-  # Measured, not written from a template (#47). The built bundle was served with a candidate
-  # policy and loaded in Chromium, and every relaxation below is something the application was
-  # observed to need — see docs/tasks/todo-47.md for the violations each one answers.
-  #
-  #   'unsafe-inline' in style-src   Web Awesome components set style attributes, and index.html
-  #                                  carries one inline <style>. A hash covers the second, not
-  #                                  the first. Note this does NOT relax script-src, which is
-  #                                  where 'unsafe-inline' would matter.
-  #   data: in connect-src           <wa-icon> fetches its SVG through the network stack, and
-  #                                  the bundled icons are small enough that Vite inlines them
-  #                                  as data: URLs - so that fetch never leaves the page.
-  #
-  # **No third-party origin is named any more.** fonts.bunny.net and ka-f.fontawesome.com were
-  # both here until #106, which bundled the webfonts and the icons, so an offline application
-  # now has its typography and its icons rather than neither. The policy was re-measured against
-  # the built bundle the same way #47 measured it in the first place: zero cross-origin requests
-  # on a first visit. `scripts/check-offline-assets.mjs` is what keeps that true.
-  #
-  # **No API origin and no CouchDB origin is wired yet** - which is narrower than saying
-  # nothing cross-origin is: the data: exception above is real and is used on every visit
-  # for icons. What is absent is this application's own back end: M5 wrote
-  # packages/web/src/sync/, and **nothing in the application imports it** — only its own tests
-  # do (#120). No code in the shipped bundle makes a request to the API or to CouchDB, so
-  # there is no origin to allow and no request being blocked.
-  #
-  # **Both origins must be added here in the same change that wires it**, or replication will
-  # fail in production only, reported by the browser as a CSP violation rather than by anything
-  # this application can see. They are deployment values (the API host and the CouchDB host),
-  # so that change also needs a way to get them into this file at build time - it is a static
-  # asset today, with no substitution step.
-  Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: blob:; connect-src 'self' data:; manifest-src 'self'; worker-src 'self'; media-src 'self' blob:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'
+
+/\*
+X-Content-Type-Options: nosniff
+Referrer-Policy: no-referrer
+
+# This catalogue is never a frame in someone else's page, and framing it is the setup for
+
+# clickjacking a delete.
+
+X-Frame-Options: DENY
+
+# Measured, not written from a template (#47). The built bundle was served with a candidate
+
+# policy and loaded in Chromium, and every relaxation below is something the application was
+
+# observed to need — see docs/tasks/todo-47.md for the violations each one answers.
+
+#
+
+# 'unsafe-inline' in style-src Web Awesome components set style attributes, and index.html
+
+# carries one inline <style>. A hash covers the second, not
+
+# the first. Note this does NOT relax script-src, which is
+
+# where 'unsafe-inline' would matter.
+
+# data: in connect-src <wa-icon> fetches its SVG through the network stack, and
+
+# the bundled icons are small enough that Vite inlines them
+
+# as data: URLs - so that fetch never leaves the page.
+
+#
+
+# **No third-party origin is named any more.** fonts.bunny.net and ka-f.fontawesome.com were
+
+# both here until #106, which bundled the webfonts and the icons, so an offline application
+
+# now has its typography and its icons rather than neither. The policy was re-measured against
+
+# the built bundle the same way #47 measured it in the first place: zero cross-origin requests
+
+# on a first visit. `scripts/check-offline-assets.mjs` is what keeps that true.
+
+#
+
+# **No API origin and no CouchDB origin is wired yet** - which is narrower than saying
+
+# nothing cross-origin is: the data: exception above is real and is used on every visit
+
+# for icons. What is absent is this application's own back end: M5 wrote
+
+# packages/web/src/sync/, and **nothing in the application imports it** — only its own tests
+
+# do (#120). No code in the shipped bundle makes a request to the API or to CouchDB, so
+
+# there is no origin to allow and no request being blocked.
+
+#
+
+# **Both origins must be added here in the same change that wires it**, or replication will
+
+# fail in production only, reported by the browser as a CSP violation rather than by anything
+
+# this application can see. They are deployment values (the API host and the CouchDB host),
+
+# so that change also needs a way to get them into this file at build time - it is a static
+
+# asset today, with no substitution step.
+
+Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: blob:; connect-src 'self' data:; manifest-src 'self'; worker-src 'self'; media-src 'self' blob:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'

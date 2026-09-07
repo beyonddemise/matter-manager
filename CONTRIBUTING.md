@@ -25,12 +25,12 @@ Commit at each transition where it helps a reviewer follow the reasoning.
 
 ## Where code goes
 
-| If it... | It belongs in |
-|---|---|
+| If it...                           | It belongs in   |
+| ---------------------------------- | --------------- |
 | is a pure function over plain data | `packages/core` |
-| touches PouchDB or CouchDB | `packages/data` |
-| renders or handles user input | `packages/web` |
-| serves HTTP or talks to Google | `packages/api` |
+| touches PouchDB or CouchDB         | `packages/data` |
+| renders or handles user input      | `packages/web`  |
+| serves HTTP or talks to Google     | `packages/api`  |
 
 **`packages/core` must never import a DOM type, a network client, or a database.** If a
 piece of logic seems to need one to be tested, it is nearly always two pieces of logic
@@ -39,13 +39,13 @@ tangled together: a pure decision and an impure action. Separate them, put the d
 
 ## Testing
 
-| Layer | Tool | Coverage gate |
-|---|---|---|
-| `core` | Vitest, node environment | **90%** |
-| `data` | Vitest + `pouchdb-adapter-memory` | 70% |
-| `web` | Vitest browser mode + `@open-wc/testing-helpers` | 70% |
-| `api` | Vitest + Fastify `.inject()` | 70% |
-| end-to-end | Playwright | not gated |
+| Layer      | Tool                                             | Coverage gate |
+| ---------- | ------------------------------------------------ | ------------- |
+| `core`     | Vitest, node environment                         | **90%**       |
+| `data`     | Vitest + `pouchdb-adapter-memory`                | 70%           |
+| `web`      | Vitest browser mode + `@open-wc/testing-helpers` | 70%           |
+| `api`      | Vitest + Fastify `.inject()`                     | 70%           |
+| end-to-end | Playwright                                       | not gated     |
 
 Prefer testing behaviour through public interfaces. A test that reaches into internals will
 break during the refactor step, which defeats the purpose of having it.
@@ -56,10 +56,10 @@ Describe the behaviour and the condition, not the function:
 
 ```ts
 // yes
-it('rejects a payload whose Base38 length does not match the declared chunk size')
+it('rejects a payload whose Base38 length does not match the declared chunk size');
 
 // no
-it('tests decodeBase38')
+it('tests decodeBase38');
 ```
 
 ## Issues and branches
@@ -88,18 +88,18 @@ i18n across a built UI is miserable work that is never quite finished, and it co
 to do it as you go.
 
 ```ts
-import { msg, updateWhenLocaleChanges } from '@lit/localize'
+import { msg, updateWhenLocaleChanges } from '@lit/localize';
 
 class AddDeviceView extends LitElement {
   constructor() {
-    super()
+    super();
     // Without this the component keeps the strings it first rendered with, while the rest of
     // the page changes language around it.
-    updateWhenLocaleChanges(this)
+    updateWhenLocaleChanges(this);
   }
 
   render() {
-    return html`<wa-button>${msg('Add device')}</wa-button>`
+    return html`<wa-button>${msg('Add device')}</wa-button>`;
   }
 }
 ```
@@ -135,16 +135,16 @@ need patching, and widen the supply-chain surface of an application holding comm
 secrets. `npm run check:deps` fails the build on anything not justified in
 `dependency-policy.json` ([ADR 0013](docs/adr/0013-minimal-runtime-dependencies.md)).
 
-| Need | Use | Not |
-|---|---|---|
-| HTTP, client or server | native `fetch` | `axios`, `node-fetch`, `got` |
-| CouchDB from the API | native `fetch` | `nano`, `couchdb` |
-| Sign / verify JWT (**server only**) | `node:crypto` | `jose`, `jsonwebtoken` |
-| Provider JWKS key | `createPublicKey({ key, format: 'jwk' })` | `jwk-to-pem` |
-| Crypto in **shared or browser** code | `@noble/*` | assuming Node and WebCrypto agree |
-| Identifiers | `crypto.randomUUID()` | `uuid`, `nanoid` |
-| Dates, formatting | `Intl` | `moment`, `date-fns` |
-| Cloning, equality | `structuredClone`, plain code | `lodash` |
+| Need                                 | Use                                       | Not                               |
+| ------------------------------------ | ----------------------------------------- | --------------------------------- |
+| HTTP, client or server               | native `fetch`                            | `axios`, `node-fetch`, `got`      |
+| CouchDB from the API                 | native `fetch`                            | `nano`, `couchdb`                 |
+| Sign / verify JWT (**server only**)  | `node:crypto`                             | `jose`, `jsonwebtoken`            |
+| Provider JWKS key                    | `createPublicKey({ key, format: 'jwk' })` | `jwk-to-pem`                      |
+| Crypto in **shared or browser** code | `@noble/*`                                | assuming Node and WebCrypto agree |
+| Identifiers                          | `crypto.randomUUID()`                     | `uuid`, `nanoid`                  |
+| Dates, formatting                    | `Intl`                                    | `moment`, `date-fns`              |
+| Cloning, equality                    | `structuredClone`, plain code             | `lodash`                          |
 
 This is not aspirational. The entire authentication and CouchDB path — ES256 signing and
 verification, importing Google's RSA key from JWKS, and every CouchDB call including
@@ -204,12 +204,12 @@ Two consequences worth stating plainly:
 ### The token lives in two stores, not one
 
 `WEBAWESOME_NPM_TOKEN` has to be set **twice** in repository settings, under
-*Secrets and variables*:
+_Secrets and variables_:
 
-| Store | Read by | Set it or else |
-| --- | --- | --- |
-| **Actions** | every run triggered by a push, a **same-repository** pull request, or `workflow_dispatch` | `npm ci` fails with `E401` on the Pro package |
-| **Dependabot** | every run triggered by Dependabot, and the updater itself | every Dependabot pull request fails CI, *and* Web Awesome Pro is silently never offered for update |
+| Store          | Read by                                                                                   | Set it or else                                                                                     |
+| -------------- | ----------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| **Actions**    | every run triggered by a push, a **same-repository** pull request, or `workflow_dispatch` | `npm ci` fails with `E401` on the Pro package                                                      |
+| **Dependabot** | every run triggered by Dependabot, and the updater itself                                 | every Dependabot pull request fails CI, _and_ Web Awesome Pro is silently never offered for update |
 
 They are separate on purpose. An update to an untrusted dependency must not be able to reach
 the credentials the rest of CI holds, so a Dependabot-triggered run reads only the Dependabot
@@ -235,8 +235,8 @@ Setup passcodes are secrets. Within the codebase:
 
 - **Never log a payload or a passcode**, at any level, including during debugging. Log the
   device id instead.
-- Never send a payload to a third-party service. The DCL lookup sends *Vendor ID and
-  Product ID only* — never the full payload.
+- Never send a payload to a third-party service. The DCL lookup sends _Vendor ID and
+  Product ID only_ — never the full payload.
 - Do not add analytics or error reporting that could capture document contents.
 
 ## Definition of done
