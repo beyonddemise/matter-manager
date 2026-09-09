@@ -1,10 +1,13 @@
+import { generateKeyPairSync } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
+import { serverOptions } from '../../src/composition.js'
 import {
   ALLOWED_HEADERS,
   ALLOWED_METHODS,
   corsHeaders,
   corsPolicy,
 } from '../../src/security/cors.js'
+import { buildServer, type Server } from '../../src/server.js'
 
 const POLICY = corsPolicy(['https://matter.example', 'http://localhost:5173'])
 
@@ -153,15 +156,91 @@ describe('the configured list itself', () => {
     // An origin is a scheme, a host and a port. A configured value with a path never matches
     // anything a browser sends, so it fails silently — the API simply refuses the application
     // it was meant to allow, in production, with no message anywhere.
-    expect(() => corsPolicy(['https://matter.example/app'])).toThrow(/origin/i)
+    expect(() => corsPolicy(['https://matter.example/app'])).toThrow(/has a path/i)
   })
 
   it('refuses something that is not a URL', () => {
-    expect(() => corsPolicy(['matter.example'])).toThrow(/origin/i)
+    expect(() => corsPolicy(['matter.example'])).toThrow(/is not a URL/i)
+  })
+
+  it('refuses a scheme a browser never sends as an origin', () => {
+    // `new URL('file:///')` parses, its pathname is "/", and it carries no query or fragment,
+    // so every other check here waves it through. Its `URL.origin` is the *string* "null",
+    // which would go on the allowlist and come back as
+    // `access-control-allow-origin: null` with credentials — permission granted to every
+    // sandboxed iframe and every page loaded from disk.
+    expect(() => corsPolicy(['file:///'])).toThrow(/not an http\(s\) origin/)
+  })
+
+  it('keeps plain http, which development needs', () => {
+    // The check is about opaque schemes, not about transport security. `vite` serves the
+    // application over http on localhost, and refusing that would break development to no end.
+    expect(corsPolicy(['http://localhost:5173']).allowedOrigins).toEqual(['http://localhost:5173'])
   })
 
   it('allows nothing when nothing is configured', () => {
     // The safe end of the range: no origins means no cross-origin access, not "any".
     expect(corsHeaders('https://matter.example', false, corsPolicy([]))).toEqual({ vary: 'Origin' })
+  })
+})
+
+describe('the allowlists against what the service actually serves', () => {
+  /** A deployment with every route group registered, so the full method surface is present. */
+  function fullyConfigured(): Server {
+    const PEM = generateKeyPairSync('ec', {
+      namedCurve: 'prime256v1',
+      privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+      publicKeyEncoding: { type: 'spki', format: 'pem' },
+    }).privateKey as unknown as string
+    const SESSION_PEM = generateKeyPairSync('ec', {
+      namedCurve: 'prime256v1',
+      privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+      publicKeyEncoding: { type: 'spki', format: 'pem' },
+    }).privateKey as unknown as string
+
+    return buildServer({
+      logger: false,
+      ...serverOptions({
+        COUCHDB_URL: 'http://couch.test:5984',
+        COUCHDB_ADMIN_USER: 'admin',
+        COUCHDB_ADMIN_PASSWORD: 'secret',
+        JWT_PRIVATE_KEY: PEM,
+        JWT_SESSION_PRIVATE_KEY: SESSION_PEM,
+        JWT_KEY_ID: 'ec-2026-08',
+        APP_ORIGIN: 'https://matter.example',
+        GOOGLE_CLIENT_ID: '1234.apps.googleusercontent.com',
+        GOOGLE_CLIENT_SECRET: 'GOCSPX-secret',
+        GOOGLE_REDIRECT_URI: 'https://api.matter.example/auth/google/callback',
+      }),
+    })
+  }
+
+  it('permits every method the routes actually register', async () => {
+    // The drift this exists to stop. PATCH and DELETE were absent from ALLOWED_METHODS while
+    // routes used them, so those two routes could not survive a preflight — and nothing
+    // noticed, because production and development both proxy /api same-origin, which issues
+    // no preflight at all. Deriving the expectation from the route table means the next route
+    // to use a new method fails here rather than in somebody's browser.
+    const app = fullyConfigured()
+    try {
+      const used = new Set(app.registeredRoutes().map((route) => route.method))
+      const missing = [...used].filter(
+        (method) => !(ALLOWED_METHODS as readonly string[]).includes(method),
+      )
+
+      expect(missing).toEqual([])
+    } finally {
+      await app.close()
+    }
+  })
+
+  it('permits the header the application actually sends', async () => {
+    // `packages/web/src/projects.ts` sends `authorization: Bearer …` to this API, and
+    // `openapi.yaml` declares bearerAuth globally. Refusing the header in preflight refused
+    // the application's own authenticated requests.
+    expect(ALLOWED_HEADERS as readonly string[]).toContain('authorization')
+
+    const headers = preflight('https://matter.example')
+    expect(headers['access-control-allow-headers']).toContain('authorization')
   })
 })
