@@ -1,6 +1,6 @@
 import { createPrivateKey, generateKeyPairSync } from 'node:crypto'
 import { afterEach, describe, expect, it } from 'vitest'
-import { type Environment, installCouchKey, serverOptions } from '../src/composition.js'
+import { type Environment, prepareCouchDb, serverOptions } from '../src/composition.js'
 import { buildServer, type Server } from '../src/server.js'
 
 const PEM = generateKeyPairSync('ec', {
@@ -253,7 +253,10 @@ describe('a deployment that is configured wrongly', () => {
 
 describe('teaching CouchDB the key it must validate', () => {
   /** Answers as a CouchDB with the JWT handler enabled, and records what it was asked. */
-  function couchLike(handlers = '{chttpd_auth, jwt_authentication_handler}') {
+  function couchLike(
+    handlers = '{chttpd_auth, jwt_authentication_handler}',
+    origins = 'https://matter.example',
+  ) {
     const calls: string[] = []
     const impl = (async (url: string | URL, init?: RequestInit) => {
       const target = String(url)
@@ -261,7 +264,17 @@ describe('teaching CouchDB the key it must validate', () => {
       if (target.includes('/_config/chttpd/authentication_handlers')) {
         return { ok: true, status: 200, text: async () => JSON.stringify(handlers) } as Response
       }
-      if (target.includes('/_config/')) return { ok: true, status: 200 } as Response
+      if (target.includes('/_config/cors/origins')) {
+        // What COMPLETE's APP_ORIGIN is, so the deployment and the database agree.
+        return {
+          ok: true,
+          status: 200,
+          text: async () => JSON.stringify(origins),
+        } as Response
+      }
+      if (target.includes('/_config/')) {
+        return { ok: true, status: 200, text: async () => '' } as Response
+      }
       // The probe. Name the subject the token carries, as a CouchDB that read it would.
       const headers = (init?.headers ?? {}) as Record<string, string>
       const token = String(headers.authorization).slice(7)
@@ -282,7 +295,7 @@ describe('teaching CouchDB the key it must validate', () => {
 
   it('installs the key when the deployment has both halves', async () => {
     const { impl, calls } = couchLike()
-    await expect(installCouchKey(COMPLETE, impl)).resolves.toBeUndefined()
+    await expect(prepareCouchDb(COMPLETE, impl)).resolves.toBeUndefined()
 
     expect(calls).toContainEqual(
       'PUT http://couch.test:5984/_node/_local/_config/jwt_keys/ec%3Aec-2026-08',
@@ -296,7 +309,7 @@ describe('teaching CouchDB the key it must validate', () => {
     const { impl, calls } = couchLike()
     const { COUCHDB_URL: _omitted, ...withoutCouch } = COMPLETE
 
-    await expect(installCouchKey(withoutCouch, impl)).resolves.toBeUndefined()
+    await expect(prepareCouchDb(withoutCouch, impl)).resolves.toBeUndefined()
     expect(calls).toEqual([])
   })
 
@@ -304,8 +317,16 @@ describe('teaching CouchDB the key it must validate', () => {
     const { impl, calls } = couchLike()
     const { JWT_PRIVATE_KEY: _omitted, ...withoutKey } = COMPLETE
 
-    await expect(installCouchKey(withoutKey, impl)).resolves.toBeUndefined()
+    await expect(prepareCouchDb(withoutKey, impl)).resolves.toBeUndefined()
     expect(calls).toEqual([])
+  })
+
+  it('refuses to start against a CouchDB that would turn our browsers away', async () => {
+    // The production overlay's placeholder, left unreplaced. Replication then fails from the
+    // real origin with a browser CORS error that reads as a network fault.
+    const { impl } = couchLike(undefined, 'https://matter-manager.example')
+
+    await expect(prepareCouchDb(COMPLETE, impl)).rejects.toThrow(/\[cors\] origins/)
   })
 
   it('refuses to start against a CouchDB that cannot read bearer tokens', async () => {
@@ -314,6 +335,6 @@ describe('teaching CouchDB the key it must validate', () => {
     // working, for as long as the process runs.
     const { impl } = couchLike('{chttpd_auth, cookie_authentication_handler}')
 
-    await expect(installCouchKey(COMPLETE, impl)).rejects.toThrow(/authentication_handlers/)
+    await expect(prepareCouchDb(COMPLETE, impl)).rejects.toThrow(/authentication_handlers/)
   })
 })

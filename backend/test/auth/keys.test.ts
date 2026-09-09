@@ -2,10 +2,12 @@ import { generateKeyPairSync } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 import { signingKeyFromPem, verifyToken } from '../../src/auth/jwt.js'
 import {
+  CorsOriginError,
   type CouchAdmin,
   couchAdmin,
   installSigningKey,
   KeyInstallationError,
+  verifyCorsOrigins,
 } from '../../src/auth/keys.js'
 
 function newKey(kid = 'ec-test') {
@@ -356,5 +358,75 @@ describe('talking to CouchDB’s configuration', () => {
 
     expect(calls[0]?.headers.authorization).toBe('Bearer the.token.here')
     expect(calls[0]?.headers.authorization).not.toContain('Basic')
+  })
+})
+
+describe('checking CouchDB will serve our browsers', () => {
+  /** A CouchDB whose [cors] origins is whatever the test says. */
+  function withOrigins(origins: string | undefined): CouchAdmin {
+    return {
+      async putConfig() {},
+      async getConfig(section, name) {
+        return section === 'cors' && name === 'origins' ? origins : undefined
+      },
+      async sessionAsBearer() {
+        return { status: 200 }
+      },
+    }
+  }
+
+  it('accepts a list that names every origin the application is served from', async () => {
+    const admin = withOrigins('http://localhost:5173, http://localhost:4173')
+
+    await expect(
+      verifyCorsOrigins(admin, ['http://localhost:5173', 'http://localhost:4173']),
+    ).resolves.toBeUndefined()
+  })
+
+  it('ignores whitespace, because the ini format is written by hand', async () => {
+    const admin = withOrigins('  https://matter.example ,   https://other.example  ')
+
+    await expect(verifyCorsOrigins(admin, ['https://matter.example'])).resolves.toBeUndefined()
+  })
+
+  it('refuses a placeholder that was never replaced at deploy time', async () => {
+    // The failure the production overlay warns about in a comment and nothing enforced.
+    // Replication fails from the real origin with an opaque browser CORS error that reads as a
+    // network fault, so it is invisible until a user tries to sync.
+    const admin = withOrigins('https://matter-manager.example')
+
+    await expect(verifyCorsOrigins(admin, ['https://matter.example'])).rejects.toThrow(
+      CorsOriginError,
+    )
+  })
+
+  it('names the origins CouchDB would turn away', async () => {
+    const admin = withOrigins('https://matter-manager.example')
+
+    await expect(verifyCorsOrigins(admin, ['https://matter.example'])).rejects.toThrow(
+      /https:\/\/matter\.example/,
+    )
+  })
+
+  it('refuses when the list was never set', async () => {
+    const admin = withOrigins(undefined)
+
+    await expect(verifyCorsOrigins(admin, ['https://matter.example'])).rejects.toThrow(/unset/)
+  })
+
+  it('says which file to set it in', async () => {
+    const admin = withOrigins(undefined)
+
+    await expect(verifyCorsOrigins(admin, ['https://matter.example'])).rejects.toThrow(
+      /10-production\.ini/,
+    )
+  })
+
+  it('checks nothing when the deployment names no origin', async () => {
+    // Consistent with the rest of composition: a deployment that has not been told where its
+    // application lives is part-way through being set up, not misconfigured.
+    const admin = withOrigins(undefined)
+
+    await expect(verifyCorsOrigins(admin, [])).resolves.toBeUndefined()
   })
 })

@@ -14,7 +14,7 @@
 
 import { googleProvider, jwksCache, verifyGoogleIdToken } from './auth/google.js'
 import { type SigningKey, signingKeyFromPem } from './auth/jwt.js'
-import { couchAdmin, installSigningKey } from './auth/keys.js'
+import { couchAdmin, installSigningKey, verifyCorsOrigins } from './auth/keys.js'
 import type { Provider } from './auth/oidc.js'
 import type { AuthDependencies } from './auth/routes.js'
 import { type CouchClient, couchClient } from './couch/client.js'
@@ -176,7 +176,8 @@ export function serverOptions(env: Environment = process.env): ServerOptions {
 }
 
 /**
- * Teaches CouchDB the key it must validate, and refuses to continue if it will not.
+ * Teaches CouchDB the key it must validate, checks it will serve our browsers, and
+ * refuses to continue if either is wrong.
  *
  * Separate from {@link serverOptions} because it is the one part of composition that talks to
  * the network: `serverOptions` stays synchronous and total, and this is awaited by `main.ts`
@@ -192,7 +193,7 @@ export function serverOptions(env: Environment = process.env): ServerOptions {
  *   CouchDB directly, so a key that is not in effect is not a degraded service — it is a
  *   service whose users watch sync fail with no explanation for as long as it runs.
  */
-export async function installCouchKey(
+export async function prepareCouchDb(
   env: Environment = process.env,
   fetchImpl: typeof fetch = fetch,
 ): Promise<void> {
@@ -204,5 +205,9 @@ export async function installCouchKey(
     return
   }
 
-  await installSigningKey(couchAdmin(url, user, password, fetchImpl), key)
+  const admin = couchAdmin(url, user, password, fetchImpl)
+  await installSigningKey(admin, key)
+  // After the key, because a CouchDB that cannot read the token is the more fundamental
+  // problem and the more confusing symptom; being turned away by CORS at least says so.
+  await verifyCorsOrigins(admin, originsFromEnv(env))
 }

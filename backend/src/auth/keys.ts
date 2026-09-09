@@ -74,6 +74,56 @@ export class KeyInstallationError extends Error {
   override readonly name = 'KeyInstallationError'
 }
 
+/** Thrown when CouchDB would refuse the browsers this deployment serves. */
+export class CorsOriginError extends Error {
+  override readonly name = 'CorsOriginError'
+}
+
+/**
+ * Confirms CouchDB will accept cross-origin replication from the origins this deployment uses.
+ *
+ * **Verified rather than written, deliberately.** `[cors] origins` is applied live, so this
+ * service could set it — but it is a deployment value, and the two environments legitimately
+ * differ: development serves `vite` and `vite preview` on separate ports, so overwriting the
+ * list with the single origin the API happens to know would narrow it. Checking asserts the
+ * agreement without taking ownership of a list this service does not fully know.
+ *
+ * What it catches is the failure the production overlay warns about in a comment and nothing
+ * enforced: an `origins` left at its placeholder. Replication then fails from the real origin
+ * with an opaque browser CORS error that reads as a network fault rather than a configuration
+ * one — expensive to diagnose, and invisible until a user tries to sync.
+ *
+ * @param expected every origin the browser may replicate from, from `originsFromEnv`.
+ * @throws {CorsOriginError} naming the origins CouchDB would turn away.
+ */
+export async function verifyCorsOrigins(
+  admin: CouchAdmin,
+  expected: readonly string[],
+): Promise<void> {
+  // Nothing to check against. A deployment that names no origin has not been told where its
+  // application lives, which `serverOptions` already treats as not-yet-configured.
+  if (expected.length === 0) return
+
+  const configured = await admin.getConfig('cors', 'origins')
+  const allowed = new Set(
+    (configured ?? '')
+      .split(',')
+      .map((origin) => origin.trim())
+      .filter((origin) => origin !== ''),
+  )
+
+  const missing = expected.filter((origin) => !allowed.has(origin))
+  if (missing.length > 0) {
+    throw new CorsOriginError(
+      `CouchDB would refuse replication from ${missing.join(', ')}: its [cors] origins is ` +
+        `${configured === undefined ? 'unset' : `"${configured}"`}. That list is a deployment ` +
+        'value — set it in the overlay beside the image (infra/couchdb/10-production.ini, ' +
+        '.devcontainer/couchdb/10-development.ini) so it names every origin the application is ' +
+        'served from.',
+    )
+  }
+}
+
 /**
  * Publishes the public key and confirms CouchDB accepts a token signed with its private half.
  *
