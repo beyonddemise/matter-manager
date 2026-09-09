@@ -55,6 +55,20 @@ updates:
       - /backend
     schedule:
       interval: monthly
+    # Node runs on the even-numbered majors only, and only once they enter Long Term Support
+    # (LTS) in the October after their release. Odd majors never do, and an even one is
+    # "Current" for six months first. Dependabot cannot tell any of that from a tag, so it
+    # offered node:26 in #168 while 26 was still Current - a runtime with no support line, in
+    # the image that serves production.
+    #
+    # Suppressing majors leaves security and patch releases within the line flowing, which is
+    # the part that matters between LTS moves, and turns "adopt the next Node" back into a
+    # decision somebody makes rather than a pull request that arrives. The Container images
+    # job in CI enforces the other half: every pin agrees with .nvmrc, so a major cannot move
+    # here alone.
+    ignore:
+      - dependency-name: node
+        update-types: [version-update:semver-major]
     groups:
       container-images:
         patterns: ['*']
@@ -90,6 +104,13 @@ updates:
     ignore:
       - dependency-name: matter-manager/couchdb
       - dependency-name: matter-manager/couchdb-dev
+      # Same Node LTS policy as the docker ecosystem above. This tag is `1-24-bookworm`, where
+      # 24 is the Node major and the leading 1 is the devcontainer image's own version - so the
+      # bump offered in #160 was `5-26-bookworm`, moving both at once. That reads as a major
+      # change on either reading of the tag, so this rule catches it; the CI pin check is what
+      # makes that certain rather than assumed.
+      - dependency-name: mcr.microsoft.com/devcontainers/typescript-node
+        update-types: [version-update:semver-major]
     groups:
       compose-images:
         patterns: ['*']
