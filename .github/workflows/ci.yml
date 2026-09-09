@@ -202,6 +202,105 @@ jobs:
         working-directory: backend
 
 
+  images:
+    name: Container images
+    runs-on: ubuntu-latest
+    # Nothing here has ever built a Dockerfile, and that gap was expensive. #164 moved the API
+    # to `backend/` and left this image installing npm workspaces that no longer existed, so it
+    # could not build at all - and three CI checks passed on that commit, because none of them
+    # touch the image. A reviewer reading the file caught it. A build takes seconds and cannot
+    # be fooled by careful reasoning.
+    steps:
+      # No credential in the tree: this job needs none, and the workspace is the worst place to
+      # leave one on a pull request from a fork.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The repository root is the context, matching what `infra/compose.prod.yml` passes:
+      # `infra/couchdb/design-docs` is copied from it. Nothing is pushed anywhere - building
+      # proves the Dockerfile, and publishing is a separate decision that belongs with M9.
+      #
+      # No registry credentials and no WEBAWESOME_NPM_TOKEN, deliberately: this image needs
+      # neither, so the job works on a pull request from a fork.
+      #
+      # Keyed on the lockfile, because the layer worth keeping is `npm ci`. A dependency
+      # change should miss; anything else should hit. `restore-keys` gives a stale cache to
+      # build on when the lockfile does move, which still saves the base image pull.
+      #
+      # Note the first run on a branch has nothing to restore - Actions caches are scoped to
+      # the branch with a fallback to the base - so this is a saving from the second run
+      # onward, not this one.
+      - name: Cache the backend image layers
+        id: image-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: /tmp/.buildx-cache
+          key: buildx-backend-${{ runner.os }}-${{ hashFiles('backend/package-lock.json') }}
+          restore-keys: buildx-backend-${{ runner.os }}-
+
+      # `--builder ci`, and deliberately NOT `docker buildx create --use`. An exported cache
+      # needs the docker-container driver, which the default builder is not - but making it
+      # that driver does not put its result in the local image store, so making it the default
+      # would break any plain `docker build` in this job whose image is then run: the build
+      # would appear to succeed and the smoke test would fail on an image that does not exist.
+      # Naming the builder for the one build that needs it keeps that trap shut.
+      - name: Backend image
+        run: |
+          docker buildx create --name ci --driver docker-container >/dev/null
+          # A missing src is a warning rather than an error, but only in some buildx versions.
+          mkdir -p /tmp/.buildx-cache
+
+          args=(
+            --builder ci --load
+            -f backend/Dockerfile -t matter-manager/backend:ci
+            --cache-from type=local,src=/tmp/.buildx-cache
+          )
+
+          # Exported only when there is something to save. On an exact key hit `actions/cache`
+          # says "not saving cache" and discards whatever is written, so exporting then costs
+          # several seconds and 178MB of writes to produce a file nothing reads. A miss - a
+          # changed lockfile, or a `restore-keys` fallback - does get saved, so export there.
+          if [ "${{ steps.image-cache.outputs.cache-hit }}" != "true" ]; then
+            args+=(--cache-to type=local,dest=/tmp/.buildx-cache-new,mode=max)
+          fi
+
+          docker buildx build "${args[@]}" .
+
+          # Written to a new directory and swapped in, because `type=local` appends: exporting
+          # over the restored cache grows it without bound, one layer set per run, until the
+          # restore itself is the slow part.
+          # Guarded: a `mv` of a directory buildx did not write would fail the step under
+          # errexit, turning a successful build into a red job for no reason.
+          if [ -d /tmp/.buildx-cache-new ]; then
+            rm -rf /tmp/.buildx-cache
+            mv /tmp/.buildx-cache-new /tmp/.buildx-cache
+          fi
+
+      # Building proves the COPY paths resolve. Running proves the runtime stage: that the
+      # pruned node_modules is complete, that CMD finds dist/src/main.js, and that the process
+      # serves. `/healthz` answers on an unconfigured deployment by design - `serverOptions`
+      # returns no routes without CouchDB and a key, and `prepareCouchDb` returns early - which
+      # is exactly what makes it usable here with no database present.
+      - name: The backend image actually serves
+        run: |
+          docker run -d --name backend-smoke -p 3000:3000 matter-manager/backend:ci
+
+          # The retry count bounds how many attempts are made, not how long one takes, and
+          # curl has no default deadline. A container that accepts the connection and then
+          # never answers would hang here until the job timeout hours later, reported as a
+          # stuck runner rather than as a service that does not respond.
+          for _ in $(seq 1 30); do
+            if curl -fsS --connect-timeout 2 --max-time 5 http://127.0.0.1:3000/healthz; then
+              echo
+              echo "backend image serves /healthz"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::the built backend image never answered /healthz"
+          docker logs backend-smoke
+          exit 1
   couchdb-contract:
     name: CouchDB access model
     runs-on: ubuntu-latest
