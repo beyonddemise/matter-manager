@@ -347,6 +347,82 @@ describe('talking to CouchDB’s configuration', () => {
     expect(session).toEqual({ status: 401 })
   })
 
+  it('gives up on a CouchDB that accepts the connection and then says nothing', async () => {
+    // Node's fetch has no request timeout of its own. Startup awaits these before anything
+    // listens, so without a deadline an unresponsive CouchDB is a process that hangs with no
+    // log line and no failure — which is the outcome this module exists to prevent, reached
+    // by another route rather than avoided.
+    const stalled = (async (_url: string | URL, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => {
+          const error = new Error('timed out')
+          error.name = 'TimeoutError'
+          reject(error)
+        })
+      })) as unknown as typeof fetch
+
+    await expect(
+      couchAdmin('http://couch.test:5984', 'admin', 'devonly', stalled, 5).getConfig('chttpd', 'x'),
+    ).rejects.toThrow(KeyInstallationError)
+  })
+
+  it('says the database is reachable but silent, rather than blaming the key', async () => {
+    const stalled = (async (_url: string | URL, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => {
+          const error = new Error('timed out')
+          error.name = 'TimeoutError'
+          reject(error)
+        })
+      })) as unknown as typeof fetch
+
+    await expect(
+      couchAdmin('http://couch.test:5984', 'admin', 'devonly', stalled, 5).putConfig('s', 'n', 'v'),
+    ).rejects.toThrow(/reachable but not responding/)
+  })
+
+  it('gives up on a CouchDB that sends headers and then stalls the body', async () => {
+    // The narrower half of the same failure, and the more misleading one. The response
+    // resolves, so a deadline that only wraps `fetch` has already let go by the time the body
+    // is read. Without this, `sessionAsBearer` swallows the rejection as an unparseable body,
+    // reports nobody, and `installSigningKey` blames a key that is perfectly good — the exact
+    // misdiagnosis this module exists to prevent.
+    const stalledBody = (async () =>
+      ({
+        ok: true,
+        status: 200,
+        text: async () => {
+          const error = new Error('aborted while reading the body')
+          error.name = 'TimeoutError'
+          throw error
+        },
+      }) as unknown as Response) as unknown as typeof fetch
+
+    const admin = couchAdmin('http://couch.test:5984', 'admin', 'devonly', stalledBody, 5)
+
+    await expect(admin.getConfig('chttpd', 'x')).rejects.toThrow(KeyInstallationError)
+    await expect(admin.sessionAsBearer('t', '/_session')).rejects.toThrow(
+      /reachable but not responding/,
+    )
+  })
+
+  it('passes a deadline on every request, not only the probe', async () => {
+    // The write and the read hang just as readily as the probe does.
+    const signals: Array<AbortSignal | null | undefined> = []
+    const impl = (async (_url: string | URL, init?: RequestInit) => {
+      signals.push(init?.signal)
+      return { ok: true, status: 200, text: async () => '""' } as unknown as Response
+    }) as unknown as typeof fetch
+
+    const admin = couchAdmin('http://couch.test:5984', 'admin', 'devonly', impl)
+    await admin.putConfig('s', 'n', 'v')
+    await admin.getConfig('s', 'n')
+    await admin.sessionAsBearer('t', '/_session')
+
+    expect(signals).toHaveLength(3)
+    expect(signals.every((signal) => signal instanceof AbortSignal)).toBe(true)
+  })
+
   it('probes as a bearer, not as the admin', async () => {
     // The probe has to ask the question a *user's* replication will ask. Asking it with admin
     // credentials would prove only that the admin password is correct.
