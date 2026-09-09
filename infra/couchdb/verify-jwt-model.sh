@@ -17,7 +17,7 @@
 # read only at STARTUP, while `[jwt_keys]` is live. Setting the handler at runtime returns
 # 200 and does nothing until restart - and until then every request authenticates as
 # ANONYMOUS rather than failing, which looks exactly like a permissions bug. Production bakes
-# the handler into the image (infra/couchdb/local.ini) so it is present at boot; this script
+# the handler into the image (infra/couchdb/00-base.ini) so it is present at boot; this script
 # configures it and restarts once as setup, then asserts the live behaviours.
 #
 # Requires: node, openssl, curl, jq, docker.

@@ -1,6 +1,6 @@
 import { createPrivateKey, generateKeyPairSync } from 'node:crypto'
 import { afterEach, describe, expect, it } from 'vitest'
-import { type Environment, serverOptions } from '../src/composition.js'
+import { type Environment, installCouchKey, serverOptions } from '../src/composition.js'
 import { buildServer, type Server } from '../src/server.js'
 
 const PEM = generateKeyPairSync('ec', {
@@ -248,5 +248,72 @@ describe('a deployment that is configured wrongly', () => {
     }).privateKey as unknown as string
 
     expect(() => serverOptions({ ...COMPLETE, JWT_PRIVATE_KEY: rsa })).toThrow(/EC key/i)
+  })
+})
+
+describe('teaching CouchDB the key it must validate', () => {
+  /** Answers as a CouchDB with the JWT handler enabled, and records what it was asked. */
+  function couchLike(handlers = '{chttpd_auth, jwt_authentication_handler}') {
+    const calls: string[] = []
+    const impl = (async (url: string | URL, init?: RequestInit) => {
+      const target = String(url)
+      calls.push(`${init?.method ?? 'GET'} ${target}`)
+      if (target.includes('/_config/chttpd/authentication_handlers')) {
+        return { ok: true, status: 200, text: async () => JSON.stringify(handlers) } as Response
+      }
+      if (target.includes('/_config/')) return { ok: true, status: 200 } as Response
+      // The probe. Name the subject the token carries, as a CouchDB that read it would.
+      const headers = (init?.headers ?? {}) as Record<string, string>
+      const token = String(headers.authorization).slice(7)
+      const sub = (
+        JSON.parse(Buffer.from(token.split('.')[1] ?? '', 'base64url').toString()) as {
+          sub?: string
+        }
+      ).sub
+      return {
+        ok: true,
+        status: 200,
+        text: async () =>
+          JSON.stringify({ userCtx: { name: sub }, info: { authenticated: 'jwt' } }),
+      } as Response
+    }) as unknown as typeof fetch
+    return { impl, calls }
+  }
+
+  it('installs the key when the deployment has both halves', async () => {
+    const { impl, calls } = couchLike()
+    await expect(installCouchKey(COMPLETE, impl)).resolves.toBeUndefined()
+
+    expect(calls).toContainEqual(
+      'PUT http://couch.test:5984/_node/_local/_config/jwt_keys/ec%3Aec-2026-08',
+    )
+  })
+
+  it('does nothing at all when there is no CouchDB to teach', async () => {
+    // Absent means absent, the same rule the rest of composition follows. A deployment
+    // part-way through being set up serves /healthz and nothing that needs a token, so there
+    // is no key to install and nothing to verify — and no reason to fail starting.
+    const { impl, calls } = couchLike()
+    const { COUCHDB_URL: _omitted, ...withoutCouch } = COMPLETE
+
+    await expect(installCouchKey(withoutCouch, impl)).resolves.toBeUndefined()
+    expect(calls).toEqual([])
+  })
+
+  it('does nothing when there is no key to install', async () => {
+    const { impl, calls } = couchLike()
+    const { JWT_PRIVATE_KEY: _omitted, ...withoutKey } = COMPLETE
+
+    await expect(installCouchKey(withoutKey, impl)).resolves.toBeUndefined()
+    expect(calls).toEqual([])
+  })
+
+  it('refuses to start against a CouchDB that cannot read bearer tokens', async () => {
+    // The failure this exists to make loud. Starting anyway means every token this service
+    // mints is ignored by the database, which users experience as replication silently not
+    // working, for as long as the process runs.
+    const { impl } = couchLike('{chttpd_auth, cookie_authentication_handler}')
+
+    await expect(installCouchKey(COMPLETE, impl)).rejects.toThrow(/authentication_handlers/)
   })
 })

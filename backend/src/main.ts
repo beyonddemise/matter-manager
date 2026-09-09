@@ -9,7 +9,7 @@
  * @module
  */
 
-import { serverOptions } from './composition.js'
+import { installCouchKey, serverOptions } from './composition.js'
 import { buildServer } from './server.js'
 
 const port = Number(process.env.PORT ?? 3000)
@@ -24,6 +24,16 @@ const host = process.env.HOST ?? '0.0.0.0'
 // moment somebody presses a button, which reads as a broken application rather than an
 // incomplete deployment. See `composition.ts`.
 const app = buildServer(serverOptions(process.env))
+
+// Then the half that needs the network: CouchDB validates the tokens this service mints, using
+// a public key only this service can give it. Before listening, because a service that serves
+// sign-in while the database refuses every token it issues looks entirely healthy and is not.
+try {
+  await installCouchKey(process.env)
+} catch (error) {
+  app.log.error({ err: error }, 'CouchDB will not accept the tokens this service issues')
+  process.exit(1)
+}
 
 /**
  * Stops accepting connections, finishes what is in flight, and exits.
