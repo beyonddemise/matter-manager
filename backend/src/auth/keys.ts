@@ -210,13 +210,37 @@ export function couchAdmin(
   user: string,
   password: string,
   fetchImpl: typeof fetch = fetch,
+  timeoutMs = 10_000,
 ): CouchAdmin {
   const base = url.replace(/\/+$/, '')
   const auth = `Basic ${Buffer.from(`${user}:${password}`).toString('base64')}`
 
+  /**
+   * Every request this module makes, with a deadline.
+   *
+   * Node's `fetch` applies no request timeout of its own, so a CouchDB that accepts the
+   * connection and then says nothing leaves the promise pending forever. Startup awaits these
+   * before anything listens, which turns that into a process that hangs with no log line and
+   * no failure — the exact outcome this module exists to prevent, reached by another route.
+   */
+  async function ask(target: string, init: RequestInit): Promise<Response> {
+    try {
+      return await fetchImpl(target, { ...init, signal: AbortSignal.timeout(timeoutMs) })
+    } catch (error) {
+      const name = error instanceof Error ? error.name : ''
+      if (name === 'TimeoutError' || name === 'AbortError') {
+        throw new KeyInstallationError(
+          `CouchDB did not answer within ${timeoutMs}ms. It is reachable but not responding, so ` +
+            'this service cannot confirm it will accept the tokens it issues.',
+        )
+      }
+      throw error
+    }
+  }
+
   return {
     async putConfig(section, name, value) {
-      const response = await fetchImpl(
+      const response = await ask(
         `${base}/_node/_local/_config/${encodeURIComponent(section)}/${encodeURIComponent(name)}`,
         {
           method: 'PUT',
@@ -234,7 +258,7 @@ export function couchAdmin(
     },
 
     async getConfig(section, name) {
-      const response = await fetchImpl(
+      const response = await ask(
         `${base}/_node/_local/_config/${encodeURIComponent(section)}/${encodeURIComponent(name)}`,
         { headers: { authorization: auth, accept: 'application/json' } },
       )
@@ -251,7 +275,7 @@ export function couchAdmin(
     },
 
     async sessionAsBearer(token, path) {
-      const response = await fetchImpl(`${base}${path}`, {
+      const response = await ask(`${base}${path}`, {
         headers: { authorization: `Bearer ${token}`, accept: 'application/json' },
       })
 

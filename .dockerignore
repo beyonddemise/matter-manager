@@ -6,12 +6,16 @@ node_modules
 coverage
 .git
 .github
-.devcontainer
-# ...except the development CouchDB's configuration overlay. That image builds from the
+# Its *contents*, not the directory: Docker never traverses an excluded directory, so a `!`
+# exception under `.devcontainer` would be silently inert — the re-inclusion below only works
+# because the directory itself stays in the context.
+.devcontainer/*
+# The development CouchDB's configuration overlay is the exception. That image builds from the
 # repository root so it can reach the base configuration it shares with production, which puts
-# it under this file's rules; without the exception its COPY fails on a context that silently
-# does not contain the file.
+# it under this file's rules; without this its COPY fails on a context that does not contain
+# the file, and says only that the file is missing.
 !.devcontainer/couchdb
+!.devcontainer/couchdb/**
 .playwright-mcp
 e2e
 packages/web
