@@ -27,12 +27,14 @@ Commit at each transition where it helps a reviewer follow the reasoning.
 
 | If it...                           | It belongs in   |
 | ---------------------------------- | --------------- |
-| is a pure function over plain data | `packages/core` |
-| touches PouchDB or CouchDB         | `packages/data` |
-| renders or handles user input      | `packages/web`  |
-| serves HTTP or talks to Google     | `packages/api`  |
+| is a pure function the browser needs | `packages/core`      |
+| is a pure function the service needs | `backend/src/domain` |
+| touches PouchDB                      | `packages/data`      |
+| renders or handles user input        | `packages/web`       |
+| serves HTTP, CouchDB or Google       | `backend/src`        |
 
-**`packages/core` must never import a DOM type, a network client, or a database.** If a
+**Neither `packages/core` nor `backend/src/domain` may import a DOM type, a network client,
+or a database.** If a
 piece of logic seems to need one to be tested, it is nearly always two pieces of logic
 tangled together: a pure decision and an impure action. Separate them, put the decision in
 `core`, and test the decision exhaustively.

@@ -95,18 +95,26 @@ registry are reachable through the API alone — a single readable registry woul
 every project's address and participant list to every user
 ([ADR 0012](docs/adr/0012-central-project-registry.md)).
 
-### Packages
+### Layout
 
-| Package         | Contains                                                            | Depends on     |
+| Directory       | Contains                                                            | Depends on     |
 | --------------- | ------------------------------------------------------------------- | -------------- |
-| `packages/core` | Pure domain: Matter codec, room paths, entitlements, conflict merge | nothing        |
+| `packages/core` | Pure browser domain: Matter codec, room paths, conflict merge       | nothing        |
 | `packages/data` | PouchDB repositories, sync manager                                  | `core`         |
 | `packages/web`  | Lit SPA                                                             | `core`, `data` |
-| `packages/api`  | Fastify backend                                                     | `core`         |
+| `backend`       | Fastify service, and its own pure domain in `src/domain`            | nothing        |
+| `openapi.yaml`  | The HTTP contract both sides are held to                            | —              |
 
-`core` has no I/O, no DOM and no network — it is where almost all the logic that can be
-_wrong_ lives, and it runs in milliseconds with zero setup. If something needs a browser or
-a database to test, that is a signal it belongs elsewhere.
+`backend` installs, typechecks and tests **on its own** — it shares no package with the
+browser and needs no Web Awesome token. That is deliberate: ADR 0004 chose TypeScript partly
+to avoid writing domain logic twice, and the code has since shown that no such sharing exists
+(the browser and the service have one type in common and no functions), so the backend stays
+replaceable in another language.
+
+Pure logic — no I/O, no DOM, no network — lives in `packages/core` for the browser and
+`backend/src/domain` for the service. That is where almost all the logic that can be _wrong_
+lives, and it runs in milliseconds with zero setup. If something needs a browser or a database
+to test, that is a signal it belongs elsewhere.
 
 ---
 

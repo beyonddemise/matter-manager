@@ -91,7 +91,7 @@ addresses, and `participants` is a map of who has access to whose home.
 `infra/couchdb/verify-access-model.sh` creates `verify-access-model-$$` against a real server —
 and an earlier version of this example replaced them with underscores, which disagreed with
 ADR 0003 and with the OpenAPI contract. One representation, produced by one function:
-`projectDatabaseName()` in `packages/api/src/projects/names.ts`, which refuses anything that is
+`projectDatabaseName()` in `backend/src/projects/names.ts`, which refuses anything that is
 not a lower-case v4 uuid.
 
 ```jsonc

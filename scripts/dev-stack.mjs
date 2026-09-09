@@ -9,7 +9,7 @@
  * together were pasted out of `.env.example` - which is a setup that works for whoever wrote it
  * and for nobody else.
  *
- * **The API runs on the host rather than in its image.** `packages/api/Dockerfile` exists and is
+ * **The API runs on the host rather than in its image.** `backend/Dockerfile` exists and is
  * what production runs; using it here would mean rebuilding an image on every edit. CouchDB is
  * containerised because its *configuration* is what has to match production, and that is baked
  * into the image - replication and `validate_doc_update` behaviour differ between minor
@@ -22,7 +22,7 @@
  *
  * Google sign-in is **not** configured, and cannot be from here: it needs a client somebody
  * creates in a console. Without it the API serves no `/auth` routes, which is deliberate - see
- * `packages/api/src/composition.ts`. Everything else works.
+ * `backend/src/composition.ts`. Everything else works.
  */
 
 import { spawn, spawnSync } from 'node:child_process'
@@ -167,7 +167,7 @@ console.log('  Ctrl-C stops the API and the web server; CouchDB keeps your data 
 console.log('  running. `npm run dev:stack:down` stops it too.\n')
 
 const children = [
-  spawn('node', ['--watch', '--env-file=.env', 'packages/api/dist/src/main.js'], {
+  spawn('node', ['--watch', '--env-file=.env', 'backend/dist/src/main.js'], {
     cwd: root,
     stdio: 'inherit',
   }),

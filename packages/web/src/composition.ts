@@ -7,7 +7,7 @@
  * inside that is exactly what a finished feature looks like.
  *
  * So this file exists to be the one place that knows how the pieces meet, and to be small enough
- * that a reader can see whether a piece is absent from it. `packages/api/src/composition.ts` is
+ * that a reader can see whether a piece is absent from it. `backend/src/composition.ts` is
  * the same idea on the other side, for the same reason.
  *
  * **Both back ends are addressed by path, never by host.** In production the application keeps

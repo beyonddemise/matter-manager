@@ -21,14 +21,14 @@ services:
       - couchdb
 
   api:
-    # packages/api/Dockerfile landed with #120; this note previously said it did not exist,
+    # backend/Dockerfile landed with #120; this note previously said it did not exist,
     # which stopped being true then. The stack as a whole is still finished in M9 - what this
     # file documents is the intended topology.
     build:
       context: ..
-      dockerfile: packages/api/Dockerfile
+      dockerfile: backend/Dockerfile
     restart: unless-stopped
-    # Every name here is read by packages/api/src/composition.ts. That is not a
+    # Every name here is read by backend/src/composition.ts. That is not a
     # coincidence to preserve casually: this block previously passed API_PORT,
     # JWT_PRIVATE_KEY_PATH, JWT_ISSUER, JWT_AUDIENCE and API_PUBLIC_URL, none of
     # which anything read - so the stack started, looked configured, and served

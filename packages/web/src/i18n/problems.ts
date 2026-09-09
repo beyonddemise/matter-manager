@@ -2,7 +2,7 @@
  * The sentence for a domain problem code, in the language the interface is showing.
  *
  * `packages/core` reports **codes** rather than sentences, because it is imported by
- * `packages/api` as well and a translation runtime belongs in neither a pure domain layer nor
+ * `backend` as well and a translation runtime belongs in neither a pure domain layer nor
  * a server. It still carries an English sentence on every error, which is the right thing for
  * a log or an API response and the wrong thing to put on a German screen (#75).
  *

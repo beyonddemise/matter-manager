@@ -30,9 +30,6 @@ const EXPECTED: ReadonlyArray<
   ['uuidOf', 'function'],
   ['DraftError', 'function'],
   ['DRAFT_PROBLEMS', 'object'],
-  ['InvitationError', 'function'],
-  ['TransferError', 'function'],
-  ['MembershipError', 'function'],
   ['planNewDevice', 'function'],
   ['planDeviceEdit', 'function'],
   ['setDeviceDisabled', 'function'],
@@ -91,15 +88,6 @@ const EXPECTED: ReadonlyArray<
   ['mergeDevice', 'function'],
   ['mergeRemarks', 'function'],
   ['mergeRoom', 'function'],
-  // entitlements
-  ['ACTIONS', 'object'],
-  ['INVITATION_LIFETIME', 'number'],
-  ['TRANSFER_LIFETIME', 'number'],
-  ['PROJECT_ROLES', 'object'],
-  ['ALLOW', 'function'],
-  ['can', 'function'],
-  ['evaluate', 'function'],
-  ['POLICIES', 'object'],
   // room paths
   ['ROOM_PATH_SEPARATOR', 'string'],
   ['RoomPathError', 'function'],
@@ -113,26 +101,10 @@ const EXPECTED: ReadonlyArray<
   ['renameRoom', 'function'],
   ['reorderRooms', 'function'],
   ['roomsInOrder', 'function'],
-  ['foldEmail', 'function'],
-  ['grantRole', 'function'],
-  ['isOpen', 'function'],
-  ['isOwner', 'function'],
   ['isValidRoomPath', 'function'],
   ['isWithinRoom', 'function'],
-  ['acceptable', 'function'],
-  ['applyTransfer', 'function'],
-  ['canManageMembers', 'function'],
-  ['canWrite', 'function'],
-  ['narrowsAccess', 'function'],
   ['normaliseRoomPath', 'function'],
-  ['ownerOf', 'function'],
-  ['planInvitation', 'function'],
-  ['planTransfer', 'function'],
-  ['redeemable', 'function'],
-  ['securityFor', 'function'],
   ['renameRoomPath', 'function'],
-  ['revokeAccess', 'function'],
-  ['roleOf', 'function'],
   ['roomPathKey', 'function'],
   ['roomPathProblem', 'function'],
   ['splitRoomPath', 'function'],
@@ -202,10 +174,6 @@ describe('the public entry point reaches the implementations', () => {
     const a = { _id: 'device:1', _rev: '1-a', updatedAt: '2026-08-01T00:00:00.000Z', remarks: [] }
     const b = { _id: 'device:1', _rev: '2-b', updatedAt: '2026-08-02T00:00:00.000Z', remarks: [] }
     expect(core.mergeDevice(a, [b])._rev).toBe('2-b')
-  })
-
-  it('answers an entitlement question', () => {
-    expect(core.can({ sub: 'auth0|x', plan: 'free' }, 'pdf.export')).toBe(true)
   })
 
   it('exposes errors as constructible classes, not bare objects', () => {
