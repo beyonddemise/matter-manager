@@ -1,4 +1,4 @@
-import { createPublicKey, generateKeyPairSync } from 'node:crypto'
+import { createPublicKey, generateKeyPairSync, verify } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 import {
   kidOf,
@@ -62,13 +62,31 @@ describe('minting a token', () => {
   it('signs with the raw R‖S pair rather than DER', () => {
     // The line that would otherwise fail silently. Without `dsaEncoding: 'ieee-p1363'` Node
     // signs correctly and encodes the signature as DER — the same algorithm, different bytes,
-    // rejected by CouchDB with no hint as to why. A P-256 R‖S signature is exactly 64 bytes;
-    // a DER one is variable and starts with 0x30.
-    const token = mintToken(newKey(), { purpose: 'access', sub: 'google|abc', exp: soon() })
+    // rejected by CouchDB with no hint as to why.
+    //
+    // The length is the whole discriminator: a P-256 R‖S signature is exactly 64 bytes, and a
+    // DER one carries a SEQUENCE header and two INTEGER headers around the same two numbers,
+    // so it measures 69 to 72 and can never be 64.
+    //
+    // This test used to also assert `signature[0] !== 0x30`, on the grounds that DER starts
+    // with that tag. In a raw signature that byte is the top byte of R — uniformly random —
+    // so the assertion failed by chance roughly once in every 256 runs, and did so on #172.
+    // It added nothing the length did not already prove. Replaced with a check that says the
+    // same thing deterministically: a verifier expecting DER must reject these bytes.
+    const key = newKey()
+    const token = mintToken(key, { purpose: 'access', sub: 'google|abc', exp: soon() })
     const signature = Buffer.from(token.split('.')[2] ?? '', 'base64url')
+    const signed = Buffer.from(token.split('.').slice(0, 2).join('.'))
+
+    const acceptedByADerVerifier = verify(
+      'sha256',
+      signed,
+      { key: key.publicKey, dsaEncoding: 'der' },
+      signature,
+    )
 
     expect(signature).toHaveLength(64)
-    expect(signature[0]).not.toBe(0x30)
+    expect(acceptedByADerVerifier).toBe(false)
   })
 
   it('refuses a key that is not an EC key', () => {
