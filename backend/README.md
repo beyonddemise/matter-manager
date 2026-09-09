@@ -21,7 +21,7 @@ service would put it on the critical path of every document, for no benefit.
 
 ## The OpenAPI contract
 
-`openapi/matter-manager.yaml` is the source of truth, not a generated afterthought. It
+`openapi.yaml` is the source of truth, not a generated afterthought. It
 exists so the backend could be reimplemented in Quarkus without touching the frontend
 (ADR 0004). A CI check that fails when handlers drift from the contract is what keeps that
 option real — without it, "we kept it open" quietly becomes false.
@@ -30,7 +30,7 @@ option real — without it, "we kept it open" quietly becomes false.
 
 **CouchDB is accessed with native `fetch`.** No `nano`, no `couchdb`, no `axios` — they
 predate global `fetch` and bring their own HTTP stack for what is now a few lines
-([ADR 0013](../../docs/adr/0013-minimal-runtime-dependencies.md)).
+([ADR 0013](../docs/adr/0013-minimal-runtime-dependencies.md)).
 
 **JWT signing and verification use `node:crypto`.** No `jose`, no `jsonwebtoken`. The two
 pieces that usually motivate a library:
@@ -66,13 +66,13 @@ only thing that binds, and is deliberately short enough that nothing hides in it
 npm run openapi:types --prefix backend
 ```
 
-`src/generated/openapi.ts` is produced from `openapi/matter-manager.yaml` by
+`src/generated/openapi.ts` is produced from `openapi.yaml` by
 `openapi-typescript` and **committed**, so a fresh clone builds without a code-generation step —
 the same reasoning the translation catalogue follows. A handler returning a shape the contract
 does not declare is a compile error.
 
 What a compiler cannot check — that the registered routes are exactly the operations the
-contract describes — is M4-2's CI check. [ADR 0015](../../docs/adr/0015-openapi-checked-not-executed.md)
+contract describes — is M4-2's CI check. [ADR 0015](../docs/adr/0015-openapi-checked-not-executed.md)
 is explicit that this is not optional infrastructure but the other half of the decision to check
 the contract rather than execute it.
 
@@ -119,7 +119,7 @@ a misconfiguration error at the moment a user presses the button.
 
 ### Configuration
 
-Step-by-step, with the console URLs: [docs/GOOGLE-SIGN-IN.md](../../docs/GOOGLE-SIGN-IN.md).
+Step-by-step, with the console URLs: [docs/GOOGLE-SIGN-IN.md](../docs/GOOGLE-SIGN-IN.md).
 
 `composition.ts` builds these into `ServerOptions.auth`, and `buildServer` registers `/auth/*`
 only when it is present — so a deployment missing any one of the first four answers
@@ -142,7 +142,7 @@ pushed into CouchDB at startup (`auth/keys.ts`), so key material never enters th
 
 Rate limits, cross-origin access, the headers on every response and a cap on request bodies
 (#47). The limits are in-process and that constrains the deployment — see
-[ADR 0016](../../docs/adr/0016-in-process-rate-limiting.md).
+[ADR 0016](../docs/adr/0016-in-process-rate-limiting.md).
 
 | Variable | |
 |---|---|

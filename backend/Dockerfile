@@ -1,13 +1,15 @@
-# The API image. Referenced by infra/compose.prod.yml since M0, and missing until now (#120).
+# The backend image. Referenced by infra/compose.prod.yml since M0, and missing until #120.
 #
 # Two stages, so the runtime image carries no compiler, no test files and no development
 # dependencies. What ships is `node_modules` for production plus the emitted JavaScript.
 #
-# **The web workspace is deliberately not installed.** It depends on `@awesome.me/webawesome-pro`,
-# which lives behind a licensed registry, so installing it here would mean a build secret in the
-# image build for a package the API never imports. Scoping the install to the two workspaces the
-# API actually needs keeps the token out of this entirely - and makes the image buildable by
-# anybody, licence or not.
+# **Build context is the repository root**, not this directory — `infra/couchdb/design-docs`
+# is copied from it below, and `design-docs.ts` finds those by walking up from the installed
+# code. See `infra/compose.prod.yml`.
+#
+# This package installs on its own: nothing here reaches for a workspace root, and no
+# dependency lives behind a licensed registry, so the image is buildable by anybody. That is a
+# property of the layout rather than of this file — see `backend/README.md`.
 
 # ---- build ------------------------------------------------------------------------------
 # Pinned to the same major as .nvmrc. A runtime that differs from the one the tests ran on is
@@ -17,24 +19,21 @@ FROM node:24-bookworm-slim AS build
 WORKDIR /app
 
 # The manifests first, so a change to source does not invalidate the dependency layer.
-COPY package.json package-lock.json .npmrc ./
-COPY packages/core/package.json packages/core/
-COPY packages/api/package.json packages/api/
+# `.npmrc` carries no credential — it records why peer resolution is relaxed.
+COPY backend/package.json backend/package-lock.json backend/.npmrc ./
 
 # `--ignore-scripts` for the same reason as CI: a transitive dependency's postinstall would
 # otherwise run with whatever is in this environment.
-RUN npm ci --ignore-scripts \
-      --include-workspace-root \
-      --workspace @matter-manager/core \
-      --workspace @matter-manager/api
+RUN npm ci --ignore-scripts
 
-COPY tsconfig.base.json tsconfig.json ./
-COPY packages/core packages/core
-COPY packages/api packages/api
+COPY backend/tsconfig.json ./
+COPY backend/src ./src
 
-# `tsc --build` follows the project reference from api to core, so this emits both. Prune the
-# compiler and other development dependencies before node_modules is copied into the runtime.
-RUN npx tsc --build packages/api \
+# `test/**/*.ts` is in the tsconfig `include` and is deliberately absent here, which is fine:
+# a glob matching nothing is only an error when *every* glob does. Emits to `dist/src`,
+# because `rootDir` is the package root. Prune the compiler and the rest of the development
+# dependencies before node_modules is copied into the runtime.
+RUN npx tsc --build \
     && npm prune --omit=dev --ignore-scripts
 
 # ---- runtime ----------------------------------------------------------------------------
@@ -47,13 +46,10 @@ ENV NODE_ENV=production
 
 COPY --from=build --chown=node:node /app/node_modules ./node_modules
 COPY --from=build --chown=node:node /app/package.json ./package.json
-COPY --from=build --chown=node:node /app/packages/core/package.json ./packages/core/package.json
-COPY --from=build --chown=node:node /app/packages/core/dist ./packages/core/dist
-COPY --from=build --chown=node:node /app/packages/api/package.json ./packages/api/package.json
-COPY --from=build --chown=node:node /app/packages/api/dist ./packages/api/dist
+COPY --from=build --chown=node:node /app/dist ./dist
 
 # The design documents CouchDB is given at startup. `design-docs.ts` finds them by walking up
-# from the installed package looking for `infra/couchdb/design-docs`, so the path relative to
+# from the installed code looking for `infra/couchdb/design-docs`, so the path relative to
 # /app is load-bearing rather than tidy. Taken from the build context, not the build stage:
 # they are data the compiler never touches.
 COPY --chown=node:node infra/couchdb/design-docs ./infra/couchdb/design-docs
@@ -68,4 +64,4 @@ HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=5 \
 
 # Directly, not through npm: a shell in front of the process means signals reach the shell and
 # not node, and the graceful shutdown in main.ts never runs.
-CMD ["node", "packages/api/dist/src/main.js"]
+CMD ["node", "dist/src/main.js"]
