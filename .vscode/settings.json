@@ -1,5 +1,17 @@
 {
-  "cSpell.words": [
-    "fontawesome"
-  ]
+  "cSpell.words": ["fontawesome"],
+
+  // `_headers` and `_redirects` have no file extension, so an editor guesses at their
+  // language and can guess "Markdown". Formatting one as Markdown is not cosmetic: it
+  // escapes the `*` in `/assets/*`, strips the two-space indent that binds a header to
+  // the path above it, and inserts a `<!-- -->` comment the platform cannot parse. Every
+  // rule in the file then silently stops applying. This happened in 43ef263 and took the
+  // deployment down. Pin the language so no editor has to guess.
+  "files.associations": {
+    "_headers": "plaintext",
+    "_redirects": "plaintext"
+  },
+  "[plaintext]": {
+    "editor.formatOnSave": false
+  }
 }
