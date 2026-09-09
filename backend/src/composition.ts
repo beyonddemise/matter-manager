@@ -14,6 +14,7 @@
 
 import { googleProvider, jwksCache, verifyGoogleIdToken } from './auth/google.js'
 import { type SigningKey, signingKeyFromPem } from './auth/jwt.js'
+import { couchAdmin, installSigningKey, verifyCorsOrigins } from './auth/keys.js'
 import type { Provider } from './auth/oidc.js'
 import type { AuthDependencies } from './auth/routes.js'
 import { type CouchClient, couchClient } from './couch/client.js'
@@ -172,4 +173,41 @@ export function serverOptions(env: Environment = process.env): ServerOptions {
     ...(sessionKey === undefined ? {} : { profile: { store, sessionKey } }),
     ...(auth === undefined ? {} : { auth }),
   }
+}
+
+/**
+ * Teaches CouchDB the key it must validate, checks it will serve our browsers, and
+ * refuses to continue if either is wrong.
+ *
+ * Separate from {@link serverOptions} because it is the one part of composition that talks to
+ * the network: `serverOptions` stays synchronous and total, and this is awaited by `main.ts`
+ * before anything listens.
+ *
+ * **Absent means absent, here too.** A deployment with no CouchDB or no signing key is one
+ * part-way through being set up; it serves `/healthz` and nothing that needs a token, so there
+ * is nothing to install and nothing to verify. What must never happen is the third case: a
+ * deployment that has both and starts anyway with a database that cannot read its tokens.
+ *
+ * @param fetchImpl injected so a test can answer as CouchDB without one running.
+ * @throws {KeyInstallationError} rather than returning. Replication authenticates against
+ *   CouchDB directly, so a key that is not in effect is not a degraded service — it is a
+ *   service whose users watch sync fail with no explanation for as long as it runs.
+ */
+export async function prepareCouchDb(
+  env: Environment = process.env,
+  fetchImpl: typeof fetch = fetch,
+): Promise<void> {
+  const key = keyFrom(env)
+  const url = value(env.COUCHDB_URL)
+  const user = value(env.COUCHDB_ADMIN_USER)
+  const password = value(env.COUCHDB_ADMIN_PASSWORD)
+  if (key === undefined || url === undefined || user === undefined || password === undefined) {
+    return
+  }
+
+  const admin = couchAdmin(url, user, password, fetchImpl)
+  await installSigningKey(admin, key)
+  // After the key, because a CouchDB that cannot read the token is the more fundamental
+  // problem and the more confusing symptom; being turned away by CORS at least says so.
+  await verifyCorsOrigins(admin, originsFromEnv(env))
 }

@@ -1,5 +1,5 @@
-# Keeps the build context small and keeps host state out of the image. Everything the API
-# image needs is copied explicitly in packages/api/Dockerfile.
+# Keeps the build context small and keeps host state out of the image. Everything the backend
+# image needs is copied explicitly in backend/Dockerfile.
 node_modules
 **/node_modules
 **/dist
@@ -7,6 +7,11 @@ coverage
 .git
 .github
 .devcontainer
+# ...except the development CouchDB's configuration overlay. That image builds from the
+# repository root so it can reach the base configuration it shares with production, which puts
+# it under this file's rules; without the exception its COPY fails on a context that silently
+# does not contain the file.
+!.devcontainer/couchdb
 .playwright-mcp
 e2e
 packages/web

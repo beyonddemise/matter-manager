@@ -13,7 +13,7 @@
  * **The trap is a neighbouring setting.** `[chttpd] authentication_handlers` is read only at
  * *startup*. Setting it at runtime returns 200, does nothing, and leaves every request
  * authenticating as **anonymous** rather than failing — which looks exactly like a permissions
- * bug and is not one. Production bakes it into the image (`infra/couchdb/local.ini`), so this
+ * bug and is not one. Both images bake it in from `infra/couchdb/00-base.ini`, so this
  * bites during experimentation rather than in operation, and only if you assume the two
  * settings behave alike. They do not, and this module does not touch it.
  *
@@ -22,22 +22,106 @@
 
 import { mintToken, publicKeyForCouch, type SigningKey } from './jwt.js'
 
+/**
+ * What CouchDB says when asked who is making a request.
+ *
+ * The status alone cannot answer the question this module exists to ask. A CouchDB with no JWT
+ * handler does not *reject* a bearer token — it ignores it, and the request proceeds as nobody.
+ * Whether that then reads as 401 or 200 depends on `require_valid_user`, so a status check is
+ * reading a setting that has nothing to do with the key. `userCtx.name` is the direct answer:
+ * it is the subject of the token when the token was understood, and absent when it was not.
+ */
+export interface SessionProbe {
+  readonly status: number
+  /** `userCtx.name`: who CouchDB believes is asking, absent when nobody. */
+  readonly name?: string
+  /** `info.authenticated`: which handler decided, e.g. `jwt`. */
+  readonly authenticated?: string
+}
+
 /** Writing config and probing with a token are not `CouchClient` operations; they are these. */
 export interface CouchAdmin {
   /** `PUT /_node/<node>/_config/<section>/<name>`. */
   putConfig(section: string, name: string, value: string): Promise<void>
   /**
-   * Makes a request **as a bearer**, returning the status.
+   * `GET /_node/<node>/_config/<section>/<name>`, or `undefined` when it is not set.
+   *
+   * Absent is a real answer rather than an error: CouchDB answers 404 for a key that was never
+   * written, and a setting left at its built-in default is exactly the case this module has to
+   * detect.
+   */
+  getConfig(section: string, name: string): Promise<string | undefined>
+  /**
+   * Makes a request **as a bearer** and reports who CouchDB thought was asking.
    *
    * The point of the whole exercise: this is the only way to find out whether CouchDB will
    * accept the tokens this service mints, and it has to be asked rather than assumed.
    */
-  statusAsBearer(token: string, path: string): Promise<number>
+  sessionAsBearer(token: string, path: string): Promise<SessionProbe>
 }
+
+/**
+ * The handler that makes CouchDB read a bearer token at all.
+ *
+ * Unlike `[jwt_keys]`, `[chttpd] authentication_handlers` is read **only at CouchDB startup**.
+ * Writing it at runtime returns 200 and changes nothing, so this module refuses rather than
+ * pretending it can fix it. See the note at the top of this file.
+ */
+const JWT_HANDLER = 'jwt_authentication_handler'
 
 /** Thrown when CouchDB will not accept what this service mints. */
 export class KeyInstallationError extends Error {
   override readonly name = 'KeyInstallationError'
+}
+
+/** Thrown when CouchDB would refuse the browsers this deployment serves. */
+export class CorsOriginError extends Error {
+  override readonly name = 'CorsOriginError'
+}
+
+/**
+ * Confirms CouchDB will accept cross-origin replication from the origins this deployment uses.
+ *
+ * **Verified rather than written, deliberately.** `[cors] origins` is applied live, so this
+ * service could set it — but it is a deployment value, and the two environments legitimately
+ * differ: development serves `vite` and `vite preview` on separate ports, so overwriting the
+ * list with the single origin the API happens to know would narrow it. Checking asserts the
+ * agreement without taking ownership of a list this service does not fully know.
+ *
+ * What it catches is the failure the production overlay warns about in a comment and nothing
+ * enforced: an `origins` left at its placeholder. Replication then fails from the real origin
+ * with an opaque browser CORS error that reads as a network fault rather than a configuration
+ * one — expensive to diagnose, and invisible until a user tries to sync.
+ *
+ * @param expected every origin the browser may replicate from, from `originsFromEnv`.
+ * @throws {CorsOriginError} naming the origins CouchDB would turn away.
+ */
+export async function verifyCorsOrigins(
+  admin: CouchAdmin,
+  expected: readonly string[],
+): Promise<void> {
+  // Nothing to check against. A deployment that names no origin has not been told where its
+  // application lives, which `serverOptions` already treats as not-yet-configured.
+  if (expected.length === 0) return
+
+  const configured = await admin.getConfig('cors', 'origins')
+  const allowed = new Set(
+    (configured ?? '')
+      .split(',')
+      .map((origin) => origin.trim())
+      .filter((origin) => origin !== ''),
+  )
+
+  const missing = expected.filter((origin) => !allowed.has(origin))
+  if (missing.length > 0) {
+    throw new CorsOriginError(
+      `CouchDB would refuse replication from ${missing.join(', ')}: its [cors] origins is ` +
+        `${configured === undefined ? 'unset' : `"${configured}"`}. That list is a deployment ` +
+        'value — set it in the overlay beside the image (infra/couchdb/10-production.ini, ' +
+        '.devcontainer/couchdb/10-development.ini) so it names every origin the application is ' +
+        'served from.',
+    )
+  }
 }
 
 /**
@@ -59,32 +143,57 @@ export async function installSigningKey(
   key: SigningKey,
   probePath = '/_session',
 ): Promise<void> {
+  // Checked before anything is written, because this one cannot be repaired from here and the
+  // diagnosis is otherwise indistinguishable from a bad key: without the handler CouchDB never
+  // looks at the token, so every symptom points at the key that is in fact perfectly good.
+  const handlers = await admin.getConfig('chttpd', 'authentication_handlers')
+  if (handlers === undefined || !handlers.includes(JWT_HANDLER)) {
+    throw new KeyInstallationError(
+      `CouchDB is not configured to read bearer tokens: [chttpd] authentication_handlers ${
+        handlers === undefined ? 'is unset, so the built-in default applies' : `is "${handlers}"`
+      } and does not include ${JWT_HANDLER}. ` +
+        'That setting is read only when CouchDB starts, so this service cannot fix it — add the ' +
+        'handler to infra/couchdb/00-base.ini, which both images bake in, and restart CouchDB.',
+    )
+  }
+
   // `ec:` because CouchDB keys the section by algorithm family. An `rsa:` prefix here is a key
   // CouchDB looks for when validating RS256 and never finds when validating ES256.
   await admin.putConfig('jwt_keys', `ec:${key.kid}`, publicKeyForCouch(key.publicKey))
 
+  // Applied live, like `[jwt_keys]`, so it is set here rather than baked in — one less thing
+  // that can differ between the image and what this service assumes. Without it CouchDB accepts
+  // a token carrying no `exp` at all, which is a credential that never stops working.
+  await admin.putConfig('jwt_auth', 'required_claims', 'exp')
+
+  const sub = `startup-probe-${key.kid}`
   const probe = mintToken(key, {
     purpose: 'access',
-    sub: `startup-probe-${key.kid}`,
+    sub,
     exp: Math.floor(Date.now() / 1000) + 60,
   })
 
-  const status = await admin.statusAsBearer(probe, probePath)
+  const session = await admin.sessionAsBearer(probe, probePath)
 
-  // 401 is the answer that matters: CouchDB read the token and rejected it, which means the key
-  // did not take. A 403 would mean the token was *accepted* and the probe user simply has no
-  // rights, which is expected and fine — the question here is authentication, not authorisation.
-  if (status === 401) {
+  if (session.status >= 500) {
     throw new KeyInstallationError(
-      `CouchDB refused a token signed with key "${key.kid}" immediately after that key was installed. ` +
-        'The key is in the configuration but not in effect — check that the value has no PEM banner ' +
-        'or newlines, and that the section is [jwt_keys] with an "ec:" prefix.',
+      `CouchDB answered ${session.status} while checking key "${key.kid}". It is not ready to authenticate anyone.`,
     )
   }
 
-  if (status >= 500) {
+  // The positive assertion, and the reason this is not a status check. CouchDB naming the
+  // probe's own subject is proof the token was read, understood and believed. Anything else —
+  // a 401, or a 200 as nobody — means the tokens this service is about to mint are not
+  // credentials as far as the database is concerned.
+  if (session.name !== sub) {
     throw new KeyInstallationError(
-      `CouchDB answered ${status} while checking key "${key.kid}". It is not ready to authenticate anyone.`,
+      `CouchDB did not accept a token signed with key "${key.kid}" immediately after that key was ` +
+        `installed: it answered ${session.status} and identified the caller as ` +
+        `${session.name === undefined ? 'nobody' : `"${session.name}"`}` +
+        `${session.authenticated === undefined ? '' : ` (via ${session.authenticated})`}, ` +
+        `not as "${sub}". The key is in the configuration but not in effect — check that the ` +
+        'value has no PEM banner or newlines, and that the section is [jwt_keys] with an ' +
+        '"ec:" prefix.',
     )
   }
 }
@@ -124,11 +233,49 @@ export function couchAdmin(
       }
     },
 
-    async statusAsBearer(token, path) {
+    async getConfig(section, name) {
+      const response = await fetchImpl(
+        `${base}/_node/_local/_config/${encodeURIComponent(section)}/${encodeURIComponent(name)}`,
+        { headers: { authorization: auth, accept: 'application/json' } },
+      )
+      // A key that was never written is not a failure to report — it is the answer, and it is
+      // the one that matters most here.
+      if (response.status === 404) return undefined
+      if (!response.ok) {
+        throw new KeyInstallationError(
+          `CouchDB refused the configuration read ${section}/${name}: ${response.status}.`,
+        )
+      }
+      // Values come back as JSON strings, the same shape `putConfig` sends.
+      return JSON.parse(await response.text()) as string
+    },
+
+    async sessionAsBearer(token, path) {
       const response = await fetchImpl(`${base}${path}`, {
-        headers: { authorization: `Bearer ${token}` },
+        headers: { authorization: `Bearer ${token}`, accept: 'application/json' },
       })
-      return response.status
+
+      // The body is the answer, but a refusal is allowed to have no usable one: CouchDB may
+      // return a problem document, or nothing. Failing to parse it is not itself the failure —
+      // the caller reads an absent name as "not authenticated", which is exactly right.
+      let name: string | undefined
+      let authenticated: string | undefined
+      try {
+        const body = JSON.parse(await response.text()) as {
+          userCtx?: { name?: string | null }
+          info?: { authenticated?: string }
+        }
+        name = body.userCtx?.name ?? undefined
+        authenticated = body.info?.authenticated
+      } catch {
+        // Left undefined.
+      }
+
+      return {
+        status: response.status,
+        ...(name === undefined ? {} : { name }),
+        ...(authenticated === undefined ? {} : { authenticated }),
+      }
     },
   }
 }

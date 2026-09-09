@@ -31,8 +31,10 @@ services:
     # Built rather than pulled so the configuration can be COPYed in. It must not be
     # bind-mounted - see the comment in couchdb/Dockerfile for the silent-crash reason.
     build:
-      context: .
-      dockerfile: couchdb/Dockerfile
+      # The repository root, so the image can reach infra/couchdb/00-base.ini — the
+      # authentication configuration shared with production.
+      context: ..
+      dockerfile: .devcontainer/couchdb/Dockerfile
     image: matter-manager/couchdb-dev:3.5.2.1
     restart: unless-stopped
     environment:
@@ -45,7 +47,7 @@ services:
     volumes:
       - couchdb-data:/opt/couchdb/data
     healthcheck:
-      # Unauthenticated on purpose. This only works because couchdb-local.ini sets
+      # Unauthenticated on purpose. This only works because infra/couchdb/00-base.ini sets
       # require_valid_user_except_for_up - without it every probe returns 401, the
       # container never reports healthy, and anything waiting on it hangs silently.
       test: ['CMD', 'curl', '-fsS', 'http://localhost:5984/_up']

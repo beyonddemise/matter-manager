@@ -96,7 +96,7 @@ The asymmetry here is easy to get backwards, and getting it backwards is expensi
 Setting the handler at runtime returns `200` and does nothing until the node restarts — and
 until then every request authenticates as **anonymous** rather than failing, which looks
 exactly like a permissions bug. Production bakes the handler into the image
-(`infra/couchdb/local.ini`), so it is active at boot and this never arises in operation.
+(`infra/couchdb/00-base.ini`), so it is active at boot and this never arises in operation.
 
 Keys being live is what makes **zero-downtime key rotation** possible: add the new key under
 a new `kid`, start issuing tokens with it, and remove the old key later. Both keys validate

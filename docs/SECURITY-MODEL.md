@@ -69,7 +69,7 @@ No restart, no interrupted replication. Verified against CouchDB 3.5.2 and guard
 runtime returns `200` and has no effect until the node restarts — and in the meantime every
 request authenticates as *anonymous* rather than failing loudly, which is a particularly
 unhelpful way to be broken. Production bakes the handler into the image
-(`infra/couchdb/local.ini`) so it is active from boot; treat changing it as a deployment, not
+(`infra/couchdb/00-base.ini`) so it is active from boot; treat changing it as a deployment, not
 a configuration tweak.
 
 The API should still confirm its key is in effect before serving traffic and fail loudly if

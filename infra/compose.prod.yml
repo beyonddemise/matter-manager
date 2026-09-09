@@ -77,8 +77,10 @@ services:
     # at startup via PUT /_node/_local/_config/jwt_keys/ec:$JWT_KEY_ID, which keeps key
     # rotation out of the image build and keeps key material out of the registry.
     build:
-      context: ./couchdb
-      dockerfile: Dockerfile
+      # The repository root, like the api service: 00-base.ini is shared with the development
+      # image, so this cannot be built from ./couchdb alone.
+      context: ..
+      dockerfile: infra/couchdb/Dockerfile
     image: matter-manager/couchdb:3.5.2.1
     restart: unless-stopped
     environment:
