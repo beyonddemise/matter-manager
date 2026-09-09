@@ -64,15 +64,18 @@ describe('minting a token', () => {
     // signs correctly and encodes the signature as DER — the same algorithm, different bytes,
     // rejected by CouchDB with no hint as to why.
     //
-    // The length is the whole discriminator: a P-256 R‖S signature is exactly 64 bytes, and a
-    // DER one carries a SEQUENCE header and two INTEGER headers around the same two numbers,
-    // so it measures 69 to 72 and can never be 64.
+    // A P-256 R‖S signature is exactly 64 bytes. A DER one wraps the same two numbers in a
+    // SEQUENCE header and two INTEGER headers and measures 69 to 72 in practice — but DER
+    // INTEGERs drop leading zero octets, so a small enough R and S encode to fewer. Reaching
+    // 64 needs both below 2^224, about one signature in 2^64: never, and still not a rule.
     //
-    // This test used to also assert `signature[0] !== 0x30`, on the grounds that DER starts
-    // with that tag. In a raw signature that byte is the top byte of R — uniformly random —
-    // so the assertion failed by chance roughly once in every 256 runs, and did so on #172.
-    // It added nothing the length did not already prove. Replaced with a check that says the
-    // same thing deterministically: a verifier expecting DER must reject these bytes.
+    // So the length is an extremely good discriminator and not a complete one, which is why
+    // the assertion below is what actually decides the format.
+    //
+    // This test used to assert `signature[0] !== 0x30`, on the grounds that DER starts with
+    // that tag. In a raw signature that byte is the top byte of R — uniformly random — so it
+    // failed by chance roughly once in every 256 runs, and did so on #172. Replaced with the
+    // deterministic form of the same claim: a verifier expecting DER must reject these bytes.
     const key = newKey()
     const token = mintToken(key, { purpose: 'access', sub: 'google|abc', exp: soon() })
     const signature = Buffer.from(token.split('.')[2] ?? '', 'base64url')
