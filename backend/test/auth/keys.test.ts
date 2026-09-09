@@ -381,6 +381,31 @@ describe('talking to CouchDB’s configuration', () => {
     ).rejects.toThrow(/reachable but not responding/)
   })
 
+  it('gives up on a CouchDB that sends headers and then stalls the body', async () => {
+    // The narrower half of the same failure, and the more misleading one. The response
+    // resolves, so a deadline that only wraps `fetch` has already let go by the time the body
+    // is read. Without this, `sessionAsBearer` swallows the rejection as an unparseable body,
+    // reports nobody, and `installSigningKey` blames a key that is perfectly good — the exact
+    // misdiagnosis this module exists to prevent.
+    const stalledBody = (async () =>
+      ({
+        ok: true,
+        status: 200,
+        text: async () => {
+          const error = new Error('aborted while reading the body')
+          error.name = 'TimeoutError'
+          throw error
+        },
+      }) as unknown as Response) as unknown as typeof fetch
+
+    const admin = couchAdmin('http://couch.test:5984', 'admin', 'devonly', stalledBody, 5)
+
+    await expect(admin.getConfig('chttpd', 'x')).rejects.toThrow(KeyInstallationError)
+    await expect(admin.sessionAsBearer('t', '/_session')).rejects.toThrow(
+      /reachable but not responding/,
+    )
+  })
+
   it('passes a deadline on every request, not only the probe', async () => {
     // The write and the read hang just as readily as the probe does.
     const signals: Array<AbortSignal | null | undefined> = []

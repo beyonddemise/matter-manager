@@ -223,9 +223,18 @@ export function couchAdmin(
    * before anything listens, which turns that into a process that hangs with no log line and
    * no failure — the exact outcome this module exists to prevent, reached by another route.
    */
-  async function ask(target: string, init: RequestInit): Promise<Response> {
+  async function ask(
+    target: string,
+    init: RequestInit,
+  ): Promise<{ status: number; ok: boolean; body: string }> {
     try {
-      return await fetchImpl(target, { ...init, signal: AbortSignal.timeout(timeoutMs) })
+      const response = await fetchImpl(target, { ...init, signal: AbortSignal.timeout(timeoutMs) })
+      // **The body is read inside the boundary, deliberately.** A CouchDB that sends headers
+      // and then stalls aborts here rather than at `fetch`, and outside this `try` that
+      // surfaces as an ordinary error: `sessionAsBearer` would swallow it as an unparseable
+      // body, report nobody, and `installSigningKey` would blame a key that is perfectly good.
+      // Which is the misdiagnosis this whole module exists to prevent.
+      return { status: response.status, ok: response.ok, body: await response.text() }
     } catch (error) {
       const name = error instanceof Error ? error.name : ''
       if (name === 'TimeoutError' || name === 'AbortError') {
@@ -271,7 +280,7 @@ export function couchAdmin(
         )
       }
       // Values come back as JSON strings, the same shape `putConfig` sends.
-      return JSON.parse(await response.text()) as string
+      return JSON.parse(response.body) as string
     },
 
     async sessionAsBearer(token, path) {
@@ -285,7 +294,7 @@ export function couchAdmin(
       let name: string | undefined
       let authenticated: string | undefined
       try {
-        const body = JSON.parse(await response.text()) as {
+        const body = JSON.parse(response.body) as {
           userCtx?: { name?: string | null }
           info?: { authenticated?: string }
         }
