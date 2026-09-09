@@ -56,18 +56,6 @@ export {
   remarksNewestFirst,
 } from './documents/remark.js'
 export type { DeviceDocument, RoomDocument, Unsaved } from './documents/types.js'
-export {
-  ACTIONS,
-  type Action,
-  ALLOW,
-  can,
-  evaluate,
-  type Plan,
-  POLICIES,
-  type Policy,
-  type Principal,
-  type ProjectRef,
-} from './entitlements/can.js'
 export { BASE38_ALPHABET, Base38Error, decodeBase38, encodeBase38 } from './matter/base38.js'
 export { type DeviceCredential, readCredential } from './matter/credential.js'
 export {
@@ -126,46 +114,7 @@ export {
   type ExportSelection,
   selectForExport,
 } from './pdf/selection.js'
-export {
-  foldEmail,
-  INVITATION_LIFETIME,
-  type Invitation,
-  InvitationError,
-  type InvitationProblem,
-  isOpen,
-  planInvitation,
-  redeemable,
-} from './projects/invitation.js'
-export {
-  canManageMembers,
-  canWrite,
-  grantRole,
-  MembershipError,
-  narrowsAccess,
-  PROJECT_ROLES,
-  type ProjectSecurity,
-  revokeAccess,
-  securityFor,
-} from './projects/membership.js'
-export {
-  type Caller,
-  isOwner,
-  type Owner,
-  ownerOf,
-  type Participant,
-  type ProjectRole,
-  roleOf,
-} from './projects/ownership.js'
-export {
-  acceptable,
-  applyTransfer,
-  type PendingTransfer,
-  planTransfer,
-  type RetainedAccess,
-  TRANSFER_LIFETIME,
-  TransferError,
-  type TransferProblem,
-} from './projects/transfer.js'
+export type { ProjectRole } from './role.js'
 export {
   devicesInRoom,
   planRoomDeletion,

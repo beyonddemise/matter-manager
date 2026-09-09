@@ -1,7 +1,7 @@
 /**
  * The shapes stored in a `project_<uuid>` database.
  *
- * They live in `core` rather than in `data` because `packages/api` reads and writes the same
+ * They live in `core` rather than in `data` because `backend` reads and writes the same
  * documents from M4 onwards. A second definition of the device shape would be a schema that
  * can drift silently against itself, with nothing failing until two halves of the application
  * disagree about a field neither one wrote.

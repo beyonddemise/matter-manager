@@ -52,7 +52,7 @@ updates:
     directories:
       - /infra/couchdb
       - /.devcontainer/couchdb
-      - /packages/api
+      - /backend
     schedule:
       interval: monthly
     groups:

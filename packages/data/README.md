@@ -45,4 +45,4 @@ This package finds the conflicts and applies the decision; it does not make it.
 ## Testing
 
 `pouchdb-adapter-memory`, never a real CouchDB. Tests that need a live CouchDB belong in
-`packages/api` or in `infra/couchdb/verify-access-model.sh`.
+`backend` or in `infra/couchdb/verify-access-model.sh`.

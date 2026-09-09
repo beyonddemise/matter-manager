@@ -59,7 +59,7 @@ https://www.googleapis.com/auth/userinfo.profile
 why publishing needs no review. Sensitive and restricted scopes — Drive, Gmail, Calendar — put
 this project into Google's verification process, and the restricted ones into an annual paid
 third-party security assessment. That is the practical meaning of the comment in
-`packages/api/src/auth/google.ts`: *"Nothing else: every extra scope is a consent screen that
+`backend/src/auth/google.ts`: *"Nothing else: every extra scope is a consent screen that
 asks for more than it needs."* The scope list is a one-line edit with a months-long consequence.
 
 ## 6. The client
@@ -130,7 +130,7 @@ absent**: same key, two names, and the isolation described above is gone — so 
 than accepted, and the symptom is the same 404.
 
 That is deliberate and it is what to check first: a 404 there means this service, not Google.
-`packages/api/test/composition.test.ts` asserts each variable's absence individually.
+`backend/test/composition.test.ts` asserts each variable's absence individually.
 
 ## Checking it works
 

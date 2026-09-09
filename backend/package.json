@@ -1,0 +1,36 @@
+{
+  "name": "@matter-manager/backend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Fastify backend: OIDC sign-in, token issuance, project provisioning. Installs and tests on its own.",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "node --watch dist/src/main.js",
+    "start": "node dist/src/main.js",
+    "build": "tsc --build",
+    "typecheck": "tsc --build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "check": "biome check .",
+    "check:fix": "biome check --write .",
+    "openapi:types": "openapi-typescript ../openapi.yaml -o src/generated/openapi.ts",
+    "verify": "npm run check && npm run typecheck && npm run test"
+  },
+  "dependencies": {
+    "fastify": "^5.12.1"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.10",
+    "@types/node": "^24.13.3",
+    "@vitest/coverage-v8": "^4.1.11",
+    "openapi-typescript": "^7.13.0",
+    "pino": "^10.3.1",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.11",
+    "yaml": "^2.9.0"
+  }
+}
