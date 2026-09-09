@@ -12,7 +12,7 @@ name: matter-manager-dev
 
 services:
   app:
-    image: mcr.microsoft.com/devcontainers/typescript-node:1-24-bookworm
+    image: mcr.microsoft.com/devcontainers/typescript-node:5-26-bookworm
     volumes:
       - ..:/workspaces/matter-manager:cached
     command: sleep infinity
