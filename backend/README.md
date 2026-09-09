@@ -51,7 +51,7 @@ Prefer a small typed CouchDB client here (`getDoc`, `putDoc`, `putSecurity`, `vi
 ## Running it
 
 ```bash
-npm run typecheck                       # builds dist/
+npm run typecheck --prefix backend      # builds backend/dist/
 npm start --prefix backend
 curl localhost:3000/healthz             # {"status":"ok"}
 ```
