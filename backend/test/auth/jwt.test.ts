@@ -1,4 +1,4 @@
-import { createPublicKey, generateKeyPairSync } from 'node:crypto'
+import { createPublicKey, generateKeyPairSync, verify } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 import {
   kidOf,
@@ -62,13 +62,34 @@ describe('minting a token', () => {
   it('signs with the raw R‖S pair rather than DER', () => {
     // The line that would otherwise fail silently. Without `dsaEncoding: 'ieee-p1363'` Node
     // signs correctly and encodes the signature as DER — the same algorithm, different bytes,
-    // rejected by CouchDB with no hint as to why. A P-256 R‖S signature is exactly 64 bytes;
-    // a DER one is variable and starts with 0x30.
-    const token = mintToken(newKey(), { purpose: 'access', sub: 'google|abc', exp: soon() })
+    // rejected by CouchDB with no hint as to why.
+    //
+    // A P-256 R‖S signature is exactly 64 bytes. A DER one wraps the same two numbers in a
+    // SEQUENCE header and two INTEGER headers and measures 69 to 72 in practice — but DER
+    // INTEGERs drop leading zero octets, so a small enough R and S encode to fewer. Reaching
+    // 64 needs both below 2^224, about one signature in 2^64: never, and still not a rule.
+    //
+    // So the length is an extremely good discriminator and not a complete one, which is why
+    // the assertion below is what actually decides the format.
+    //
+    // This test used to assert `signature[0] !== 0x30`, on the grounds that DER starts with
+    // that tag. In a raw signature that byte is the top byte of R — uniformly random — so it
+    // failed by chance roughly once in every 256 runs, and did so on #172. Replaced with the
+    // deterministic form of the same claim: a verifier expecting DER must reject these bytes.
+    const key = newKey()
+    const token = mintToken(key, { purpose: 'access', sub: 'google|abc', exp: soon() })
     const signature = Buffer.from(token.split('.')[2] ?? '', 'base64url')
+    const signed = Buffer.from(token.split('.').slice(0, 2).join('.'))
+
+    const acceptedByADerVerifier = verify(
+      'sha256',
+      signed,
+      { key: key.publicKey, dsaEncoding: 'der' },
+      signature,
+    )
 
     expect(signature).toHaveLength(64)
-    expect(signature[0]).not.toBe(0x30)
+    expect(acceptedByADerVerifier).toBe(false)
   })
 
   it('refuses a key that is not an EC key', () => {
