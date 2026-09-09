@@ -13,7 +13,7 @@
     "@lit/localize": "^0.12.2",
     "@matter-manager/core": "*",
     "@matter-manager/data": "*",
-    "@zxing/browser": "^0.1.5",
+    "@zxing/browser": "^0.2.1",
     "events": "^3.3.0",
     "lit": "^3.3.3",
     "pdf-lib": "^1.17.1",

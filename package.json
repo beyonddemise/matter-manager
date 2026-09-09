@@ -10,7 +10,7 @@
     "url": "git+https://github.com/beyonddemise/matter-manager.git"
   },
   "engines": {
-    "node": ">=22"
+    "node": ">=24"
   },
   "workspaces": [
     "packages/*",
@@ -48,7 +48,7 @@
     "assets:fetch": "node scripts/fetch-offline-assets.mjs"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.10",
+    "@biomejs/biome": "^2.5.12",
     "@fortawesome/fontawesome-free": "^7.3.1",
     "@lit/localize-tools": "^0.8.2",
     "@vitest/browser-playwright": "^4.1.11",
