@@ -210,6 +210,10 @@ jobs:
     # could not build at all - and three CI checks passed on that commit, because none of them
     # touch the image. A reviewer reading the file caught it. A build takes seconds and cannot
     # be fooled by careful reasoning.
+    #
+    # The same gap covers the two CouchDB images, with a second failure mode on top: their
+    # authentication configuration is read only at CouchDB startup, so whether our images
+    # carry it is a question only a running container can answer.
     steps:
       # No credential in the tree: this job needs none, and the workspace is the worst place to
       # leave one on a pull request from a fork.
@@ -277,6 +281,21 @@ jobs:
             mv /tmp/.buildx-cache-new /tmp/.buildx-cache
           fi
 
+      # These two build from the repository root as well, and for them it is not a
+      # convenience: `infra/couchdb/00-base.ini` is shared between them, so neither can be
+      # built from its own directory. That arrangement is recent (#169), and a COPY path that
+      # stops resolving fails only when somebody builds the image - which, until now, nobody
+      # did.
+      #
+      # Not cached, unlike the backend. Each is a base image and two COPYs of an ini file:
+      # there is no expensive layer to keep, and a cache would cost more to restore than the
+      # build costs to run.
+      - name: CouchDB image (production)
+        run: docker build -f infra/couchdb/Dockerfile -t matter-manager/couchdb:ci .
+
+      - name: CouchDB image (development)
+        run: docker build -f .devcontainer/couchdb/Dockerfile -t matter-manager/couchdb-dev:ci .
+
       # Building proves the COPY paths resolve. Running proves the runtime stage: that the
       # pruned node_modules is complete, that CMD finds dist/src/main.js, and that the process
       # serves. `/healthz` answers on an unconfigured deployment by design - `serverOptions`
@@ -301,6 +320,105 @@ jobs:
           echo "::error::the built backend image never answered /healthz"
           docker logs backend-smoke
           exit 1
+
+      # The one thing `verify-jwt-model.sh` cannot tell us. That script PUTs
+      # `authentication_handlers` and restarts, so it proves the JWT model against a stock
+      # image; it says nothing about whether *our* images carry the setting from boot. CouchDB
+      # reads it only at startup, so "from boot" is the only way it is ever true - and it lives
+      # in `00-base.ini`, which nothing else parses.
+      #
+      # Both images, not just one. They share that file, so a single boot would appear to cover
+      # both, but the overlay each carries is its own - and the whole lexical-order mechanism
+      # (00- then 10-) is asserted nowhere but in a comment. Checking that each image ends up
+      # with its own CORS origins proves the override happens, and would have caught the
+      # divergence that made these files shared in the first place.
+      - name: Both CouchDB images read bearer tokens from boot
+        run: |
+          boot() {
+            docker rm -f couch-smoke >/dev/null 2>&1 || true
+            # Guarded rather than left to errexit: this runs inside a function called with
+            # `||`, where errexit is off, so a refused `docker run` would otherwise fall
+            # through to a sixty-second wait for a container that was never started.
+            docker run -d --name couch-smoke \
+              -e COUCHDB_USER=admin -e COUCHDB_PASSWORD=devonly \
+              -p 5984:5984 "$1" >/dev/null || {
+                echo "::error::$1 would not start"
+                return 1
+              }
+
+            # `require_valid_user_except_for_up` is what makes an unauthenticated /_up work,
+            # so this wait doubles as a check on that setting.
+            # Deadlines for the same reason as the backend probe: the count bounds attempts,
+            # not the time one attempt can take.
+            for _ in $(seq 1 60); do
+              curl -fsS --connect-timeout 2 --max-time 5 \
+                http://127.0.0.1:5984/_up >/dev/null 2>&1 && return 0
+              sleep 1
+            done
+            echo "::error::$1 never became ready"
+            docker logs couch-smoke
+            return 1
+          }
+
+          setting() {
+            curl -fsS --connect-timeout 2 --max-time 5 -u admin:devonly \
+              "http://127.0.0.1:5984/_node/_local/_config/$1"
+          }
+
+          fail=0
+          # image:tag and the origin its own 10-*.ini overlay sets.
+          for pair in \
+            "matter-manager/couchdb-dev:ci|localhost:5173" \
+            "matter-manager/couchdb:ci|matter-manager.example"
+          do
+            image=${pair%%|*}
+            origin=${pair##*|}
+            echo "--- $image"
+            # `continue`, not `exit`: the comment below promises the loop visits every image
+            # before the step reports, and an `exit` here broke that promise for the one case
+            # where it matters most. An image that will not boot is a finding about that
+            # image, not a reason to stop asking about the other - and the two share
+            # `00-base.ini`, so knowing whether both fail or only one is the difference
+            # between a bad base and a bad overlay. `boot` has already dumped its logs.
+            if ! boot "$image"; then
+              fail=1
+              continue
+            fi
+
+            # `|| echo` is load-bearing under errexit. A plain `var=$(setting ...)` is a
+            # simple command carrying the substitution's exit status, so an absent key - a
+            # 404, which `curl -fsS` reports as a failure - would abort the step right here.
+            # It would still be red, so no false pass; but the annotation below would never
+            # print, the logs would never be captured, and the second image would never be
+            # checked. A missing key is the exact thing this step exists to detect, so losing
+            # the diagnostics precisely then is the wrong way round to be wrong.
+            bad=0
+
+            handlers=$(setting chttpd/authentication_handlers || echo '<unreadable>')
+            case "$handlers" in
+              *jwt_authentication_handler*) echo "  ok   bearer tokens accepted from boot" ;;
+              *) echo "::error::$image does not read bearer tokens: $handlers"; bad=1 ;;
+            esac
+
+            origins=$(setting cors/origins || echo '<unreadable>')
+            case "$origins" in
+              *"$origin"*) echo "  ok   overlay applied: $origins" ;;
+              *) echo "::error::$image did not apply its overlay, origins are $origins"; bad=1 ;;
+            esac
+
+            # Once per failing image rather than per failing check, and `fail` is set here so
+            # the loop still visits every image before the step reports.
+            if [ "$bad" = 1 ]; then
+              echo "--- $image logs"
+              docker logs couch-smoke
+              fail=1
+            fi
+          done
+
+          docker rm -f couch-smoke >/dev/null 2>&1 || true
+          exit $fail
+
+
   couchdb-contract:
     name: CouchDB access model
     runs-on: ubuntu-latest
