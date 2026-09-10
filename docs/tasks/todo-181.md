@@ -80,7 +80,7 @@ tree, not that the tree is clean.
 
 ## #182 landed here, not separately
 
-#182 asked for one command that verifies the whole repository, and for the frontend-only scripts
+Issue #182 asked for one command that verifies the whole repository, and for the frontend-only scripts
 to move out of the root. Both are here, because neither could honestly be deferred:
 
 - **The scripts had to move with their tests.** `packages/web/test/deploy/` holds four tests of
