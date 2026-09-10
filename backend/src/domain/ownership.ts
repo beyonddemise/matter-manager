@@ -21,11 +21,13 @@
  * `docs/SECURITY-MODEL.md`.
  *
  * **Declared twice on purpose**, and this is the half that says so from the server's side: the
- * browser has its own copy in `frontend/src/domain/role.ts`. It is the only value that crosses
- * between the two, a shared package for one four-value union is not worth a build boundary, and
- * a TypeScript type could not survive this service being rewritten in another language — see
- * `docs/adr/0017-two-halves-one-contract.md`. Both copies should come from `openapi.yaml`
- * instead; that is issue #183. Until then: change one, change the other.
+ * browser has its own copy in `frontend/src/domain/role.ts`. Plenty of values cross between the
+ * two — that is what `openapi.yaml` is for — but this is the only one *duplicated as a source
+ * declaration* rather than described by the contract. A shared package for one four-value union
+ * is not worth a build boundary, and a TypeScript type could not survive this service being
+ * rewritten in another language; see `docs/adr/0017-two-halves-one-contract.md`. Both copies
+ * should come from `openapi.yaml` instead, which is issue #183. Until then: change one, change
+ * the other.
  */
 export type ProjectRole = 'owner' | 'manage' | 'write' | 'read'
 

@@ -39,7 +39,7 @@ belongs to exactly one side for a reason that predates the decision. `packages/c
 recorded Consequence — "written once and used by browser and server alike" — describes
 something that did not happen.
 
-#164 then made the backend a self-contained directory, and #181 did the same for the frontend.
+Issue #164 then made the backend a self-contained directory, and #181 did the same for the frontend.
 There is no `packages/` any more, and therefore no `packages/core` for 0004's reasoning to
 refer to.
 
@@ -56,8 +56,10 @@ mechanism. 0004 kept it open by having one language on both sides, which would h
 rewrite a *translation* of shared code. What keeps it open now is that there is no shared code
 to translate: replacing the backend is a change to one directory, behind one HTTP contract.
 
-`ProjectRole` — the single overlapping alias — is declared by hand on both sides, each comment
-pointing at the other. One four-value union does not justify a build boundary, and a shared
+`ProjectRole` is the one alias each half declares in its own source rather than reading from the
+contract, and it is written by hand in both, each comment pointing at the other. Plenty of values
+cross this boundary — that is what `openapi.yaml` is for; this is the only *duplicated* one. One
+four-value union does not justify a build boundary, and a shared
 TypeScript type could not survive a non-TypeScript backend anyway. Whether it should instead be
 generated from `openapi.yaml` is [#183](https://github.com/beyonddemise/matter-manager/issues/183),
 open deliberately: it is a decision, not an oversight.

@@ -1256,7 +1256,7 @@ is to describe where things are.
 
 ## L37 — Splitting a shared install lets versions diverge, and your machine hides it
 
-#181 gave `frontend/` its own lockfile. It depends on `playwright` for browser-mode tests; the
+Issue #181 gave `frontend/` its own lockfile. It depends on `playwright` for browser-mode tests; the
 root `e2e` workspace depends on `@playwright/test`. Under one workspace npm hoisted them to a
 single copy. Two lockfiles resolved them **1.63.0 and 1.62.1** — different browser builds, 1243
 and 1234. Chromium was installed for one, and the other tried to launch a binary that had never
