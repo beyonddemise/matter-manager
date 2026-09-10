@@ -1208,3 +1208,85 @@ So the state to watch for is not an unnoticed red mark. It is that **a dependenc
 never be resolved never appears in an update, which is exactly what a dependency that is already
 current looks like.** Ask what the symptom of the failure would be before trusting the absence
 of one — and when the answer is "nothing", that is the finding.
+
+---
+
+## L36 — A check keyed to a path stops checking when the path moves, and the silence looks like success
+
+Five instances in two changes (#179, #181), which is what makes it a pattern rather than five
+mistakes:
+
+| the check | how it was told where to look | what it stopped covering |
+| --- | --- | --- |
+| Dependabot, npm ecosystem | `directory: /` | every dependency in `backend/`, once #164 made it non-workspace — Fastify, pino, the toolchain, **security advisories included** |
+| Dependabot, docker ecosystem (#156) | `directory: /infra` | three base images, from the day the repository was created |
+| `check-npmrc.mjs` | `join(root, '.npmrc')` | the Web Awesome credential, the moment it moved into `frontend/.npmrc` |
+| `check-dependencies.mjs` | `for (const dir of ['packages', '.'])` | every manifest, once `packages/` was emptied |
+| `.gitignore` | `packages/web/.vitest-attachments/` | nothing — worse. The rename **un-ignored** the old directory, and `git add -A` staged 79 stale screenshots |
+
+Every one failed in the direction that reads as success. A check with nothing to look at
+compares nothing, finds no problems, and prints `ok`. `check-npmrc.mjs` was the sharpest case:
+it explicitly treated a missing file as "not present, nothing to check" and **exited 0** — a
+credential guard on a public repository, passing precisely because it had lost track of the
+credential.
+
+The move itself is never what breaks these. A move is loud: tests fail, imports break,
+`tsc` complains. What is quiet is the *coverage* shrinking underneath a check that keeps
+running and keeps passing.
+
+**Rule:** a check should **discover** what it inspects, not be told where it lives. Walk the
+tree for `package.json`, for `.npmrc`, for manifests; match `.vitest-attachments/` unanchored
+rather than under one directory. Where a tool cannot discover — Dependabot genuinely does not
+recurse — the enumeration is a liability that has to be maintained deliberately, and the
+correct time to update it is *in the change that moves the directory*, not in the repair
+afterwards.
+
+**Corollary — "found nothing" must be a failure, not a pass.** `check-npmrc.mjs` now exits 1
+when no `.npmrc` exists anywhere, because this repository installs from a private registry and
+finding none means the check has lost the tree rather than that the tree is clean.
+`check-node-pins.mjs` treats an empty regex match the same way: a rewritten `FROM` line would
+otherwise read as agreement. Ask what your check prints when it is pointed at nothing, and if
+the answer is `ok`, that is the bug.
+
+**Applies to:** lint and policy scripts, `.gitignore` and `.dockerignore`, CI `paths:` filters,
+Dependabot and Renovate directories, coverage `include` globs, and any configuration whose job
+is to describe where things are.
+
+---
+
+## L37 — Splitting a shared install lets versions diverge, and your machine hides it
+
+#181 gave `frontend/` its own lockfile. It depends on `playwright` for browser-mode tests; the
+root `e2e` workspace depends on `@playwright/test`. Under one workspace npm hoisted them to a
+single copy. Two lockfiles resolved them **1.63.0 and 1.62.1** — different browser builds, 1243
+and 1234. Chromium was installed for one, and the other tried to launch a binary that had never
+been fetched.
+
+Locally all 8 journeys passed. They had to: one machine has one `~/.cache/ms-playwright`, and
+both builds were sitting in it from earlier work. The green run was evidence about my laptop's
+accumulated state, not about the change. **CI failed on the first run**, on a clean cache, which
+is the only place the defect could exist.
+
+Fixing the versions would have been a patch. Three layers, because the divergence had three
+independent causes:
+
+1. **Realign now** — the root lockfile resolves to 1.63.0.
+2. **Keep them in step** — the Dependabot `dev-tooling` group matched `@playwright/*` and *not*
+   bare `playwright`, so the updater would bump one and not the other. That is how they came to
+   disagree. Both names are in the pattern list now, grouped by `dependency-name`.
+3. **Stop depending on agreement** — CI reads both versions, keys the browser cache on both, and
+   installs from each directory. A future divergence costs a second download instead of a broken
+   job.
+
+**Rule:** when you split one install into two, list every package that was previously shared by
+hoisting and decide, per package, whether it must stay in step — then encode that decision in
+the updater's grouping. "They both say `^1.62.1`" is not the same as "they are the same version";
+two lockfiles resolve independently and at different times.
+
+**Corollary — a warm cache is a form of test pollution.** A local pass that depends on artefacts
+an earlier run left behind proves nothing about a fresh checkout. Where a change alters *what
+gets installed*, the honest local check is a cold one, and where that is impractical, CI's first
+run on the branch is the result to believe over your own.
+
+**Applies to:** monorepo splits, workspace removal, browser and toolchain binaries, native
+modules, generated caches, and any devDependency whose version selects an out-of-band download.
