@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitReturns": true,
+
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "skipLibCheck": true,
+
+    // Nothing consumes what `tsc` would emit. Vite compiles the source directly, Vitest goes
+    // through Vite, and the three packages that used to publish `dist/src/index.d.ts` to each
+    // other are now one package importing itself by relative path. So `tsc` here is a checker
+    // and nothing else — which also removes the collision the old layout lived with, where
+    // `tsc` wrote `dist/` and then `vite build` emptied it.
+    "noEmit": true,
+
+    // The union of what `core`, `data` and `web` each declared, which is the honest cost of
+    // merging them: `DOM` is now in scope for every file, including `src/domain`. That is what
+    // `tsconfig.domain.json` exists to take back.
+    "types": [
+      "vite/client",
+      "node",
+      "pouchdb-browser",
+      "pouchdb-core",
+      "pouchdb-adapter-memory",
+      "pouchdb-replication"
+    ],
+
+    // Lit decorators are the standard proposal, not TypeScript's legacy implementation, and
+    // fields must not be defined with `[[Define]]` semantics or reactive properties break.
+    "experimentalDecorators": false,
+    "useDefineForClassFields": false
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts", "vite.config.ts"]
+}

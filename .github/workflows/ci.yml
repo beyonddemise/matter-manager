@@ -17,7 +17,7 @@ permissions:
 
 jobs:
   verify:
-    name: Lint, typecheck, test
+    name: Frontend
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -26,32 +26,48 @@ jobs:
       # moment it is pushed. The check fails closed: the value must BE ${VARIABLE}, not
       # merely mention one. An earlier inline grep accepted any line containing `${`
       # anywhere, so a literal token followed by a comment naming the variable passed.
-      - name: Reject a literal token in .npmrc
+      #
+      # It scans every .npmrc in the repository rather than the root one, which is what keeps
+      # it pointed at the credential now that #181 moved the file into `frontend/`.
+      - name: Reject a literal token in any .npmrc
         run: node scripts/check-npmrc.mjs
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: .nvmrc
           cache: npm
+          # Two lockfiles since #181: the root holds only Biome and the end-to-end suite, and
+          # the application's own dependencies live in `frontend/`. Naming both keeps the cache
+          # keyed on what is actually installed.
+          cache-dependency-path: |
+            package-lock.json
+            frontend/package-lock.json
+
+      # The root install is small and deliberately tokenless - Biome plus @playwright/test for
+      # the `e2e` workspace. Nothing here reaches Web Awesome's registry.
+      - name: Install the root tooling
+        run: npm ci --ignore-scripts
 
       # --ignore-scripts is not caution, it is the point: any transitive dependency's
       # postinstall would otherwise run with WEBAWESOME_NPM_TOKEN in its environment and
       # could exfiltrate it. The token is only needed to FETCH packages, never to build them.
       #
-      # .npmrc routes the @awesome.me scope to Web Awesome's own registry and reads the token
-      # from the environment. Without it, npm ci fails on the Pro package rather than quietly
-      # installing a free substitute.
-      - name: Install (no lifecycle scripts)
+      # frontend/.npmrc routes the @awesome.me scope to Web Awesome's own registry and reads
+      # the token from the environment. Without it, npm ci fails on the Pro package rather than
+      # quietly installing a free substitute.
+      - name: Install the frontend (no lifecycle scripts)
         run: npm ci --ignore-scripts
+        working-directory: frontend
         env:
           WEBAWESOME_NPM_TOKEN: ${{ secrets.WEBAWESOME_NPM_TOKEN }}
 
       # npm ci --ignore-scripts (above) deliberately skips Playwright's postinstall, so the
-      # Chromium build the "web" Vitest project launches to run browser tests is never
+      # Chromium build the "ui" Vitest project launches to run browser tests is never
       # fetched. It has to be installed explicitly, and only for Chromium: the other engines
       # are unused here.
       - name: Read Playwright version
         id: playwright-version
+        working-directory: frontend
         run: echo "version=$(node -p "require('playwright/package.json').version")" >> "$GITHUB_OUTPUT"
 
       # Caches the downloaded browser so it is fetched once per Playwright version instead of
@@ -64,9 +80,14 @@ jobs:
           path: ~/.cache/ms-playwright
           key: playwright-chromium-${{ runner.os }}-${{ steps.playwright-version.outputs.version }}
 
+      # From `frontend`, where the `playwright` package whose version keyed the cache above
+      # actually lives. Run from the root it would resolve the e2e workspace's
+      # @playwright/test instead - a different package on the same release line, and a silent
+      # way for the browser fetched to stop being the browser the cache key describes.
       - name: Install Playwright Chromium
         if: steps.playwright-cache.outputs.cache-hit != 'true'
         run: npx playwright install --with-deps chromium
+        working-directory: frontend
 
       # A cache hit restores the browser binary but not the OS-level shared libraries that
       # --with-deps installs: those are runner packages, not files under
@@ -74,6 +95,7 @@ jobs:
       - name: Install Playwright OS dependencies
         if: steps.playwright-cache.outputs.cache-hit == 'true'
         run: npx playwright install-deps chromium
+        working-directory: frontend
 
       # Runs before Biome: dependency creep is silent and cheap to catch, and the answer to
       # a violation is a design conversation, not a formatting fix.
@@ -85,17 +107,20 @@ jobs:
       # about what "green" meant.
       - name: Web Awesome Pro
         run: npm run check:webawesome
+        working-directory: frontend
 
       # Regenerates the catalogue into a temporary directory and compares. Catches a msg()
       # added without an extract, which otherwise ships as English with nothing red anywhere.
       - name: Translation catalogue
         run: npm run check:i18n
+        working-directory: frontend
 
       # The deployment's caching contract. Here as well as in deploy.yml, because a `_headers`
       # that would pin the app shell is a bug worth catching in review rather than after it
       # has shipped - by which point the users it affects are the ones who cannot get the fix.
       - name: Caching contract
         run: npm run check:deploy
+        working-directory: frontend
 
       # #120 shipped seven modules that were written, tested, and imported by nothing but their
       # own tests - so every suite passed while the features did not exist in the application.
@@ -103,15 +128,29 @@ jobs:
       # works and says nothing about whether anything uses it.
       - name: Every module reaches an entry point
         run: npm run check:graph
+        working-directory: frontend
 
-      - name: Biome
+      # Two Biome runs, because there are two root configurations: the frontend's own, and the
+      # repository's, which covers only what the root owns - scripts, the e2e suite, the
+      # workflows. Running one Biome over both fails with "nested root configuration".
+      - name: Biome (root)
         run: npm run check
 
+      - name: Biome (frontend)
+        run: npm run check
+        working-directory: frontend
+
+      # Two passes. The second, `tsconfig.domain.json`, typechecks `src/domain` with no DOM and
+      # no Node types - the guarantee `packages/core` used to get from being a separate
+      # TypeScript project, and the one thing merging the packages would otherwise have thrown
+      # away. See frontend/tsconfig.domain.json.
       - name: TypeScript
         run: npm run typecheck
+        working-directory: frontend
 
       - name: Tests
         run: npm run test:coverage
+        working-directory: frontend
 
       # The build is here for the check below rather than for its own sake — the deploy
       # workflow builds what it deploys. Without it, "the QR fallback is not in the entry
@@ -119,9 +158,11 @@ jobs:
       # *ask* for the fallback, and only the built output can prove it does not *ship* it.
       - name: Build the site
         run: npm run build
+        working-directory: frontend
 
       - name: The QR fallback is not in the bundle everyone downloads
         run: npm run check:lazy
+        working-directory: frontend
 
       # #106 shipped an offline-first application whose icons and typography arrived from two
       # CDNs on every visit. Finding that took serving `dist` under a strict CSP and reading the
@@ -131,6 +172,7 @@ jobs:
       # there is a finding with no allowlist.
       - name: Nothing in the built site is fetched from a third party
         run: npm run check:offline
+        working-directory: frontend
 
       # And the runtime one runs it. A bundle contains the strings of code paths it never takes,
       # so the static check has to allow Font Awesome's CDN template - which Web Awesome ships
@@ -139,6 +181,7 @@ jobs:
       # application needs fails here rather than in front of a user.
       - name: The running site makes no cross-origin request
         run: npm run probe:runtime
+        working-directory: frontend
 
       # The job `e2e/README.md` promised in M2 and #57 finally added. It drives the *built*
       # site, because what these journeys are for is what unit tests cannot reach: the service
@@ -157,7 +200,7 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: coverage
-          path: coverage/
+          path: frontend/coverage/
           retention-days: 7
 
   backend:

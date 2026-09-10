@@ -16,16 +16,21 @@ registries:
     token: ${{secrets.WEBAWESOME_NPM_TOKEN}}
 
 updates:
-  # `/backend` is listed because Dependabot does not recurse - the same fact that made every
-  # docker run fail in #156, arriving here through a different door. #164 gave the backend its
-  # own package.json and lockfile, and this entry still said `directory: /`, so from that merge
-  # until #179 the nine dependencies in `backend/package.json` - Fastify, pino and the whole
-  # toolchain - were watched by nothing at all. A workspace stops being covered the moment it
-  # stops being a workspace, and nothing announces it: the updater keeps succeeding, because
-  # the directory it was pointed at is still there and still has updates to offer.
+  # Every directory holding a lockfile is listed, because Dependabot does not recurse - the
+  # same fact that made every docker run fail in #156, arriving here through a different door.
+  # #164 gave the backend its own package.json and lockfile while this entry still said
+  # `directory: /`, so from that merge until #179 the nine dependencies in
+  # `backend/package.json` - Fastify, pino and the whole toolchain - were watched by nothing at
+  # all. A workspace stops being covered the moment it stops being a workspace, and nothing
+  # announces it: the updater keeps succeeding, because the directory it was pointed at is
+  # still there and still has updates to offer.
+  #
+  # `/frontend` is here from the change that created it (#181) rather than from a later repair,
+  # which is the whole point of learning that the hard way once.
   - package-ecosystem: npm
     directories:
       - /
+      - /frontend
       - /backend
     registries:
       - webawesome

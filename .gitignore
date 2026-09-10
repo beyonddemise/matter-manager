@@ -46,12 +46,17 @@ npm-debug.log*
 # Subagent-driven-development scratch workspace
 .superpowers/
 
-# Browser-test artefacts
-packages/web/.vitest-attachments/
-# Anchored with ** because vitest writes these beside each test file, not only at the
-# top of test/: a plain `test/__screenshots__/` misses test/<area>/__screenshots__/ and a
-# failure screenshot then arrives in a commit looking like a deliberate baseline.
-packages/web/test/**/__screenshots__/
+# Browser-test artefacts.
+#
+# Unanchored, and deliberately so. These read `packages/web/...` until #181 moved the tests,
+# and the rename briefly un-ignored the old directory - which `git add -A` then swept 79 stale
+# screenshots into. A rule pinned to a path stops covering anything the moment the path moves,
+# and the failure is silent in the direction that matters: files start being tracked, not
+# missed. Vitest also writes these beside each test file rather than only at the top of test/,
+# so a plain `test/__screenshots__/` would miss `test/<area>/__screenshots__/` and a failure
+# screenshot would arrive in a commit looking like a deliberate baseline.
+.vitest-attachments/
+**/__screenshots__/
 
 # Written and removed by scripts/check-i18n.mjs; listed so a crashed run leaves no trap.
 .lit-localize.check.json

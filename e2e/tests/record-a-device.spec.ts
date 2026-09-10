@@ -9,7 +9,7 @@ import { expect, test } from '@playwright/test'
  * rather than merely displayed.
  */
 
-/** The verified reference device; see `packages/core/test/matter/payload.test.ts`. */
+/** The verified reference device; see `frontend/test/domain/matter/payload.test.ts`. */
 const PAYLOAD = 'MT:Y.K9042C00KA0648G00'
 
 /*
@@ -55,7 +55,7 @@ test('a device that is recorded can be found again', async ({ page }) => {
 test('it is still there after a reload, which is the whole promise', async ({ page }) => {
   // The one thing every unit test in this repository takes on trust: that what was written
   // reaches storage the browser keeps. A device held only in memory would pass every test in
-  // `packages/web` and fail here.
+  // the frontend and fail here.
   await recordDevice(page, 'Hall sensor', 'Ground Floor/Hall')
   // Waited for before reloading. Saving navigates to the list, and reloading during the write
   // would test whether the reload beat the write rather than whether the device was kept.

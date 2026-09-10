@@ -3,7 +3,7 @@ import { expect, test } from '@playwright/test'
 /**
  * Offline behaviour, which is what ADR 0002 makes this application for.
  *
- * Every unit test in `packages/web` runs against a database that is simply there. What none of
+ * Every unit test in the frontend runs against a database that is simply there. What none of
  * them can show is that the *shipped* application opens, records and keeps a device with the
  * network switched off — which is the promise, and which depends on the service worker, the
  * bundle and real storage all being right at once.

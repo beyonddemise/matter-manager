@@ -16,24 +16,30 @@
  */
 
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { dirname, join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const policy = JSON.parse(readFileSync(join(root, 'dependency-policy.json'), 'utf8'))
 
-/** Every package.json in the workspace, root included. */
-function manifests() {
-  const found = [{ name: '<root>', path: join(root, 'package.json') }]
-  for (const dir of ['packages', '.']) {
-    const base = join(root, dir)
-    if (!existsSync(base)) continue
-    for (const entry of readdirSync(base, { withFileTypes: true })) {
-      if (!entry.isDirectory() || entry.name === 'node_modules') continue
-      const p = join(base, entry.name, 'package.json')
-      if (existsSync(p)) found.push({ name: `${dir}/${entry.name}`, path: p })
-    }
+/**
+ * Every package.json in the repository, root included.
+ *
+ * It scanned `packages/` and the top level until #181, which left `packages/` empty. Scanning
+ * only named directories is what made that a silent narrowing rather than a failure: a
+ * directory that stops existing simply contributes nothing, and the check keeps passing over
+ * whatever is left. So this walks the tree instead of being told where to look — the same
+ * correction #179 made to the Dependabot npm entry and #181 made to the .npmrc guard.
+ */
+function manifests(dir = root, found = []) {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue
+    if (['node_modules', 'dist', 'coverage', '.git'].includes(entry.name)) continue
+    const path = join(dir, entry.name, 'package.json')
+    if (existsSync(path)) found.push({ name: relative(root, join(dir, entry.name)), path })
+    manifests(join(dir, entry.name), found)
   }
+  if (dir === root) found.unshift({ name: '<root>', path: join(root, 'package.json') })
   return found
 }
 
@@ -43,12 +49,13 @@ const SHIPPING_FIELDS = ['dependencies', 'optionalDependencies', 'peerDependenci
 /**
  * Packages whose code reaches the browser: a devDependency imported by their source ships too.
  *
- * `packages/data` is here even though it emits no bundle of its own, because `packages/web`
- * bundles it. "It is a devDependency of a library" is not evidence it stays out of the
- * download; only not being imported is, and that is asserted by
- * packages/data/test/no-pouchdb-import.test.ts.
+ * The whole frontend is one package now, so this is one entry where it used to be two. Nothing
+ * about the reasoning changed: `src/data` still declares PouchDB builds as devDependencies and
+ * is still bundled into the download, and "it is a devDependency" is not evidence it stays out
+ * of that download. Only not being imported is, and
+ * `frontend/test/data/no-pouchdb-import.test.ts` asserts exactly that.
  */
-const BUNDLED_PACKAGES = new Set(['packages/web', 'packages/data'])
+const BUNDLED_PACKAGES = new Set(['frontend'])
 
 const problems = []
 

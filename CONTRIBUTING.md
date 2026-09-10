@@ -25,19 +25,24 @@ Commit at each transition where it helps a reviewer follow the reasoning.
 
 ## Where code goes
 
-| If it...                           | It belongs in   |
-| ---------------------------------- | --------------- |
-| is a pure function the browser needs | `packages/core`      |
-| is a pure function the service needs | `backend/src/domain` |
-| touches PouchDB                      | `packages/data`      |
-| renders or handles user input        | `packages/web`       |
-| serves HTTP, CouchDB or Google       | `backend/src`        |
+| If it...                             | It belongs in           |
+| ------------------------------------ | ----------------------- |
+| is a pure function the browser needs | `frontend/src/domain`   |
+| is a pure function the service needs | `backend/src/domain`    |
+| touches PouchDB                      | `frontend/src/data`     |
+| renders or handles user input        | `frontend/src/ui`       |
+| serves HTTP, CouchDB or Google       | `backend/src`           |
 
-**Neither `packages/core` nor `backend/src/domain` may import a DOM type, a network client,
-or a database.** If a
-piece of logic seems to need one to be tested, it is nearly always two pieces of logic
-tangled together: a pure decision and an impure action. Separate them, put the decision in
-`core`, and test the decision exhaustively.
+**Neither `frontend/src/domain` nor `backend/src/domain` may import a DOM type, a network
+client, or a database.** If a piece of logic seems to need one to be tested, it is nearly
+always two pieces of logic tangled together: a pure decision and an impure action. Separate
+them, put the decision in the domain, and test the decision exhaustively.
+
+On the frontend this is enforced twice over, and both will fail your build rather than a
+review comment: `frontend/tsconfig.domain.json` typechecks `src/domain` with no DOM and no
+Node types, so `document` and `process` do not exist there; and
+`frontend/test/domain/purity.test.ts` walks the import graph transitively, so importing a file
+that imports Lit fails just as loudly as importing Lit.
 
 ## Testing
 
@@ -114,7 +119,7 @@ than a proof.
 ### After adding or changing a string
 
 ```
-npm run i18n     # extract into packages/web/xliff/de.xlf, then regenerate the locale modules
+npm run i18n --prefix frontend   # extract into frontend/xliff/de.xlf, then regenerate the locale modules
 ```
 
 Then **write the German** in the new `<trans-unit>` before committing. A unit with no
@@ -127,8 +132,8 @@ Two things are deliberately **not** wrapped in `msg()`:
 
 - **Language names** (`English`, `Deutsch`). A language picker names each option in its own
   language, so that a user stranded in a language they cannot read can still find their own.
-  They live in `LOCALE_NAMES` in `packages/web/src/i18n/locale.ts`, as data rather than markup.
-- **The generated catalogue** under `packages/web/src/generated/`. Never edit it by hand.
+  They live in `LOCALE_NAMES` in `frontend/src/ui/i18n/locale.ts`, as data rather than markup.
+- **The generated catalogue** under `frontend/src/ui/generated/`. Never edit it by hand.
 
 ## Runtime dependencies
 
@@ -228,8 +233,9 @@ so the visible symptom is no symptom at all: Web Awesome simply never appears in
 looks identical to already being current.
 
 Without a licence, please open an issue describing the change rather than a pull request you
-cannot build, and we will work out how to land it. Changes confined to `packages/core` — which
-is pure domain logic with no UI dependency — build and test without any of this.
+cannot build, and we will work out how to land it. Changes confined to `backend/` build and
+test without any of this — it installs with no token at all, which is why a fork's backend
+pull request passes CI where the frontend's cannot.
 
 ## Handling Matter payloads
 
