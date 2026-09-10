@@ -147,6 +147,21 @@ Everything else naming `packages/` is deliberate: historical records under `docs
 `docs/backlog`, `docs/tasks` and `CHANGELOG.md`, plus prose in this change that is explicitly
 *about* what `packages/core` used to be.
 
+## A field dropped in the rewrite
+
+Root `package.json` carried `allowScripts` for `fsevents`, and rewriting the file from scratch
+lost it. npm says so on install — `npm warn allow-scripts … Run npm approve-scripts` — which is
+easy to read past among the audit noise.
+
+`fsevents` is Vite's macOS file-watcher binding, pulled in by `vite` in `frontend` and by
+`vitest` in `backend`, so **both halves need the field and neither had it**. Without the
+approval the native binding is not built and Vite's watcher falls back to polling: `npm run dev`
+still works, just slower and hotter, on macOS only, with nothing to indicate why. Restored to
+both `package.json` files, and the warning is gone from `npm ci` in each.
+
+Nothing would have caught this. CI installs with `--ignore-scripts` everywhere, deliberately, so
+the field is inert there — it only matters on a contributor's machine.
+
 ## And the devcontainer, which no check builds
 
 `postCreateCommand` was `npm ci && npx playwright install …`. After this change that installs

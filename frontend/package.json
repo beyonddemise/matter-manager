@@ -60,5 +60,9 @@
     "typescript": "^7.0.2",
     "vite": "^8.2.2",
     "vitest": "^4.1.11"
+  },
+  "allowScripts": {
+    "fsevents@2.3.3": true,
+    "fsevents@2.3.2": true
   }
 }
