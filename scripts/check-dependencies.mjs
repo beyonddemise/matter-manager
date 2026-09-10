@@ -8,7 +8,7 @@
  *
  * `dependencies`, `optionalDependencies` and `peerDependencies` are all checked, because all
  * three can end up installed in production. `devDependencies` are unrestricted ONLY in
- * packages that do not ship a bundle — in `packages/web` a bundler will happily inline a
+ * packages that do not ship a bundle — in `frontend` a bundler will happily inline a
  * devDependency that application source imports, so "it is a devDependency" is not by itself
  * evidence that it does not reach users.
  *

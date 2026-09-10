@@ -127,6 +127,26 @@ Three layers, because one would have been a patch rather than a fix:
 This is the "shared tooling versions can drift" consequence ADR 0017 names, arriving as a real
 failure on the change that introduced it rather than as a hypothetical.
 
+## Found by re-reading the diff, not by any check
+
+Three things the move left behind, none of which failed anything — which is the point:
+
+- **`vitest.config.ts` was still at the repository root**, describing four projects under
+  `packages/*` that no longer exist. Nothing referenced it: the root has no `vitest`
+  dependency and no `test` script, so it was a dead file that read like live configuration.
+  Deleted. Exactly the failure mode L36 is about, in the one form a *check* cannot catch —
+  there is no check for "this configuration file is describing nothing".
+- **`backend/src/security/cors.ts` and its test pointed at `packages/web/src/projects.ts`** to
+  explain *why* the CORS allowlist admits an `authorization` header. The file is now
+  `frontend/src/ui/projects.ts`. A comment citing a path that does not exist is worse than no
+  citation: the next reader concludes the reasoning is stale and stops trusting it.
+- **`check-dependencies.mjs`'s docblock** described `packages/web` as the bundled package while
+  the code beneath it had already been changed to `frontend`.
+
+Everything else naming `packages/` is deliberate: historical records under `docs/adr`,
+`docs/backlog`, `docs/tasks` and `CHANGELOG.md`, plus prose in this change that is explicitly
+*about* what `packages/core` used to be.
+
 ## Verified
 
 - **`npm run verify` from the root — exit 0**, covering the whole repository for the first time:
