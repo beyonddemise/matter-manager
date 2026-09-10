@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Fastify backend: OIDC sign-in, token issuance, project provisioning. Installs and tests on its own.",
   "engines": {
-    "node": ">=22"
+    "node": ">=24"
   },
   "scripts": {
     "dev": "node --watch dist/src/main.js",
@@ -25,7 +25,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.12",
-    "@types/node": "^26.2.0",
+    "@types/node": "^24.13.4",
     "@vitest/coverage-v8": "^4.1.11",
     "openapi-typescript": "^7.13.0",
     "pino": "^10.3.1",

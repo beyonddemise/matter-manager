@@ -16,18 +16,46 @@ registries:
     token: ${{secrets.WEBAWESOME_NPM_TOKEN}}
 
 updates:
+  # `/backend` is listed because Dependabot does not recurse - the same fact that made every
+  # docker run fail in #156, arriving here through a different door. #164 gave the backend its
+  # own package.json and lockfile, and this entry still said `directory: /`, so from that merge
+  # until #179 the nine dependencies in `backend/package.json` - Fastify, pino and the whole
+  # toolchain - were watched by nothing at all. A workspace stops being covered the moment it
+  # stops being a workspace, and nothing announces it: the updater keeps succeeding, because
+  # the directory it was pointed at is still there and still has updates to offer.
   - package-ecosystem: npm
-    directory: /
+    directories:
+      - /
+      - /backend
     registries:
       - webawesome
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    ignore:
+      # `@types/node` majors track Node majors, so this range decides which API surface the
+      # compiler believes in. At `^26` against a Node 24 runtime, anything added in 25 or 26
+      # typechecks cleanly and throws in production - a type checker certifying a crash. That
+      # was the state of `main` before #179, and Dependabot #152 was proposing to widen it.
+      #
+      # Same policy as the `node` image pin below, for the same reason: Dependabot cannot tell
+      # an LTS line from a Current one, so moving major is a decision somebody makes rather
+      # than a pull request that arrives. Minors and patches within the line still flow, and
+      # `npm run check:node` fails if a major ever moves without `.nvmrc` moving.
+      - dependency-name: '@types/node'
+        update-types: [version-update:semver-major]
     groups:
       # One PR per ecosystem rather than a swarm. Dev tooling updates are almost always
       # safe together, and reviewing them as a batch is faster than fifteen separate PRs.
+      #
+      # `group-by: dependency-name` for the reason the container-images group gives: with
+      # `directories:`, the default is a separate pull request PER DIRECTORY, and Biome,
+      # TypeScript and Vitest are installed in both halves. Ungrouped, one half could take a
+      # Biome major and the other not - and the two halves would then format the same code
+      # differently, which surfaces as a lint failure in whichever one was not updated.
       dev-tooling:
         patterns: ['@biomejs/*', 'vitest', '@vitest/*', 'typescript', '@playwright/*']
+        group-by: dependency-name
       lit:
         patterns: ['lit', '@lit/*', '@lit-labs/*']
       pouchdb:
