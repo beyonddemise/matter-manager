@@ -147,6 +147,23 @@ Everything else naming `packages/` is deliberate: historical records under `docs
 `docs/backlog`, `docs/tasks` and `CHANGELOG.md`, plus prose in this change that is explicitly
 *about* what `packages/core` used to be.
 
+## And the devcontainer, which no check builds
+
+`postCreateCommand` was `npm ci && npx playwright install …`. After this change that installs
+**Biome and the end-to-end suite, and neither half** — so a fresh devcontainer would come up
+with no Vite, no Vitest, no Fastify, and `npm run dev` failing on a missing binary. Nothing in
+CI builds the devcontainer, so nothing would have caught it. It now installs all three and the
+browsers for both Playwrights.
+
+`"typescript.tsdk": "node_modules/typescript/lib"` came off, and the reason is worth recording
+because it is **not** something this change broke. TypeScript 7 ships no tsserver at all — that
+directory holds `tsc.js` and a path helper. So the setting has pointed at nothing since the
+TypeScript 7 upgrade, and VS Code has been silently falling back to its bundled compiler,
+meaning every contributor's editor diagnostics come from a different TypeScript than CI runs.
+#181 only made it unambiguous, by removing `typescript` from the root entirely. Recorded as
+#189 rather than fixed here: choosing how the editor gets a language service is not part of a
+move.
+
 ## Verified
 
 - **`npm run verify` from the root — exit 0**, covering the whole repository for the first time:
