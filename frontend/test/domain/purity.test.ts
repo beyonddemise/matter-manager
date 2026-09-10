@@ -1,5 +1,5 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
-import { dirname, join, relative, resolve } from 'node:path'
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
@@ -56,6 +56,24 @@ function resolveRelative(from: string, specifier: string): string | null {
 }
 
 /**
+ * Whether a resolved file lies outside `src/domain`.
+ *
+ * Asked through `relative()` rather than by comparing string prefixes. The obvious spelling,
+ * `target.startsWith(`${domain}/`)`, hard-codes a forward slash while every path here comes
+ * from `node:path` — so on Windows `domain` and `target` are separated by backslashes, no path
+ * ever matches, and **every domain file is reported as an escape**. That fails loudly rather
+ * than silently, which is the better direction, but it fails on a machine where nothing is
+ * wrong. Found in review on #186.
+ *
+ * `..` and `..\` or `../` cover the ordinary case; `isAbsolute` covers the Windows one where
+ * two paths on different drives have no relative form at all.
+ */
+function escapesDomain(target: string): boolean {
+  const fromDomain = relative(domain, target)
+  return fromDomain === '..' || fromDomain.startsWith(`..${sep}`) || isAbsolute(fromDomain)
+}
+
+/**
  * Every violation reachable from `src/domain`, each with the chain that reached it.
  *
  * Returned rather than asserted so the "would notice" test below can drive the same function
@@ -81,7 +99,7 @@ function escapes(roots: string[]): string[] {
       }
       const target = resolveRelative(file, specifier)
       if (target === null) continue
-      if (!target.startsWith(`${domain}/`)) {
+      if (escapesDomain(target)) {
         problems.push(`${chain.join(' -> ')} imports ${relative(packageRoot, target)}`)
       }
       // Followed either way. A file outside the domain is already a violation, and following

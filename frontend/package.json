@@ -29,7 +29,7 @@
     "assets:fetch": "node scripts/fetch-offline-assets.mjs",
     "probe:runtime": "node scripts/probe-runtime-requests.mjs",
     "probe:svg": "node scripts/probe-svg-rendering.mjs",
-    "verify": "npm run check:webawesome && npm run check:i18n && npm run check:deploy && npm run check:graph && npm run check && npm run typecheck && npm run test"
+    "verify": "npm run check:webawesome && npm run check:i18n && npm run check:deploy && npm run check:graph && npm run check && npm run typecheck && npm run test && npm run build && npm run check:lazy && npm run check:offline"
   },
   "dependencies": {
     "@awesome.me/webawesome-pro": "^3.12.0",

@@ -164,6 +164,30 @@ meaning every contributor's editor diagnostics come from a different TypeScript 
 #189 rather than fixed here: choosing how the editor gets a language service is not part of a
 move.
 
+## From review on #186
+
+**The purity check compared paths with a hard-coded `/`.** `target.startsWith(`${domain}/`)`,
+while every path in the file comes from `node:path`. On Windows those are backslash-separated,
+so nothing would match and **every domain file would be reported as an escape**. It fails loudly
+rather than silently, which is the better direction, but it fails on a machine where nothing is
+wrong. Now asked through `relative()` plus `sep`, with `isAbsolute` for the Windows case of two
+paths on different drives. Re-proved afterwards by planting the transitive violation again — the
+refactor could have broken detection, and a check that stops detecting is the failure this whole
+change is about.
+
+**`verify` did not cover the post-build checks.** `check:lazy` and `check:offline` ran only in
+CI, so a contributor could be green locally and red in CI — the same disagreement about what
+"green" means that `ci.yml` already records for `check:webawesome`.
+
+The suggested fix was to add both to the `verify` chain, and that would have broken it: each
+exits 1 with `No built site in dist`, so `verify` would fail on a clean checkout. Verified by
+moving `dist` aside and running them — `exit=1` from both. So `verify` now **builds first** and
+then runs them. The build costs about 250ms, and `npm run verify` from a tree with no `dist` at
+all comes back green.
+
+Still CI-only, and honestly so: `probe:runtime` (needs a served site and a browser) and the
+end-to-end journeys. `verify` means "everything that does not need a running server".
+
 ## Verified
 
 - **`npm run verify` from the root — exit 0**, covering the whole repository for the first time:
