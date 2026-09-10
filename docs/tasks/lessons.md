@@ -1211,7 +1211,7 @@ of one — and when the answer is "nothing", that is the finding.
 
 ---
 
-## L36 — A check keyed to a path stops checking when the path moves, and the silence looks like success
+## L36 — A check keyed to a path stops checking when the path moves
 
 Five instances in two changes (#179, #181), which is what makes it a pattern rather than five
 mistakes:
