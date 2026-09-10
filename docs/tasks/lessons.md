@@ -1216,19 +1216,26 @@ of one — and when the answer is "nothing", that is the finding.
 Five instances in two changes (#179, #181), which is what makes it a pattern rather than five
 mistakes:
 
-| the check | how it was told where to look | what it stopped covering |
+| the check | how it was told where to look | what went wrong when the path moved |
 | --- | --- | --- |
-| Dependabot, npm ecosystem | `directory: /` | every dependency in `backend/`, once #164 made it non-workspace — Fastify, pino, the toolchain, **security advisories included** |
-| Dependabot, docker ecosystem (#156) | `directory: /infra` | three base images, from the day the repository was created |
-| `check-npmrc.mjs` | `join(root, '.npmrc')` | the Web Awesome credential, the moment it moved into `frontend/.npmrc` |
-| `check-dependencies.mjs` | `for (const dir of ['packages', '.'])` | every manifest, once `packages/` was emptied |
-| `.gitignore` | `packages/web/.vitest-attachments/` | nothing — worse. The rename **un-ignored** the old directory, and `git add -A` staged 79 stale screenshots |
+| Dependabot, npm ecosystem | `directory: /` | stopped covering every dependency in `backend/`, once #164 made it non-workspace — Fastify, pino, the toolchain, **security advisories included** |
+| Dependabot, docker ecosystem (#156) | `directory: /infra` | stopped covering three base images, from the day the repository was created |
+| `check-npmrc.mjs` | `join(root, '.npmrc')` | stopped covering the Web Awesome credential, the moment it moved into `frontend/.npmrc` |
+| `check-dependencies.mjs` | `for (const dir of ['packages', '.'])` | stopped covering every manifest, once `packages/` was emptied |
+| `.gitignore` | `packages/web/.vitest-attachments/` | **inverted**: the rename un-ignored the old directory, and `git add -A` staged 79 stale screenshots |
 
-Every one failed in the direction that reads as success. A check with nothing to look at
-compares nothing, finds no problems, and prints `ok`. `check-npmrc.mjs` was the sharpest case:
-it explicitly treated a missing file as "not present, nothing to check" and **exited 0** — a
-credential guard on a public repository, passing precisely because it had lost track of the
-credential.
+The first four fail the same way, in the direction that reads as success. A check with nothing
+to look at compares nothing, finds no problems, and prints `ok`. `check-npmrc.mjs` was the
+sharpest: it explicitly treated a missing file as "not present, nothing to check" and **exited
+0** — a credential guard on a public repository, passing precisely because it had lost track of
+the credential.
+
+**`.gitignore` is the odd one, and worth keeping in the list for that.** It returns no result to
+be empty; it is a filter, not a check. Its stale rule did not stop matching quietly — it stopped
+matching *the files that still existed*, so they became tracked. The shared cause is identical
+(a rule pinned to a path outlived the path) and the symptom is opposite: the first four quietly
+cover less, this one quietly includes more. A pattern that only describes one of those two
+outcomes will miss the next instance of the other.
 
 The move itself is never what breaks these. A move is loud: tests fail, imports break,
 `tsc` complains. What is quiet is the *coverage* shrinking underneath a check that keeps
@@ -1264,11 +1271,11 @@ been fetched.
 
 Locally all 8 journeys passed. They had to: one machine has one `~/.cache/ms-playwright`, and
 both builds were sitting in it from earlier work. The green run was evidence about my laptop's
-accumulated state, not about the change. **CI failed on the first run**, on a clean cache, which
-is the only place the defect could exist.
+accumulated state, not about the change. The defect was in the lockfiles either way; **CI's
+clean cache is what exposed it**, on the first run.
 
-Fixing the versions would have been a patch. Three layers, because the divergence had three
-independent causes:
+Fixing the versions would have been a patch. The fix took three layers, one for each thing that
+had to be true for the divergence to happen and go unnoticed:
 
 1. **Realign now** — the root lockfile resolves to 1.63.0.
 2. **Keep them in step** — the Dependabot `dev-tooling` group matched `@playwright/*` and *not*
