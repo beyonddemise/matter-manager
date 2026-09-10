@@ -65,10 +65,26 @@ jobs:
       # Chromium build the "ui" Vitest project launches to run browser tests is never
       # fetched. It has to be installed explicitly, and only for Chromium: the other engines
       # are unused here.
-      - name: Read Playwright version
+      #
+      # BOTH versions are read, because there are now two Playwrights: `frontend` depends on
+      # `playwright` for its browser-mode tests, and the root `e2e` workspace depends on
+      # `@playwright/test`. The root workspace used to hoist them to one copy; #181 split the
+      # installs and they immediately diverged - 1.63.0 against 1.62.1, which are different
+      # browser builds (1243 and 1234). Installing for one left the other launching a binary
+      # that was never fetched, and CI caught it on the first run.
+      #
+      # They are held in step by `.github/dependabot.yml` (the dev-tooling group matches both
+      # `playwright` and `@playwright/*`, grouped by dependency-name). This step does not rely
+      # on that: it reads both and installs for both, so a divergence costs a second download
+      # rather than a broken job.
+      - name: Read Playwright versions
         id: playwright-version
-        working-directory: frontend
-        run: echo "version=$(node -p "require('playwright/package.json').version")" >> "$GITHUB_OUTPUT"
+        run: |
+          frontend=$(node -p "require('./frontend/node_modules/playwright/package.json').version")
+          e2e=$(node -p "require('./node_modules/@playwright/test/package.json').version")
+          echo "frontend=$frontend" >> "$GITHUB_OUTPUT"
+          echo "e2e=$e2e" >> "$GITHUB_OUTPUT"
+          echo "Playwright: frontend $frontend, e2e $e2e"
 
       # Caches the downloaded browser so it is fetched once per Playwright version instead of
       # on every run. Keyed on the resolved version (not just runner.os) so a dependency bump
@@ -78,16 +94,19 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/ms-playwright
-          key: playwright-chromium-${{ runner.os }}-${{ steps.playwright-version.outputs.version }}
+          key: playwright-chromium-${{ runner.os }}-${{ steps.playwright-version.outputs.frontend }}-${{ steps.playwright-version.outputs.e2e }}
 
-      # From `frontend`, where the `playwright` package whose version keyed the cache above
-      # actually lives. Run from the root it would resolve the e2e workspace's
-      # @playwright/test instead - a different package on the same release line, and a silent
-      # way for the browser fetched to stop being the browser the cache key describes.
-      - name: Install Playwright Chromium
+      # Once per Playwright, from the directory that owns it. When the two versions agree the
+      # second command is a no-op; when they do not, each gets the build it will actually try
+      # to launch.
+      - name: Install Playwright Chromium (frontend)
         if: steps.playwright-cache.outputs.cache-hit != 'true'
         run: npx playwright install --with-deps chromium
         working-directory: frontend
+
+      - name: Install Playwright Chromium (e2e)
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: npx playwright install --with-deps chromium
 
       # A cache hit restores the browser binary but not the OS-level shared libraries that
       # --with-deps installs: those are runner packages, not files under

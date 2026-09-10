@@ -59,7 +59,14 @@ updates:
       # Biome major and the other not - and the two halves would then format the same code
       # differently, which surfaces as a lint failure in whichever one was not updated.
       dev-tooling:
-        patterns: ['@biomejs/*', 'vitest', '@vitest/*', 'typescript', '@playwright/*']
+        # Bare `playwright` as well as `@playwright/*`: `frontend` depends on the first for
+        # its browser-mode tests and the root `e2e` workspace on the second. They were one
+        # hoisted copy until #181 split the installs, and the pattern list matched only the
+        # scoped name - so Dependabot would have bumped one and not the other, which is
+        # precisely how they came to be 1.63.0 and 1.62.1 pointing at different browser
+        # builds. Grouped, they move together or not at all.
+        patterns:
+          ['@biomejs/*', 'vitest', '@vitest/*', 'typescript', 'playwright', '@playwright/*']
         group-by: dependency-name
       lit:
         patterns: ['lit', '@lit/*', '@lit-labs/*']

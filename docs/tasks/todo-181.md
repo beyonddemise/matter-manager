@@ -101,6 +101,32 @@ errors with "Found a nested root configuration". Verified by removing the exclus
 the failure. The root's includes are now narrowed to what it owns anyway — 13 files: `scripts`,
 `e2e`, `infra`, `.devcontainer`, `.github` and the root JSON.
 
+## The cost this change carries, demonstrated within the hour
+
+`frontend` depends on `playwright` for its browser-mode tests; the root `e2e` workspace depends
+on `@playwright/test`. The root workspace used to hoist those to **one** copy. Splitting the
+installs let them diverge immediately — **1.63.0 against 1.62.1**, which are different browser
+builds (1243 and 1234) — so installing Chromium for one left the other trying to launch a binary
+that had never been fetched.
+
+Local runs could not see it: one machine, one `~/.cache/ms-playwright`, both builds present from
+earlier work. **CI caught it on the first run**, with all 8 journeys failing on
+`Executable doesn't exist`.
+
+Three layers, because one would have been a patch rather than a fix:
+
+1. **The versions are realigned** — the root lockfile now resolves `@playwright/test` to 1.63.0.
+2. **Dependabot keeps them in step.** The `dev-tooling` group matched `@playwright/*` and **not**
+   bare `playwright`, so the updater would have bumped one and not the other — which is exactly
+   how they came to disagree. Both names are now in the pattern list, grouped by
+   `dependency-name`.
+3. **CI no longer depends on them agreeing.** It reads both versions, keys the browser cache on
+   both, and installs from each directory. A future divergence costs a second download instead
+   of a broken job.
+
+This is the "shared tooling versions can drift" consequence ADR 0017 names, arriving as a real
+failure on the change that introduced it rather than as a hypothetical.
+
 ## Verified
 
 - **`npm run verify` from the root — exit 0**, covering the whole repository for the first time:
