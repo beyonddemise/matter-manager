@@ -19,20 +19,23 @@ shared domain logic:
 > the server. In Java they would have to be written twice, in two languages, with two test
 > suites, and the two implementations would drift.
 
-That sentence describes a repository this never became. Before moving anything, #164 counted
-what actually crossed the boundary:
+That sentence describes a repository this never became. Counted against the tree as it stood
+immediately before the move (`e7eb0df`), by resolving every `import … from '@matter-manager/core'`
+in each half:
 
-| | symbols imported from `core` |
+| | distinct symbols imported from `core` |
 |---|---|
-| the API only | `ACTIONS`, `Action`, `Invitation`, `Owner`, `Participant`, `Principal`, `ProjectRef`, `can`, `canManageMembers`, `foldEmail`, `isOpen`, `redeemable`, `roleOf` |
-| the browser only | `DeletedRoom`, `DeviceDraft`, `DraftError`, `DraftProblem`, `PayloadError`, `PayloadProblem`, `RemarkAuthor`, `RoomDocument`, `planMigration`, `planNewDevice`, `readCredential`, `worthRemembering` |
-| **both** | **`ProjectRole`. One type alias. No functions.** |
+| the API (`packages/api/src`) | **27** — `ACTIONS`, `can`, `canManageMembers`, `planInvitation`, `planTransfer`, `securityFor`, `roleOf`, `grantRole`, `revokeAccess`, `narrowsAccess`, … |
+| the browser (`packages/web/src`, `packages/data/src`) | **58** — `readCredential`, `planNewDevice`, `mergeDevice`, `mergeRoom`, `layoutLabels`, `normaliseRoomPath`, `browseDevices`, `resurrectedRooms`, … |
+| **shared by both** | **1: `ProjectRole`.** A type alias. **Zero functions.** |
 
-Thirteen symbols on each side, and one shared between them. The Matter codec is browser-only —
-the server never sees a payload, by ADR 0002, because devices replicate straight to CouchDB. The
-entitlement rules are server-only — a browser that evaluated them would be asking the client
-whether the client is allowed. Room paths and conflict merge belong to whichever side holds the
-documents, which is the browser.
+Eighty-four distinct symbols crossed into that package, and exactly one of them crossed into
+both.
+
+(#164's own description said "thirteen each way", which is where this record's first draft got
+the figure. Re-measuring for this ADR gave 27 and 58 — the conclusion is the same and the
+evidence is stronger, but the number is worth getting right in the document that will be cited
+for it.)
 
 So the four things 0004 named as shared were never shared, and could not have been: each one
 belongs to exactly one side for a reason that predates the decision. `packages/core`'s first
@@ -73,8 +76,14 @@ open deliberately: it is a decision, not an oversight.
 - **The drift check is what makes that true rather than aspirational.** ADR 0015 chose checking
   over executing, and 0004 already warned that without such a check "we kept the option open"
   quietly stops being true within a month. That warning is stronger now, not weaker:
-  `backend/test/openapi-drift.test.ts` is the only mechanism left that would notice the two
-  sides disagreeing.
+  `backend/test/openapi-drift.test.ts` is the only *automated* mechanism that would notice the
+  two sides disagreeing.
+
+  Its reach is exactly the contract, and no further. `ProjectRole` is declared in source on both
+  sides, so **no test would fail if the two declarations diverged** — that is the case #183
+  exists to close, and until it does the guard is two comments pointing at each other. Worth
+  stating plainly, because "the drift check covers it" is the assumption that would let a fifth
+  role be added to one side only.
 - **Neither half may take a dependency on the other's package.** Not a style rule. It is the
   property that makes "replace this directory" a bounded change, and it would be dissolved by a
   single convenient import.

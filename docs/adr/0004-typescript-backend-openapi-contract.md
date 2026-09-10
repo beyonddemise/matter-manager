@@ -11,8 +11,9 @@ truth" needed a mechanism. 0015 chooses checking over executing, and keeps Fasti
 **Reasoning superseded by [ADR 0017](0017-two-halves-one-contract.md).** The decision below
 stands — the backend is still Fastify and TypeScript — but the argument for it does not. The
 Context section leans on `packages/core` holding logic "needed by *both* the browser and the
-server"; #164 counted the imports across that boundary and found thirteen symbols each way with
-one type alias in common and no functions at all. The first Consequence, "`packages/core` is
+server". Counted against the tree immediately before the move, the API imported 27 distinct
+symbols from `core` and the browser imported 58, with exactly one — the `ProjectRole` type
+alias — in common, and no shared functions at all. The first Consequence, "`packages/core` is
 written once and used by browser and server alike", describes something that did not happen,
 and #181 removed `packages/core` entirely. 0017 records what actually keeps a Quarkus rewrite
 available.

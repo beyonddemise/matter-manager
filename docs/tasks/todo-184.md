@@ -16,9 +16,22 @@ ADR 0004's strongest recorded argument for TypeScript over Quarkus was shared do
 Its first Consequence followed from that: "`packages/core` is written once and used by browser
 and server alike."
 
-Neither was true. #164 counted the imports before moving anything — thirteen symbols each way,
-one type alias in common, no functions. And each of the four things named belongs to exactly one
-side for a reason that predates the decision:
+Neither was true, and the numbers turned out to be worth measuring rather than quoting. #164's
+description said "thirteen each way", and this record's first draft repeated it. Re-counted
+against the tree immediately before the move (`e7eb0df`), resolving every
+`import … from '@matter-manager/core'`:
+
+| | distinct symbols from `core` |
+| --- | --- |
+| the API | **27** |
+| the browser | **58** |
+| **shared by both** | **1** — the `ProjectRole` type alias. **Zero functions.** |
+
+Eighty-four distinct symbols, one of which crossed into both halves. The conclusion is unchanged
+and the evidence is stronger; the figure is now one a reader can reproduce.
+
+And each of the four things named belongs to exactly one side for a reason that predates the
+decision:
 
 | named as shared | actually |
 | --- | --- |
@@ -44,8 +57,14 @@ two directories that install independently.
 
 The Consequences section is written to be checkable rather than agreeable, and names what must
 not be traded away: `openapi.yaml` as the whole agreement, `backend/test/openapi-drift.test.ts`
-as the only remaining mechanism that would notice the sides disagreeing, no cross-dependency
-between the halves, and `backend/` needing no Web Awesome token. It also states the costs
+as the only *automated* mechanism that would notice the sides disagreeing, no cross-dependency
+between the halves, and `backend/` needing no Web Awesome token.
+
+That word *automated* was added in review, and the correction matters. The drift test reaches
+exactly the contract and no further — **`ProjectRole` is declared in source on both sides, so no
+test fails if the two diverge.** Saying the drift check covers the boundary would have been the
+assumption that lets a fifth role be added to one side only. Until #183 the guard there is two
+comments pointing at each other, and the ADR now says so. It also states the costs
 honestly — domain purity is now enforced by two mechanisms instead of one package boundary, and
 Biome/TypeScript/Vitest are installed twice and can drift.
 
