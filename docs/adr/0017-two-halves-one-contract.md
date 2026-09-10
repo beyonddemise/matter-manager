@@ -29,8 +29,9 @@ in each half:
 | the browser (`packages/web/src`, `packages/data/src`) | **58** — `readCredential`, `planNewDevice`, `mergeDevice`, `mergeRoom`, `layoutLabels`, `normaliseRoomPath`, `browseDevices`, `resurrectedRooms`, … |
 | **shared by both** | **1: `ProjectRole`.** A type alias. **Zero functions.** |
 
-Eighty-four distinct symbols crossed into that package, and exactly one of them crossed into
-both.
+The first two are per-side totals and each includes that one shared alias, so the union is 84
+distinct symbols: 26 the API alone reached for, 57 the browser alone reached for, and one they
+both did.
 
 (#164's own description said "thirteen each way", which is where this record's first draft got
 the figure. Re-measuring for this ADR gave 27 and 58 — the conclusion is the same and the
@@ -99,9 +100,20 @@ open deliberately: it is a decision, not an oversight.
   `frontend/test/domain/purity.test.ts` (transitive import walk). Two mechanisms rather than
   one boundary — which is more to maintain, and the trade accepted for deleting a package that
   had one consumer.
-- **Shared tooling versions can drift.** Biome, TypeScript and Vitest are installed twice.
-  `.github/dependabot.yml` groups them with `group-by: dependency-name` so updates arrive
-  together; without that the halves could format the same code differently.
+- **Shared tooling versions can drift, and grouping only makes that less likely.** Biome,
+  TypeScript, Vitest and Playwright are installed twice. `.github/dependabot.yml` groups them
+  with `group-by: dependency-name`, which raises one pull request per dependency across
+  directories *where it can* — it falls back to separate pull requests when the directories
+  carry incompatible version requirements, and it applies to version updates only, not security
+  updates. So it is a strong default, not a guarantee, and nothing downstream should assume the
+  two halves agree.
+
+  Playwright is the worked example, and it happened on the change that introduced the split:
+  the two halves resolved 1.63.0 and 1.62.1, which are different browser builds, and CI
+  installed Chromium for one and launched the other. The durable fix was not the grouping — it
+  was making CI read both versions and install for both, so a divergence costs a second
+  download rather than a broken job. Prefer that shape wherever it is available: tolerate the
+  drift rather than depend on it not happening.
 - **A genuinely shared pure function would now be awkward.** None exists, and the census above
   is the evidence rather than an assumption. If one ever does, this ADR is the record to
   supersede — the answer is likely to be `openapi.yaml` growing a schema, not `packages/`

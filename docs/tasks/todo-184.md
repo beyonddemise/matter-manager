@@ -88,7 +88,9 @@ the duplication is recorded for a decision.
   `backend/src/projects/routes.ts` and `backend/src/domain/membership.ts` use `ProjectRole`,
   `frontend/src/domain/role.ts:17` declares it, `backend/test/openapi-drift.test.ts` exists.
 - The census table was internally inconsistent on first writing — `ProjectRole` appeared in the
-  browser row while being called the overlap. Split into "the API only", "the browser only" and
-  "both", which is what #164 actually measured.
+  browser row while being called the overlap, and both figures came from #164's description
+  rather than from the code. Re-measured: the counts are now **per-side totals**, 27 for the API
+  and 58 for the browser, each of which *includes* the one shared alias. They are not exclusive
+  counts, and the row labels say so. 84 distinct symbols in the union.
 - `npm run verify` — exit 0. Frontend 1516 tests in 86 files, backend 787 in 33, both Biome
   runs clean.

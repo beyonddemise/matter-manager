@@ -1213,8 +1213,9 @@ of one — and when the answer is "nothing", that is the finding.
 
 ## L36 — A check keyed to a path stops checking when the path moves
 
-Five instances in two changes (#179, #181), which is what makes it a pattern rather than five
-mistakes:
+Five instances across three changes (#156, #179, #181), which is what makes it a pattern rather
+than five mistakes. They share one cause and fail in **three different ways** — worth separating,
+because a reader who only knows one symptom will not recognise the others:
 
 | the check | how it was told where to look | what went wrong when the path moved |
 | --- | --- | --- |
@@ -1224,18 +1225,25 @@ mistakes:
 | `check-dependencies.mjs` | `for (const dir of ['packages', '.'])` | stopped covering every manifest, once `packages/` was emptied |
 | `.gitignore` | `packages/web/.vitest-attachments/` | **inverted**: the rename un-ignored the old directory, and `git add -A` staged 79 stale screenshots |
 
-The first four fail the same way, in the direction that reads as success. A check with nothing
-to look at compares nothing, finds no problems, and prints `ok`. `check-npmrc.mjs` was the
-sharpest: it explicitly treated a missing file as "not present, nothing to check" and **exited
-0** — a credential guard on a public repository, passing precisely because it had lost track of
-the credential.
+**Silently passing** — the npm ecosystem entry, `check-npmrc.mjs`, `check-dependencies.mjs`. A
+check with nothing to look at compares nothing, finds no problems, and prints `ok`.
+`check-npmrc.mjs` was the sharpest: it explicitly treated a missing file as "not present,
+nothing to check" and **exited 0** — a credential guard on a public repository, passing
+precisely because it had lost track of the credential.
 
-**`.gitignore` is the odd one, and worth keeping in the list for that.** It returns no result to
-be empty; it is a filter, not a check. Its stale rule did not stop matching quietly — it stopped
-matching *the files that still existed*, so they became tracked. The shared cause is identical
-(a rule pinned to a path outlived the path) and the symptom is opposite: the first four quietly
-cover less, this one quietly includes more. A pattern that only describes one of those two
-outcomes will miss the next instance of the other.
+**Failing loudly, where nobody was looking** — the docker ecosystem entry (#156). It did not
+print `ok`; it aborted every run with `No Dockerfiles nor Kubernetes YAML found in /infra` and
+was marked **failed**. What hid it is everything around the mark, which L35's last corollary
+sets out: a `Dependabot Updates` run is not a pull request check, so it blocks nothing and
+notifies nobody. Three base images went unchecked from the day the repository was created.
+
+**Silently including more** — `.gitignore`. It returns no result to be empty; it is a filter,
+not a check. Its stale rule did not stop matching quietly — it stopped matching *the files that
+still existed*, so they became tracked, and `git add -A` staged 79 stale screenshots.
+
+One cause, three symptoms: quietly covers less, loudly fails somewhere nobody reads, quietly
+covers more. A pattern described in terms of only one of those will miss the next instance of
+the other two.
 
 The move itself is never what breaks these. A move is loud: tests fail, imports break,
 `tsc` complains. What is quiet is the *coverage* shrinking underneath a check that keeps
