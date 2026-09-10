@@ -4,7 +4,8 @@ Closes #179.
 
 ## Symptom
 
-Four files declared which Node this project uses, and three of them disagreed.
+Five files declared which Node this project uses. Four of those declarations disagreed with
+the one that decides.
 
 | declares | said | should say |
 | --- | --- | --- |
@@ -42,6 +43,13 @@ Three properties worth naming, because each one is a way this kind of check usua
 - **A floor and a pin are held to the same major.** `>=22` against a Node 24 runtime claims
   support for something nothing here tests. The repository has one runtime; leniency here is
   what let `>=22` survive a move.
+- **Every alternative in a range is checked, and an unreadable range is refused.** The first
+  version of `majorsOf` read only the leading number, so `^24.13.4 || ^26.0.0` reported `24`
+  and passed while the declaration went on permitting Node 26 — the check saying yes to exactly
+  the drift it exists to catch. Found in review on #185. Each `||` alternative is now read
+  separately, and an alternative naming more than one version (`>=20 <25`) is reported as
+  unverifiable rather than reduced to a guess: picking one end of a range and calling it the
+  answer is how a check comes to certify something nobody checked.
 
 **Then the versions were fixed** — and npm made that harder than it should have been. `npm install`
 updated the manifests to `^24.13.4` but left the *nested* lockfile entries at 26.3.0, so
@@ -64,7 +72,7 @@ that actually covers the packages declaring it. The npm entry said `directory: /
 **Dependabot does not recurse** — the same fact that made every docker run fail in #156, arriving
 through a different door.
 
-#164 gave `backend/` its own `package.json` and lockfile. From that merge until this change,
+Issue #164 gave `backend/` its own `package.json` and lockfile. From that merge until this change,
 Fastify, pino, TypeScript, Vitest, Biome, `@types/node`, `@vitest/coverage-v8`, `openapi-typescript`
 and `yaml` were watched by nothing at all — including for security advisories.
 
@@ -82,7 +90,9 @@ Biome major and the other not — and the two halves would then format the same 
 
 - `node scripts/check-node-pins.mjs` — 7 declarations, all agree. Observed failing first, on the
   four real disagreements; then observed failing on a hand-broken `FROM` line, for the empty-match
-  branch.
+  branch; then, after the review fix, on `"@types/node": "^24.13.4 || ^26.0.0"` (reports the 26
+  alternative) and on `">=20 <25"` (reports the range as unverifiable). Each planted value was
+  restored and the check re-run clean.
 - Frontend `npm run verify` — clean. **1512 tests in 85 files**, identical to the count on `main`
   before this change.
 - Backend, standalone — Biome clean, `tsc --build --force` clean, **787 tests in 33 files**,

@@ -47,15 +47,31 @@ const SKIP = new Set([
 ])
 
 /**
- * The major from a version range: `^24.13.4`, `~24.1`, `>=24`, `24` all yield 24.
+ * Every major a version range permits: `^24.13.4`, `~24.1`, `>=24` and `24` all yield `[24]`.
  *
- * Returns null when there is no leading number, which is a real answer rather than a parse
- * failure — `*` and `latest` pin nothing, and a check that silently treated them as agreement
- * would pass for the wrong reason.
+ * **Every one, not the first one.** Reading only the leading number made `^24.13.4 || ^26.0.0`
+ * report `[24]` and pass, while the declaration went on permitting Node 26 — the check saying
+ * yes to precisely the drift it exists to catch. So each `||` alternative is read separately
+ * and all of them have to agree.
+ *
+ * An alternative naming more than one version (`>=20 <25`) is a range this cannot reduce to a
+ * major, and it says so rather than guessing: `NaN` propagates to the caller, which reports the
+ * declaration as unverifiable and fails. Guessing would mean picking one end of a range and
+ * calling it the answer, which is how a check comes to certify something nobody checked.
+ *
+ * An empty result means nothing numeric was found at all — `*`, `latest`, a typo. Also a
+ * failure, in the caller: a range that pins nothing is not a range that agrees.
  */
 function majorsOf(range) {
-  const match = /(\d+)/.exec(String(range ?? ''))
-  return match ? [Number(match[1])] : []
+  return String(range ?? '')
+    .split('||')
+    .map((alternative) => alternative.trim())
+    .filter((alternative) => alternative !== '')
+    .map((alternative) => {
+      const versions = alternative.match(/\d+(?:\.\d+)*/g) ?? []
+      if (versions.length !== 1) return Number.NaN
+      return Number(versions[0]?.split('.')[0])
+    })
 }
 
 /** Every package.json in the repository, generated and vendored trees excluded. */
@@ -105,8 +121,18 @@ function expect(where, what, majors) {
     return
   }
   for (const major of majors) {
-    if (major === expected) checked.push(`  ok   ${where}: ${what} -> ${major}`)
-    else problems.push(`${where}: ${what} declares ${major}, but .nvmrc declares ${expected}`)
+    if (Number.isNaN(major)) {
+      // Refused rather than guessed. A compound range like `>=20 <25` has no single major, and
+      // picking one end of it would be this check certifying something it never established.
+      problems.push(
+        `${where}: ${what} is a range this check cannot reduce to one major - ` +
+          `write it as a single ${expected}.x range, or teach this check to read it`,
+      )
+    } else if (major === expected) {
+      checked.push(`  ok   ${where}: ${what} -> ${major}`)
+    } else {
+      problems.push(`${where}: ${what} declares ${major}, but .nvmrc declares ${expected}`)
+    }
   }
 }
 
