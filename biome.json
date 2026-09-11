@@ -7,16 +7,19 @@
   },
   "files": {
     "includes": [
-      "**",
+      "scripts/**",
+      "e2e/**",
+      "infra/**",
+      ".devcontainer/**",
+      ".github/**",
+      "*.json",
+      "!frontend",
+      "!backend",
       "!**/dist",
       "!**/coverage",
-      "!backend",
       "!**/playwright-report",
       "!**/test-results",
-      "!infra/couchdb/design-docs",
-      "!packages/web/src/generated",
-      "!packages/web/src/fonts",
-      "!packages/web/src/icons/svg"
+      "!infra/couchdb/design-docs"
     ]
   },
   "formatter": {
@@ -27,7 +30,9 @@
   },
   "linter": {
     "enabled": true,
-    "rules": { "preset": "recommended" }
+    "rules": {
+      "preset": "recommended"
+    }
   },
   "javascript": {
     "formatter": {

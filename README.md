@@ -97,24 +97,36 @@ every project's address and participant list to every user
 
 ### Layout
 
-| Directory       | Contains                                                            | Depends on     |
-| --------------- | ------------------------------------------------------------------- | -------------- |
-| `packages/core` | Pure browser domain: Matter codec, room paths, conflict merge       | nothing        |
-| `packages/data` | PouchDB repositories, sync manager                                  | `core`         |
-| `packages/web`  | Lit SPA                                                             | `core`, `data` |
-| `backend`       | Fastify service, and its own pure domain in `src/domain`            | nothing        |
-| `openapi.yaml`  | The HTTP contract both sides are held to                            | —              |
+Two halves and a contract between them.
 
-`backend` installs, typechecks and tests **on its own** — it shares no package with the
-browser and needs no Web Awesome token. That is deliberate: ADR 0004 chose TypeScript partly
-to avoid writing domain logic twice, and the code has since shown that no such sharing exists
-(the browser and the service have one type in common and no functions), so the backend stays
-replaceable in another language.
+| Directory      | Contains                                                              | Depends on |
+| -------------- | --------------------------------------------------------------------- | ---------- |
+| `frontend`     | The browser application — `src/domain`, `src/data`, `src/ui`           | nothing    |
+| `backend`      | Fastify service, and its own pure domain in `src/domain`               | nothing    |
+| `e2e`          | Playwright journeys against the built site                             | both       |
+| `openapi.yaml` | The HTTP contract both sides are held to                               | —          |
 
-Pure logic — no I/O, no DOM, no network — lives in `packages/core` for the browser and
+**Each half installs, lints, typechecks, tests and builds on its own**, with its own
+`package.json`, lockfile, `tsconfig`, Biome and Vitest configuration. They share no package.
+That is deliberate rather than tidy: ADR 0004 chose TypeScript partly to avoid writing domain
+logic twice, the code has since shown no such sharing exists — the browser and the service
+have one type alias in common and no functions — and so either side stays replaceable in
+another language. `backend` in particular needs no Web Awesome token, which is what lets a
+fork's backend pull request pass CI where the frontend's cannot.
+
+Inside `frontend`, the three directories are what used to be three npm packages:
+
+| Directory          | Contains                                             | Depends on   |
+| ------------------ | ---------------------------------------------------- | ------------ |
+| `src/domain`       | Matter codec, room paths, drafts, conflict merge      | **nothing**  |
+| `src/data`         | PouchDB repositories, sync manager                    | `src/domain` |
+| `src/ui`           | Lit SPA, routing, views, PDF, QR                      | both         |
+
+Pure logic — no I/O, no DOM, no network — lives in `frontend/src/domain` for the browser and
 `backend/src/domain` for the service. That is where almost all the logic that can be _wrong_
 lives, and it runs in milliseconds with zero setup. If something needs a browser or a database
-to test, that is a signal it belongs elsewhere.
+to test, that is a signal it belongs elsewhere. The purity is enforced, not requested: see
+`frontend/tsconfig.domain.json` and `frontend/test/domain/purity.test.ts`.
 
 ---
 
@@ -123,8 +135,8 @@ to test, that is a signal it belongs elsewhere.
 ### Prerequisite: a Web Awesome Pro token
 
 The UI uses [Web Awesome Pro](https://webawesome.com), which is published only to Web
-Awesome's own registry. Export your token before installing — `.npmrc` reads it from the
-environment, and `npm ci` fails without it:
+Awesome's own registry. Export your token before installing — `frontend/.npmrc` reads it from
+the environment, and `npm ci` fails without it:
 
 ```bash
 export WEBAWESOME_NPM_TOKEN=...   # from your Web Awesome account
@@ -142,22 +154,25 @@ comes up alongside, already configured, and your token is forwarded from the hos
 **Without:**
 
 ```bash
-npm ci
-docker compose -f .devcontainer/docker-compose.yml up -d couchdb  # optional until M4
-npm run verify        # lint + typecheck + tests
-npm run dev           # Vite dev server with HMR on http://localhost:5173
+npm ci                          # root tooling: Biome and the e2e suite
+npm ci --prefix frontend        # the application (needs the token above)
+npm ci --prefix backend         # the service (needs no token)
+docker compose -f .devcontainer/docker-compose.yml up -d couchdb
+npm run verify                  # everything, both halves
+npm run dev                     # Vite dev server with HMR on http://localhost:5173
 ```
 
 | Command              | Does                                                                                                                                                             |
 | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `npm run dev`        | Vite dev server for `packages/web` with hot module replacement. Builds `core` and `data` first, because the web app resolves them through their emitted `dist/`. |
-| `npm run build`      | Production bundle into `packages/web/dist`. Same two steps the deploy workflow runs.                                                                             |
-| `npm run preview`    | Serve the built bundle, to check it before deploying.                                                                                                            |
-| `npm run verify`     | Dependency policy, `.npmrc` guard, Biome, typecheck, tests. CI additionally runs coverage gates and the CouchDB contract checks, which need a live CouchDB.      |
-| `npm test`           | Unit and integration tests                                                                                                                                       |
-| `npm run test:watch` | Test watcher for red-green-refactor                                                                                                                              |
-| `npm run check:fix`  | Auto-fix formatting and lint                                                                                                                                     |
-| `npm run e2e`        | Playwright end-to-end suite                                                                                                                                      |
+| `npm run dev`        | Vite dev server for `frontend` with hot module replacement, on http://localhost:5173.                                                                     |
+| `npm run build`      | Production bundle into `frontend/dist`. Typechecks first — both passes — because the deploy is the last place to find a type error.                        |
+| `npm run preview`    | Serve the built bundle, to check it before deploying.                                                                                                     |
+| `npm run verify`     | **Everything**: the repository-wide checks, then `frontend`'s own verify, then `backend`'s. CI adds coverage gates and the CouchDB contract checks.        |
+| `npm run e2e`        | Playwright end-to-end suite against the built site                                                                                                        |
+| `npm run check:fix`  | Auto-fix formatting and lint at the root. Each half has its own: `npm run check:fix --prefix frontend`.                                                    |
+
+Anything that belongs to one half is run from that half — `npm test --prefix frontend`,
+`npm run test:watch --prefix backend`. The root runs what spans them.
 
 ---
 

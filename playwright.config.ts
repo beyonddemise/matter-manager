@@ -39,7 +39,7 @@ export default defineConfig({
     // `preview` serves `dist`, which is the artefact the deploy uploads. `--strictPort` for the
     // reason `vite.config.ts` gives: everything around it names 4173, and a silent move leaves
     // the suite testing whatever else is on the next port.
-    command: 'npm --workspace @matter-manager/web run preview -- --port 4173 --strictPort',
+    command: 'npm --prefix frontend run preview -- --port 4173 --strictPort',
     url: 'http://localhost:4173',
     reuseExistingServer: process.env.CI === undefined,
     timeout: 60_000,

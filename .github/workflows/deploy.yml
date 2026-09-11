@@ -109,18 +109,24 @@ jobs:
             exit 1
           fi
 
-      - name: Reject a literal token in .npmrc
+      - name: Reject a literal token in any .npmrc
         run: node scripts/check-npmrc.mjs
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: .nvmrc
           cache: npm
+          # This job installs `frontend` and nothing else - it builds the site, and the root
+          # holds only Biome and the end-to-end suite, neither of which deploys anything. So
+          # the cache is keyed on the lockfile actually being installed; left at the default it
+          # would key on the root's and be restored for a tree this job never uses.
+          cache-dependency-path: frontend/package-lock.json
 
       # --ignore-scripts for the same reason as in ci.yml: a transitive dependency's
       # postinstall would otherwise run with WEBAWESOME_NPM_TOKEN in its environment.
       - name: Install (no lifecycle scripts)
         run: npm ci --ignore-scripts
+        working-directory: frontend
         env:
           WEBAWESOME_NPM_TOKEN: ${{ secrets.WEBAWESOME_NPM_TOKEN }}
 
@@ -130,16 +136,18 @@ jobs:
       # new version because the old service worker will not step aside.
       - name: Caching contract
         run: npm run check:deploy
+        working-directory: frontend
 
-      # `vite build` resolves @matter-manager/core and @matter-manager/data through their
-      # emitted declarations and JS, so the project references have to be built first. Without
-      # this the build fails with "Failed to resolve import", which reads like a missing
-      # dependency rather than a missing build step.
-      - name: Build workspace packages
-        run: npm run typecheck
-
+      # One package since #181, so there is nothing to build first: `core` and `data` used to be
+      # separate projects resolved through their emitted declarations, which is why this job
+      # needed a `tsc --build` before `vite build` or failed with "Failed to resolve import".
+      # They are now directories inside the same package, and Vite compiles the source.
+      #
+      # `npm run build` still typechecks before bundling - both passes, including the domain
+      # purity one - because a deploy is the last place to discover a type error.
       - name: Build the site
-        run: npm --workspace @matter-manager/web run build
+        run: npm run build
+        working-directory: frontend
 
       # Direct Upload rather than Cloudflare's Git integration, so that what is deployed is
       # what this repository's own pipeline built - same Node version, same lockfile, same
@@ -191,7 +199,7 @@ jobs:
           # the step above refused anything outside [A-Za-z0-9._/-]; without that check this
           # line would be the injection the check exists to prevent.
           command: >-
-            pages deploy packages/web/dist
+            pages deploy frontend/dist
             --project-name=matter-manager-app
             --branch=${{ steps.branch.outputs.name }}
 

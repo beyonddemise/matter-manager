@@ -1,0 +1,91 @@
+import { describe, expect, it } from 'vitest'
+import { matchRoute } from '../../../src/ui/router/match.js'
+import { NAV_ROUTES, ROUTES } from '../../../src/ui/router/routes.js'
+
+describe('the route registry', () => {
+  it('routes the root path to the device list', () => {
+    expect(matchRoute('#/', ROUTES)?.route.view).toBe('device-list')
+  })
+
+  it('routes /settings to the settings view', () => {
+    expect(matchRoute('#/settings', ROUTES)?.route.view).toBe('settings')
+  })
+
+  it('gives every route a unique path', () => {
+    const paths = ROUTES.map((route) => route.path)
+    expect(new Set(paths).size).toBe(paths.length)
+  })
+
+  it('lists exactly the labelled routes in the navigation', () => {
+    expect(NAV_ROUTES).toEqual(ROUTES.filter((route) => route.label !== undefined))
+  })
+
+  it('has at least one navigation entry, or the shell has no navigation to render', () => {
+    expect(NAV_ROUTES.length).toBeGreaterThan(0)
+  })
+
+  it('gives every navigation entry a label and an icon', () => {
+    for (const route of NAV_ROUTES) {
+      expect(typeof route.label?.()).toBe('string')
+      expect(route.label?.()).not.toBe('')
+      expect(route.icon).toBeTruthy()
+    }
+  })
+
+  it('routes /devices/new to the add-device view', () => {
+    expect(matchRoute('#/devices/new', ROUTES)?.route.view).toBe('add-device')
+  })
+
+  it('routes /devices/<uuid> to the device view, capturing the uuid', () => {
+    const match = matchRoute('#/devices/6ba7b810-9dad-11d1-80b4-00c04fd430c8', ROUTES)
+    expect(match?.route.view).toBe('device')
+    expect(match?.params.id).toBe('6ba7b810-9dad-11d1-80b4-00c04fd430c8')
+  })
+
+  it('keeps /devices/new out of the reach of /devices/:id', () => {
+    // Registry order decides this: `matchRoute` returns the first match, and `:id` would
+    // happily capture the literal segment `new`. Reordering the two entries would send the add
+    // form to a device page for a device that does not exist, with nothing else looking wrong.
+    expect(ROUTES.findIndex((route) => route.path === '/devices/new')).toBeLessThan(
+      ROUTES.findIndex((route) => route.path === '/devices/:id'),
+    )
+    expect(matchRoute('#/devices/new', ROUTES)?.route.view).toBe('add-device')
+  })
+
+  it('routes /devices/<uuid>/edit to the edit view, capturing the uuid', () => {
+    const match = matchRoute('#/devices/6ba7b810-9dad-11d1-80b4-00c04fd430c8/edit', ROUTES)
+    expect(match?.route.view).toBe('edit-device')
+    expect(match?.params.id).toBe('6ba7b810-9dad-11d1-80b4-00c04fd430c8')
+  })
+
+  it('does not let /devices/:id swallow the edit route, whatever the order', () => {
+    // Unlike `/devices/new`, this pair cannot shadow each other: `matchRoute` compares segment
+    // counts before comparing anything else. Asserted rather than assumed, because the
+    // consequence of being wrong is the edit form silently rendering as a device page.
+    const reversed = [...ROUTES].reverse()
+    expect(matchRoute('#/devices/abc/edit', reversed)?.route.view).toBe('edit-device')
+    expect(matchRoute('#/devices/abc', reversed)?.route.view).toBe('device')
+  })
+
+  it('keeps the add-device route out of the navigation', () => {
+    // Reached from the button on the device list. A permanent nav entry beside "Devices"
+    // would list one section's action as though it were a section.
+    expect(NAV_ROUTES.map((route) => route.path)).not.toContain('/devices/new')
+  })
+
+  it('registers the views it is expected to, and no others', () => {
+    // A pin on the registry rather than a check that each view exists: this file runs in Node,
+    // and the shell's map of views cannot be imported here because loading it defines custom
+    // elements. `views.browser.test.ts` makes the stronger claim — that the shell has an entry
+    // for every route — and the two together are what stop a route matching a path and then
+    // failing to render, which is worse than not matching at all.
+    expect(ROUTES.map((route) => route.view)).toEqual([
+      'device-list',
+      'add-device',
+      'device',
+      'edit-device',
+      'rooms',
+      'settings',
+    ])
+  })
+})

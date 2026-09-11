@@ -18,7 +18,7 @@ coverage
 !.devcontainer/couchdb/**
 .playwright-mcp
 e2e
-packages/web
+frontend
 docs
 *.log
 .env

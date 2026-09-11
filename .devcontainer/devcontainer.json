@@ -9,7 +9,7 @@
     "3000": { "label": "API (Fastify)" },
     "5985": { "label": "CouchDB (5984 inside the network)" }
   },
-  "postCreateCommand": "npm ci && npx playwright install --with-deps chromium",
+  "postCreateCommand": "npm ci && npm ci --prefix frontend && npm ci --prefix backend && npx playwright install --with-deps chromium && (cd frontend && npx playwright install --with-deps chromium)",
   "customizations": {
     "vscode": {
       "extensions": [
@@ -23,8 +23,7 @@
       "settings": {
         "editor.defaultFormatter": "biomejs.biome",
         "editor.formatOnSave": true,
-        "editor.codeActionsOnSave": { "source.organizeImports.biome": "explicit" },
-        "typescript.tsdk": "node_modules/typescript/lib"
+        "editor.codeActionsOnSave": { "source.organizeImports.biome": "explicit" }
       }
     }
   },

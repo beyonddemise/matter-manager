@@ -34,7 +34,7 @@ export const ALLOWED_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTION
  * header here refused the application's own authenticated requests.
  *
  * This list previously omitted it, reasoning that "the CouchDB access token goes to CouchDB,
- * not here". That was a sound rule about a fact that was not true — `packages/web` sends the
+ * not here". That was a sound rule about a fact that was not true — `frontend/src/ui` sends the
  * header to this API, by design and by contract.
  */
 export const ALLOWED_HEADERS = ['content-type', 'accept', 'authorization'] as const

@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+
+  // `src/domain` is pure logic: no DOM, no network, no I/O. Until #181 that was enforced by
+  // `packages/core` being a separate TypeScript project whose `lib` stopped at ES2023 — the
+  // compiler simply did not believe `document` existed. Merging the packages takes the union
+  // of three `lib` and `types` lists, so `tsconfig.json` hands the DOM to every file. This
+  // file takes it back for the one directory where it matters.
+  //
+  // It is a **check, not a build**: `noEmit`, no `composite`, no references, nothing depends
+  // on its output. `npm run typecheck` runs it as a second pass. A domain module that reaches
+  // for `document`, `window`, `localStorage` or `process` fails here with `Cannot find name`,
+  // which is the same failure `packages/core` used to produce and for the same reason.
+  //
+  // What it CANNOT catch is an `import`: PouchDB, Lit and Web Awesome ship their own type
+  // definitions, so `types: []` does not hide them. `test/domain/purity.test.ts` covers that,
+  // and covers it transitively — a domain module importing a domain module that imports Lit is
+  // exactly the case a direct-import check waves through.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ES2023"],
+    "types": []
+  },
+  "include": ["src/domain/**/*.ts"]
+}

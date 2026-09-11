@@ -235,7 +235,7 @@ describe('the allowlists against what the service actually serves', () => {
   })
 
   it('permits the header the application actually sends', async () => {
-    // `packages/web/src/projects.ts` sends `authorization: Bearer …` to this API, and
+    // `frontend/src/ui/projects.ts` sends `authorization: Bearer …` to this API, and
     // `openapi.yaml` declares bearerAuth globally. Refusing the header in preflight refused
     // the application's own authenticated requests.
     expect(ALLOWED_HEADERS as readonly string[]).toContain('authorization')
