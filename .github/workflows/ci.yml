@@ -223,39 +223,18 @@ jobs:
 
       # Node ships Long Term Support on even majors only, and only from the October after
       # release, so "the current Node" and "the Node this runs on" are different questions.
-      # .nvmrc answers the second one, and the two image pins have to agree with it or the
-      # tests ran on a runtime production does not have. Dependabot cannot see any of that
-      # from a tag - it offered node:26 (#168) and typescript-node 5-26-bookworm (#160) while
-      # 26 was still Current. .github/dependabot.yml now suppresses those, and this is what
-      # makes the suppression verifiable rather than assumed: whatever Dependabot makes of a
-      # tag like `1-24-bookworm`, a bump that moves a pin without moving .nvmrc fails here.
-      - name: Every Node pin agrees with .nvmrc
-        run: |
-          expected=$(tr -d '[:space:]' < .nvmrc)
-          echo ".nvmrc declares Node $expected"
-
-          fail=0
-          check() {
-            # Unquoted, so several disagreeing pins in one file collapse onto one line and the
-            # annotation stays readable. Empty means the pattern stopped matching - a rewritten
-            # FROM line reads as agreement otherwise, which is the wrong way round to be wrong.
-            # shellcheck disable=SC2086,SC2116
-            found=$(echo $2)
-            if [ "$found" = "$expected" ]; then
-              echo "  ok   $1 -> $found"
-            else
-              echo "::error file=$1::pins Node ${found:-nothing}, but .nvmrc declares $expected"
-              fail=1
-            fi
-          }
-
-          check backend/Dockerfile \
-            "$(sed -n 's/^FROM node:\([0-9][0-9]*\)-.*/\1/p' backend/Dockerfile | sort -u)"
-          check .devcontainer/docker-compose.yml \
-            "$(sed -n 's#.*devcontainers/typescript-node:[0-9][0-9]*-\([0-9][0-9]*\)-.*#\1#p' \
-               .devcontainer/docker-compose.yml | sort -u)"
-
-          exit $fail
+      # .nvmrc answers the second one, and every other declaration has to agree with it or
+      # something ran against a runtime production does not have. Dependabot cannot see any of
+      # that from a version string - it offered node:26 (#168) and typescript-node
+      # 5-26-bookworm (#160) while 26 was still Current, and `@types/node@^26` was sitting on
+      # `main` unnoticed until #179. .github/dependabot.yml suppresses those; this is what
+      # makes the suppression verifiable rather than assumed.
+      #
+      # The body of this check moved into `scripts/check-node-pins.mjs` so it can also run in
+      # `npm run verify`, before a push rather than after one - and because #179 added the two
+      # package.json declarations, which meant parsing JSON in `sed`.
+      - name: Every Node declaration agrees with .nvmrc
+        run: node scripts/check-node-pins.mjs
 
       # The repository root is the context, matching what `infra/compose.prod.yml` passes:
       # `infra/couchdb/design-docs` is copied from it. Nothing is pushed anywhere - building
