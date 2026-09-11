@@ -12,9 +12,6 @@
   "engines": {
     "node": ">=24"
   },
-  "workspaces": [
-    "e2e"
-  ],
   "scripts": {
     "dev": "npm --prefix frontend run dev",
     "build": "npm --prefix frontend run build",
@@ -24,8 +21,8 @@
     "check:deps": "node scripts/check-dependencies.mjs",
     "check:npmrc": "node scripts/check-npmrc.mjs",
     "check:node": "node scripts/check-node-pins.mjs",
-    "e2e": "playwright test",
-    "e2e:build": "npm run build && playwright test",
+    "e2e": "npm --prefix e2e test",
+    "e2e:build": "npm run build && npm --prefix e2e test",
     "dev:stack": "node scripts/dev-stack.mjs",
     "dev:stack:down": "docker compose -f .devcontainer/docker-compose.yml down",
     "verify": "npm run check:deps && npm run check:npmrc && npm run check:node && npm run check && npm --prefix frontend run verify && npm --prefix backend run verify"

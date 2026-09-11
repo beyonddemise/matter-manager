@@ -9,7 +9,7 @@
     "3000": { "label": "API (Fastify)" },
     "5985": { "label": "CouchDB (5984 inside the network)" }
   },
-  "postCreateCommand": "npm ci && npm ci --prefix frontend && npm ci --prefix backend && npx playwright install --with-deps chromium && (cd frontend && npx playwright install --with-deps chromium)",
+  "postCreateCommand": "npm ci && npm ci --prefix frontend && npm ci --prefix backend && npm ci --prefix e2e && (cd frontend && npx playwright install --with-deps chromium) && (cd e2e && npx playwright install --with-deps chromium)",
   "customizations": {
     "vscode": {
       "extensions": [
