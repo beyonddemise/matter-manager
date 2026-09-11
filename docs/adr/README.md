@@ -12,7 +12,7 @@ decision to be wrong. That is the part people need eighteen months later.
 | [0001](0001-record-architecture-decisions.md) | Record architecture decisions | Accepted |
 | [0002](0002-offline-first-pouchdb-couchdb.md) | Offline-first with PouchDB and CouchDB | Accepted |
 | [0003](0003-database-per-project.md) | One CouchDB database per project | Accepted (verified); discovery amended by 0012 |
-| [0004](0004-typescript-backend-openapi-contract.md) | TypeScript backend behind an OpenAPI contract | Accepted |
+| [0004](0004-typescript-backend-openapi-contract.md) | TypeScript backend behind an OpenAPI contract | Accepted; amended by 0015, reasoning superseded by 0017 |
 | [0005](0005-plaintext-payload-storage.md) | Store Matter payloads unencrypted | Accepted |
 | [0006](0006-materialised-path-rooms.md) | Rooms as materialised paths | Accepted |
 | [0007](0007-client-side-pdf.md) | Generate PDFs in the browser | Accepted |
@@ -25,6 +25,7 @@ decision to be wrong. That is the part people need eighteen months later.
 | [0014](0014-cloudflare-pages-deployment.md) | Cloudflare Pages by direct upload, caching contract pinned | Accepted |
 | [0015](0015-openapi-checked-not-executed.md) | The OpenAPI contract is checked against, not executed from | Accepted (amends 0004) |
 | [0016](0016-in-process-rate-limiting.md) | Rate limiting is in-process, which constrains how the API is deployed | Accepted |
+| [0017](0017-two-halves-one-contract.md) | Two halves and one contract, not a shared package | Accepted (supersedes 0004's reasoning) |
 
 ## Writing one
 

@@ -8,6 +8,16 @@ Accepted. **Amended by [ADR 0015](0015-openapi-checked-not-executed.md)**, which
 question this record left open: Fastify does not read OpenAPI, so "the contract is the source of
 truth" needed a mechanism. 0015 chooses checking over executing, and keeps Fastify.
 
+**Reasoning superseded by [ADR 0017](0017-two-halves-one-contract.md).** The decision below
+stands — the backend is still Fastify and TypeScript — but the argument for it does not. The
+Context section leans on `packages/core` holding logic "needed by *both* the browser and the
+server". Counted against the tree immediately before the move, the API imported 27 distinct
+symbols from `core` and the browser imported 58, with exactly one — the `ProjectRole` type
+alias — in common, and no shared functions at all. The first Consequence, "`packages/core` is
+written once and used by browser and server alike", describes something that did not happen,
+and #181 removed `packages/core` entirely. 0017 records what actually keeps a Quarkus rewrite
+available.
+
 ## Context
 
 The backend is small. It handles Google OIDC, mints JWTs, provisions project databases,
