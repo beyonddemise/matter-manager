@@ -107,7 +107,8 @@ Two halves and a contract between them.
 | `openapi.yaml` | The HTTP contract both sides are held to                               | —          |
 
 **Each half installs, lints, typechecks, tests and builds on its own**, with its own
-`package.json`, lockfile, `tsconfig`, Biome and Vitest configuration. They share no package.
+`package.json`, lockfile, `tsconfig`, Biome and Vitest configuration. `e2e` is self-contained
+the same way, including its own `playwright.config.ts`. They share no package.
 That is deliberate rather than tidy: ADR 0004 chose TypeScript partly to avoid writing domain
 logic twice, the code has since shown no such sharing exists — the browser and the service
 have one type alias in common and no functions — and so either side stays replaceable in
@@ -154,9 +155,10 @@ comes up alongside, already configured, and your token is forwarded from the hos
 **Without:**
 
 ```bash
-npm ci                          # root tooling: Biome and the e2e suite
+npm ci                          # root tooling: Biome, for the files the root owns
 npm ci --prefix frontend        # the application (needs the token above)
 npm ci --prefix backend         # the service (needs no token)
+npm ci --prefix e2e             # the end-to-end journeys (needs no token)
 docker compose -f .devcontainer/docker-compose.yml up -d couchdb
 npm run verify                  # everything, both halves
 npm run dev                     # Vite dev server with HMR on http://localhost:5173

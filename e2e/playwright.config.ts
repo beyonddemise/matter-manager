@@ -1,7 +1,7 @@
 import { defineConfig, devices } from '@playwright/test'
 
 /**
- * The end-to-end suite, promised in `e2e/README.md` since M2 and empty until #57.
+ * The end-to-end suite, promised in `README.md` since M2 and empty until #57.
  *
  * **It drives the built site, not the dev server.** What these journeys are for is the things
  * unit tests cannot reach — the service worker, the bundle actually shipping, a real IndexedDB
@@ -14,7 +14,7 @@ import { defineConfig, devices } from '@playwright/test'
  * stay a manual check, written down rather than implied.
  */
 export default defineConfig({
-  testDir: 'e2e/tests',
+  testDir: 'tests',
   // Journeys touch a shared IndexedDB per browser context; running them at once in one browser
   // would have them deleting each other's devices.
   workers: 1,
@@ -39,7 +39,10 @@ export default defineConfig({
     // `preview` serves `dist`, which is the artefact the deploy uploads. `--strictPort` for the
     // reason `vite.config.ts` gives: everything around it names 4173, and a silent move leaves
     // the suite testing whatever else is on the next port.
-    command: 'npm --prefix frontend run preview -- --port 4173 --strictPort',
+    // `../frontend`, because Playwright resolves a relative webServer command against the
+    // directory holding this config. It read `frontend` while this file sat at the
+    // repository root; moving the config moves what "relative" means.
+    command: 'npm --prefix ../frontend run preview -- --port 4173 --strictPort',
     url: 'http://localhost:4173',
     reuseExistingServer: process.env.CI === undefined,
     timeout: 60_000,

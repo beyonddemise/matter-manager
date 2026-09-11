@@ -36,17 +36,25 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: npm
-          # Two lockfiles since #181: the root holds only Biome and the end-to-end suite, and
-          # the application's own dependencies live in `frontend/`. Naming both keeps the cache
-          # keyed on what is actually installed.
+          # Three lockfiles: the root holds Biome alone, the application's dependencies live in
+          # `frontend/`, and the end-to-end suite owns its own since it stopped being a root
+          # workspace. Naming all three keys the cache on what is actually installed.
           cache-dependency-path: |
             package-lock.json
             frontend/package-lock.json
+            e2e/package-lock.json
 
-      # The root install is small and deliberately tokenless - Biome plus @playwright/test for
-      # the `e2e` workspace. Nothing here reaches Web Awesome's registry.
+      # The root install is one package: Biome, for the files the root owns. Deliberately
+      # tokenless - nothing here reaches Web Awesome's registry.
       - name: Install the root tooling
         run: npm ci --ignore-scripts
+
+      # Its own install since `e2e` stopped being a root workspace and became a directory that
+      # owns its config, its lockfile and its scripts - the same shape as the two halves, for a
+      # suite that belongs to neither.
+      - name: Install the end-to-end suite
+        run: npm ci --ignore-scripts
+        working-directory: e2e
 
       # --ignore-scripts is not caution, it is the point: any transitive dependency's
       # postinstall would otherwise run with WEBAWESOME_NPM_TOKEN in its environment and
@@ -66,12 +74,12 @@ jobs:
       # fetched. It has to be installed explicitly, and only for Chromium: the other engines
       # are unused here.
       #
-      # BOTH versions are read, because there are now two Playwrights: `frontend` depends on
-      # `playwright` for its browser-mode tests, and the root `e2e` workspace depends on
-      # `@playwright/test`. The root workspace used to hoist them to one copy; #181 split the
-      # installs and they immediately diverged - 1.63.0 against 1.62.1, which are different
-      # browser builds (1243 and 1234). Installing for one left the other launching a binary
-      # that was never fetched, and CI caught it on the first run.
+      # BOTH versions are read, because there are two Playwrights: `frontend` depends on
+      # `playwright` for its browser-mode tests, and `e2e` depends on `@playwright/test`. They
+      # were one hoisted copy until #181 split the installs, and they immediately diverged -
+      # 1.63.0 against 1.62.1, which are different browser builds (1243 and 1234). Installing
+      # for one left the other launching a binary that was never fetched, and CI caught it on
+      # the first run.
       #
       # They are held in step by `.github/dependabot.yml` (the dev-tooling group matches both
       # `playwright` and `@playwright/*`, grouped by dependency-name). This step does not rely
@@ -81,7 +89,7 @@ jobs:
         id: playwright-version
         run: |
           frontend=$(node -p "require('./frontend/node_modules/playwright/package.json').version")
-          e2e=$(node -p "require('./node_modules/@playwright/test/package.json').version")
+          e2e=$(node -p "require('./e2e/node_modules/@playwright/test/package.json').version")
           echo "frontend=$frontend" >> "$GITHUB_OUTPUT"
           echo "e2e=$e2e" >> "$GITHUB_OUTPUT"
           echo "Playwright: frontend $frontend, e2e $e2e"
@@ -107,6 +115,7 @@ jobs:
       - name: Install Playwright Chromium (e2e)
         if: steps.playwright-cache.outputs.cache-hit != 'true'
         run: npx playwright install --with-deps chromium
+        working-directory: e2e
 
       # A cache hit restores the browser binary but not the OS-level shared libraries that
       # --with-deps installs: those are runner packages, not files under
