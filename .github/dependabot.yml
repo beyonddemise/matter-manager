@@ -64,7 +64,10 @@ updates:
         # hoisted copy until #181 split the installs, and the pattern list matched only the
         # scoped name - so Dependabot would have bumped one and not the other, which is
         # precisely how they came to be 1.63.0 and 1.62.1 pointing at different browser
-        # builds. Grouped, they move together or not at all.
+        # builds. Grouped, they move together where Dependabot can manage it - `group-by` falls
+        # back to separate pull requests when directories carry incompatible requirements, and
+        # covers version updates only, not security ones. So this reduces the drift; the CI job
+        # is what tolerates it, by installing a browser for each Playwright it finds.
         patterns:
           ['@biomejs/*', 'vitest', '@vitest/*', 'typescript', 'playwright', '@playwright/*']
         group-by: dependency-name
