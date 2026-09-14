@@ -313,8 +313,8 @@ jobs:
       # a working one. #173's devcontainer rule carried a registry host, matched nothing, and was
       # discovered a month later by the step above failing on the update it should have
       # prevented (#193).
-      - name: Every Dependabot ignore names a real dependency
-        run: node scripts/check-dependabot-ignores.mjs
+      - name: Dependabot watches everything, and names it correctly
+        run: node scripts/check-dependabot.mjs
 
       # The repository root is the context, matching what `infra/compose.prod.yml` passes:
       # `infra/couchdb/design-docs` is copied from it. Nothing is pushed anywhere - building

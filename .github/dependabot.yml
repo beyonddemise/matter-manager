@@ -26,12 +26,19 @@ updates:
   # still there and still has updates to offer.
   #
   # `/frontend` is here from the change that created it (#181) rather than from a later repair,
-  # which is the whole point of learning that the hard way once.
+  # which was meant to be the point of learning that the hard way once. `/e2e` then went
+  # unlisted when #192 gave it its own lockfile - a third instance of the same thing, and the
+  # one that left `@playwright/test` unwatched while the group below exists to hold it in step
+  # with `frontend`'s `playwright`.
+  #
+  # `scripts/check-dependabot.mjs` is why there will not be a fourth: it reads the files on
+  # disk and fails the build when a directory holding a manifest is not listed here.
   - package-ecosystem: npm
     directories:
       - /
       - /frontend
       - /backend
+      - /e2e
     registries:
       - webawesome
     schedule:
