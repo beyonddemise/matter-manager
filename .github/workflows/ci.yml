@@ -307,6 +307,15 @@ jobs:
       - name: Every Node declaration agrees with .nvmrc
         run: node scripts/check-node-pins.mjs
 
+      # The other half of the same policy, and the half that was silently broken. A Dependabot
+      # `ignore` naming a dependency that does not exist is not an error to Dependabot - it
+      # matches nothing and the run succeeds, so an inert suppression is indistinguishable from
+      # a working one. #173's devcontainer rule carried a registry host, matched nothing, and was
+      # discovered a month later by the step above failing on the update it should have
+      # prevented (#193).
+      - name: Every Dependabot ignore names a real dependency
+        run: node scripts/check-dependabot-ignores.mjs
+
       # The repository root is the context, matching what `infra/compose.prod.yml` passes:
       # `infra/couchdb/design-docs` is copied from it. Nothing is pushed anywhere - building
       # proves the Dockerfile, and publishing is a separate decision that belongs with M9.

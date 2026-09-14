@@ -147,13 +147,31 @@ updates:
     ignore:
       - dependency-name: matter-manager/couchdb
       - dependency-name: matter-manager/couchdb-dev
-      # Same Node LTS policy as the docker ecosystem above. This tag is `1-24-bookworm`, where
-      # 24 is the Node major and the leading 1 is the devcontainer image's own version - so the
-      # bump offered in #160 was `5-26-bookworm`, moving both at once. That reads as a major
-      # change on either reading of the tag, so this rule catches it; the CI pin check is what
-      # makes that certain rather than assumed.
-      - dependency-name: mcr.microsoft.com/devcontainers/typescript-node
-        update-types: [version-update:semver-major]
+      # NO registry host, and NO update-types. Both halves of that were wrong until #193, and
+      # the rule had therefore never matched anything.
+      #
+      # The name: Dependabot strips the registry. Its own compatibility-score link on #193 reads
+      # `dependency-name=devcontainers/typescript-node`, and the options reference gives the
+      # same rule by example - for
+      # `<account>.dkr.ecr.us-west-2.amazonaws.com/base/foo/bar/ruby:3.1.0-focal-jemalloc`, use
+      # `base/foo/bar/ruby`. `mcr.microsoft.com/...` matched no dependency, so this entry was
+      # inert from the day it was written in #173. The two `matter-manager/couchdb` names above
+      # have no host either, which is why those two have always worked.
+      #
+      # The absent update-types: this tag is `1-24-bookworm`, where 24 is the Node major and the
+      # leading 1 is the devcontainer image's own version. **One tag, two independent versions**,
+      # so there is no update to it that is safe to take automatically - a bump of the image's
+      # own version can carry a Node major with it, which is exactly what `5-26-bookworm` is.
+      # Whether Dependabot would even classify that as `semver-major` is undocumented for
+      # non-semver Docker tags, so the old rule rested on an assumption that could not be
+      # checked. Ignoring the image outright needs no such assumption.
+      #
+      # The cost is that patch updates to the devcontainer image are no longer offered. That is
+      # acceptable: it is a development-only image, nothing it contains reaches production, and
+      # adopting a new tag is already meant to be a decision somebody makes. `scripts/check-node-pins.mjs`
+      # stays the backstop - it is what caught #193 - and `scripts/check-dependabot-ignores.mjs`
+      # now fails the build if a registry host creeps back into any of these names.
+      - dependency-name: devcontainers/typescript-node
     groups:
       compose-images:
         patterns: ['*']
