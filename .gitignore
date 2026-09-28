@@ -24,6 +24,7 @@ __screenshots__
 *.pem
 *.key
 !infra/couchdb/**/*.key
+/docs
 
 # Local data
 .couchdb-data/
