@@ -192,8 +192,8 @@ export async function installSigningKey(
         `${session.name === undefined ? 'nobody' : `"${session.name}"`}` +
         `${session.authenticated === undefined ? '' : ` (via ${session.authenticated})`}, ` +
         `not as "${sub}". The key is in the configuration but not in effect — check that the ` +
-        'value has no PEM banner or newlines, and that the section is [jwt_keys] with an ' +
-        '"ec:" prefix.',
+        'value is the whole PEM including its banner lines, with newlines written as the ' +
+        'escape sequence \\n, and that the section is [jwt_keys] with an "ec:" prefix.',
     )
   }
 }

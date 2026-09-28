@@ -246,23 +246,30 @@ describe('choosing a key', () => {
 })
 
 describe('the public key CouchDB is given', () => {
-  it('is a single line with no PEM banner', () => {
-    // CouchDB's config is an ini file, where a value cannot span lines. A PEM with its headers
-    // and newlines intact is accepted into the config and then cannot be parsed — so every
-    // token fails to verify while the configuration looks perfectly correct.
+  it('is the whole PEM, with newlines as the two-character escape', () => {
+    // The format CouchDB documents in its own default.ini:
+    //
+    //   ; For asymmetric keys, the value is the PEM encoding of the public
+    //   ; key with newlines replaced with the escape sequence \n.
+    //   ;   ec:bar = -----BEGIN PUBLIC KEY-----\nMHYwEAYHK...AzztRs\n-----END PUBLIC KEY-----\n
+    //
+    // The escape is there because the config is an ini file, where a value cannot span lines.
+    // The banners are not optional: jwtf_keystore restores the newlines and then decodes a PEM.
     const encoded = publicKeyForCouch(newKey().publicKey)
 
-    expect(encoded).not.toContain('BEGIN')
+    expect(encoded).toContain('-----BEGIN PUBLIC KEY-----')
+    expect(encoded).toContain('-----END PUBLIC KEY-----')
+    // The literal backslash-n, two characters — not a newline.
+    expect(encoded).toContain(String.raw`\n`)
     expect(encoded).not.toContain('\n')
-    expect(encoded).toMatch(/^[A-Za-z0-9+/=]+$/)
   })
 
-  it('round-trips back to the same key', () => {
-    // The check that the stripping did not damage it. Reassembling the PEM and verifying a
-    // real token with it proves the bytes CouchDB will hold are the bytes that work.
+  it('round-trips through the escape CouchDB undoes', () => {
+    // This test previously reassembled the PEM from bare base64 itself, which proved only that
+    // the bytes survived its own reassembly — never that CouchDB could read them. It passed
+    // while the encoding was wrong. So undo exactly what jwtf_keystore undoes, and nothing else.
     const key = newKey()
-    const encoded = publicKeyForCouch(key.publicKey)
-    const pem = `-----BEGIN PUBLIC KEY-----\n${(encoded.match(/.{1,64}/g) ?? []).join('\n')}\n-----END PUBLIC KEY-----\n`
+    const pem = publicKeyForCouch(key.publicKey).replaceAll(String.raw`\n`, '\n')
 
     const token = mintToken(key, { purpose: 'access', sub: 'google|abc', exp: soon() })
     expect(verifyToken(token, createPublicKey(pem), 'access').sub).toBe('google|abc')

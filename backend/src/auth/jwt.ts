@@ -284,15 +284,27 @@ export function verifyCompact<T extends { exp: number; iat?: number; purpose: To
 /**
  * The public key as CouchDB wants it in `[jwt_keys]`.
  *
- * PEM, with the header and footer lines and the newlines removed — CouchDB's config is an
- * ini file, where a value cannot span lines. Getting this wrong produces a key CouchDB accepts
- * into its config and then cannot parse, so every token fails to verify while the configuration
- * looks correct.
+ * The **whole PEM**, banners included, with every newline replaced by the two-character escape
+ * sequence `\n`. CouchDB's own `default.ini` is the authority:
+ *
+ * ```text
+ * ; For asymmetric keys, the value is the PEM encoding of the public
+ * ; key with newlines replaced with the escape sequence \n.
+ * ;   ec:bar = -----BEGIN PUBLIC KEY-----\nMHYwEAYHK...AzztRs\n-----END PUBLIC KEY-----\n
+ * ```
+ *
+ * The escape exists because the config is an ini file, where a value cannot span lines;
+ * `jwtf_keystore` turns it back into a real newline before decoding the PEM.
+ *
+ * This function used to strip the banners and the whitespace, emitting bare base64 DER. CouchDB
+ * stores any string you give it and reports it back unchanged, so `[jwt_keys]` looked correct in
+ * `_config` while every token failed with a 400 — the exact failure the previous version of this
+ * comment warned about, describing the wrong half of it.
  */
 export function publicKeyForCouch(publicKey: KeyObject): string {
   return publicKey
     .export({ type: 'spki', format: 'pem' })
     .toString()
-    .replace(/-----(BEGIN|END) PUBLIC KEY-----/g, '')
-    .replace(/\s+/g, '')
+    .trimEnd()
+    .replace(/\n/g, '\\n')
 }

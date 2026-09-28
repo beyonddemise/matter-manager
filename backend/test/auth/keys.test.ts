@@ -80,12 +80,17 @@ describe('installing the signing key', () => {
   })
 
   it('publishes a value CouchDB can parse', async () => {
-    // A PEM with its banner lines and newlines intact is accepted into an ini config and then
-    // fails to load — so the configuration looks correct while every token is refused.
+    // The format CouchDB's default.ini documents: the whole PEM, banners included, with every
+    // newline written as the two-character escape `\n` because an ini value cannot span lines.
+    //
+    // This assertion was inverted until the deployment proved it: it required bare base64 with
+    // the banners stripped. CouchDB stores whatever string it is given and reports it back
+    // unchanged, so `_config` looked right while every token failed with a 400.
     const { admin, config } = fakeAdmin()
     await installSigningKey(admin, newKey())
 
-    expect(config[0]?.value).not.toContain('BEGIN')
+    expect(config[0]?.value).toContain('-----BEGIN PUBLIC KEY-----')
+    expect(config[0]?.value).toContain(String.raw`\n`)
     expect(config[0]?.value).not.toContain('\n')
   })
 
@@ -127,7 +132,7 @@ describe('installing the signing key', () => {
   it('says what to check when it refuses', async () => {
     const { admin } = fakeAdmin({ status: 401, name: null })
 
-    await expect(installSigningKey(admin, newKey('ec-a'))).rejects.toThrow(/PEM banner/)
+    await expect(installSigningKey(admin, newKey('ec-a'))).rejects.toThrow(/whole PEM/)
   })
 
   it('treats a 403 as success, because that is authentication working', async () => {
