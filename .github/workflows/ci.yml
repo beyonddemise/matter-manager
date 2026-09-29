@@ -150,6 +150,23 @@ jobs:
         run: npm run check:deploy
         working-directory: frontend
 
+      # The other half of the deployment contract. `_headers` decides how long the browser
+      # keeps what it was given; `_routes.json` decides whether it reaches a Function at all.
+      # Here as well as in deploy.yml for the same reason the step above is: a `/api/*` that
+      # has fallen out of `include` ships as 200 with the app shell, which review catches and
+      # monitoring does not.
+      - name: Forwarder routes
+        run: npm run check:routes
+        working-directory: frontend
+
+      # Bundles functions/ with esbuild, exactly as the deploy does, and needs no credentials
+      # to do it. The only check that proves the directory *compiles and routes* before a
+      # deployment rather than after: `npm run typecheck` checks the types, and the unit tests
+      # never load the route files at all.
+      - name: Forwarders bundle
+        run: npm run check:functions
+        working-directory: frontend
+
       # #120 shipped seven modules that were written, tested, and imported by nothing but their
       # own tests - so every suite passed while the features did not exist in the application.
       # Nothing could have noticed: a test that imports its module directly proves the module
@@ -462,9 +479,18 @@ jobs:
 
           fail=0
           # image:tag and the origin its own 10-*.ini overlay sets.
+          #
+          # These two literals are a second copy of a value that lives in
+          # `.devcontainer/couchdb/10-development.ini` and `infra/couchdb/10-production.ini`, and
+          # the copy has already gone stale once: the production overlay carried the placeholder
+          # `https://matter-manager.example` until d8ff00f replaced it with the real origin, and
+          # nothing here was updated, so this step failed on the first pull request that ran it.
+          # Substring matching is what keeps the duplication tolerable - the overlay may write a
+          # scheme, a port or a list, and only the host has to appear - but when an overlay's
+          # `origins` changes, this line changes with it.
           for pair in \
             "matter-manager/couchdb-dev:ci|localhost:5173" \
-            "matter-manager/couchdb:ci|matter-manager.example"
+            "matter-manager/couchdb:ci|app.matter-manager.io"
           do
             image=${pair%%|*}
             origin=${pair##*|}

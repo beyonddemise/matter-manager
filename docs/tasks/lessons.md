@@ -1305,3 +1305,41 @@ run on the branch is the result to believe over your own.
 
 **Applies to:** monorepo splits, workspace removal, browser and toolchain binaries, native
 modules, generated caches, and any devDependency whose version selects an out-of-band download.
+
+---
+
+## L38 — An error that names a cause is a hypothesis, not a finding
+
+**What happened:** `app.matter-manager.io` returned **522**. I reported it as "a leftover proxied
+record to a dead origin, not a Pages custom domain", and proposed fixing the DNS.
+
+The DNS was correct, and had been all along: a proxied `CNAME` to `matter-manager-app.pages.dev`,
+exactly right. The real fault was one layer further in — the hostname had never been added to the
+Pages project's custom-domain list (`domains: []`), so Pages did not recognise the `Host` header
+and Cloudflare had nothing to hand the request to.
+
+**Why it was easy to believe.** Cloudflare's 522 *means* "connection timed out to origin". The
+symptom names a cause, the named cause is a real thing that happens, and the explanation therefore
+arrives pre-justified — the same trap as L12, where a plausible mechanism was already available
+before anything had been tested.
+
+**What would have caught it** was one read-only API call, listing the zone's DNS records and the
+project's domains side by side. It cost nothing, mutated nothing, and was available before the
+diagnosis rather than after it. I made that call eventually — to plan the fix I had already
+described, which is one step too late for it to have informed the description.
+
+**Rule:** when an error message names a cause, treat it as the first hypothesis and read the
+configuration that would confirm it before reporting it as the finding. A cheap, non-mutating read
+that can falsify your explanation is not optional diligence; it is the difference between a
+diagnosis and a restatement of the symptom.
+
+**Corollary — count the registrations.** A Pages custom domain is **two** registrations: a DNS
+record in the zone, and the hostname on the project. Where a platform requires two and you supply
+one, the error necessarily points at the layer that failed, never at the one that was never made —
+so "the error names layer A" is positive evidence about A and no evidence at all about B. Ask what
+else had to be true, and check that too. The same zone shows the same defect a second time:
+`www.matter-manager.io` has its CNAME and is absent from `matter-manager-web`'s domain list.
+
+**Applies to:** Cloudflare Pages and Workers custom domains, TLS certificate provisioning, DNS-backed
+verifications, OAuth redirect URIs, webhook endpoints — anything where a working path needs both a
+record somewhere and a registration somewhere else.

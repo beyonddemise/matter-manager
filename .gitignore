@@ -8,6 +8,7 @@ dist/
 build/
 *.tsbuildinfo
 .vite/
+.wrangler/
 
 # Test output
 coverage/
@@ -24,7 +25,13 @@ __screenshots__
 *.pem
 *.key
 !infra/couchdb/**/*.key
-/docs
+
+# Working notes, kept local. Narrowed from a bare `/docs` (86bbe4a), which ignored the whole
+# tree: harmless for the ~50 todo files already tracked, because gitignore does not apply to
+# tracked files, and silent for every *new* doc — a spec or an ADR written after that commit
+# simply would not appear in `git status`. The rule keeps the working notes out and lets
+# docs/superpowers/specs, docs/adr and lessons.md commit normally.
+/docs/tasks/todo*.md
 
 # Local data
 .couchdb-data/

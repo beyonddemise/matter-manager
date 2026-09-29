@@ -73,16 +73,17 @@
   # the built bundle the same way #47 measured it in the first place: zero cross-origin requests
   # on a first visit. `scripts/check-offline-assets.mjs` is what keeps that true.
   #
-  # **No API origin and no CouchDB origin is wired yet** - which is narrower than saying
-  # nothing cross-origin is: the data: exception above is real and is used on every visit
-  # for icons. What is absent is this application's own back end: M5 wrote
-  # src/ui/sync/, and **nothing in the application imports it** — only its own tests
-  # do (#120). No code in the shipped bundle makes a request to the API or to CouchDB, so
-  # there is no origin to allow and no request being blocked.
+  # **/api and /db are forwarded by frontend/functions/**, which means the API and CouchDB are
+  # first-party as far as the browser is concerned — see
+  # docs/superpowers/specs/2026-09-29-pages-functions-proxy-design.md. `connect-src 'self'`
+  # already covers both, and wiring src/ui/sync/'s replication needs no change here: there is
+  # no third-party origin to name, so nothing to add to this file, and no build-time
+  # substitution step has to exist — a static asset with a fixed policy is enough.
   #
-  # **Both origins must be added here in the same change that wires it**, or replication will
-  # fail in production only, reported by the browser as a CSP violation rather than by anything
-  # this application can see. They are deployment values (the API host and the CouchDB host),
-  # so that change also needs a way to get them into this file at build time - it is a static
-  # asset today, with no substitution step.
+  # This is narrower than saying nothing cross-origin is: the data: exception above is real and
+  # is used on every visit for icons. And it is not "no request is made yet" either —
+  # composition.ts's readSessionState POSTs /api/auth/token on every load, same-origin, covered
+  # by 'self' like everything else. M5 wrote src/ui/sync/ and **nothing in the application
+  # imports it** — only its own tests do (#120) — but when it is wired in, it forwards through
+  # the same first-party path and this paragraph stays true without editing.
   Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: blob:; connect-src 'self' data:; manifest-src 'self'; worker-src 'self'; media-src 'self' blob:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'
