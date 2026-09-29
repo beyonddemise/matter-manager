@@ -149,3 +149,25 @@ export function upstreamHeaders(request: Request, kind: Upstream): Headers {
 
   return headers
 }
+
+/**
+ * The upstream's reply, rebuilt as ours.
+ *
+ * `new Response(upstream.body, upstream)` rather than copying headers into a plain object, and
+ * the difference is one specific bug: a `Headers` built from an object keeps one value per
+ * name, and `clearCookies` sets two `Set-Cookie` headers in a single reply. The user would be
+ * told they had signed out while still holding one of the two cookies.
+ *
+ * Passing `upstream.body` is safe for a 204 or a 304 - statuses whose body the runtime refuses
+ * to accept - because the body of such a response is already `null`. That is worth stating
+ * rather than trusting: PouchDB revalidates constantly, so a mistake here would work in every
+ * test and fail on the second replication.
+ *
+ * The body is a stream in both directions, so `_changes` and `_bulk_docs` are forwarded as
+ * they arrive rather than buffered into the Function's memory.
+ */
+export function toResponse(upstream: Response): Response {
+  const response = new Response(upstream.body, upstream)
+  for (const name of HOP_BY_HOP) response.headers.delete(name)
+  return response
+}

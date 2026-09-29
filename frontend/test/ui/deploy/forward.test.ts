@@ -3,6 +3,7 @@ import {
   prefixFor,
   stripPrefix,
   targets,
+  toResponse,
   upstreamHeaders,
   upstreamUrl,
 } from '../../../functions/_lib/forward.js'
@@ -238,5 +239,64 @@ describe('the headers sent upstream', () => {
     // the first thing to mislead somebody debugging a future one.
     const headers = upstreamHeaders(incoming('https://app.matter-manager.io/api/x'), 'api')
     expect(headers.get('access-control-allow-origin')).toBeNull()
+  })
+})
+
+describe('the response handed back to the browser', () => {
+  it('keeps the status and the status text', () => {
+    const out = toResponse(new Response('no', { status: 403, statusText: 'Forbidden' }))
+    expect(out.status).toBe(403)
+    expect(out.statusText).toBe('Forbidden')
+  })
+
+  it('keeps a redirect as a redirect rather than following it', () => {
+    // Step 3 of the sign-in flow. If this became a 200 the browser would be shown Google's
+    // authorization page served from our origin, never navigated anywhere, and never given a
+    // cookie - a failure that presents as a broken page, not as an error.
+    const out = toResponse(
+      new Response(null, {
+        status: 302,
+        headers: { location: 'https://accounts.google.com/o/oauth2/v2/auth?x=1' },
+      }),
+    )
+    expect(out.status).toBe(302)
+    expect(out.headers.get('location')).toBe('https://accounts.google.com/o/oauth2/v2/auth?x=1')
+  })
+
+  it('keeps both Set-Cookie headers when the upstream sets two', () => {
+    // `clearCookies` sets two in one reply. Copying headers one key at a time through a plain
+    // object keeps the last and loses the first, leaving a cookie the user believed they had
+    // cleared - which is why this is `new Response(body, upstream)` and not a hand-copied map.
+    const upstream = new Response(null, { status: 204 })
+    upstream.headers.append('set-cookie', 'mm_session=; Max-Age=0; Path=/')
+    upstream.headers.append('set-cookie', 'mm_flow=; Max-Age=0; Path=/')
+    expect(toResponse(upstream).headers.getSetCookie()).toEqual([
+      'mm_session=; Max-Age=0; Path=/',
+      'mm_flow=; Max-Age=0; Path=/',
+    ])
+  })
+
+  it('passes a 304 through without inventing a body', () => {
+    // PouchDB leans on conditional requests, and the Response constructor *throws* if a
+    // null-body status is given a body. A forwarder that always passed `upstream.body` would
+    // work until the first cache revalidation and then 500.
+    const out = toResponse(new Response(null, { status: 304, headers: { etag: '"1-abc"' } }))
+    expect(out.status).toBe(304)
+    expect(out.headers.get('etag')).toBe('"1-abc"')
+  })
+
+  it('passes a 204 through', () => {
+    expect(toResponse(new Response(null, { status: 204 })).status).toBe(204)
+  })
+
+  it('drops hop-by-hop headers on the way back too', () => {
+    const upstream = new Response('ok', { status: 200, headers: { connection: 'close' } })
+    expect(toResponse(upstream).headers.get('connection')).toBeNull()
+  })
+
+  it('preserves the body', async () => {
+    expect(await toResponse(new Response('{"ok":true}', { status: 200 })).text()).toBe(
+      '{"ok":true}',
+    )
   })
 })
