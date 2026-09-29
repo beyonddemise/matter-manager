@@ -29,8 +29,14 @@ build-time substitution step has to exist.
 
 ## Scope
 
-Both forwarders, in one change. `/db` ships ahead of its consumer — `src/ui/sync/` exists but
-nothing in the shipped bundle imports it — and that is accepted deliberately. The contract in
+Both forwarders, in one change.
+
+**Corrected 2026-09-29.** This said `/db` shipped "ahead of its consumer — `src/ui/sync/` exists
+but nothing in the shipped bundle imports it", repeating a stale comment in
+`frontend/public/_headers` rather than checking. It is wrong: `app-shell.ts:435` calls
+`projectSync()` and starts one replication per project, and the built bundle carries
+`couchUrl:"/db"`. `/db` has a live consumer, which makes the forwarder more load-bearing than
+this document claimed, not less. The contract in
 `devProxy` names both prefixes; honouring one of them in production would recreate the
 development/production split that the contract was written to prevent, and would mean opening
 these files again the moment replication is wired.

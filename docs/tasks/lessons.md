@@ -1385,3 +1385,38 @@ answer is to build the deterministic check rather than to soften the flaky one.
 **Applies to:** post-deploy smoke tests, health checks behind a CDN or WAF, anything asserting on a
 response served through infrastructure that can answer on its own behalf, and any check whose
 verdict rests on a body or content type rather than on a value the system under test produced.
+
+## L40 — A comment asserting what the code does *not* do rots without anything failing
+
+**What happened.** For most of a session I repeated that `src/ui/sync/` was written, tested, and
+imported by nothing — in a design spec, in a pull request description, and in conversation, as the
+reason `/db` was being built "ahead of its consumer". It had not been true for some time.
+`app-shell.ts:435` calls `projectSync()` and starts one replication per project; the built bundle
+carries `couchUrl:"/db"`.
+
+The source was a comment in `frontend/public/_headers` citing #120. I read it, believed it, and
+propagated it. Then — while **rewriting that very paragraph** to correct two other claims the
+Pages Functions work had falsified — I carried the sentence across unexamined and shipped it.
+
+**Why this kind of claim is different.** Most comments describe code beside them, and a reader
+editing that code sees them. A comment asserting that *something elsewhere does not exist* has no
+such anchor: the thing it denies can come into existence anywhere in the tree, and nothing about
+that event touches the comment or fails a test. It is the only class of comment that goes stale
+through work done somewhere else entirely.
+
+**What would have caught it** was one command. `npm run check:graph` exists precisely to answer
+"does anything import this", it runs on every build, and it prints `80 modules, all reachable from
+an entry point`. I ran it in this session — to check something else — and did not connect it.
+A `grep -rn "from '.*sync/"` was equally available and takes seconds.
+
+**Rule:** a claim that some part of the system is unused is a claim about the whole tree, so verify
+it against the whole tree before repeating it, and re-verify it every time you lean on it — it is
+load-bearing exactly when it is about to be wrong. Prefer a check that answers the question
+mechanically over a sentence that answered it once.
+
+**Corollary — correcting a paragraph does not vouch for the rest of it.** Rewriting two sentences
+in `_headers` implied review of the third, and there was none. When editing a comment for accuracy,
+the unit of verification is the paragraph, not the clause being changed.
+
+**Applies to:** "nothing calls this yet", "this is dead code", "only tests import it", "no request
+is made to X" — and to every comment explaining why something is *not* wired up.
