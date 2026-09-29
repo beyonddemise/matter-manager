@@ -1,6 +1,15 @@
 import { msg } from '@lit/localize'
 import { html } from 'lit'
-import { type DeviceDraft, DraftError, planNewDevice } from '../../domain/index.js'
+import {
+  type DeviceDraft,
+  DraftError,
+  PayloadError,
+  type PayloadProblem,
+  planNewDevice,
+  readCredential,
+} from '../../domain/index.js'
+import { imageMessage } from '../i18n/problems.js'
+import { codesFromImage, type ImageProblem, ImageScanError } from '../scan/image.js'
 import { cameraSource, type ScanSource } from '../scan/source.js'
 import { DeviceFormView, fieldValue } from './device-form.js'
 import './scan-dialog.js'
@@ -36,6 +45,7 @@ export class AddDeviceView extends DeviceFormView {
     canScan: { state: true },
     scanChecked: { state: true },
     scanOpen: { state: true },
+    uploadProblem: { state: true },
   }
 
   /** Bound by a test to a camera that is not one; the real one otherwise. */
@@ -51,12 +61,17 @@ export class AddDeviceView extends DeviceFormView {
    */
   declare scanChecked: boolean
   declare scanOpen: boolean
+  /** Why the last chosen picture produced no code, if it produced none. */
+  declare uploadProblem: ImageProblem | PayloadProblem | undefined
+  /** Bound by a test to a decoder that is not one; the real one otherwise. */
+  decodeImage: (file: Blob) => Promise<readonly string[]> = codesFromImage
 
   constructor() {
     super()
     this.canScan = false
     this.scanChecked = false
     this.scanOpen = false
+    this.uploadProblem = undefined
   }
 
   protected override firstUpdated(): void {
@@ -108,6 +123,50 @@ export class AddDeviceView extends DeviceFormView {
     // A code that was scanned cannot be malformed in the ways a typed one can, so an error
     // still on screen from an earlier attempt is now about text that is no longer there.
     if (this.error?.field === 'credential') this.error = undefined
+  }
+
+  /**
+   * Reads a chosen picture, and fills the field if there is a setup code in it.
+   *
+   * Deliberately the same destination as {@link onScan}: a code from a photograph is one more
+   * way to fill the field the form already has, not a second flow with a second idea of what a
+   * setup code is. `readCredential` runs here only to decide whether what was decoded *is* one
+   * - the form runs it again for real when it saves.
+   */
+  private async onUpload(event: Event): Promise<void> {
+    const input = event.target as HTMLInputElement
+    const file = input.files?.[0]
+    // Resetting lets the same file be chosen twice running. Without it the input holds the
+    // previous selection, `change` never fires again, and a second attempt at the same
+    // photograph appears to do nothing at all.
+    input.value = ''
+    if (file === undefined) return
+
+    this.uploadProblem = undefined
+    let codes: readonly string[]
+    try {
+      codes = await this.decodeImage(file)
+    } catch (error) {
+      if (!(error instanceof ImageScanError)) throw error
+      this.uploadProblem = error.problem
+      return
+    }
+
+    for (const code of codes) {
+      try {
+        readCredential(code)
+      } catch (error) {
+        if (!(error instanceof PayloadError)) throw error
+        // Kept, and the next code tried: a device's box often carries two, and giving up
+        // because the first one decoded was a URL would fail in the case this is most needed.
+        this.uploadProblem = error.problem
+        continue
+      }
+      this.setControlValue('[data-field="credential"]', code)
+      this.uploadProblem = undefined
+      if (this.error?.field === 'credential') this.error = undefined
+      return
+    }
   }
 
   private draft(): DeviceDraft {
@@ -182,11 +241,11 @@ export class AddDeviceView extends DeviceFormView {
             spellcheck="false"
           ></wa-input>
 
-          <!-- Absent, not disabled, when nothing here can scan. See {@link checkScanning}. -->
-          ${
-            this.canScan
-              ? html`
-                  <div class="wa-cluster wa-gap-s">
+          <div class="wa-cluster wa-gap-s">
+            <!-- Absent, not disabled, when nothing here can scan. See {@link checkScanning}. -->
+            ${
+              this.canScan
+                ? html`
                     <wa-button
                       data-scan
                       type="button"
@@ -198,9 +257,50 @@ export class AddDeviceView extends DeviceFormView {
                       <wa-icon slot="start" name="camera"></wa-icon>
                       ${msg('Scan the code')}
                     </wa-button>
-                  </div>
+                  `
+                : ''
+            }
+
+            <!-- Always rendered, unlike the camera button beside it, and that asymmetry is the
+                 feature. A machine with no camera shows no scan control at all, which is
+                 precisely the person holding a photograph of the label instead. Nothing is
+                 asked beforehand because every browser can choose a file; the only uncertainty
+                 is decoding, and that is reported when it happens rather than guessed at
+                 here - which also keeps the ZXing chunk off the page load. -->
+            <wa-button
+              data-upload
+              type="button"
+              appearance="outlined"
+              @click=${() => {
+                ;(this.querySelector('input[type="file"]') as HTMLInputElement | null)?.click()
+              }}
+            >
+              <wa-icon slot="start" name="image"></wa-icon>
+              ${msg('Upload an image')}
+            </wa-button>
+
+            <!-- Hidden rather than absent: the button above opens it, so it has to be in the
+                 tree to be opened. The accept attribute filters the picker and enforces
+                 nothing, which is why codesFromImage still answers for a file that is not an
+                 image. No backticks in this comment: it sits inside a template literal, where
+                 one would end it. -->
+            <input
+              type="file"
+              accept="image/*"
+              hidden
+              @change=${(event: Event) => void this.onUpload(event)}
+            />
+          </div>
+
+          ${
+            this.uploadProblem === undefined
+              ? ''
+              : html`
+                  <wa-callout variant="neutral" data-upload-problem>
+                    <wa-icon slot="icon" name="circle-info"></wa-icon>
+                    ${imageMessage(this.uploadProblem)}
+                  </wa-callout>
                 `
-              : ''
           }
         </div>
 

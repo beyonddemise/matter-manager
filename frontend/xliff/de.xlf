@@ -658,6 +658,22 @@
   <source>Keep it</source>
   <target>Behalten</target>
 </trans-unit>
+<trans-unit id="safe6e8a383023467">
+  <source>That file could not be read as an image. Choose a photograph or a screenshot.</source>
+  <target>Diese Datei konnte nicht als Bild gelesen werden. Bitte wählen Sie ein Foto oder einen Screenshot.</target>
+</trans-unit>
+<trans-unit id="s9dbdd33c32c1616a">
+  <source>No QR code was found in that image. Try a closer or sharper picture of the label.</source>
+  <target>In diesem Bild wurde kein QR-Code gefunden. Versuchen Sie eine nähere oder schärfere Aufnahme des Etiketts.</target>
+</trans-unit>
+<trans-unit id="sa364d8beed7ae9c2">
+  <source>This browser cannot read codes from images. Type the code instead.</source>
+  <target>Dieser Browser kann keine Codes aus Bildern lesen. Bitte geben Sie den Code ein.</target>
+</trans-unit>
+<trans-unit id="sf38d6612424880ee">
+  <source>Upload an image</source>
+  <target>Bild hochladen</target>
+</trans-unit>
 </body>
 </file>
 </xliff>

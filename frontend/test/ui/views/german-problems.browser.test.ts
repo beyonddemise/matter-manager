@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { DRAFT_PROBLEMS } from '../../../src/domain/index.js'
 import { activateLocale } from '../../../src/ui/i18n/localization.js'
 import { problemMessage } from '../../../src/ui/i18n/problems.js'
+import { ImageScanError } from '../../../src/ui/scan/image.js'
 import type { AddDeviceView } from '../../../src/ui/views/add-device.js'
 import '../../../src/ui/views/add-device.js'
 import '../../../src/ui/views/scan-dialog.js'
@@ -137,5 +138,32 @@ describe('the combobox names its own control in German too', () => {
     await combobox.updateComplete
     const create = combobox.querySelector('[data-create-option]')
     expect(create?.textContent).toContain('erstellen')
+  })
+})
+
+describe('a picture that carried no code speaks the interface language', () => {
+  it('says in German that no QR code was found', async () => {
+    // The same defect as #75, one family of messages further on: these sentences are chosen in
+    // `imageMessage`, which is a second switch that has to stay translated as the first one
+    // did. An untranslated entry here falls back to English silently - `lit-localize build`
+    // says so on stdout and nothing fails.
+    const element = await form()
+    element.decodeImage = async () => {
+      throw new ImageScanError('no-code')
+    }
+    await element.updateComplete
+
+    const input = element.querySelector('input[type="file"]') as HTMLInputElement
+    const transfer = new DataTransfer()
+    transfer.items.add(new File([new Uint8Array([0])], 'etikett.png', { type: 'image/png' }))
+    input.files = transfer.files
+    input.dispatchEvent(new Event('change', { bubbles: true }))
+
+    await waitUntil(
+      () => element.querySelector('[data-upload-problem]') !== null,
+      'nothing reported the picture',
+    )
+    const callout = element.querySelector('[data-upload-problem]') as HTMLElement
+    expect(callout.textContent).toContain('kein QR-Code')
   })
 })

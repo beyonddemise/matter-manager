@@ -1,7 +1,8 @@
 import { msg, updateWhenLocaleChanges } from '@lit/localize'
 import { html, LitElement, type PropertyValues, type TemplateResult } from 'lit'
 import { PayloadError, type PayloadProblem, readCredential } from '../../domain/index.js'
-import { problemMessage } from '../i18n/problems.js'
+import { imageMessage, problemMessage } from '../i18n/problems.js'
+import { codesFromImage, type ImageProblem, ImageScanError } from '../scan/image.js'
 import type { CameraProblem } from '../scan/problem.js'
 import { cameraProblem } from '../scan/problem.js'
 import { cameraSource, type ScanSource } from '../scan/source.js'
@@ -43,6 +44,7 @@ export class ScanDialog extends LitElement {
     scanning: { state: true },
     cameraFailure: { state: true },
     codeFailure: { state: true },
+    imageFailure: { state: true },
   }
 
   declare open: boolean
@@ -66,6 +68,10 @@ export class ScanDialog extends LitElement {
    * the dialog changed. Holding the code means the render translates it every time (#75).
    */
   declare codeFailure: PayloadProblem | undefined
+  /** Why the last chosen picture produced no setup code, if it produced none. */
+  declare imageFailure: ImageProblem | PayloadProblem | undefined
+  /** Bound by a test to a decoder that is not one; the real one otherwise. */
+  decodeImage: (file: Blob) => Promise<readonly string[]> = codesFromImage
 
   constructor() {
     super()
@@ -74,6 +80,7 @@ export class ScanDialog extends LitElement {
     this.scanning = false
     this.cameraFailure = undefined
     this.codeFailure = undefined
+    this.imageFailure = undefined
   }
 
   private stream: MediaStream | undefined
@@ -210,6 +217,44 @@ export class ScanDialog extends LitElement {
   }
 
   /**
+   * Reads a chosen picture, and reports any setup code in it.
+   *
+   * Reaches the form through the same `scan` event the camera uses, deliberately: a setup code
+   * is a setup code, and a second event would be a second thing for the form to remember. The
+   * accepting is {@link accept}'s, so the decision about what counts is made in one place
+   * whichever way the pixels arrived.
+   */
+  private async onUpload(event: Event): Promise<void> {
+    const input = event.target as HTMLInputElement
+    const file = input.files?.[0]
+    // Resetting lets the same file be chosen twice running. Without it the input holds the
+    // previous selection, `change` never fires again, and a second attempt at the same
+    // photograph appears to do nothing at all.
+    input.value = ''
+    if (file === undefined) return
+
+    this.imageFailure = undefined
+    this.codeFailure = undefined
+
+    let codes: readonly string[]
+    try {
+      codes = await this.decodeImage(file)
+    } catch (error) {
+      if (!(error instanceof ImageScanError)) throw error
+      this.imageFailure = error.problem
+      return
+    }
+
+    for (const code of codes) {
+      if (this.accept(code)) return
+    }
+    // `accept` recorded which code was wrong and why. Moving it across says the same thing in
+    // the callout this flow owns, so the message does not depend on which control was used.
+    this.imageFailure = this.codeFailure
+    this.codeFailure = undefined
+  }
+
+  /**
    * Stops reading and releases the camera. Safe to call when nothing is running.
    *
    * Clearing `scanning` is what ends {@link loop}; there is no timer to cancel.
@@ -255,6 +300,15 @@ export class ScanDialog extends LitElement {
       `
     }
 
+    if (this.imageFailure !== undefined) {
+      return html`
+        <wa-callout variant="neutral" data-image-problem>
+          <wa-icon slot="icon" name="circle-info"></wa-icon>
+          ${imageMessage(this.imageFailure)}
+        </wa-callout>
+      `
+    }
+
     if (this.codeFailure !== undefined) {
       return html`
         <wa-callout variant="neutral" data-scan-problem>
@@ -295,6 +349,32 @@ export class ScanDialog extends LitElement {
           ></video>
           ${this.renderProblems()}
         </div>
+
+        <!-- In the footer, beside the way out, because this is the other way out. It is worth
+             most on the screens where the camera refused to open: the person who has just been
+             told there is no camera is the likeliest person here to have a photograph of the
+             label, and until this existed their only remaining option was to type twenty-two
+             characters by hand. Always rendered, for the same reason as on the form - every
+             browser can choose a file. No backticks in this comment: it sits inside a template
+             literal, where one would end it. -->
+        <wa-button
+          slot="footer"
+          data-upload
+          appearance="plain"
+          @click=${() => {
+            ;(this.querySelector('input[type="file"]') as HTMLInputElement | null)?.click()
+          }}
+        >
+          <wa-icon slot="start" name="image"></wa-icon>
+          ${msg('Upload an image')}
+        </wa-button>
+
+        <input
+          type="file"
+          accept="image/*"
+          hidden
+          @change=${(event: Event) => void this.onUpload(event)}
+        />
 
         <wa-button
           slot="footer"
