@@ -245,7 +245,7 @@ export function stripPrefix(pathname: string, prefix: Prefix): string {
 cd frontend && npx vitest run test/ui/deploy/forward.test.ts && npm run typecheck
 ```
 
-Expected: PASS, 9 tests. Typecheck clean — if it reports it cannot find `functions/_lib/forward.ts`, Step 1 was not applied.
+Expected: PASS, 10 tests. Typecheck clean — if it reports it cannot find `functions/_lib/forward.ts`, Step 1 was not applied.
 
 - [ ] **Step 6: Format and commit**
 
@@ -384,7 +384,7 @@ export function upstreamUrl(origin: string, pathname: string, search: string): s
 cd frontend && npx vitest run test/ui/deploy/forward.test.ts && npm run typecheck
 ```
 
-Expected: PASS, 15 tests.
+Expected: PASS, 16 tests.
 
 - [ ] **Step 5: Format and commit**
 
@@ -631,7 +631,7 @@ export function upstreamHeaders(request: Request, kind: Upstream): Headers {
 cd frontend && npx vitest run test/ui/deploy/forward.test.ts && npm run typecheck
 ```
 
-Expected: PASS, 25 tests.
+Expected: PASS, 26 tests.
 
 - [ ] **Step 5: Format and commit**
 
@@ -789,7 +789,7 @@ export function toResponse(upstream: Response): Response {
 cd frontend && npx vitest run test/ui/deploy/forward.test.ts && npm run typecheck
 ```
 
-Expected: PASS, 32 tests.
+Expected: PASS, 33 tests.
 
 If `getSetCookie` is reported as not a function, the Node version is below 24 — check `node --version` against the `engines` field rather than working around it.
 
@@ -1120,7 +1120,7 @@ export const onRequest = (context: PagesContext): Promise<Response> => forward(c
 cd frontend && npx vitest run test/ui/deploy/forward.test.ts && npm run typecheck
 ```
 
-Expected: PASS, 41 tests. Typecheck clean, including both route files.
+Expected: PASS, 42 tests. Typecheck clean, including both route files.
 
 - [ ] **Step 6: Format and commit**
 
@@ -1360,6 +1360,8 @@ and extend `verify`, inserting `check:routes` directly after `check:deploy`:
     "verify": "npm run check:webawesome && npm run check:i18n && npm run check:deploy && npm run check:routes && npm run check:graph && npm run check && npm run typecheck && npm run test && npm run build && npm run check:lazy && npm run check:offline"
 ```
 
+Task 7 adds `check:functions` immediately after `check:routes` in both places.
+
 - [ ] **Step 6: Wire it into both workflows**
 
 In `.github/workflows/ci.yml`, directly after the `Caching contract` step (the one running `npm run check:deploy`):
@@ -1450,6 +1452,15 @@ Add to `frontend/package.json` scripts, after `check:routes`:
 ```json
     "check:functions": "wrangler pages functions build --outdir .wrangler/check-functions",
 ```
+
+and add it to `verify` directly after `check:routes`, so the full line reads:
+
+```json
+    "verify": "npm run check:webawesome && npm run check:i18n && npm run check:deploy && npm run check:routes && npm run check:functions && npm run check:graph && npm run check && npm run typecheck && npm run test && npm run build && npm run check:lazy && npm run check:offline"
+```
+
+Every other checker in this repository is in `verify`; one that only ran in CI would be a
+checker developers meet for the first time as a red build.
 
 Run it:
 
