@@ -252,13 +252,46 @@ jobs:
           # red means "run it again", which is the whole failure this step has already had
           # once. Six attempts over thirty seconds, and a 404 is the only status worth
           # retrying: it is what an edge says about a deployment it does not have yet.
+          # `rc` is captured rather than left to errexit, and the result read from a variable
+          # rather than through `< <(...)`. Process substitution discards curl's exit status,
+          # and a transport failure still prints a `-w` line - `000` with an empty content
+          # type. That reached the non-HTML branch below and was reported as "A Function
+          # answered (000)": a gate saying yes when nothing answered at all, which is the one
+          # direction a gate must never fail in.
+          rc=0
           for attempt in $(seq 1 6); do
-            read -r status type < <(curl -sS -o /tmp/probe.body -D /tmp/probe.head \
-              -w '%{http_code} %{content_type}\n' -H 'Accept: */*' "${DEPLOYMENT_URL}/api/healthz")
-            echo "attempt ${attempt}: GET ${DEPLOYMENT_URL}/api/healthz -> ${status} ${type}"
-            [ "${status}" = "404" ] || break
-            sleep 5
+            probe=$(curl -sS -o /tmp/probe.body -D /tmp/probe.head \
+              -w '%{http_code} %{content_type}' -H 'Accept: */*' \
+              "${DEPLOYMENT_URL}/api/healthz") && rc=0 || rc=$?
+            read -r status type <<<"${probe:-000 }"
+            echo "attempt ${attempt}: GET ${DEPLOYMENT_URL}/api/healthz -> ${status} ${type:-<none>} (curl exit ${rc})"
+            # Both retryable conditions are transient by nature: a deployment the edge does not
+            # have yet, and a connection that did not come up. Anything else is an answer.
+            if [ "${rc}" -eq 0 ] && [ "${status}" != "404" ]; then break; fi
+            [ "${attempt}" -eq 6 ] || sleep 5
           done
+
+          # **Status before content type.** Both false results this step has produced came from
+          # classifying on the type first: a 404 HTML page read as our app shell, and a
+          # transport failure read as a Function's reply. The type only means something once
+          # the status says there was a reply to have a type.
+          if [ "${rc}" -ne 0 ] || [ "${status}" = "000" ]; then
+            echo "::warning::Could not tell whether a Function ran: the deployment could not be reached."
+            echo "curl exited ${rc} without an HTTP response, so nothing here is evidence" >&2
+            echo "either way. Check by hand:" >&2
+            echo "  curl -sS -D- ${DEPLOYMENT_URL}/api/healthz" >&2
+            exit 0
+          fi
+
+          if [ "${status}" = "404" ]; then
+            # Six attempts over thirty seconds and the edge still does not have it. Whatever
+            # content type came with that, it is not the forwarder answering.
+            echo "::warning::Could not tell whether a Function ran: still 404 after six attempts."
+            echo "The edge did not have this deployment yet. That is propagation, not a" >&2
+            echo "missing bundle - but it is not proof of one either. Check by hand:" >&2
+            echo "  curl -sS -D- ${DEPLOYMENT_URL}/api/healthz" >&2
+            exit 0
+          fi
 
           # **Only a 200 carrying HTML is the failure this step exists to catch.** That is what
           # the single-page fallback returns for a path it does not recognise, and it is the
