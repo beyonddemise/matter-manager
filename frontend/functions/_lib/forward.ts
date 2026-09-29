@@ -171,3 +171,89 @@ export function toResponse(upstream: Response): Response {
   for (const name of HOP_BY_HOP) response.headers.delete(name)
   return response
 }
+
+/**
+ * What a Pages Function is handed, narrowed to the two fields this module reads.
+ *
+ * Declared here rather than imported from `@cloudflare/workers-types`, deliberately. That
+ * package redeclares `Request`, `Response` and `fetch`, and this `tsconfig.json` already has
+ * `DOM` in `lib` and `node` in `types` - a third set of definitions for the same three names
+ * is a larger problem than the six lines below.
+ */
+export interface PagesContext {
+  request: Request
+  env: ForwardEnv
+}
+
+/** A 502 that says which variable nobody set. */
+function missingTarget(target: Target): Response {
+  return new Response(
+    `${target.variable} is not set on this Pages project, so this path has no upstream.\n`,
+    {
+      status: 502,
+      headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' },
+    },
+  )
+}
+
+/**
+ * A 502 for an upstream that did not answer.
+ *
+ * Says nothing about which host was tried. The browser is the wrong audience for that: it
+ * turns an internal hostname into something anybody can read, and the person who needs it has
+ * the Function's logs.
+ */
+function unreachable(): Response {
+  return new Response('The upstream did not answer.\n', {
+    status: 502,
+    headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' },
+  })
+}
+
+/**
+ * Forwards one request to one upstream.
+ *
+ * The only function here with side effects, which is why everything above it is separate: the
+ * rules are testable by calling them, and this is testable by passing `fetchImpl`.
+ *
+ * `redirect: 'manual'` is not a detail. The default is `follow`, and a Function that followed
+ * would fetch `accounts.google.com` server-side during sign-in and return Google's HTML from
+ * our own origin with a 200 - the user never redirected, no cookie set anywhere, and nothing
+ * reported as an error.
+ *
+ * `fetchImpl` defaults to the global `fetch` and exists for the tests. A test that reached the
+ * real network would be measuring Cloudflare's uptime.
+ */
+export async function forward(
+  context: PagesContext,
+  kind: Upstream,
+  fetchImpl: typeof fetch = fetch,
+): Promise<Response> {
+  const prefix = prefixFor(kind)
+  const target = targets(context.env)[prefix]
+
+  // Before any fetch. A missing variable must fail where it is read, named - not become
+  // `fetch('undefined/auth/google')`, whose error arrives somewhere else entirely and is about
+  // a hostname nobody configured.
+  if (target.origin === '') return missingTarget(target)
+
+  const url = new URL(context.request.url)
+
+  try {
+    const upstream = await fetchImpl(
+      upstreamUrl(target.origin, stripPrefix(url.pathname, prefix), url.search),
+      {
+        method: context.request.method,
+        headers: upstreamHeaders(context.request, kind),
+        body: context.request.body,
+        redirect: 'manual',
+      },
+    )
+    return toResponse(upstream)
+  } catch {
+    // Any throw here is a network-level failure. Left uncaught it becomes a Worker exception
+    // and Cloudflare's own error page, which is HTML - and HTML from /api/* is precisely the
+    // symptom this whole change exists to remove.
+    return unreachable()
+  }
+}

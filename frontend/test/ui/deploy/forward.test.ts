@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  forward,
   prefixFor,
   stripPrefix,
   targets,
@@ -298,5 +299,131 @@ describe('the response handed back to the browser', () => {
     expect(await toResponse(new Response('{"ok":true}', { status: 200 })).text()).toBe(
       '{"ok":true}',
     )
+  })
+})
+
+/** Records what `forward` asked for, and answers with whatever the test supplies. */
+function recordingFetch(reply: Response | (() => never)) {
+  const calls: { url: string; init: RequestInit }[] = []
+  const impl = (async (url: unknown, init: unknown) => {
+    calls.push({ url: String(url), init: (init ?? {}) as RequestInit })
+    if (typeof reply === 'function') reply()
+    return reply
+  }) as unknown as typeof fetch
+  return { impl, calls }
+}
+
+const LIVE = {
+  API_ORIGIN: 'https://api.matter-manager.io',
+  COUCHDB_URL: 'https://couch.matter-manager.io/',
+}
+
+describe('forwarding a request', () => {
+  it('sends /api/auth/google to the API with the prefix removed', async () => {
+    const { impl, calls } = recordingFetch(new Response(null, { status: 302 }))
+    await forward(
+      { request: incoming('https://app.matter-manager.io/api/auth/google'), env: LIVE },
+      'api',
+      impl,
+    )
+    expect(calls[0]?.url).toBe('https://api.matter-manager.io/auth/google')
+  })
+
+  it('sends /db to CouchDB with the configured trailing slash collapsed', async () => {
+    const { impl, calls } = recordingFetch(new Response('{}', { status: 200 }))
+    await forward(
+      { request: incoming('https://app.matter-manager.io/db/project_local'), env: LIVE },
+      'db',
+      impl,
+    )
+    expect(calls[0]?.url).toBe('https://couch.matter-manager.io/project_local')
+  })
+
+  it('never follows a redirect', async () => {
+    // The default is `follow`. A Function that followed step 3 of the sign-in flow would fetch
+    // Google's authorization page server-side and hand *that* back - a 200 of Google's HTML,
+    // served from app.matter-manager.io, with the user never redirected and no cookie
+    // anywhere. It fails as a broken page rather than as an error, which is why it is pinned.
+    const { impl, calls } = recordingFetch(new Response(null, { status: 302 }))
+    await forward(
+      { request: incoming('https://app.matter-manager.io/api/auth/google'), env: LIVE },
+      'api',
+      impl,
+    )
+    expect(calls[0]?.init.redirect).toBe('manual')
+  })
+
+  it('answers 502 naming the variable when a target is not configured', async () => {
+    const { impl, calls } = recordingFetch(new Response('unreachable'))
+    const response = await forward(
+      { request: incoming('https://app.matter-manager.io/api/healthz'), env: {} },
+      'api',
+      impl,
+    )
+    expect(response.status).toBe(502)
+    expect(await response.text()).toContain('API_ORIGIN')
+    // It must not have guessed a URL: `fetch('undefined/auth/google')` produces an error
+    // somewhere else entirely, about a hostname nobody configured.
+    expect(calls).toHaveLength(0)
+  })
+
+  it('names COUCHDB_URL when that is the missing one', async () => {
+    const { impl } = recordingFetch(new Response('unreachable'))
+    const response = await forward(
+      { request: incoming('https://app.matter-manager.io/db/x'), env: { API_ORIGIN: 'https://a' } },
+      'db',
+      impl,
+    )
+    expect(await response.text()).toContain('COUCHDB_URL')
+  })
+
+  it('answers a plain-text 502, so the smoke test can tell a Function ran', async () => {
+    // deploy.yml asserts that /api/healthz is not text/html. That assertion passes on a 502
+    // deliberately - a 502 from our own Function proves a Function answered at all, which is
+    // the single fact that was false before this change existed.
+    const { impl } = recordingFetch(new Response('unreachable'))
+    const response = await forward(
+      { request: incoming('https://app.matter-manager.io/api/healthz'), env: {} },
+      'api',
+      impl,
+    )
+    expect(response.headers.get('content-type')).toMatch(/^text\/plain/)
+  })
+
+  it('answers 502 without disclosing the upstream when it cannot be reached', async () => {
+    const { impl } = recordingFetch(() => {
+      throw new TypeError('connection refused')
+    })
+    const response = await forward(
+      { request: incoming('https://app.matter-manager.io/api/healthz'), env: LIVE },
+      'api',
+      impl,
+    )
+    expect(response.status).toBe(502)
+    expect(await response.text()).not.toContain('api.matter-manager.io')
+  })
+
+  it('passes the upstream reply straight back', async () => {
+    const { impl } = recordingFetch(new Response('{"status":"ok"}', { status: 200 }))
+    const response = await forward(
+      { request: incoming('https://app.matter-manager.io/api/healthz'), env: LIVE },
+      'api',
+      impl,
+    )
+    expect(response.status).toBe(200)
+    expect(await response.text()).toBe('{"status":"ok"}')
+  })
+
+  it('forwards the method', async () => {
+    const { impl, calls } = recordingFetch(new Response(null, { status: 200 }))
+    await forward(
+      {
+        request: incoming('https://app.matter-manager.io/db/project_local/doc', {}, 'HEAD'),
+        env: LIVE,
+      },
+      'db',
+      impl,
+    )
+    expect(calls[0]?.init.method).toBe('HEAD')
   })
 })
