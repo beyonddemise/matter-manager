@@ -81,9 +81,16 @@
   # substitution step has to exist — a static asset with a fixed policy is enough.
   #
   # This is narrower than saying nothing cross-origin is: the data: exception above is real and
-  # is used on every visit for icons. And it is not "no request is made yet" either —
-  # composition.ts's readSessionState POSTs /api/auth/token on every load, same-origin, covered
-  # by 'self' like everything else. M5 wrote src/ui/sync/ and **nothing in the application
-  # imports it** — only its own tests do (#120) — but when it is wired in, it forwards through
-  # the same first-party path and this paragraph stays true without editing.
+  # is used on every visit for icons. Two same-origin request families exist today and are both
+  # covered by 'self': composition.ts's readSessionState POSTs /api/auth/token on every load,
+  # and app-shell.ts builds projectSync() and starts one replication per project against /db.
+  #
+  # **That second sentence replaces a claim that had gone stale.** This comment said until now
+  # that src/ui/sync/ was imported by nothing but its own tests (#120), and that was true when
+  # it was written. It stopped being true when app-shell.ts:435 began calling projectSync, and
+  # the built bundle carries `couchUrl:"/db"` to prove it. The claim survived a rewrite of this
+  # very paragraph, which is the lesson worth leaving behind: a comment asserting what the rest
+  # of the codebase does not do is the kind that rots silently, because nothing fails when it
+  # becomes false. `npm run check:graph` is what actually answers "does anything import this",
+  # and it answers it on every build.
   Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: blob:; connect-src 'self' data:; manifest-src 'self'; worker-src 'self'; media-src 'self' blob:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'
