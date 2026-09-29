@@ -241,23 +241,56 @@ jobs:
             echo "The deploy step reported no URL, so there is nothing to probe." >&2
             exit 1
           fi
-          status=$(curl -sS -o /tmp/probe.body -w '%{http_code}' \
-            -H 'Accept: */*' "${DEPLOYMENT_URL}/api/healthz")
-          type=$(curl -sS -o /dev/null -w '%{content_type}' \
-            -H 'Accept: */*' "${DEPLOYMENT_URL}/api/healthz")
+          # One request, not two. The previous version made a second identical call just to
+          # read the content type, which is a second chance to be challenged, rate-limited or
+          # served by a different edge node - so the status and the type it compared could come
+          # from two different answers.
+          read -r status type < <(curl -sS -o /tmp/probe.body -D /tmp/probe.head \
+            -w '%{http_code} %{content_type}\n' -H 'Accept: */*' "${DEPLOYMENT_URL}/api/healthz")
           echo "GET ${DEPLOYMENT_URL}/api/healthz -> ${status} ${type}"
+
           case "${type}" in
-            text/html*)
-              echo >&2
-              echo "/api/healthz was served the app shell, so no Pages Function ran." >&2
-              echo "The functions/ directory was not bundled - check that the Deploy step" >&2
-              echo "still sets workingDirectory: frontend, and see" >&2
-              echo "docs/superpowers/specs/2026-09-29-pages-functions-proxy-design.md." >&2
-              head -c 200 /tmp/probe.body >&2
-              exit 1
+            text/html*) ;;
+            *)
+              echo "A Function answered (${status}); the forwarder is deployed."
+              exit 0
               ;;
           esac
-          echo "A Function answered (${status}); the forwarder is deployed."
+
+          # HTML, which is the symptom this step exists to catch - but not every HTML body is
+          # our app shell, and the difference decides whether a deployment is broken or merely
+          # unobservable.
+          #
+          # Cloudflare's own bot protection answers *.pages.dev with an interstitial titled
+          # "Just a moment...", 403, text/html, and a `cf-mitigated` header. A GitHub runner is
+          # exactly the sort of client it challenges, and this step failed the first real
+          # deploy that way (run 36522759319) while the forwarder was working perfectly:
+          # `https://app.matter-manager.io/api/healthz` answered 200 with the API's JSON at the
+          # same moment. A check that fails at random on something the deployment does not
+          # control is worse than no check, because the first response to a red run stops being
+          # "what broke" and becomes "run it again".
+          #
+          # So a challenge is reported as inconclusive rather than as a failure. It is a real
+          # loss - a genuinely unbundled deployment could hide behind one - and it is the lesser
+          # loss, because the bundling is already asserted before the deploy by
+          # `npm run check:functions`, which compiles functions/ with no network at all.
+          if grep -qi '^cf-mitigated:' /tmp/probe.head ||
+             grep -qi 'Just a moment' /tmp/probe.body; then
+            echo "::warning::Cloudflare challenged the probe, so whether a Function ran is unknown."
+            echo "Cloudflare served its bot interstitial (${status}) instead of passing the" >&2
+            echo "request through, which it does to CI runners on *.pages.dev. This is not" >&2
+            echo "evidence either way. Check by hand:" >&2
+            echo "  curl -sS -D- ${DEPLOYMENT_URL}/api/healthz" >&2
+            exit 0
+          fi
+
+          echo >&2
+          echo "/api/healthz was served the app shell, so no Pages Function ran." >&2
+          echo "The functions/ directory was not bundled - check that the Deploy step" >&2
+          echo "still sets workingDirectory: frontend, and see" >&2
+          echo "docs/superpowers/specs/2026-09-29-pages-functions-proxy-design.md." >&2
+          head -c 200 /tmp/probe.body >&2
+          exit 1
 
       - name: Say where it went
         env:
