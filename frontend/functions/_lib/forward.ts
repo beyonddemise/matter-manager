@@ -1,6 +1,7 @@
 /**
- * Everything the two Pages Functions do, with the side effects pushed to one function at the
- * bottom (Task 5) so the rest can be tested by calling it.
+ * Everything the two Pages Functions do, with the side effects pushed down into `forward` —
+ * the one function here with side effects, at the bottom of this file — so the rest can be
+ * tested by calling it.
  *
  * The production half of the contract `frontend/vite.config.ts` states: `/api` and `/db` are
  * served from the application's own origin with the prefix stripped. Vite keeps that promise
@@ -77,13 +78,13 @@ export function stripPrefix(pathname: string, prefix: Prefix): string {
  * rather than the lazy one: `new URL` normalises, and normalising a path that a browser has
  * already percent-encoded re-encodes it. PouchDB document ids contain spaces and slashes as a
  * matter of course, so `a%20b` would go upstream as `a%2520b` and the document would not be
- * found - a failure that looks like missing data rather than like a broken proxy.
+ * found — a failure that looks like missing data rather than like a broken proxy.
  *
  * Two shapes have to be handled and neither is hypothetical:
  *
  * - **A trailing slash on the origin.** `COUCHDB_URL` is set on the live project as
- *   `https://couch.matter-manager.io/`. Concatenated with `/project_local` that is `//project_local`,
- *   whose first path segment is empty, which is a different route.
+ *   `https://couch.matter-manager.io/`. Concatenated with `/project_local` that is
+ *   `//project_local`, whose first path segment is empty, which is a different route.
  * - **An empty path**, which is what `stripPrefix` leaves for a bare `/db`. `origin + '' + '?x'`
  *   is a URL with no path at all.
  */
@@ -94,9 +95,12 @@ export function upstreamUrl(origin: string, pathname: string, search: string): s
 /**
  * Headers that describe one connection rather than the message travelling over it.
  *
- * RFC 9110's hop-by-hop set. They are removed in both directions: this Function terminates the
- * browser's connection and opens a new one, so every one of these is a statement about a
- * connection the other end is not on.
+ * RFC 2616 §13.5.1's hop-by-hop set — credited to that document rather than to RFC 9110,
+ * whose own connection-specific list is different and does not name Proxy-Authenticate,
+ * Proxy-Authorization or Trailer as hop-by-hop. The older, wider set is the conservative
+ * choice regardless of which document names it. They are removed in both directions: this
+ * Function terminates the browser's connection and opens a new one, so every one of these is a
+ * statement about a connection the other end is not on.
  */
 export const HOP_BY_HOP: readonly string[] = [
   'connection',
@@ -114,7 +118,7 @@ export const HOP_BY_HOP: readonly string[] = [
  *
  * Starts from what the browser sent and takes things away, rather than building an allowlist
  * from nothing. An allowlist would mean every future header the application starts sending -
- * `If-None-Match`, `Range`, a content type PouchDB picks - has to be remembered here, and
+ * `If-None-Match`, `Range`, a content type PouchDB picks — has to be remembered here, and
  * forgetting one produces a subtly wrong response rather than an error.
  *
  * `Host` is deleted rather than set. `fetch` derives it from the URL, which is exactly what
@@ -131,13 +135,13 @@ export function upstreamHeaders(request: Request, kind: Upstream): Headers {
   // The session cookie is `Path=/`, so the browser attaches it to `/db/*` as readily as to
   // `/api/*`. CouchDB authenticates replication with the bearer JWT and has no use for it, so
   // forwarding would hand a thirty-day credential to a different service and write it into
-  // that service's logs on every request - with nothing anywhere looking wrong.
+  // that service's logs on every request — with nothing anywhere looking wrong.
   if (kind === 'db') headers.delete('cookie')
 
   // Overwritten, never appended. The API runs with TRUST_PROXY=true and Fastify reads the
   // leftmost entry as the client address, so anything the caller put there would be believed.
   // `CF-Connecting-IP` is set by the edge and cannot be forged from outside it. When it is
-  // absent - which for a real request through Cloudflare it is not - the right answer is to
+  // absent — which for a real request through Cloudflare it is not — the right answer is to
   // send nothing rather than to pass on an attacker-chosen value.
   const client = request.headers.get('cf-connecting-ip')
   if (client === null) headers.delete('x-forwarded-for')
@@ -158,8 +162,8 @@ export function upstreamHeaders(request: Request, kind: Upstream): Headers {
  * name, and `clearCookies` sets two `Set-Cookie` headers in a single reply. The user would be
  * told they had signed out while still holding one of the two cookies.
  *
- * Passing `upstream.body` is safe for a 204 or a 304 - statuses whose body the runtime refuses
- * to accept - because the body of such a response is already `null`. That is worth stating
+ * Passing `upstream.body` is safe for a 204 or a 304 — statuses whose body the runtime refuses
+ * to accept — because the body of such a response is already `null`. That is worth stating
  * rather than trusting: PouchDB revalidates constantly, so a mistake here would work in every
  * test and fail on the second replication.
  *
@@ -177,7 +181,7 @@ export function toResponse(upstream: Response): Response {
  *
  * Declared here rather than imported from `@cloudflare/workers-types`, deliberately. That
  * package redeclares `Request`, `Response` and `fetch`, and this `tsconfig.json` already has
- * `DOM` in `lib` and `node` in `types` - a third set of definitions for the same three names
+ * `DOM` in `lib` and `node` in `types` — a third set of definitions for the same three names
  * is a larger problem than the six lines below.
  */
 export interface PagesContext {
@@ -218,7 +222,7 @@ function unreachable(): Response {
  *
  * `redirect: 'manual'` is not a detail. The default is `follow`, and a Function that followed
  * would fetch `accounts.google.com` server-side during sign-in and return Google's HTML from
- * our own origin with a 200 - the user never redirected, no cookie set anywhere, and nothing
+ * our own origin with a 200 — the user never redirected, no cookie set anywhere, and nothing
  * reported as an error.
  *
  * `fetchImpl` defaults to the global `fetch` and exists for the tests. A test that reached the
@@ -232,28 +236,41 @@ export async function forward(
   const prefix = prefixFor(kind)
   const target = targets(context.env)[prefix]
 
-  // Before any fetch. A missing variable must fail where it is read, named - not become
+  // Before any fetch. A missing variable must fail where it is read, named — not become
   // `fetch('undefined/auth/google')`, whose error arrives somewhere else entirely and is about
   // a hostname nobody configured.
   if (target.origin === '') return missingTarget(target)
 
   const url = new URL(context.request.url)
 
+  // Computed outside the try, deliberately: `stripPrefix` (a `startsWith` and a `slice`),
+  // `upstreamUrl` (a template literal and a regex `replace`) and `upstreamHeaders` (`Headers`
+  // operations on values that are already valid, and a `URL` built from a Pages request's URL,
+  // which is always absolute) are all total — none of the three can throw. Hoisting them keeps
+  // the try narrowed to the two calls below that genuinely can fail.
+  const upstreamRequestUrl = upstreamUrl(
+    target.origin,
+    stripPrefix(url.pathname, prefix),
+    url.search,
+  )
+  const headers = upstreamHeaders(context.request, kind)
+
   try {
-    const upstream = await fetchImpl(
-      upstreamUrl(target.origin, stripPrefix(url.pathname, prefix), url.search),
-      {
-        method: context.request.method,
-        headers: upstreamHeaders(context.request, kind),
-        body: context.request.body,
-        redirect: 'manual',
-      },
-    )
+    const upstream = await fetchImpl(upstreamRequestUrl, {
+      method: context.request.method,
+      headers,
+      body: context.request.body,
+      redirect: 'manual',
+    })
     return toResponse(upstream)
   } catch {
-    // Any throw here is a network-level failure. Left uncaught it becomes a Worker exception
-    // and Cloudflare's own error page, which is HTML - and HTML from /api/* is precisely the
-    // symptom this whole change exists to remove.
+    // Two distinct failures reach this catch, and both have to stay inside it. The fetch
+    // itself throws when the upstream does not answer at all. `toResponse` can also throw —
+    // `new Response(body, init)` rejects a non-null body on a null-body status — and narrowing
+    // this try to the fetch alone would be the obvious-looking fix and the wrong one: a throw
+    // from `toResponse` left uncaught becomes a Worker exception, which Cloudflare answers with
+    // its own error page. That page is HTML, served from /api/* — precisely the symptom this
+    // whole change exists to remove.
     return unreachable()
   }
 }

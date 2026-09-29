@@ -59,10 +59,10 @@ describe('stripping the prefix', () => {
   })
 
   it('leaves the empty string for the bare prefix, exactly as Vite does', () => {
-    // Turning it into `/` is `upstreamUrl`'s job (Task 2), deliberately: this function has a
-    // counterpart in vite.config.ts and the parity test below compares them character for
-    // character. A normalisation applied here and not there would be a real divergence
-    // reported as a passing test.
+    // Turning it into `/` is `upstreamUrl`'s job, deliberately: this function has a counterpart
+    // in vite.config.ts and the parity test below compares them character for character. A
+    // normalisation applied here and not there would be a real divergence reported as a
+    // passing test.
     expect(stripPrefix('/api', '/api')).toBe('')
     expect(stripPrefix('/db', '/db')).toBe('')
   })
@@ -71,6 +71,15 @@ describe('stripping the prefix', () => {
 describe('parity with the development proxy', () => {
   // Development and production are two implementations of one contract. Nothing but this
   // assertion stops them drifting, and a drift is invisible in both places: each works.
+  //
+  // What this pins is narrower than "the two sides agree": it compares only the *rewrite*
+  // functions — what stripping a prefix leaves — never the *matching* rule that decides whether
+  // a path reaches a rewrite at all. The two matching rules genuinely differ: Vite's proxy key
+  // '/api' is an unanchored prefix match, so `/apikey` is proxied in development and rewritten
+  // to `/key`; `_routes.json`'s `include: ["/api/*"]` is anchored at the slash, so `/apikey`
+  // never reaches a Function in production and falls through to the single-page app instead.
+  // Nothing below can see that difference, and nothing has to today — `/apikey` is not a route
+  // on either side, so no production path collides with it.
   it('agrees on which prefixes exist', () => {
     expect(Object.keys(targets({})).sort()).toEqual(Object.keys(devProxy({})).sort())
   })
@@ -233,14 +242,6 @@ describe('the headers sent upstream', () => {
     const headers = upstreamHeaders(incoming('https://app.matter-manager.io/api/x'), 'api')
     expect(headers.get('host')).toBeNull()
   })
-
-  it('adds no CORS headers', () => {
-    // Every request through this Function is same-origin by construction. An
-    // Access-Control-Allow-Origin here would describe a flow that does not exist and would be
-    // the first thing to mislead somebody debugging a future one.
-    const headers = upstreamHeaders(incoming('https://app.matter-manager.io/api/x'), 'api')
-    expect(headers.get('access-control-allow-origin')).toBeNull()
-  })
 })
 
 describe('the response handed back to the browser', () => {
@@ -300,6 +301,19 @@ describe('the response handed back to the browser', () => {
       '{"ok":true}',
     )
   })
+
+  it('adds no CORS headers to the response', () => {
+    // Every request through this Function is same-origin by construction, so an
+    // Access-Control-Allow-Origin here would describe a flow that does not exist and would be
+    // the first thing to mislead somebody debugging a future one. This is anchored on
+    // `toResponse`'s output rather than on the request `upstreamHeaders` builds — the earlier
+    // version of this test asserted a *response* header was absent from a *request*, which no
+    // browser ever sends and no code path here could add, so it could not fail no matter what
+    // changed. A future edit that started adding CORS headers to the response is what this
+    // guards against.
+    const out = toResponse(new Response('ok', { status: 200 }))
+    expect(out.headers.get('access-control-allow-origin')).toBeNull()
+  })
 })
 
 /** Records what `forward` asked for, and answers with whatever the test supplies. */
@@ -337,6 +351,61 @@ describe('forwarding a request', () => {
       impl,
     )
     expect(calls[0]?.url).toBe('https://couch.matter-manager.io/project_local')
+  })
+
+  it('strips the cookie on the real /db path, not just in the upstreamHeaders helper', async () => {
+    // The spec's failure-modes table calls this the one row with no natural symptom: "session
+    // cookie forwarded to CouchDB — silent credential leak, no symptom at all." The unit test on
+    // `upstreamHeaders` above calls it directly with a literal `'db'` and proves the stripping
+    // rule is right; it says nothing about the wiring that decides which literal `forward`
+    // actually passes. This is the guard for that wiring — swap `kind` for a hardcoded `'api'`
+    // on the call inside `forward` and every other test in this file still passes.
+    const { impl, calls } = recordingFetch(new Response('{}', { status: 200 }))
+    await forward(
+      {
+        request: incoming('https://app.matter-manager.io/db/project_local', {
+          cookie: 'mm_session=abc',
+        }),
+        env: LIVE,
+      },
+      'db',
+      impl,
+    )
+    expect((calls[0]?.init.headers as Headers | undefined)?.get('cookie')).toBeNull()
+  })
+
+  it('forwards the cookie on the real /api path', async () => {
+    // The mirror image of the test above. Without it, a regression that stripped the cookie
+    // from both kinds — not only from /db — would pass that test and still be wrong: the same
+    // two-sided-assertion discipline `upstreamHeaders`'s own tests already apply one level down.
+    const { impl, calls } = recordingFetch(new Response('{}', { status: 200 }))
+    await forward(
+      {
+        request: incoming('https://app.matter-manager.io/api/projects', {
+          cookie: 'mm_session=abc',
+        }),
+        env: LIVE,
+      },
+      'api',
+      impl,
+    )
+    expect((calls[0]?.init.headers as Headers | undefined)?.get('cookie')).toBe('mm_session=abc')
+  })
+
+  it('hands the request body straight to the upstream, unbuffered', async () => {
+    // The spec: "Bodies pass as streams in both directions. _changes and _bulk_docs are not
+    // buffered." Asserting identity rather than content is the point — a forwarder that did
+    // `body: await request.text()` would pass a content assertion and fail this one, because
+    // reading the body first is exactly the buffering the spec rules out. Two shipped features
+    // depend on this today: creating a project (projects.ts) and saving the locale preference
+    // (profile.ts) both POST/PUT a JSON body through /api.
+    const { impl, calls } = recordingFetch(new Response(null, { status: 201 }))
+    const request = new Request('https://app.matter-manager.io/api/projects', {
+      method: 'POST',
+      body: '{"name":"Kitchen"}',
+    })
+    await forward({ request, env: LIVE }, 'api', impl)
+    expect(calls[0]?.init.body).toBe(request.body)
   })
 
   it('never follows a redirect', async () => {
