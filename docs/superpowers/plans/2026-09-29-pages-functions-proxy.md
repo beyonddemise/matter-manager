@@ -1420,6 +1420,7 @@ The mechanism that puts `functions/` where wrangler looks, plus the two guards t
 **Files:**
 - Modify: `frontend/package.json` (`devDependencies`, `scripts`)
 - Modify: `frontend/package-lock.json` (regenerated)
+- Modify: `dependency-policy.json` (`allowedDev`)
 - Modify: `.github/workflows/deploy.yml` (the `Deploy` step, ~line 167; a new step before it and a new step after it)
 - Modify: `.github/workflows/ci.yml` (one new step beside `check:routes`)
 
@@ -1435,13 +1436,33 @@ cd frontend && npm install --save-dev --ignore-scripts wrangler@^4
 
 Not a convenience. `cloudflare/wrangler-action` runs `npm i` in its working directory when it cannot already resolve wrangler, and from Step 4 that directory is `frontend/` — whose `.npmrc` authenticates to the Web Awesome private registry from `WEBAWESOME_NPM_TOKEN`. That install would need the token *and* would run lifecycle scripts, which is the one thing every other install in this repository uses `--ignore-scripts` to prevent while the token is in the environment (#164). Declared here, `npm ci --ignore-scripts` has already installed it and the action installs nothing.
 
+**This will not pass `npm run check:deps` on its own.** `scripts/check-dependencies.mjs:58` names `frontend` a bundled package, and for a bundled package it checks `devDependencies` against `dependency-policy.json` as well as the shipping fields — because a bundler will happily inline a devDependency that application source imports, so "it is a devDependency" is not by itself evidence it does not reach users. An unlisted one fails the check, and `check:deps` runs in the root `verify` and in CI.
+
+So add `wrangler` to `allowedDev` in `dependency-policy.json`, after the `vite` entry whose argument it borrows:
+
+```json
+    "wrangler": "Deploys the site and bundles frontend/functions for Cloudflare Pages. A devDependency of the bundled package rather than of the root, because that is where functions/ lives and where the deploy has to run from: wrangler resolves the functions directory as a hardcoded join(cwd(), \"functions\") with no flag to move it, and an action that cannot already resolve wrangler installs one with `npm i` against this package's .npmrc - authenticating to the Web Awesome registry and running lifecycle scripts with the token in the environment, which is what --ignore-scripts exists to prevent everywhere else here. Provably absent from the built output, by the same argument vite carries above: it produces dist/, it is not part of it.",
+```
+
+Confirm before moving on:
+
+```bash
+npm run check:deps
+```
+
+Expected: `Dependency policy: ok (4 manifests, no undeclared shipping dependencies)`.
+
 - [ ] **Step 2: Prove wrangler works under `--ignore-scripts`**
 
 ```bash
 cd frontend && npx wrangler --version
 ```
 
-Expected: a version number. This is the assumption Step 1 rests on — wrangler bundles its own esbuild, and `--ignore-scripts` is how every install in this repository runs. If this fails, stop: the whole `workingDirectory` approach depends on it, and the fallback is a root `functions/` directory with the toolchain the spec priced.
+Expected: a version number.
+
+This is the assumption Step 1 rests on, and it is a real assumption rather than a formality. Wrangler depends on `esbuild` and `workerd`, both of which ship their binaries as platform-specific optional dependencies — and **`esbuild` is new to this tree**: Vite 8 bundles with rolldown, so nothing here currently installs esbuild at all. Wrangler is therefore the first dependency in this repository whose usefulness could plausibly depend on an install script, and every install here runs `--ignore-scripts`.
+
+Modern esbuild resolves its binary through the optional platform package rather than through its postinstall, so this is expected to work. Expected is not verified, which is why the step exists. If it fails, **stop and report it** rather than adding wrangler to an allow-scripts list: the whole `workingDirectory` approach depends on this, and the documented fallback is a root `functions/` directory with the separate tsconfig and test runner the spec priced.
 
 - [ ] **Step 3: Add a local bundle check**
 
@@ -1576,7 +1597,7 @@ Expected: every check passes, including `check:routes`, and the build succeeds. 
 - [ ] **Step 8: Commit**
 
 ```bash
-git add frontend/package.json frontend/package-lock.json .gitignore \
+git add frontend/package.json frontend/package-lock.json dependency-policy.json .gitignore \
         .github/workflows/ci.yml .github/workflows/deploy.yml
 git commit -m "$(cat <<'EOF'
 build(deploy): run the deploy from frontend/, so wrangler finds functions/
