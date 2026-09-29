@@ -159,6 +159,14 @@ jobs:
         run: npm run check:routes
         working-directory: frontend
 
+      # Bundles functions/ with esbuild, exactly as the deploy does, and needs no credentials
+      # to do it. The only check that proves the directory *compiles and routes* before a
+      # deployment rather than after: `npm run typecheck` checks the types, and the unit tests
+      # never load the route files at all.
+      - name: Forwarders bundle
+        run: npm run check:functions
+        working-directory: frontend
+
       # #120 shipped seven modules that were written, tested, and imported by nothing but their
       # own tests - so every suite passed while the features did not exist in the application.
       # Nothing could have noticed: a test that imports its module directly proves the module

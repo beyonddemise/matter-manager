@@ -175,6 +175,17 @@ jobs:
         id: deploy
         uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0
         with:
+          # **This is what makes the Pages Functions ship.** Wrangler resolves `functions/`
+          # against its own working directory, hardcoded as `join(cwd(), "functions")` - there
+          # is no flag to point it elsewhere, whatever the shape of `--functions-directory`
+          # suggests. Run from the repository root it would look for `./functions`, find
+          # nothing, and upload the assets alone: a deployment that succeeds, passes every
+          # check, and answers 200 with the app shell from /api/*.
+          #
+          # `frontend/` is also where the npm steps above already run, and where wrangler is a
+          # devDependency - so the action finds it installed and runs no `npm i` of its own
+          # against an .npmrc that carries the Web Awesome token.
+          workingDirectory: frontend
           # Passed as inputs, and they have to be. This comment previously claimed the opposite
           # — that supplying them would overwrite the job environment with empty strings — and
           # had the mechanism exactly backwards. Read from the pinned action's own source at
@@ -208,9 +219,45 @@ jobs:
           # the step above refused anything outside [A-Za-z0-9._/-]; without that check this
           # line would be the injection the check exists to prevent.
           command: >-
-            pages deploy frontend/dist
+            pages deploy dist
             --project-name=matter-manager-app
             --branch=${{ steps.branch.outputs.name }}
+
+      # The one fact nothing else reveals: did a Function run?
+      #
+      # Deliberately weak about *what* it answered. Until the API is reachable from the edge
+      # this request is a 502 - and a 502 from our own forwarder is proof that a Function ran,
+      # so the check passes on it. What it refuses is `text/html`, because that is the failure
+      # it exists to catch: with no Function bundled, /api/healthz falls through to the
+      # single-page fallback and answers 200 with the app shell. A stricter assertion here
+      # would couple deploying the site to the API being up, and would fail for the one reason
+      # that is not this workflow's business.
+      - name: A forwarder answered
+        env:
+          DEPLOYMENT_URL: ${{ steps.deploy.outputs.deployment-url }}
+        run: |
+          set -euo pipefail
+          if [ -z "${DEPLOYMENT_URL}" ]; then
+            echo "The deploy step reported no URL, so there is nothing to probe." >&2
+            exit 1
+          fi
+          status=$(curl -sS -o /tmp/probe.body -w '%{http_code}' \
+            -H 'Accept: */*' "${DEPLOYMENT_URL}/api/healthz")
+          type=$(curl -sS -o /dev/null -w '%{content_type}' \
+            -H 'Accept: */*' "${DEPLOYMENT_URL}/api/healthz")
+          echo "GET ${DEPLOYMENT_URL}/api/healthz -> ${status} ${type}"
+          case "${type}" in
+            text/html*)
+              echo >&2
+              echo "/api/healthz was served the app shell, so no Pages Function ran." >&2
+              echo "The functions/ directory was not bundled - check that the Deploy step" >&2
+              echo "still sets workingDirectory: frontend, and see" >&2
+              echo "docs/superpowers/specs/2026-09-29-pages-functions-proxy-design.md." >&2
+              head -c 200 /tmp/probe.body >&2
+              exit 1
+              ;;
+          esac
+          echo "A Function answered (${status}); the forwarder is deployed."
 
       - name: Say where it went
         env:
