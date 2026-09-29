@@ -41,5 +41,5 @@
     "experimentalDecorators": false,
     "useDefineForClassFields": false
   },
-  "include": ["src/**/*.ts", "test/**/*.ts", "vite.config.ts"]
+  "include": ["src/**/*.ts", "test/**/*.ts", "functions/**/*.ts", "vite.config.ts"]
 }
