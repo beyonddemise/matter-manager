@@ -81,8 +81,12 @@ The first line is the one that cannot be checked any other way: **the `/api` for
 invisibly — the redirect *out* to Google works either way, so a manual test that stops at the
 consent screen proves nothing about it.
 
-`_changes` with a query string matters for its own reason: it is the call that would expose a
-forwarder mangling `?since=…&limit=…`, and no other request here would notice.
+`_changes` is asked for with `limit=1&include_docs=true`, and both parameters are asserted
+rather than the status alone. That is the difference between a check and a decoration: a
+forwarder that dropped the query string entirely would still answer 200, and on a small database
+with the same content — so the obvious version of this test could not fail for the reason its
+own name gave. Making the *count* depend on `limit` and the *shape* of each result depend on
+`include_docs` is what ties the assertion to the thing it claims to detect.
 
 ### Not yet observed
 

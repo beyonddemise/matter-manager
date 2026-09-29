@@ -137,9 +137,19 @@ status=$(call GET "${ORIGIN}/db/" "${WORK}/root")
 echo "${status}"
 [ "${status}" = "200" ] || fail "expected 200 from /db/ with a valid token"
 
-say 'GET /db/_session (who CouchDB thinks we are)'
+# Asserted, not just printed: `docs/replication.md` lists a successful `_session` among the
+# results this script reproduces, and a line that is reported but never checked is a line the
+# document is wrong about the moment it stops holding. The name is compared against the token's
+# own `sub`, which is the claim CouchDB maps to a user - equal names prove the mapping, where a
+# bare 200 would only prove the request arrived.
+say 'GET /db/_session (CouchDB maps sub to a user)'
 status=$(call GET "${ORIGIN}/db/_session" "${WORK}/sess")
-echo "${status} $(field "${WORK}/sess" 'r.userCtx && r.userCtx.name')"
+name=$(field "${WORK}/sess" 'r.userCtx && r.userCtx.name')
+subject=$(field "${WORK}/token" "JSON.parse(Buffer.from(r.accessToken.split('.')[1],'base64url')).sub")
+echo "${status} ${name}"
+[ "${status}" = "200" ] || fail "_session did not answer"
+[ -n "${name}" ] && [ "${name}" = "${subject}" ] ||
+  fail "CouchDB sees '${name}', the token says '${subject}'"
 
 # 3. A project, because the browser never creates a database itself: the API provisions it with
 #    admin credentials and writes a `_security` document naming the user. Replicating into a
@@ -159,6 +169,16 @@ esac
 
 PROJECT_ID=$(field "${WORK}/project" 'r.projectId')
 DB=$(field "${WORK}/project" 'r.dbName')
+# Checked before anything else uses them. An empty `projectId` leaves the EXIT trap with nothing
+# to archive, so a response that provisioned a database but did not name it would strand that
+# database in production and say nothing - the same outcome as the missing DELETE route, arrived
+# at from the other direction.
+if [ -z "${PROJECT_ID}" ] || [ -z "${DB}" ]; then
+  echo "  The project response named no projectId or dbName, so the cleanup cannot run." >&2
+  echo "  A database may have been provisioned. The response was:" >&2
+  cat "${WORK}/project" >&2
+  exit 1
+fi
 say '  database'
 echo "${DB}"
 
@@ -185,20 +205,40 @@ echo "${status} ${note}"
 [ "${note}" = "written through the Pages Function" ] ||
   fail "something read back, but not the document that was written"
 
-say 'GET /db/<db>/_changes?since=0 (query string)'
-status=$(call GET "${ORIGIN}/db/${DB}/_changes?since=0&limit=10" "${WORK}/changes")
-echo "${status} $(field "${WORK}/changes" 'r.results && r.results.length + " change(s)"')"
-[ "${status}" = "200" ] || fail "_changes did not answer; a mangled query string looks like this"
-
 # `_bulk_docs` answers 201 for the request, not for each document in it, so the per-document
-# results are what say whether the write happened.
+# results are what say whether the write happened. `every()` alone is not enough either: it is
+# true of an empty array, so a response confirming that nothing was written would have passed.
 say 'POST /db/<db>/_bulk_docs (what sync writes)'
 status=$(call POST "${ORIGIN}/db/${DB}/_bulk_docs" "${WORK}/bulk" \
   -H 'Content-Type: application/json' \
   -d '{"docs":[{"_id":"probe-bulk","type":"probe"}]}')
 echo "${status} $(field "${WORK}/bulk" 'Array.isArray(r) && r.map(d=>d.ok?"ok":(d.error||"?")).join(", ")')"
-[ "$(field "${WORK}/bulk" 'Array.isArray(r) && r.every(d=>d.ok)')" = "true" ] ||
-  fail "_bulk_docs accepted the request but refused a document"
+case "${status}" in
+  20*) ;;
+  *) fail "_bulk_docs was refused" ;;
+esac
+[ "$(field "${WORK}/bulk" 'Array.isArray(r) && r.length === 1 && r[0].ok === true && r[0].id === "probe-bulk"')" = "true" ] ||
+  fail "_bulk_docs did not report one accepted document called probe-bulk"
+
+# Last, and deliberately so: it needs two documents in the database to mean anything.
+#
+# **The assertion has to depend on the query string, or it is decorative.** The earlier version
+# asked for `?since=0&limit=10` and checked only the status - but a forwarder that dropped the
+# query entirely would still answer 200, and on a database this small with the same content, so
+# the check could not fail for the reason its own name gave. That is the defect L39 is about,
+# one layer out.
+#
+# `limit=1` against a database now holding probe-doc, probe-bulk and the design document makes
+# the *count* depend on the parameter surviving, and `include_docs=true` makes the *shape* of
+# each result depend on it too. Drop either and this fails.
+say 'GET /db/<db>/_changes?limit=1&include_docs (query survives)'
+status=$(call GET "${ORIGIN}/db/${DB}/_changes?since=0&limit=1&include_docs=true" "${WORK}/changes")
+echo "${status} $(field "${WORK}/changes" 'r.results && r.results.length + " result(s)"')"
+[ "${status}" = "200" ] || fail "_changes did not answer"
+[ "$(field "${WORK}/changes" 'r.results && r.results.length === 1')" = "true" ] ||
+  fail "limit=1 did not limit the result; the query string is not reaching CouchDB"
+[ "$(field "${WORK}/changes" 'r.results && r.results[0] && r.results[0].doc !== undefined')" = "true" ] ||
+  fail "include_docs=true returned no document; the query string is not reaching CouchDB"
 
 # 5. The blocklist has to survive the new path. `/db` reaches CouchDB through the same host
 #    Caddy as `couch.matter-manager.io`, and inheriting that `@forbidden` list rather than
