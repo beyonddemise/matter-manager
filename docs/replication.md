@@ -93,9 +93,14 @@ enforcing, and proved nothing about a successful write. The same function checks
 against the `_security` writers the API wrote at provisioning time, so both halves of the
 access model are live.
 
-The corrected probe sends a document carrying `type`. Until somebody runs it, "a document
-survives the round trip" is inference, not measurement — which is the distinction this whole
-file exists to keep.
+The corrected probe sends a document carrying `type`, and **its exit status now depends on the
+answer**: it fails unless the document read back is the document written. The first version
+printed every result and exited 0 regardless, so a run that wrote nothing and read nothing still
+looked like a pass — a probe that cannot fail measures nothing, which is the same defect as the
+deploy check in L39, one layer out.
+
+Until somebody runs it, "a document survives the round trip" is inference, not measurement —
+which is the distinction this whole file exists to keep.
 
 ## Running the probe
 
@@ -103,6 +108,11 @@ It needs a session token, and the signing keys have never left the droplet. Mint
 for a throwaway subject, with the API's own `mintToken`:
 
 ```bash
+# Before the redirect, not after. The shell creates the file, so its mode comes from the umask
+# in force at that moment - a default 022 makes a live credential world-readable, and chmod
+# afterwards closes a door that was already open.
+umask 077
+
 ssh wisselroot 'docker exec -i matter-manager-api node --input-type=module' \
   > /tmp/mm-session.jwt <<'JS'
 import { signingKeyFromPem, mintToken } from '/app/dist/src/auth/jwt.js'
@@ -116,7 +126,10 @@ rm -f /tmp/mm-session.jwt
 ```
 
 The token is a real thirty-minute credential for a synthetic user. Delete it afterwards; the
-script never prints it, and neither should anything else.
+script never prints it, never puts it in a process argument, and neither should anything else —
+`ps` is readable by other local users on most systems, so a token in a `curl -H` is a token
+published to everyone logged in. The script writes it into a curl configuration file inside a
+private temporary directory instead, and passes it with `-K`.
 
 **The probe writes to production and cannot fully clean up.** It creates a project, and the API
 has no `DELETE` for one — only `PATCH {"archived": true}` — so each run leaves an archived
