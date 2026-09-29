@@ -109,6 +109,23 @@ describe('the deployment routing contract', () => {
     expect(code).toBe(1)
   })
 
+  it('accepts an exclusion for a sibling path that merely starts the same way', () => {
+    // `/api-docs/*` begins with the characters `/api` and has nothing to do with it. A
+    // checker that refused it would fail CI over a legitimate exclusion, which is the
+    // expensive direction to be wrong in - the other kind of wrong ships a bad deploy, this
+    // kind stops a good one. `/apikey*` is the same trap without the slash.
+    expect(scan({ ...GOOD, exclude: ['/api-docs/*'] }).code).toBe(0)
+    expect(scan({ ...GOOD, exclude: ['/apikey*'] }).code).toBe(0)
+  })
+
+  it('still refuses an exclusion broad enough to glob the prefix', () => {
+    // `/a*` does not land on a segment boundary and matches `/api` anyway, so segment
+    // awareness must not become an excuse to let it through.
+    const { code, output } = scan({ ...GOOD, exclude: ['/a*'] })
+    expect(output).toContain('/a*')
+    expect(code).toBe(1)
+  })
+
   it('refuses an exclusion narrower than the prefix', () => {
     // The dangerous shape, and the one a coverage-only check misses: `/api/auth/*` excludes
     // nothing the include patterns name, so the contract reads as healthy - while Cloudflare,

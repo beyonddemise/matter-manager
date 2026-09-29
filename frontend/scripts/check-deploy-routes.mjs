@@ -129,8 +129,23 @@ function coversBare(pattern, prefix) {
  */
 function overlaps(pattern, prefix) {
   if (pattern === '/*') return true
+
+  const wildcard = pattern.endsWith('*')
   const literal = pattern.replace(/\*+$/, '')
-  return literal.startsWith(prefix) || prefix.startsWith(literal)
+
+  // Segment-aware, because a raw `startsWith` gets siblings wrong in the direction that hurts:
+  // `/api-docs/*` begins with the characters `/api` while being nothing to do with it, and a
+  // checker that refused it would fail CI over a legitimate exclusion. This is the same
+  // boundary mistake `stripPrefix` carries deliberately for parity with Vite's unanchored
+  // regex - harmless there, because nothing routes `/apikey` to a Function; not harmless here,
+  // because this decides whether a build is allowed to proceed.
+  if (!wildcard) return literal === prefix || literal.startsWith(`${prefix}/`)
+
+  // A trailing `*` matches anything beginning with the literal part, so the containment has to
+  // be tested both ways round - and the second direction is a plain `startsWith` on purpose.
+  // `/a*` really does match `/api`, so an exclusion written that broadly overlaps whether or
+  // not it lands on a segment boundary, and refusing it is correct.
+  return literal === prefix || literal.startsWith(`${prefix}/`) || prefix.startsWith(literal)
 }
 
 for (const { prefix, route, why } of FORWARDED) {
