@@ -1343,3 +1343,45 @@ else had to be true, and check that too. The same zone shows the same defect a s
 **Applies to:** Cloudflare Pages and Workers custom domains, TLS certificate provisioning, DNS-backed
 verifications, OAuth redirect URIs, webhook endpoints — anything where a working path needs both a
 record somewhere and a registration somewhere else.
+
+## L39 — A negative check must rule out every other route to the same symptom
+
+**What happened.** The Pages Functions proxy shipped with a post-deploy probe whose whole design
+was a single inference: `/api/healthz` answering `text/html` means no Function ran, because the
+single-page fallback serves the app shell for any path it does not recognise. That inference was
+the point of the check — it is the only failure in that design with no natural symptom, so the
+content type was the one thing that could reveal it.
+
+It failed on the first real deploy (run 36522759319) and it was wrong. The body was
+`<title>Just a moment...</title>` with a 403: **Cloudflare's own bot interstitial**, served to the
+GitHub runner on `*.pages.dev`. At that same moment the forwarder was working perfectly —
+`https://app.matter-manager.io/api/healthz` answered `200 {"status":"ok"}`, `/db/` answered
+CouchDB's `401`, and `/api/auth/google` redirected to Google with the PKCE cookie set. Nothing was
+broken except the thing watching for breakage.
+
+**Why it was easy to write.** `text/html` really is the symptom of the failure. The check reasoned
+correctly from the failure to the symptom, then used the symptom as proof of the failure — which
+only holds if nothing else produces it. Cloudflare's challenge page does, and so would a 404 page,
+a WAF block, a maintenance page, or any interstitial an edge might insert. The check was a
+*necessary* condition dressed up as a sufficient one.
+
+**What it cost.** Not the deployment, which was live and correct throughout. It cost the check's
+credibility: a gate that goes red on something the deployment does not control teaches its readers
+that red means "run it again", and the next red one — the real one — is read the same way.
+
+**Rule:** before a check fails a build on the *absence* of evidence, enumerate what else produces
+the same observation. If anything on the path can produce it — a CDN, a WAF, a proxy, a bot
+challenge, an error page — the check must tell those apart and say "inconclusive" for the ones it
+cannot attribute. Prefer positive evidence where it exists: "the Function answered" is better
+asserted from something only the Function emits than from the absence of somebody else's HTML.
+
+**Corollary — an inconclusive verdict needs somewhere else to be conclusive.** Downgrading a
+failure to a warning is only safe when something else still asserts the fact. Here it is:
+`npm run check:functions` compiles `functions/` before the deploy with no network and no
+credentials, so the bundling claim has a deterministic gate and the probe is confirmation rather
+than the sole guard. Where no such gate exists, an inconclusive result is a silent hole, and the
+answer is to build the deterministic check rather than to soften the flaky one.
+
+**Applies to:** post-deploy smoke tests, health checks behind a CDN or WAF, anything asserting on a
+response served through infrastructure that can answer on its own behalf, and any check whose
+verdict rests on a body or content type rather than on a value the system under test produced.
