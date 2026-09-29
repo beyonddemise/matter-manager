@@ -90,3 +90,62 @@ export function stripPrefix(pathname: string, prefix: Prefix): string {
 export function upstreamUrl(origin: string, pathname: string, search: string): string {
   return `${origin.replace(/\/+$/, '')}${pathname === '' ? '/' : pathname}${search}`
 }
+
+/**
+ * Headers that describe one connection rather than the message travelling over it.
+ *
+ * RFC 9110's hop-by-hop set. They are removed in both directions: this Function terminates the
+ * browser's connection and opens a new one, so every one of these is a statement about a
+ * connection the other end is not on.
+ */
+export const HOP_BY_HOP: readonly string[] = [
+  'connection',
+  'keep-alive',
+  'proxy-authenticate',
+  'proxy-authorization',
+  'te',
+  'trailer',
+  'transfer-encoding',
+  'upgrade',
+]
+
+/**
+ * The headers to send upstream.
+ *
+ * Starts from what the browser sent and takes things away, rather than building an allowlist
+ * from nothing. An allowlist would mean every future header the application starts sending -
+ * `If-None-Match`, `Range`, a content type PouchDB picks - has to be remembered here, and
+ * forgetting one produces a subtly wrong response rather than an error.
+ *
+ * `Host` is deleted rather than set. `fetch` derives it from the URL, which is exactly what
+ * `changeOrigin: true` does in the development proxy; an inherited `Host: app.matter-manager.io`
+ * would contradict it, and Caddy on the droplet routes on `Host`, so the request would arrive
+ * at the wrong site block.
+ */
+export function upstreamHeaders(request: Request, kind: Upstream): Headers {
+  const headers = new Headers(request.headers)
+
+  for (const name of HOP_BY_HOP) headers.delete(name)
+  headers.delete('host')
+
+  // The session cookie is `Path=/`, so the browser attaches it to `/db/*` as readily as to
+  // `/api/*`. CouchDB authenticates replication with the bearer JWT and has no use for it, so
+  // forwarding would hand a thirty-day credential to a different service and write it into
+  // that service's logs on every request - with nothing anywhere looking wrong.
+  if (kind === 'db') headers.delete('cookie')
+
+  // Overwritten, never appended. The API runs with TRUST_PROXY=true and Fastify reads the
+  // leftmost entry as the client address, so anything the caller put there would be believed.
+  // `CF-Connecting-IP` is set by the edge and cannot be forged from outside it. When it is
+  // absent - which for a real request through Cloudflare it is not - the right answer is to
+  // send nothing rather than to pass on an attacker-chosen value.
+  const client = request.headers.get('cf-connecting-ip')
+  if (client === null) headers.delete('x-forwarded-for')
+  else headers.set('x-forwarded-for', client)
+
+  // Always https: Cloudflare redirects http to https before a Function ever runs.
+  headers.set('x-forwarded-proto', 'https')
+  headers.set('x-forwarded-host', new URL(request.url).host)
+
+  return headers
+}

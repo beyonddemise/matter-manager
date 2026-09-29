@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { prefixFor, stripPrefix, targets, upstreamUrl } from '../../../functions/_lib/forward.js'
+import {
+  prefixFor,
+  stripPrefix,
+  targets,
+  upstreamHeaders,
+  upstreamUrl,
+} from '../../../functions/_lib/forward.js'
 import { devProxy } from '../../../vite.config.js'
 
 /**
@@ -123,5 +129,114 @@ describe('the URL actually fetched', () => {
     expect(upstreamUrl('https://db.example', '/project_local/a%20b%2Fc', '')).toBe(
       'https://db.example/project_local/a%20b%2Fc',
     )
+  })
+})
+
+/** A request as it arrives at the edge, with whatever headers the test needs. */
+function incoming(url: string, headers: Record<string, string> = {}, method = 'GET'): Request {
+  return new Request(url, { method, headers })
+}
+
+describe('the headers sent upstream', () => {
+  it('forwards the session cookie to the API', () => {
+    const headers = upstreamHeaders(
+      incoming('https://app.matter-manager.io/api/projects', { cookie: 'mm_session=abc' }),
+      'api',
+    )
+    expect(headers.get('cookie')).toBe('mm_session=abc')
+  })
+
+  it('strips the cookie on the way to CouchDB', () => {
+    // The session cookie is Path=/, so the browser attaches it to every /db/* request without
+    // being asked. CouchDB has no use for it - replication authenticates with the bearer JWT -
+    // so forwarding it ships a thirty-day credential to a different service, and into its
+    // logs, on every replication request. Nothing about that failure is visible: it works.
+    const headers = upstreamHeaders(
+      incoming('https://app.matter-manager.io/db/project_local', { cookie: 'mm_session=abc' }),
+      'db',
+    )
+    expect(headers.get('cookie')).toBeNull()
+  })
+
+  it('forwards Authorization to both', () => {
+    for (const kind of ['api', 'db'] as const) {
+      const headers = upstreamHeaders(
+        incoming('https://app.matter-manager.io/x', { authorization: 'Bearer token' }),
+        kind,
+      )
+      expect(headers.get('authorization')).toBe('Bearer token')
+    }
+  })
+
+  it('sets X-Forwarded-For from CF-Connecting-IP', () => {
+    const headers = upstreamHeaders(
+      incoming('https://app.matter-manager.io/api/x', { 'cf-connecting-ip': '203.0.113.9' }),
+      'api',
+    )
+    expect(headers.get('x-forwarded-for')).toBe('203.0.113.9')
+  })
+
+  it('overwrites a caller-supplied X-Forwarded-For rather than appending to it', () => {
+    // The API runs with TRUST_PROXY=true and Fastify reads the *leftmost* entry as the client
+    // address. Appending would leave the caller's own value leftmost, letting them choose
+    // their rate-limit bucket. compose.prod.yml states the consequence of getting this family
+    // of settings wrong: "the first twenty sign-in attempts from anywhere lock out everybody
+    // else."
+    const headers = upstreamHeaders(
+      incoming('https://app.matter-manager.io/api/x', {
+        'x-forwarded-for': '10.0.0.1',
+        'cf-connecting-ip': '203.0.113.9',
+      }),
+      'api',
+    )
+    expect(headers.get('x-forwarded-for')).toBe('203.0.113.9')
+  })
+
+  it('removes a caller-supplied X-Forwarded-For when the edge gave us no address', () => {
+    // Keeping it would be worse than having none: it is attacker-chosen and would be trusted.
+    const headers = upstreamHeaders(
+      incoming('https://app.matter-manager.io/api/x', { 'x-forwarded-for': '10.0.0.1' }),
+      'api',
+    )
+    expect(headers.get('x-forwarded-for')).toBeNull()
+  })
+
+  it('states the protocol and the host the browser used', () => {
+    const headers = upstreamHeaders(incoming('https://app.matter-manager.io/api/x'), 'api')
+    expect(headers.get('x-forwarded-proto')).toBe('https')
+    expect(headers.get('x-forwarded-host')).toBe('app.matter-manager.io')
+  })
+
+  it('drops hop-by-hop headers', () => {
+    // They describe this connection, not the message. Forwarding `Connection: keep-alive` or a
+    // `Transfer-Encoding` to a different connection is a protocol error that some servers
+    // tolerate and some do not.
+    const headers = upstreamHeaders(
+      incoming('https://app.matter-manager.io/api/x', {
+        connection: 'keep-alive',
+        'keep-alive': 'timeout=5',
+        upgrade: 'websocket',
+      }),
+      'api',
+    )
+    for (const name of ['connection', 'keep-alive', 'upgrade']) {
+      expect(headers.get(name)).toBeNull()
+    }
+  })
+
+  it('does not carry the browser-facing Host upstream', () => {
+    // fetch() derives Host from the URL it is given, which is what `changeOrigin: true` does
+    // in the dev proxy. An explicit Host left over from the inbound request would contradict
+    // it, and Caddy routes on Host - so the request would arrive at the wrong site block.
+    const headers = upstreamHeaders(incoming('https://app.matter-manager.io/api/x'), 'api')
+    expect(headers.get('host')).toBeNull()
+  })
+
+  it('adds no CORS headers', () => {
+    // Every request through this Function is same-origin by construction. An
+    // Access-Control-Allow-Origin here would describe a flow that does not exist and would be
+    // the first thing to mislead somebody debugging a future one.
+    const headers = upstreamHeaders(incoming('https://app.matter-manager.io/api/x'), 'api')
+    expect(headers.get('access-control-allow-origin')).toBeNull()
   })
 })
