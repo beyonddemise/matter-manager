@@ -1420,3 +1420,33 @@ the unit of verification is the paragraph, not the clause being changed.
 
 **Applies to:** "nothing calls this yet", "this is dead code", "only tests import it", "no request
 is made to X" — and to every comment explaining why something is *not* wired up.
+**Corollary to L39 — narrowing a check can strengthen it.** The first fix for that probe
+special-cased Cloudflare's bot interstitial and left the general rule alone: *any* `text/html`
+still meant "the app shell was served". It failed again two deploys later, on `404 text/html` —
+Cloudflare's own not-found page, returned because `wrangler pages deploy` had not finished
+propagating. The same URL answered `200 {"status":"ok"}` minutes afterwards.
+
+Two false failures from one mistake, and the second only happened because the first was patched
+at the symptom. The app-shell failure has a **precise** shape: a single-page fallback answers
+**200** with HTML. Every other HTML response on that path belongs to somebody else — a 404, an
+interstitial, a WAF block — and none of them is evidence about our bundle. Asserting on
+`status = 200 && html` rather than on `html` is a *narrower* condition that catches the same
+bug and nothing else.
+
+**Second corollary — classify on the strongest signal first.** Review of the fix found the same
+root cause a third time, in the opposite direction: a `curl` that never gets an HTTP response
+still prints its `-w` line, as `000` with an empty content type, and process substitution throws
+away the exit status that would have said so. An empty type is not `text/html`, so it reached the
+"not HTML, therefore the forwarder answered" branch and reported **success for a deployment that
+could not be contacted at all**. A gate may cry wolf; it may not stay silent when there is one.
+
+Every one of the three came from branching on the content type before the status. The type is
+only meaningful once the status says there was a reply for it to describe — so the status is
+tested first, and a transport failure and an exhausted retry are named outcomes rather than
+whatever falls through.
+
+**Rule:** when a check misfires, do not add an exception for the case that misfired. Ask what
+the failure's exact observable shape is, and assert on that. A list of exceptions grows one
+incident at a time and is never finished; the precise condition is finished the day it is
+written. And when a verdict cannot be reached, say that — "a Function answered (403)" was the
+convenient sentence and it was not true.

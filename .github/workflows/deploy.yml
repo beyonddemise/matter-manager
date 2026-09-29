@@ -241,21 +241,87 @@ jobs:
             echo "The deploy step reported no URL, so there is nothing to probe." >&2
             exit 1
           fi
-          # One request, not two. The previous version made a second identical call just to
-          # read the content type, which is a second chance to be challenged, rate-limited or
-          # served by a different edge node - so the status and the type it compared could come
-          # from two different answers.
-          read -r status type < <(curl -sS -o /tmp/probe.body -D /tmp/probe.head \
-            -w '%{http_code} %{content_type}\n' -H 'Accept: */*' "${DEPLOYMENT_URL}/api/healthz")
-          echo "GET ${DEPLOYMENT_URL}/api/healthz -> ${status} ${type}"
+          # One request per attempt, not two. An earlier version made a second identical call
+          # just to read the content type, which is a second chance to be challenged,
+          # rate-limited or served by a different edge node - so the status and the type it
+          # compared could come from two different answers.
+          #
+          # Retried, because `wrangler pages deploy` returns before the deployment is serving.
+          # Run 36529216882 probed 0.4 s after upload and got 404; the same URL answered
+          # `200 {"status":"ok"}` minutes later. A gate that fails on a race is a gate whose
+          # red means "run it again", which is the whole failure this step has already had
+          # once. Six attempts over thirty seconds, and a 404 is the only status worth
+          # retrying: it is what an edge says about a deployment it does not have yet.
+          # `rc` is captured rather than left to errexit, and the result read from a variable
+          # rather than through `< <(...)`. Process substitution discards curl's exit status,
+          # and a transport failure still prints a `-w` line - `000` with an empty content
+          # type. That reached the non-HTML branch below and was reported as "A Function
+          # answered (000)": a gate saying yes when nothing answered at all, which is the one
+          # direction a gate must never fail in.
+          rc=0
+          for attempt in $(seq 1 6); do
+            probe=$(curl -sS -o /tmp/probe.body -D /tmp/probe.head \
+              -w '%{http_code} %{content_type}' -H 'Accept: */*' \
+              "${DEPLOYMENT_URL}/api/healthz") && rc=0 || rc=$?
+            read -r status type <<<"${probe:-000 }"
+            echo "attempt ${attempt}: GET ${DEPLOYMENT_URL}/api/healthz -> ${status} ${type:-<none>} (curl exit ${rc})"
+            # Both retryable conditions are transient by nature: a deployment the edge does not
+            # have yet, and a connection that did not come up. Anything else is an answer.
+            if [ "${rc}" -eq 0 ] && [ "${status}" != "404" ]; then break; fi
+            [ "${attempt}" -eq 6 ] || sleep 5
+          done
 
+          # **Status before content type.** Both false results this step has produced came from
+          # classifying on the type first: a 404 HTML page read as our app shell, and a
+          # transport failure read as a Function's reply. The type only means something once
+          # the status says there was a reply to have a type.
+          if [ "${rc}" -ne 0 ] || [ "${status}" = "000" ]; then
+            echo "::warning::Could not tell whether a Function ran: the deployment could not be reached."
+            echo "curl exited ${rc} without an HTTP response, so nothing here is evidence" >&2
+            echo "either way. Check by hand:" >&2
+            echo "  curl -sS -D- ${DEPLOYMENT_URL}/api/healthz" >&2
+            exit 0
+          fi
+
+          if [ "${status}" = "404" ]; then
+            # Six attempts over thirty seconds and the edge still does not have it. Whatever
+            # content type came with that, it is not the forwarder answering.
+            echo "::warning::Could not tell whether a Function ran: still 404 after six attempts."
+            echo "The edge did not have this deployment yet. That is propagation, not a" >&2
+            echo "missing bundle - but it is not proof of one either. Check by hand:" >&2
+            echo "  curl -sS -D- ${DEPLOYMENT_URL}/api/healthz" >&2
+            exit 0
+          fi
+
+          # **Only a 200 carrying HTML is the failure this step exists to catch.** That is what
+          # the single-page fallback returns for a path it does not recognise, and it is the
+          # precise shape of "no Function ran". Every other HTML response comes from somebody
+          # else's page - Cloudflare's 404, its bot interstitial, a WAF block - and reading
+          # those as our app shell is how this check produced two false failures before anyone
+          # had broken anything. Narrowing to 200 is not a weaker assertion; it is the one the
+          # symptom actually supports.
           case "${type}" in
             text/html*) ;;
             *)
+              # Not HTML at all, so it came from the forwarder: the API's JSON through it, or
+              # its own plain-text 502. Either proves a Function ran, which is the whole
+              # question.
               echo "A Function answered (${status}); the forwarder is deployed."
               exit 0
               ;;
           esac
+
+          if [ "${status}" != "200" ]; then
+            # HTML, but not the 200 the single-page fallback returns - so it is somebody
+            # else's page. Cloudflare's 404 while a deployment propagates, its bot
+            # interstitial, a WAF block. None of them is evidence about our bundle, and
+            # saying "a Function answered" here would be as false as calling it the app shell.
+            echo "::warning::Could not tell whether a Function ran: the edge answered ${status} with HTML."
+            echo "The edge served its own ${status} page rather than passing the request" >&2
+            echo "through, so this says nothing either way. Check by hand:" >&2
+            echo "  curl -sS -D- ${DEPLOYMENT_URL}/api/healthz" >&2
+            exit 0
+          fi
 
           # HTML, which is the symptom this step exists to catch - but not every HTML body is
           # our app shell, and the difference decides whether a deployment is broken or merely
@@ -276,6 +342,8 @@ jobs:
           # `npm run check:functions`, which compiles functions/ with no network at all.
           if grep -qi '^cf-mitigated:' /tmp/probe.head ||
              grep -qi 'Just a moment' /tmp/probe.body; then
+            # Reachable only for a 200 now, since anything else left above - a challenge served
+            # with 200 rather than 403, which Cloudflare also does.
             echo "::warning::Cloudflare challenged the probe, so whether a Function ran is unknown."
             echo "Cloudflare served its bot interstitial (${status}) instead of passing the" >&2
             echo "request through, which it does to CI runners on *.pages.dev. This is not" >&2
