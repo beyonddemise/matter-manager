@@ -39,19 +39,55 @@ Wiring `src/ui/sync/` is **not** in scope. This change is deployment plumbing.
 
 ## Where the code lives
 
-`frontend/functions/`, with `--functions-directory frontend/functions` added to the deploy
-command in `.github/workflows/deploy.yml`.
+`frontend/functions/`, reached by running the deploy **from `frontend/`** rather than by naming
+the directory.
 
 Wrangler resolves `functions/` relative to the working directory, and the deploy runs
 `wrangler pages deploy frontend/dist` from the repository root — so the zero-configuration
 location is a new top-level `functions/` folder. That is the wrong place twice over: commit
 `0a3b6b7` has just finished tidying the root, and code there would sit outside every workspace,
-needing its own tsconfig, its own Biome coverage and its own test runner configuration. Inside
-`frontend/` all four already exist, and the tests land beside `frontend/test/ui/deploy/`, where
-the existing proxy test already lives.
+needing its own tsconfig, its own Biome coverage and its own test runner configuration. The
+repository root has no `tsconfig.json` and no test runner at all, so "needing its own" means
+writing both. Inside `frontend/` all four already exist, and the tests land beside
+`frontend/test/ui/deploy/`, where the existing proxy test already lives.
 
-The cost is one flag in the deploy command. The flag is cheap; a directory that silently is not
-bundled is not.
+**Corrected 2026-09-29.** This section previously said the cost was `--functions-directory
+frontend/functions`, "one flag in the deploy command". **That flag does not exist.** The
+argument list of `wrangler pages deploy` is `directory`, `project-name`, `branch`,
+`commit-hash`, `commit-message`, `commit-dirty`, `skip-caching`, `no-bundle` and
+`upload-source-maps`, plus three hidden ones — read from `src/pages/deploy.ts` in
+`cloudflare/workers-sdk`, not from the documentation, which omits the hidden ones and so cannot
+be used to prove absence. `functionsDirectory` is real but belongs to the *programmatic* API
+(`src/api/pages/deploy.ts`, `customFunctionsDirectory`); the CLI never supplies it and falls
+back to a hardcoded `join(cwd(), "functions")`.
+
+It is worth naming what that error would have cost, because it is this document's own opening
+paragraph turned on its author: an unrecognised flag either aborts the deploy or is ignored, and
+if it were ignored, wrangler would find no `functions/` at the root, upload the assets alone, and
+**every guard below would pass**. `_routes.json` would still be present and still be correct.
+The site would answer 200 with the app shell from `/api/*` — the exact failure this design
+exists to remove, reintroduced by the mechanism chosen to remove it.
+
+So the working directory moves instead, which is the same idea with no flag in it:
+`cloudflare/wrangler-action` takes a `workingDirectory` input (its bundle passes it as
+`cwd`), and `workingDirectory: frontend` with `command: pages deploy dist` makes
+`join(cwd(), "functions")` resolve to `frontend/functions`.
+
+**Wrangler becomes a `frontend` devDependency, and that is not incidental.** The action installs
+wrangler with `npm i` in its working directory when it cannot already resolve one. Pointed at
+`frontend/`, that install would run against `frontend/.npmrc`, which authenticates to the Web
+Awesome private registry from `WEBAWESOME_NPM_TOKEN` — so the step would need the token, and
+`npm i` runs lifecycle scripts, which is precisely what every other install in this repository
+uses `--ignore-scripts` to prevent while that token is in the environment (#164). Declaring
+wrangler in `frontend/package.json` means the existing `npm ci --ignore-scripts` has already put
+it there, the action finds it and installs nothing, and the version that deploys is the one in
+the lockfile rather than whatever `latest` resolved to that morning — which is the same argument
+`deploy.yml` already makes for building here rather than in Cloudflare's CI.
+
+It also buys the strongest guard available for the failure in the first row of the table below:
+`wrangler pages functions build` bundles `functions/` locally, with no credentials and no
+network, so CI can prove the directory compiles and routes **before** a deploy rather than
+inferring it from a response afterwards.
 
 ```text
 frontend/functions/
@@ -72,10 +108,18 @@ correctness rather than merely explicit.
 `devProxy(env)` deliberately: same shape, same testability, and the parity test below can import
 both and compare them.
 
-| Variable | Value | Set where |
+| Variable | Live value | Set where |
 | --- | --- | --- |
-| `API_ORIGIN` | the API's public origin | Pages project — **not yet set**, awaits the API deployment |
-| `COUCHDB_URL` | `https://couch.matter-manager.io` | Pages project — already set |
+| `API_ORIGIN` | `https://api.matter-manager.io` | Pages project production — set 2026-09-29 |
+| `COUCHDB_URL` | `https://couch.matter-manager.io/` | Pages project production — already set |
+
+Both values are read back from the project rather than quoted from memory, and the second one is
+why: **`COUCHDB_URL` ends in a slash.** Concatenating it with a stripped path yields
+`https://couch.matter-manager.io//project_local`, and an empty first path segment is not
+cosmetic to CouchDB — it is a different route. `upstreamUrl` therefore trims trailing slashes
+from the origin, and a test pins it with the live value rather than a tidy one. Writing
+`API_ORIGIN` without a trailing slash does not make this safe; it makes it *untested*, which is
+how the pair would come apart the first time somebody pasted the other form into the dashboard.
 
 `COUCHDB_URL` names the public hostname, never a bypass. That is what puts every `/db` request
 through the host Caddy on `wisselroot` and so inherits its `@forbidden` blocklist — `_all_dbs`,
