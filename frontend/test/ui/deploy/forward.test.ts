@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { prefixFor, stripPrefix, targets } from '../../../functions/_lib/forward.js'
+import { prefixFor, stripPrefix, targets, upstreamUrl } from '../../../functions/_lib/forward.js'
 import { devProxy } from '../../../vite.config.js'
 
 /**
@@ -75,5 +75,53 @@ describe('parity with the development proxy', () => {
     for (const path of ['/db', '/db/', '/db/project_local', '/db/_changes']) {
       expect(stripPrefix(path, '/db')).toBe(devProxy({})['/db'].rewrite(path))
     }
+  })
+})
+
+describe('the URL actually fetched', () => {
+  it('joins the origin, the stripped path and the query', () => {
+    expect(upstreamUrl('https://api.example', '/projects', '?limit=10')).toBe(
+      'https://api.example/projects?limit=10',
+    )
+  })
+
+  it('trims a trailing slash from the origin', () => {
+    // COUCHDB_URL is set on the live project *with* a trailing slash. Concatenating gives
+    // `https://couch.matter-manager.io//project_local`, and an empty first path segment is a
+    // different route to CouchDB, not a cosmetic difference. The literal below is the deployed
+    // value, not a tidied one, because a tidied one would leave this untested.
+    expect(upstreamUrl('https://couch.matter-manager.io/', '/project_local', '')).toBe(
+      'https://couch.matter-manager.io/project_local',
+    )
+  })
+
+  it('trims however many slashes there are', () => {
+    expect(upstreamUrl('https://db.example///', '/x', '')).toBe('https://db.example/x')
+  })
+
+  it('turns the bare prefix into the root', () => {
+    // `stripPrefix('/db', '/db')` is '', and `https://db.example?x` is not the root with a
+    // query - it is a URL whose path is empty, which CouchDB and the API both read differently
+    // from `/`.
+    expect(upstreamUrl('https://db.example', '', '')).toBe('https://db.example/')
+    expect(upstreamUrl('https://db.example', '', '?a=1')).toBe('https://db.example/?a=1')
+  })
+
+  it('keeps the query string', () => {
+    // Replication is `_changes?since=…&feed=longpoll&heartbeat=…`. A forwarder that rebuilt
+    // the URL from the pathname alone would serve /api/healthz perfectly and break every
+    // replication request, which is the sort of bug that gets diagnosed as "CouchDB is slow".
+    expect(
+      upstreamUrl('https://db.example', '/project_local/_changes', '?feed=longpoll&since=42'),
+    ).toBe('https://db.example/project_local/_changes?feed=longpoll&since=42')
+  })
+
+  it('does not re-encode what the browser already encoded', () => {
+    // The pathname arrives percent-encoded from `new URL(request.url).pathname`. Running it
+    // through URL construction again would double-encode a document id containing a space or
+    // a slash, and PouchDB document ids routinely contain both.
+    expect(upstreamUrl('https://db.example', '/project_local/a%20b%2Fc', '')).toBe(
+      'https://db.example/project_local/a%20b%2Fc',
+    )
   })
 })

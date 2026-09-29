@@ -69,3 +69,24 @@ export function prefixFor(kind: Upstream): Prefix {
 export function stripPrefix(pathname: string, prefix: Prefix): string {
   return pathname.startsWith(prefix) ? pathname.slice(prefix.length) : pathname
 }
+
+/**
+ * The address the request is actually sent to.
+ *
+ * String concatenation rather than `new URL(path, origin)`, and that is the careful choice
+ * rather than the lazy one: `new URL` normalises, and normalising a path that a browser has
+ * already percent-encoded re-encodes it. PouchDB document ids contain spaces and slashes as a
+ * matter of course, so `a%20b` would go upstream as `a%2520b` and the document would not be
+ * found - a failure that looks like missing data rather than like a broken proxy.
+ *
+ * Two shapes have to be handled and neither is hypothetical:
+ *
+ * - **A trailing slash on the origin.** `COUCHDB_URL` is set on the live project as
+ *   `https://couch.matter-manager.io/`. Concatenated with `/project_local` that is `//project_local`,
+ *   whose first path segment is empty, which is a different route.
+ * - **An empty path**, which is what `stripPrefix` leaves for a bare `/db`. `origin + '' + '?x'`
+ *   is a URL with no path at all.
+ */
+export function upstreamUrl(origin: string, pathname: string, search: string): string {
+  return `${origin.replace(/\/+$/, '')}${pathname === '' ? '/' : pathname}${search}`
+}
