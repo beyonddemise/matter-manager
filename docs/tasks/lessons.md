@@ -1385,3 +1385,22 @@ answer is to build the deterministic check rather than to soften the flaky one.
 **Applies to:** post-deploy smoke tests, health checks behind a CDN or WAF, anything asserting on a
 response served through infrastructure that can answer on its own behalf, and any check whose
 verdict rests on a body or content type rather than on a value the system under test produced.
+
+**Corollary to L39 — narrowing a check can strengthen it.** The first fix for that probe
+special-cased Cloudflare's bot interstitial and left the general rule alone: *any* `text/html`
+still meant "the app shell was served". It failed again two deploys later, on `404 text/html` —
+Cloudflare's own not-found page, returned because `wrangler pages deploy` had not finished
+propagating. The same URL answered `200 {"status":"ok"}` minutes afterwards.
+
+Two false failures from one mistake, and the second only happened because the first was patched
+at the symptom. The app-shell failure has a **precise** shape: a single-page fallback answers
+**200** with HTML. Every other HTML response on that path belongs to somebody else — a 404, an
+interstitial, a WAF block — and none of them is evidence about our bundle. Asserting on
+`status = 200 && html` rather than on `html` is a *narrower* condition that catches the same
+bug and nothing else.
+
+**Rule:** when a check misfires, do not add an exception for the case that misfired. Ask what
+the failure's exact observable shape is, and assert on that. A list of exceptions grows one
+incident at a time and is never finished; the precise condition is finished the day it is
+written. And when a verdict cannot be reached, say that — "a Function answered (403)" was the
+convenient sentence and it was not true.
