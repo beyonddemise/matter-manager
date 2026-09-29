@@ -4,6 +4,7 @@ import '@awesome.me/webawesome-pro/dist/components/dialog/dialog.js'
 import '@awesome.me/webawesome-pro/dist/components/icon/icon.js'
 import { fixture, html, waitUntil } from '@open-wc/testing-helpers'
 import { describe, expect, it } from 'vitest'
+import { ImageScanError } from '../../../src/ui/scan/image.js'
 import type { ScanSource } from '../../../src/ui/scan/source.js'
 import type { ScanDialog } from '../../../src/ui/views/scan-dialog.js'
 import '../../../src/ui/views/scan-dialog.js'
@@ -263,5 +264,71 @@ describe('closing the dialog', () => {
 
     await waitUntil(() => slow.released(), 'the camera was left open behind a closed dialog')
     expect(element.scanning).toBe(false)
+  })
+})
+
+describe('uploading a picture from the dialog', () => {
+  /** A one-pixel PNG, as a `File` from a picker. Its bytes never matter: the decoder is faked. */
+  function pngFile(): File {
+    const png = Uint8Array.from(
+      atob(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+      ),
+      (character) => character.charCodeAt(0),
+    )
+    return new File([png], 'label.png', { type: 'image/png' })
+  }
+
+  /** Chooses a file the way a person does — through the input the control opens. */
+  function chooseFile(element: ScanDialog, file: File): void {
+    const input = element.querySelector('input[type="file"]') as HTMLInputElement
+    const transfer = new DataTransfer()
+    transfer.items.add(file)
+    input.files = transfer.files
+    input.dispatchEvent(new Event('change', { bubbles: true }))
+  }
+
+  it('offers the control even when the camera would not open', async () => {
+    // The screen this matters on. Someone who has just been told the camera is unavailable is
+    // the likeliest person in the application to have a photograph of the label instead, and
+    // until now their only remaining option was to type twenty-two characters by hand.
+    const element = await dialog(
+      fakeSource({
+        open: async () => {
+          throw new DOMException('denied', 'NotAllowedError')
+        },
+      }),
+    )
+    await waitUntil(() => said(element).includes('permission'), 'no camera message')
+
+    expect(element.querySelector('[data-upload]')).not.toBeNull()
+  })
+
+  it('reports a code from a picture the same way it reports one from the camera', async () => {
+    // Through the same `scan` event, so the form has one destination for a setup code however
+    // it was read. A second event would be a second thing for the form to remember.
+    const scanned = deferred<string>()
+    const element = await dialog(fakeSource(), scanned.settle)
+    element.decodeImage = async () => [PAYLOAD]
+    await element.updateComplete
+
+    chooseFile(element, pngFile())
+
+    expect(await scanned.promise).toBe(PAYLOAD)
+  })
+
+  it('says what was wrong with a picture that carried no code', async () => {
+    const element = await dialog(fakeSource())
+    element.decodeImage = async () => {
+      throw new ImageScanError('no-code')
+    }
+    await element.updateComplete
+
+    chooseFile(element, pngFile())
+
+    await waitUntil(
+      () => said(element).includes('No QR code'),
+      'nothing said the picture was empty',
+    )
   })
 })

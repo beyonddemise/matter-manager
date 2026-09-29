@@ -78,6 +78,10 @@ const ICONS = [
   'circle-exclamation',
   'circle-info',
   'comment-medical',
+  // The upload control beside the camera button on the add form, and in the scan dialog's
+  // footer. Bundled like every other icon rather than fetched: an icon that 404s offline is a
+  // control that looks broken in exactly the situation this application is built for.
+  'image',
   'expand',
   'file-pdf',
   'pen',

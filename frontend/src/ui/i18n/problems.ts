@@ -19,6 +19,7 @@
 
 import { msg } from '@lit/localize'
 import type { DraftProblem } from '../../domain/index.js'
+import type { ImageProblem } from '../scan/image.js'
 
 /**
  * The fallback for a code this build does not know.
@@ -108,5 +109,36 @@ export function problemMessage(problem: DraftProblem): string {
 
     default:
       return unknownProblem(problem)
+  }
+}
+
+/**
+ * What went wrong with a picture someone chose, said to the person who chose it.
+ *
+ * Takes the wider union rather than `ImageProblem` alone, because the two failures a reader
+ * meets here come from different layers and there is no reason they should learn that. A
+ * picture with nothing in it is `image.ts`'s answer; a picture of a barcode that is not a setup
+ * code is `readCredential`'s, and {@link problemMessage} already has the sentence for it.
+ *
+ * A switch for the reason the one above is a switch: `msg()` resolves against the locale active
+ * when it is called, so a table built at module scope would freeze every sentence into
+ * whichever language loaded first.
+ */
+export function imageMessage(problem: ImageProblem | DraftProblem): string {
+  switch (problem) {
+    case 'unreadable':
+      // Does not say which formats are accepted. The answer depends on the browser - Safari
+      // reads HEIC and Chrome on Linux does not - so a list here would be wrong somewhere.
+      return msg('That file could not be read as an image. Choose a photograph or a screenshot.')
+    case 'no-code':
+      return msg(
+        'No QR code was found in that image. Try a closer or sharper picture of the label.',
+      )
+    case 'no-decoder':
+      return msg('This browser cannot read codes from images. Type the code instead.')
+    default:
+      // Everything else was decoded perfectly well and is simply not a setup code, which is a
+      // question `problemMessage` already answers.
+      return problemMessage(problem)
   }
 }

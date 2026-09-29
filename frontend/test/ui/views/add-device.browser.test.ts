@@ -9,6 +9,7 @@ import { fixture, html, waitUntil } from '@open-wc/testing-helpers'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { ProjectRepositories } from '../../../src/data/index.js'
 import type { DeviceDocument, RoomDocument } from '../../../src/domain/index.js'
+import { ImageScanError } from '../../../src/ui/scan/image.js'
 import type { ScanSource } from '../../../src/ui/scan/source.js'
 import type { AddDeviceView } from '../../../src/ui/views/add-device.js'
 import '../../../src/ui/views/add-device.js'
@@ -89,6 +90,33 @@ async function form(
  * is what the real source answers there. Letting the tests fall through to the real one would
  * mean the form under test differed between a developer's Mac and CI.
  */
+/** A one-pixel PNG, as a `File` from a picker. Its bytes never matter: the decoder is faked. */
+function pngFile(): File {
+  const png = Uint8Array.from(
+    atob(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+    ),
+    (character) => character.charCodeAt(0),
+  )
+  return new File([png], 'label.png', { type: 'image/png' })
+}
+
+/**
+ * Chooses a file the way a person does, by pressing the control and letting it open the input.
+ *
+ * A `File` cannot be assigned to `input.files` directly, so it goes through a `DataTransfer` -
+ * the same trick a drag-and-drop test would use. Dispatching `change` rather than calling the
+ * handler keeps this a test of the wiring as well as of the handler.
+ */
+async function chooseFile(element: AddDeviceView, file: File): Promise<void> {
+  await waitUntil(() => element.querySelector('[data-upload]') !== null, 'no upload control')
+  const input = element.querySelector('input[type="file"]') as HTMLInputElement
+  const transfer = new DataTransfer()
+  transfer.items.add(file)
+  input.files = transfer.files
+  input.dispatchEvent(new Event('change', { bubbles: true }))
+}
+
 function neverAvailable(): ScanSource {
   return {
     available: async () => false,
@@ -462,6 +490,51 @@ describe('the order the two documents are written in', () => {
     await submit(element, () => element.querySelector('[data-save-failed]') !== null)
 
     expect(await devices()).toHaveLength(0)
+  })
+})
+
+describe('filling the setup code from a picture', () => {
+  /** A decoder that reports one code, whatever it is handed. */
+  const decodingTo = (payload: string) => async () => [payload]
+
+  /** A decoder that behaves as the real one does for a picture with nothing in it. */
+  const findingNothing = () => async () => {
+    throw new ImageScanError('no-code')
+  }
+
+  it('offers the upload control even where nothing here can scan', async () => {
+    // The point of the feature. `neverAvailable()` is the default source, so this is the
+    // desktop with no webcam - which today is shown a form that does not mention scanning at
+    // all, and is exactly the person who has a photograph of the label instead.
+    const element = await form()
+    await waitUntil(() => element.scanChecked, 'the scan check never finished')
+    await element.updateComplete
+
+    expect(element.querySelector('[data-scan]')).toBeNull()
+    expect(element.querySelector('[data-upload]')).not.toBeNull()
+  })
+
+  it('puts a code read from a picture into the setup-code field', async () => {
+    const element = await form()
+    element.decodeImage = decodingTo(PAYLOAD)
+    await element.updateComplete
+
+    await chooseFile(element, pngFile())
+
+    await waitUntil(() => fieldValue(element, 'credential') === PAYLOAD, 'the code never arrived')
+  })
+
+  it('says so when the picture carries no code', async () => {
+    const element = await form()
+    element.decodeImage = findingNothing()
+    await element.updateComplete
+
+    await chooseFile(element, pngFile())
+
+    await waitUntil(
+      () => element.querySelector('[data-upload-problem]') !== null,
+      'nothing said the picture had no code in it',
+    )
   })
 })
 
