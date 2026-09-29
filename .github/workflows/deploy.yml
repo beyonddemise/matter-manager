@@ -138,6 +138,15 @@ jobs:
         run: npm run check:deploy
         working-directory: frontend
 
+      # The other half of the deployment contract. `_headers` decides how long the browser
+      # keeps what it was given; `_routes.json` decides whether it reaches a Function at all.
+      # Here as well as in deploy.yml for the same reason the step above is: a `/api/*` that
+      # has fallen out of `include` ships as 200 with the app shell, which review catches and
+      # monitoring does not.
+      - name: Forwarder routes
+        run: npm run check:routes
+        working-directory: frontend
+
       # One package since #181, so there is nothing to build first: `core` and `data` used to be
       # separate projects resolved through their emitted declarations, which is why this job
       # needed a `tsc --build` before `vite build` or failed with "Failed to resolve import".
