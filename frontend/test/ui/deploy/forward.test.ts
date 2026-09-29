@@ -235,6 +235,23 @@ describe('the headers sent upstream', () => {
     }
   })
 
+  it('drops the headers that Connection names, not just Connection itself', () => {
+    // `Connection: X-Custom` says X-Custom belongs to this connection alone. Deleting
+    // Connection and forwarding X-Custom is the half of the rule that is easy to miss, because
+    // nothing breaks - the field just travels one hop further than its sender allowed.
+    const headers = upstreamHeaders(
+      incoming('https://app.matter-manager.io/api/x', {
+        connection: 'X-Custom, X-Another',
+        'x-custom': 'one',
+        'x-another': 'two',
+      }),
+      'api',
+    )
+    expect(headers.get('connection')).toBeNull()
+    expect(headers.get('x-custom')).toBeNull()
+    expect(headers.get('x-another')).toBeNull()
+  })
+
   it('does not carry the browser-facing Host upstream', () => {
     // fetch() derives Host from the URL it is given, which is what `changeOrigin: true` does
     // in the dev proxy. An explicit Host left over from the inbound request would contradict
@@ -294,6 +311,18 @@ describe('the response handed back to the browser', () => {
   it('drops hop-by-hop headers on the way back too', () => {
     const upstream = new Response('ok', { status: 200, headers: { connection: 'close' } })
     expect(toResponse(upstream).headers.get('connection')).toBeNull()
+  })
+
+  it('drops the headers that Connection names on the way back too', () => {
+    // Same rule, the other direction. An upstream that names a field in Connection means it
+    // for the hop it is on, not for the browser.
+    const upstream = new Response('ok', {
+      status: 200,
+      headers: { connection: 'X-Upstream-Only', 'x-upstream-only': 'leaked' },
+    })
+    const out = toResponse(upstream)
+    expect(out.headers.get('connection')).toBeNull()
+    expect(out.headers.get('x-upstream-only')).toBeNull()
   })
 
   it('preserves the body', async () => {

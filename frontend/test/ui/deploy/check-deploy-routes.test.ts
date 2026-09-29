@@ -29,7 +29,7 @@ function scan(routes: unknown): { code: number; output: string } {
 }
 
 /** A contract that covers both forwarded prefixes and excludes nothing. */
-const GOOD = { version: 1, include: ['/api/*', '/db/*'], exclude: [] }
+const GOOD = { version: 1, include: ['/api', '/api/*', '/db', '/db/*'], exclude: [] }
 
 describe('the deployment routing contract', () => {
   it('accepts a contract that covers both /api and /db', () => {
@@ -63,7 +63,7 @@ describe('the deployment routing contract', () => {
     const { code, output } = scan({ ...GOOD, exclude: ['/db/*'] })
     expect(code).toBe(1)
     expect(output).toContain('/db')
-    expect(output).toContain('exclude pattern covers it')
+    expect(output).toContain('an exclude pattern overlaps it')
   })
 
   it('rejects a version other than 1', () => {
@@ -98,4 +98,24 @@ describe('the deployment routing contract', () => {
   // That check only runs against the real tree (`scanIndex === -1` in the checker), because a
   // fixture directory has no `functions/` beside it to check against - there is no `--scan`
   // argument that can drive it, so it is left unexercised by design rather than by oversight.
+
+  it('refuses a contract that covers the subtree but not the bare path', () => {
+    // `/api/*` does not match `/api`. The wildcard stands for what follows the slash, so the
+    // bare path never invokes a Function and is served the app shell - one endpoint quietly
+    // wrong while everything beneath it works. This is also what wrangler generates on its
+    // own, which is why the committed file deliberately asks for more than the default.
+    const { code, output } = scan({ ...GOOD, include: ['/api/*', '/db', '/db/*'] })
+    expect(output).toContain('bare path')
+    expect(code).toBe(1)
+  })
+
+  it('refuses an exclusion narrower than the prefix', () => {
+    // The dangerous shape, and the one a coverage-only check misses: `/api/auth/*` excludes
+    // nothing the include patterns name, so the contract reads as healthy - while Cloudflare,
+    // which evaluates exclude first, sends every sign-in request to the CDN. The rest of
+    // `/api` keeps working, so nothing looks broken until somebody tries to sign in.
+    const { code, output } = scan({ ...GOOD, exclude: ['/api/auth/*'] })
+    expect(output).toContain('/api/auth/*')
+    expect(code).toBe(1)
+  })
 })

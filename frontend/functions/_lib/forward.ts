@@ -114,6 +114,34 @@ export const HOP_BY_HOP: readonly string[] = [
 ]
 
 /**
+ * Strips the hop-by-hop headers, including the ones `Connection` names rather than lists.
+ *
+ * `Connection` is not only a header to remove, it is a header that *names others to remove*:
+ * `Connection: X-Custom` says `X-Custom` belongs to this connection alone. Deleting `Connection`
+ * and forwarding `X-Custom` is the half of the rule that is easy to miss, because everything
+ * still works — the field simply travels one hop further than its sender said it should.
+ *
+ * Applied in both directions. Cloudflare's edge normalises much of this before a Function ever
+ * runs, so in practice the loop below usually finds nothing; that is a reason to keep it cheap,
+ * not a reason to rely on somebody else's normalisation for a rule that is ours to apply.
+ */
+function stripHopByHop(headers: Headers): void {
+  // Read before deleting: `Connection` is the instruction, so removing it first would discard
+  // the list of what else to remove.
+  const named = headers.get('connection')
+  if (named !== null) {
+    for (const name of named.split(',')) {
+      const field = name.trim()
+      // `close` and `keep-alive` are connection *options*, not field names. Deleting a header
+      // called `close` is harmless, but skipping them keeps the intent legible.
+      if (field !== '') headers.delete(field)
+    }
+  }
+
+  for (const name of HOP_BY_HOP) headers.delete(name)
+}
+
+/**
  * The headers to send upstream.
  *
  * Starts from what the browser sent and takes things away, rather than building an allowlist
@@ -129,7 +157,7 @@ export const HOP_BY_HOP: readonly string[] = [
 export function upstreamHeaders(request: Request, kind: Upstream): Headers {
   const headers = new Headers(request.headers)
 
-  for (const name of HOP_BY_HOP) headers.delete(name)
+  stripHopByHop(headers)
   headers.delete('host')
 
   // The session cookie is `Path=/`, so the browser attaches it to `/db/*` as readily as to
@@ -172,7 +200,7 @@ export function upstreamHeaders(request: Request, kind: Upstream): Headers {
  */
 export function toResponse(upstream: Response): Response {
   const response = new Response(upstream.body, upstream)
-  for (const name of HOP_BY_HOP) response.headers.delete(name)
+  stripHopByHop(response.headers)
   return response
 }
 

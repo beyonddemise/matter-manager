@@ -91,6 +91,48 @@ function covers(pattern, prefix) {
   return pattern === '/*' || pattern === `${prefix}/*` || pattern === `${prefix}*`
 }
 
+/**
+ * Whether a pattern covers the bare prefix itself — `/api`, not `/api/healthz`.
+ *
+ * Separate from `covers` because Cloudflare treats them separately: **`/api/*` does not match
+ * `/api`.** The wildcard stands for what follows the slash, and a request with no slash after
+ * the prefix simply is not that shape, so it never invokes a Function and gets the app shell
+ * instead — this file's whole subject.
+ *
+ * The catch-all handler itself is not the problem: `functions/api/[[path]].ts` compiles to the
+ * route `/api/:path*`, whose regular expression matches the bare path too (verified against the
+ * `path-to-regexp` wrangler bundles). So the bare path needs an invitation in `include`, not a
+ * second handler.
+ *
+ * This is the one place this file deliberately asks for more than wrangler would generate on
+ * its own. Left to itself wrangler emits exactly `/api/*` and `/db/*`, so the bare paths fall
+ * through by default; `forward()` handles them, and `stripPrefix` has a test for them, which
+ * makes routing that never delivers them a discrepancy rather than a saving.
+ */
+function coversBare(pattern, prefix) {
+  return pattern === '/*' || pattern === prefix || pattern === `${prefix}*`
+}
+
+/**
+ * Whether a pattern could exclude *any* path beneath a prefix, however narrow.
+ *
+ * Wider than `covers` on purpose, and the difference is the bug it exists to catch:
+ * `exclude: ["/api/auth/*"]` covers nothing that `covers` recognises, so a checker built on
+ * that alone passes it — while Cloudflare, which evaluates `exclude` before `include`, routes
+ * every sign-in request to the CDN. The result is the failure this whole file is about, aimed
+ * at exactly the endpoint that can least afford it.
+ *
+ * So any overlap at all is refused rather than reasoned about. A narrower exclusion inside a
+ * forwarded prefix has no legitimate use here — everything under `/api` and `/db` is meant to
+ * reach a Function — and "is this particular exclusion safe?" is the question this checker
+ * exists so that nobody has to answer.
+ */
+function overlaps(pattern, prefix) {
+  if (pattern === '/*') return true
+  const literal = pattern.replace(/\*+$/, '')
+  return literal.startsWith(prefix) || prefix.startsWith(literal)
+}
+
 for (const { prefix, route, why } of FORWARDED) {
   if (!include.some((pattern) => covers(pattern, prefix))) {
     problems.push({
@@ -103,12 +145,29 @@ for (const { prefix, route, why } of FORWARDED) {
     })
   }
 
-  // Cloudflare evaluates `exclude` first, so an entry here silently wins over `include`.
-  if (exclude.some((pattern) => covers(pattern, prefix))) {
+  if (!include.some((pattern) => coversBare(pattern, prefix))) {
     problems.push({
       where: prefix,
-      what: 'an exclude pattern covers it',
-      detail: `exclude is evaluated before include, so ${route} would never run.`,
+      what: 'no include pattern covers the bare path',
+      detail:
+        `\`${prefix}/*\` does not match \`${prefix}\` itself, so that one request would be ` +
+        `served the app shell while everything beneath it reached ${route}. Add \`${prefix}\` ` +
+        'to include; the handler already matches it.',
+    })
+  }
+
+  // Cloudflare evaluates `exclude` first, so an entry here silently wins over `include` -
+  // including an entry far narrower than the prefix.
+  const excluded = exclude.find((pattern) => overlaps(pattern, prefix))
+  if (excluded !== undefined) {
+    problems.push({
+      where: prefix,
+      what: `an exclude pattern overlaps it: ${excluded}`,
+      detail:
+        `exclude is evaluated before include, so ${route} would not run for the paths it ` +
+        'matches. A narrow exclusion is the dangerous shape, not the safe one: it leaves the ' +
+        'rest of the prefix working, so the deployment looks healthy while one endpoint is ' +
+        'quietly served the app shell.',
     })
   }
 
