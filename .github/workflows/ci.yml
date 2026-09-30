@@ -352,6 +352,16 @@ jobs:
       - name: Dependabot watches everything, and names it correctly
         run: node scripts/check-dependabot.mjs
 
+      # Two TypeScripts are installed on purpose - `^7` in frontend and backend, `^5` at the
+      # root for `openapi-typescript`, which needs a compiler API the Go port does not publish.
+      # They must not share a node_modules, because both declare `bin.tsc`. The residual hazard
+      # is that `npx tsc` resolves upward, so from the repository root it silently means 5.9.3:
+      # a root script reaching for the compiler would check a package against a compiler that
+      # package does not declare, and succeed. dependency-policy.json stated the premise; this
+      # is what makes it enforced rather than asserted in prose.
+      - name: No root script invokes tsc
+        run: node scripts/check-root-tsc.mjs
+
       # The repository root is the context, matching what `infra/compose.prod.yml` passes:
       # `infra/couchdb/design-docs` is copied from it. Nothing is pushed anywhere - building
       # proves the Dockerfile, and publishing is a separate decision that belongs with M9.
