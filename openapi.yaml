@@ -173,7 +173,21 @@ paths:
               schema: { $ref: '#/components/schemas/Profile' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
+        # `NotAnOperator` rather than `#/components/responses/Forbidden`, because the shared one
+        # says only "authenticated but not permitted" - which leaves `reason`, the field a
+        # client actually branches on, undescribed. See that schema for why it is spelled out
+        # rather than composed from `Problem`.
+        '403':
+          description: |
+            The caller sent `plan` and does not hold `_admin` or `customerservice`.
+
+            **Nothing in the request was applied**, including the `locale` or `displayName` that
+            came with it: half of an operator's intent is not an outcome anybody asked for. So
+            this is a refusal of the whole request, not of one field, and a client may re-send
+            the rest of it unchanged.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/NotAnOperator' }
 
   /customer:
     put:
@@ -222,7 +236,20 @@ paths:
               schema: { $ref: '#/components/schemas/Profile' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
+        # The same refusal `PATCH /profile` gives, by the same role check, carrying the same
+        # `reason` - so the same schema. The shared `Forbidden` response was used here until the
+        # contract had a way to say which refusal this is, and it left an operator tool's one
+        # refusal indistinguishable from every other 403 in the file.
+        '403':
+          description: |
+            The caller does not hold `_admin` or `customerservice`.
+
+            Answered **before** the body is validated and before the named subject is looked up,
+            so it is byte-for-byte the answer a non-operator gets whether or not that account
+            exists. See this operation's description for why that ordering is a requirement.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/NotAnOperator' }
         '404':
           description: |
             No `_users` document for that subject - an account that has never signed in. Distinct
@@ -273,8 +300,21 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/ProjectSummary' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        # Previously a bare description with no schema at all, which meant the contract said
+        # nothing a check could read: `reason` was already being sent by the handler and was
+        # documented nowhere.
         '403':
-          description: Entitlement check refused (see ADR 0009)
+          description: |
+            No room for another project on this plan (ADR 0009).
+
+            Named rather than empty, because a page cannot tell a capacity refusal from a
+            permission refusal by status code alone - and only one of the two is fixed by
+            upgrading. A client that reads `projectLimit` from `GET /profile` should not
+            normally reach this; it is the answer when it does anyway, which is what a limit
+            enforced on the server rather than in the page means.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/ProjectLimitReached' }
 
   /projects/{projectId}:
     parameters:
@@ -486,7 +526,12 @@ components:
 
     Profile:
       type: object
-      required: [sub, email, displayName, locale]
+      # `plan` and `projectLimit` are required, not optional. A client that has to handle their
+      # absence is a client deciding for itself what a missing plan means - and the two answers
+      # it could pick, "free" and "unlimited", are the most and the least permissive readings
+      # available. Every profile has a plan; a document that has never been given one reads as
+      # `free`, which is a value rather than a gap.
+      required: [sub, email, displayName, locale, plan, projectLimit]
       properties:
         sub: { type: string, description: Internal user id; also the CouchDB username }
         email: { type: string, format: email }
@@ -495,6 +540,27 @@ components:
           type: string
           enum: [auto, en, de]
           description: '`auto` follows the browser; anything else overrides it.'
+        plan:
+          type: string
+          enum: [free, user, pro]
+          description: |
+            Set by an operator through `PUT /customer`, or by an operator's own
+            `PATCH /profile`; never by the account itself.
+
+            A stored value this build does not know - an operator's typo, or a tier from a
+            later version - reads as `free` rather than as an error, so the enum here is what
+            a client will actually receive and not merely what CouchDB may hold.
+        projectLimit:
+          type: integer
+          description: >-
+            How many projects this plan may own. **`-1` means unlimited** and must be tested
+            before it is compared - `owned >= limit` is true for every count when the limit is
+            `-1`, so a client that compares directly refuses every project on the one plan that
+            has no limit.
+
+            A number rather than a null or an absence, so one fact arrives in one shape.
+            Reported at all so a page can say "3 of 5 used" without a second copy of the policy
+            table, which is the duplication ADR 0009 exists to prevent.
 
     ProjectSummary:
       type: object
@@ -555,6 +621,52 @@ components:
           description: What the current owner keeps once the offer is accepted.
         expiresAt: { type: string, format: date-time }
 
+    # The two refusals a client must tell apart from an ordinary 403, each pinning the one
+    # value it can carry. Named schemas rather than inline copies, because `not-an-operator` is
+    # answered by two operations - `PATCH /profile` and `PUT /customer`, by the same role check -
+    # and two copies of a `const` are two things that can come to disagree.
+    #
+    # Spelled out rather than composed from `Problem` with an `allOf`: the contract checker
+    # (`backend/test/support/contract.ts`) supports neither `allOf` nor a `$ref` that can be
+    # narrowed afterwards - it resolves a `$ref` by replacing it, so a `$ref` to `Problem` would
+    # erase the `const` that is the entire point. The cost is that a field added to `Problem`
+    # does not appear here; the gain is that the one value each refusal carries is *checked*
+    # rather than merely described, which is what phase 2's projects page branches on.
+    NotAnOperator:
+      type: object
+      description: |
+        Setting a plan was refused: the caller does not hold `_admin` or `customerservice`.
+      required: [title, status, reason]
+      properties:
+        type: { type: string, format: uri }
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: string }
+        reason:
+          type: string
+          const: not-an-operator
+          description: >-
+            Pinned, so a handler that renamed it or stopped sending it fails the contract check
+            rather than silently becoming a refusal no client recognises.
+
+    ProjectLimitReached:
+      type: object
+      description: |
+        Creating a project was refused: this plan has no room for another one (ADR 0009). The
+        count includes archived projects, which still have a database and still cost.
+      required: [title, status, reason]
+      properties:
+        type: { type: string, format: uri }
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: string }
+        reason:
+          type: string
+          const: project-limit-reached
+          description: >-
+            Pinned, so a handler that renamed it or stopped sending it fails the contract check
+            rather than silently becoming a refusal no client recognises.
+
     Problem:
       type: object
       description: RFC 9457 problem details.
@@ -564,6 +676,23 @@ components:
         title: { type: string }
         status: { type: integer }
         detail: { type: string }
+        reason:
+          type: string
+          description: |
+            A stable, machine-readable name for *which* refusal this is, for the cases where a
+            client must do something different about two refusals that share a status code. A
+            capacity 403 and a permission 403 look identical by status, and only one of them is
+            fixed by upgrading.
+
+            `title` and `detail` are for a person to read; this is for code to branch on. A
+            client that branched on `title` would break on a rewording.
+
+            **Optional here, and deliberately not an enum.** This schema is shared by every
+            problem response in the contract, so an enum would have to list every reason any
+            operation will ever answer - a list that goes stale the moment one operation gains a
+            case, and that says nothing about which reasons *this* refusal can give. The
+            operations that answer a named reason pin their own value with `const` instead,
+            which is both narrower and local to the refusal it describes.
 
   responses:
     BadRequest:

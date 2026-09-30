@@ -16,7 +16,7 @@
 
 import type { Identity } from '../auth/oidc.js'
 import type { CouchClient } from '../couch/client.js'
-import type { Plan } from '../domain/index.js'
+import { type Plan, PROJECT_LIMITS } from '../domain/index.js'
 
 /** What a user may choose. `auto` follows the browser, as the contract says. */
 export type Locale = 'auto' | 'en' | 'de'
@@ -32,6 +32,18 @@ export interface Profile {
   readonly locale: Locale
   /** What the account may do. Absent from the document means `free`; see {@link isPlan}. */
   readonly plan: Plan
+  /**
+   * How many projects this plan may own, with **`-1` for unlimited**.
+   *
+   * Derived from {@link PROJECT_LIMITS} rather than stored, so it cannot disagree with the limit
+   * the gate actually enforces. A number that said one thing while `can.ts` did another would be
+   * worse than no number at all: the page would offer a slot the API then refuses.
+   *
+   * Reported because the page has to render "3 of 5 used" before it has tried anything, and the
+   * alternative is a client-side copy of the policy table — which ADR 0009 exists to prevent.
+   * The `-1` is a sentinel and must be tested before it is compared; see `withinLimit`.
+   */
+  readonly projectLimit: number
 }
 
 /** What a user is allowed to change about themselves. */
@@ -105,6 +117,16 @@ export class UnknownSubjectError extends Error {
 
 /** A `_users` document as a profile, filling in what CouchDB does not hold. */
 function toProfile(document: UserDocument): Profile {
+  // Narrowed once, into a name, and then used twice. Unknown reads as free, for the same reason
+  // an unknown locale reads as `auto`: this field is hand-edited by an operator, so a typo is a
+  // question of when. A miss would make `PROJECT_LIMITS[plan]` undefined and every comparison
+  // against it false, which is a crash or a silent grant depending on where it lands.
+  //
+  // Narrowing in one place is also what keeps the two reported fields consistent: a document
+  // saying `Pro` must not report `plan: 'free'` beside `projectLimit: undefined`, which is what
+  // a second, separate test of `document.plan` would eventually produce.
+  const plan: Plan = isPlan(document.plan) ? document.plan : 'free'
+
   return {
     sub: document.name,
     email: document.email ?? '',
@@ -113,11 +135,14 @@ function toProfile(document: UserDocument): Profile {
     // `auto` are the same thing to the interface, and writing `en` in for a new user would give
     // a German-speaking visitor an English interface they never asked for.
     locale: isLocale(document.locale) ? document.locale : 'auto',
-    // Unknown reads as free, for the same reason an unknown locale reads as `auto`: this field
-    // is hand-edited by an operator, so a typo is a question of when. A miss would make
-    // PROJECT_LIMITS[plan] undefined and every comparison against it false, which is a crash
-    // or a silent grant depending on where it lands.
-    plan: isPlan(document.plan) ? document.plan : 'free',
+    plan,
+    // A lookup, never a comparison against a tier: ADR 0009 forbids `plan === 'free'` outside
+    // the policy table, and *reporting* what a plan allows is as much a policy decision as
+    // enforcing it. Derived here rather than at each route because three operations return a
+    // `Profile` — `GET /profile`, `PATCH /profile` and `PUT /customer` — and the contract's
+    // schema requires this field of all three. Three derivations would be three chances to
+    // forget one, and the one forgotten would be the operator's.
+    projectLimit: PROJECT_LIMITS[plan],
   }
 }
 

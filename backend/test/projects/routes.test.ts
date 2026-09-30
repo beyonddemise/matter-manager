@@ -123,6 +123,10 @@ describe('creating a project', () => {
       (operation) => operation.method === 'POST' && operation.path === '/projects',
     )?.responses['201']
 
+    // Asserted before it is used. `validate` against an undefined schema reports nothing wrong
+    // - correct for a validator, and fatal here: a contract that no longer described this
+    // method and path would make the line below pass while checking nothing at all.
+    expect(schema, 'the contract declares no 201 for POST /projects').toBeDefined()
     expect(validate(response.json(), schema)).toEqual([])
   })
 
@@ -999,6 +1003,50 @@ describe('creating a project against the plan', () => {
     })
     expect(response.statusCode).toBe(403)
     expect(response.json()).toMatchObject({ reason: 'project-limit-reached' })
+  })
+
+  it('answers the refusal the contract declares, reason and all', async () => {
+    // The contract declared this 403 with a bare description and no schema at all until this
+    // task, so `reason` - which the handler had been sending since the limit was enforced - was
+    // documented nowhere and checked by nothing. Two separate gaps made that invisible: no
+    // schema to look up, and an `operationsOf` that collected only `application/json` while
+    // every refusal here is `application/problem+json`.
+    const built = serverWithProjects({ plan: 'free', owned: 1 })
+    const response = await built.inject({
+      method: 'POST',
+      url: '/projects',
+      headers: { authorization: bearer(SUBJECT) },
+      payload: { name: 'Second' },
+    })
+
+    expect(response.statusCode).toBe(403)
+    const schema = operationsOf(loadContract()).find(
+      (operation) => operation.method === 'POST' && operation.path === '/projects',
+    )?.responses['403']
+    expect(schema, 'the contract declares no 403 for POST /projects').toBeDefined()
+    expect(validate(response.json(), schema)).toEqual([])
+  })
+
+  it('would notice a refusal that stopped naming itself', async () => {
+    // The negative control. `validate` ignores properties the contract does not declare, so the
+    // test above would go on passing if `reason` left the 403 schema - and the page would branch
+    // on a field the contract no longer promised. This asserts both ways the pin can come
+    // loose: the field leaving `required`, and the `const` naming a different refusal.
+    const schema = operationsOf(loadContract()).find(
+      (operation) => operation.method === 'POST' && operation.path === '/projects',
+    )?.responses['403']
+    expect(schema).toBeDefined()
+
+    expect(validate({ title: 'No', status: 403 }, schema)).toEqual([
+      { at: '$.reason', says: 'is required and missing' },
+    ])
+    // The other refusal's reason, which is what a copy-paste produces. A capacity 403 that said
+    // `not-an-operator` would tell a page to explain a permission problem to somebody whose
+    // only problem is that they have run out of slots - and only one of those is fixed by
+    // upgrading, which is the whole reason the field exists.
+    expect(validate({ title: 'No', status: 403, reason: 'not-an-operator' }, schema)).toEqual([
+      { at: '$.reason', says: 'must be "project-limit-reached", got "not-an-operator"' },
+    ])
   })
 
   it('counts an archived project against the limit', async () => {

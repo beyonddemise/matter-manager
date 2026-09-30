@@ -101,12 +101,16 @@ describe('reading a profile', () => {
   it('reads what CouchDB holds', async () => {
     const { couch } = fakeCouch(storedAda({ locale: 'de' }))
 
+    // Exhaustive rather than `toMatchObject`, which is why adding `projectLimit` to the profile
+    // had to be admitted here. A field the store reports and nothing asserts is a field that can
+    // change shape without a test noticing.
     expect(await profileStore(couch).read('google|1234')).toEqual({
       sub: 'google|1234',
       email: 'ada@example.com',
       displayName: 'Ada',
       locale: 'de',
       plan: 'free',
+      projectLimit: 1,
     })
   })
 
@@ -253,7 +257,60 @@ describe('the profile endpoints', () => {
     const schema = operationsOf(loadContract()).find(
       (operation) => operation.method === 'GET' && operation.path === '/profile',
     )?.responses['200']
+    // Asserted before it is used, for the same reason the PATCH test below gives: `validate`
+    // against an undefined schema finds nothing wrong, so a contract that no longer described
+    // this method and path would make the line after this one pass while checking nothing.
+    expect(schema).toBeDefined()
     expect(validate(response.json(), schema)).toEqual([])
+  })
+
+  it('reports the plan and the capacity that goes with it', async () => {
+    // The page has to render "3 of 5 used" before it has tried to create anything, so the limit
+    // arrives with the profile. The alternative is a copy of PROJECT_LIMITS in the browser -
+    // the duplication ADR 0009 exists to prevent - and the copy is the one that would be wrong
+    // the first time a tier changed.
+    const { app: server, cookie } = serve(storedAda({ locale: 'de', plan: 'user' }))
+    const body = (
+      await server.inject({ method: 'GET', url: '/profile', headers: { cookie } })
+    ).json() as Profile
+
+    expect(body.plan).toBe('user')
+    expect(body.projectLimit).toBe(5)
+  })
+
+  it('reports -1 rather than null or an absence for an unlimited plan', async () => {
+    // The page interprets this through the same rule the policy does, so it has to arrive in
+    // one shape. A null or a missing key would make a client handle two shapes to learn one
+    // fact - and `null` is exactly what a limit computed as `Infinity` would serialise to, so
+    // this is the assertion that keeps the sentinel a sentinel.
+    //
+    // `toBe` is `Object.is`, so this one line already refuses `null`, `undefined` and an absent
+    // key; it does not need three assertions to say so.
+    const { app: server, cookie } = serve(storedAda({ locale: 'de', plan: 'pro' }))
+    const body = (
+      await server.inject({ method: 'GET', url: '/profile', headers: { cookie } })
+    ).json() as Profile
+
+    expect(body.projectLimit).toBe(-1)
+  })
+
+  it('would notice a contract that stopped describing the plan and the limit', async () => {
+    // The negative control for the two tests above, and it is not decoration: `validate`
+    // tolerates properties the contract does not declare, so removing `plan` and `projectLimit`
+    // from the `Profile` schema would leave every other assertion in this file green while the
+    // contract went silent about two fields that three operations return. What pins them is that
+    // they are **required** - so this asserts what the contract does to a profile without them.
+    const schema = operationsOf(loadContract()).find(
+      (operation) => operation.method === 'GET' && operation.path === '/profile',
+    )?.responses['200']
+    expect(schema).toBeDefined()
+
+    expect(
+      validate({ sub: 'a', email: 'a@b.test', displayName: 'A', locale: 'auto' }, schema),
+    ).toEqual([
+      { at: '$.plan', says: 'is required and missing' },
+      { at: '$.projectLimit', says: 'is required and missing' },
+    ])
   })
 
   it('answers PATCH with what the contract declares', async () => {
@@ -445,6 +502,47 @@ describe('the plan a PATCH may carry', () => {
     expect(response.statusCode).toBe(403)
     expect(JSON.stringify(response.json())).toContain('not-an-operator')
     expect(await storedPlan()).toBe('free')
+  })
+
+  it('answers the refusal the contract declares, reason and all', async () => {
+    // The 403 validated against the contract rather than against a hand-written shape. Until
+    // this task no error response in the contract had ever been checked by anything:
+    // `operationsOf` collected only `application/json`, and every refusal here is declared
+    // `application/problem+json`, so the lookup returned `undefined` and `validate` found
+    // nothing wrong with it.
+    const { app: server, cookie } = serveWithRoles([])
+    const response = await patch(server, cookie, { plan: 'pro' })
+
+    expect(response.statusCode).toBe(403)
+    const schema = operationsOf(loadContract()).find(
+      (operation) => operation.method === 'PATCH' && operation.path === '/profile',
+    )?.responses['403']
+    expect(schema, 'the contract declares no 403 for PATCH /profile').toBeDefined()
+    expect(validate(response.json(), schema)).toEqual([])
+  })
+
+  it('would notice a refusal that stopped naming itself', async () => {
+    // The negative control for the test above, and the reason it exists is that the positive
+    // one cannot fail for the thing that matters: `validate` ignores properties the contract
+    // does not declare, so dropping `reason` from the 403 schema would leave the handler's real
+    // answer validating perfectly against a contract that no longer described the field phase
+    // 2's projects page branches on.
+    //
+    // So this asserts the two ways the contract can stop pinning it: the field leaving
+    // `required`, and the `const` naming a different refusal.
+    const schema = operationsOf(loadContract()).find(
+      (operation) => operation.method === 'PATCH' && operation.path === '/profile',
+    )?.responses['403']
+    expect(schema).toBeDefined()
+
+    expect(validate({ title: 'No', status: 403 }, schema)).toEqual([
+      { at: '$.reason', says: 'is required and missing' },
+    ])
+    // The other operation's reason, which is the mistake a copy-paste makes. A 403 that says
+    // `project-limit-reached` would send a page to offer an upgrade for a permission problem.
+    expect(validate({ title: 'No', status: 403, reason: 'project-limit-reached' }, schema)).toEqual(
+      [{ at: '$.reason', says: 'must be "not-an-operator", got "project-limit-reached"' }],
+    )
   })
 
   it('accepts a plan from a role holder', async () => {

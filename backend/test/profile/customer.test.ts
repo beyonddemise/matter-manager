@@ -367,4 +367,63 @@ describe('what the contract says about PUT /customer', () => {
     ).toBeDefined()
     expect(validate(response.json(), schema)).toEqual([])
   })
+
+  /** The schema the contract declares for one status, asserted to exist before it is used. */
+  const declaredFor = (status: number): unknown => {
+    const schema = operations.find(
+      (operation) => operation.method === 'PUT' && operation.path === '/customer',
+    )?.responses[String(status)]
+    expect(schema, `the contract declares no ${status} for PUT /customer`).toBeDefined()
+    return schema
+  }
+
+  it('declares the refusal a non-operator gets, reason and all', async () => {
+    // Checkable for the first time here. `operationsOf` collected only `application/json`, and
+    // every refusal in the contract is `application/problem+json` - so this operation's 403 and
+    // 404 were invisible to every contract assertion ever written, and a test that looked one
+    // up got `undefined`, which `validate` finds nothing wrong with.
+    const { app: server, cookie } = customerServer({ callerRoles: [], subjects: ['other'] })
+    const response = await put(server, { sub: 'other', plan: 'pro' }, cookie)
+
+    expect(response.statusCode).toBe(403)
+    expect(validate(response.json(), declaredFor(403))).toEqual([])
+  })
+
+  it('declares the 404 an operator gets for an account that has never signed in', async () => {
+    // The status this operation exists to be able to give: an operator needs to tell "no such
+    // account" from "you may not", and nobody else may tell them apart at all. It was declared
+    // in the contract from the start and checked by nothing.
+    const { app: server, cookie } = customerServer({
+      callerRoles: ['customerservice'],
+      subjects: [],
+    })
+    const response = await put(server, { sub: 'ghost', plan: 'pro' }, cookie)
+
+    expect(response.statusCode).toBe(404)
+    expect(validate(response.json(), declaredFor(404))).toEqual([])
+  })
+
+  it('would notice a refusal that stopped naming itself', async () => {
+    // The negative control, and the positive tests above cannot stand in for it: `validate`
+    // ignores properties the contract does not declare, so dropping `reason` from the 403
+    // schema would leave the handler's real answer validating perfectly against a contract that
+    // had gone silent about the field a client branches on. This asserts the two ways the
+    // contract can stop pinning it - the field leaving `required`, and the `const` naming a
+    // different refusal.
+    const forbidden = declaredFor(403)
+
+    expect(validate({ title: 'No', status: 403 }, forbidden)).toEqual([
+      { at: '$.reason', says: 'is required and missing' },
+    ])
+    expect(
+      validate({ title: 'No', status: 403, reason: 'project-limit-reached' }, forbidden),
+    ).toEqual([{ at: '$.reason', says: 'must be "not-an-operator", got "project-limit-reached"' }])
+
+    // And the 404, which carries no reason but must still be a problem document rather than
+    // anything at all - the state the contract was in for every refusal until this task.
+    expect(validate({}, declaredFor(404))).toEqual([
+      { at: '$.title', says: 'is required and missing' },
+      { at: '$.status', says: 'is required and missing' },
+    ])
+  })
 })

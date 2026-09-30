@@ -4,832 +4,1029 @@
  */
 
 export interface paths {
-  '/healthz': {
-    parameters: {
-      query?: never
-      header?: never
-      path?: never
-      cookie?: never
-    }
-    /** Liveness probe */
-    get: {
-      parameters: {
-        query?: never
-        header?: never
-        path?: never
-        cookie?: never
-      }
-      requestBody?: never
-      responses: {
-        /** @description Service is up */
-        200: {
-          headers: {
-            [name: string]: unknown
-          }
-          content: {
-            'application/json': {
-              /** @constant */
-              status: 'ok'
-            }
-          }
-        }
-      }
-    }
-    put?: never
-    post?: never
-    delete?: never
-    options?: never
-    head?: never
-    patch?: never
-    trace?: never
-  }
-  '/auth/google': {
-    parameters: {
-      query?: never
-      header?: never
-      path?: never
-      cookie?: never
-    }
-    /**
-     * Begin Google sign-in
-     * @description Redirects to Google's consent screen using authorization code + PKCE.
-     */
-    get: {
-      parameters: {
-        query?: never
-        header?: never
-        path?: never
-        cookie?: never
-      }
-      requestBody?: never
-      responses: {
-        /** @description Redirect to Google */
-        302: {
-          headers: {
-            [name: string]: unknown
-          }
-          content?: never
-        }
-      }
-    }
-    put?: never
-    post?: never
-    delete?: never
-    options?: never
-    head?: never
-    patch?: never
-    trace?: never
-  }
-  '/auth/google/callback': {
-    parameters: {
-      query?: never
-      header?: never
-      path?: never
-      cookie?: never
-    }
-    /** Complete Google sign-in */
-    get: {
-      parameters: {
-        query: {
-          code: string
-          state: string
-        }
-        header?: never
-        path?: never
-        cookie?: never
-      }
-      requestBody?: never
-      responses: {
-        /** @description Redirect to the web app with a session established */
-        302: {
-          headers: {
-            [name: string]: unknown
-          }
-          content?: never
-        }
-      }
-    }
-    put?: never
-    post?: never
-    delete?: never
-    options?: never
-    head?: never
-    patch?: never
-    trace?: never
-  }
-  '/auth/token': {
-    parameters: {
-      query?: never
-      header?: never
-      path?: never
-      cookie?: never
-    }
-    get?: never
-    put?: never
-    /**
-     * Issue a CouchDB-validatable access token
-     * @description Returns a short-lived ES256 (EC P-256) JWT whose `sub` is the CouchDB username. PouchDB sends
-     *     it as a bearer token on replication requests; CouchDB validates it with the public
-     *     key without consulting this API.
-     *
-     *     Called on sign-in and again whenever replication receives a 401. Offline clients
-     *     never call it - local writes must never block on token freshness.
-     */
-    post: {
-      parameters: {
-        query?: never
-        header?: never
-        path?: never
-        cookie?: never
-      }
-      requestBody?: never
-      responses: {
-        /** @description A new access token */
-        200: {
-          headers: {
-            [name: string]: unknown
-          }
-          content: {
-            'application/json': {
-              accessToken: string
-              /** @description Seconds until expiry */
-              expiresIn: number
-            }
-          }
-        }
-        401: components['responses']['Unauthorized']
-      }
-    }
-    delete?: never
-    options?: never
-    head?: never
-    patch?: never
-    trace?: never
-  }
-  '/auth/signout': {
-    parameters: {
-      query?: never
-      header?: never
-      path?: never
-      cookie?: never
-    }
-    get?: never
-    put?: never
-    /**
-     * End the session
-     * @description Clears the session cookie. Necessary as a server operation because that cookie is
-     *     `HttpOnly` — the page cannot remove it, and a page that merely forgot its own token
-     *     would still be signed in on the next request.
-     *
-     *     Removing local databases is the browser's half and is not undone by this.
-     */
-    post: {
-      parameters: {
-        query?: never
-        header?: never
-        path?: never
-        cookie?: never
-      }
-      requestBody?: never
-      responses: {
-        /** @description Signed out. Also the answer when there was no session to end. */
-        204: {
-          headers: {
-            [name: string]: unknown
-          }
-          content?: never
-        }
-      }
-    }
-    delete?: never
-    options?: never
-    head?: never
-    patch?: never
-    trace?: never
-  }
-  '/profile': {
-    parameters: {
-      query?: never
-      header?: never
-      path?: never
-      cookie?: never
-    }
-    /** Read the signed-in user's profile */
-    get: {
-      parameters: {
-        query?: never
-        header?: never
-        path?: never
-        cookie?: never
-      }
-      requestBody?: never
-      responses: {
-        /** @description The profile */
-        200: {
-          headers: {
-            [name: string]: unknown
-          }
-          content: {
-            'application/json': components['schemas']['Profile']
-          }
-        }
-        401: components['responses']['Unauthorized']
-      }
-    }
-    /**
-     * Update the signed-in user's own settings
-     * @description Only the fields a user may change about themselves. `sub` and `email` come from the
-     *     identity provider and are not writable here — a profile endpoint that accepted an
-     *     arbitrary `sub` would be an account-takeover primitive.
-     */
-    put: {
-      parameters: {
-        query?: never
-        header?: never
-        path?: never
-        cookie?: never
-      }
-      requestBody: {
-        content: {
-          'application/json': {
+    "/healthz": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Liveness probe */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Service is up */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            /** @constant */
+                            status: "ok";
+                        };
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/google": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Begin Google sign-in
+         * @description Redirects to Google's consent screen using authorization code + PKCE.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Redirect to Google */
+                302: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/google/callback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Complete Google sign-in */
+        get: {
+            parameters: {
+                query: {
+                    code: string;
+                    state: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Redirect to the web app with a session established */
+                302: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/token": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Issue a CouchDB-validatable access token
+         * @description Returns a short-lived ES256 (EC P-256) JWT whose `sub` is the CouchDB username. PouchDB sends
+         *     it as a bearer token on replication requests; CouchDB validates it with the public
+         *     key without consulting this API.
+         *
+         *     Called on sign-in and again whenever replication receives a 401. Offline clients
+         *     never call it - local writes must never block on token freshness.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description A new access token */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            accessToken: string;
+                            /** @description Seconds until expiry */
+                            expiresIn: number;
+                        };
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/signout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * End the session
+         * @description Clears the session cookie. Necessary as a server operation because that cookie is
+         *     `HttpOnly` — the page cannot remove it, and a page that merely forgot its own token
+         *     would still be signed in on the next request.
+         *
+         *     Removing local databases is the browser's half and is not undone by this.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Signed out. Also the answer when there was no session to end. */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/profile": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read the signed-in user's profile */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The profile */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Profile"];
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Update the signed-in user's own settings
+         * @description Only the fields a user may change about themselves. `sub` and `email` come from the
+         *     identity provider and are not writable here — a profile endpoint that accepted an
+         *     arbitrary `sub` would be an account-takeover primitive.
+         *
+         *     PATCH rather than PUT, and every field is optional: an absent field is one the caller is
+         *     not changing. A `locale` that is present and not one of the three is still refused — only
+         *     nothing at all means "leave it alone".
+         *
+         *     `plan` is the exception to "about themselves": it may be sent only by an account holding
+         *     `_admin` or `customerservice`, and anybody else is answered 403 rather than having the
+         *     field quietly dropped. See ADR 0009 — what a plan then permits is decided by the policy
+         *     table, never by a comparison against a tier.
+         */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        /** @enum {string} */
+                        locale?: "auto" | "en" | "de";
+                        displayName?: string;
+                        /** @enum {string} */
+                        plan?: "free" | "user" | "pro";
+                    };
+                };
+            };
+            responses: {
+                /** @description The updated profile */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Profile"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                /**
+                 * @description The caller sent `plan` and does not hold `_admin` or `customerservice`.
+                 *
+                 *     **Nothing in the request was applied**, including the `locale` or `displayName` that
+                 *     came with it: half of an operator's intent is not an outcome anybody asked for. So
+                 *     this is a refusal of the whole request, not of one field, and a client may re-send
+                 *     the rest of it unchanged.
+                 */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["NotAnOperator"];
+                    };
+                };
+            };
+        };
+        trace?: never;
+    };
+    "/customer": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set another account's plan
+         * @description The operator counterpart to `PATCH /profile`. That operation takes its subject from the
+         *     session and never from the body - a profile endpoint accepting an arbitrary `sub` would
+         *     be an account-takeover primitive - so it can only ever reach the caller, and an operator
+         *     who can upgrade themselves and nobody else is not an operator tool. This operation names
+         *     a subject, and being a separate operation is what lets `/profile` keep that rule.
+         *
+         *     Reached only by an account holding `_admin` or `customerservice`. **The role is checked
+         *     before the body is validated and before the subject is looked up**, so the answer to a
+         *     caller without the role is 403 whether or not the named account exists, and is identical
+         *     in both cases: answering 404 or 400 first would make this an oracle telling any
+         *     signed-in user which accounts exist.
+         *
+         *     Only `plan` is applied. `name`, `roles` and `type` are CouchDB's own and are written
+         *     back unchanged - an operator who could set `roles` could mint more operators, and the
+         *     role check above would then mean nothing.
+         *
+         *     What a plan then permits is decided by the policy table, never by a comparison against a
+         *     tier (ADR 0009).
+         */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        /**
+                         * @description The account to change; also the CouchDB username. Not the caller - that is
+                         *     the whole point of this operation.
+                         */
+                        sub: string;
+                        /** @enum {string} */
+                        plan: "free" | "user" | "pro";
+                    };
+                };
+            };
+            responses: {
+                /** @description The named account's profile, as stored */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Profile"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                /**
+                 * @description The caller does not hold `_admin` or `customerservice`.
+                 *
+                 *     Answered **before** the body is validated and before the named subject is looked up,
+                 *     so it is byte-for-byte the answer a non-operator gets whether or not that account
+                 *     exists. See this operation's description for why that ordering is a requirement.
+                 */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["NotAnOperator"];
+                    };
+                };
+                /**
+                 * @description No `_users` document for that subject - an account that has never signed in. Distinct
+                 *     from 403 because "you may not" and "there is no such account" send an operator to
+                 *     different places, and reached only *after* the role check, so it says that to an
+                 *     operator and to nobody else.
+                 */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/projects": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List projects the signed-in user can access */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Accessible projects */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProjectSummary"][];
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+            };
+        };
+        put?: never;
+        /**
+         * Create a project
+         * @description The ONLY operation in the entire application that requires connectivity.
+         *
+         *     Creating a project means creating a CouchDB database, writing its `_security`
+         *     document and installing `_design/access` - all of which need admin credentials the
+         *     browser does not and must not have.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        name: string;
+                        address?: string;
+                    };
+                };
+            };
+            responses: {
+                /** @description Project created and its database provisioned */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProjectSummary"];
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                /**
+                 * @description No room for another project on this plan (ADR 0009).
+                 *
+                 *     Named rather than empty, because a page cannot tell a capacity refusal from a
+                 *     permission refusal by status code alone - and only one of the two is fixed by
+                 *     upgrading. A client that reads `projectLimit` from `GET /profile` should not
+                 *     normally reach this; it is the answer when it does anyway, which is what a limit
+                 *     enforced on the server rather than in the page means.
+                 */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProjectLimitReached"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/projects/{projectId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Change a project's name, address or archived state
+         * @description A settings change, not a permission change. Requires `owner` or `manage` — the role
+         *     that may decide who has access may certainly correct a name, or put the project away.
+         *
+         *     All three fields are optional and independent, so a client may send any one alone.
+         *     `address` may be `null`, which removes it; that is spelled as a value rather than as a
+         *     missing field, so that a body which simply forgot the address does not erase one.
+         *     `archived` has no such spelling because it has no third state: absent leaves it alone,
+         *     and `true` or `false` sets it.
+         *
+         *     Answers 404 rather than 403 to a caller who is not a participant, for the reason the
+         *     member operations do: a 403 would confirm that a project with this id exists, which is
+         *     a fact about somebody else's home.
+         */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    projectId: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        name?: string;
+                        address?: string | null;
+                        /**
+                         * @description Put the project away, or bring it back. A state rather than an event, so
+                         *     it can be undone — a project that could be archived and not unarchived
+                         *     would be deleted with extra steps.
+                         */
+                        archived?: boolean;
+                    };
+                };
+            };
+            responses: {
+                /** @description The project as it now stands */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProjectSummary"];
+                    };
+                };
+                /** @description Nothing to change, or a name that is not a name */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                401: components["responses"]["Unauthorized"];
+                /** @description Read or write access does not include changing settings */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                404: components["responses"]["NotFound"];
+            };
+        };
+        trace?: never;
+    };
+    "/projects/{projectId}/members": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: string;
+            };
+            cookie?: never;
+        };
+        /** List project members and their roles */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    projectId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Members */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Member"][];
+                    };
+                };
+                403: components["responses"]["Forbidden"];
+            };
+        };
+        /**
+         * Grant or change a member's role
+         * @description Rewrites the database's `_security` document: readers go in `members.names`, and
+         *     the subset allowed to write additionally in `writers.names`.
+         *
+         *     Revocation stops future replication. It cannot recall what already replicated to
+         *     someone's device - see SECURITY.md.
+         */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    projectId: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        /** Format: email */
+                        email: string;
+                        /** @enum {string} */
+                        role: "manage" | "write" | "read";
+                    };
+                };
+            };
+            responses: {
+                /** @description Applied */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                400: components["responses"]["BadRequest"];
+                403: components["responses"]["Forbidden"];
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/projects/{projectId}/transfer": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Transfer ownership
+         * @description The installer hand-over: an installer commissions a house, then transfers the
+         *     project to the homeowner, optionally retaining read access.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    projectId: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        /** Format: email */
+                        toEmail: string;
+                        /**
+                         * @description Retain read-only access after transfer. Omit to leave entirely.
+                         * @enum {string}
+                         */
+                        retainAccess?: "read";
+                    };
+                };
+            };
+            responses: {
+                /** @description Offered; the recipient must accept before ownership moves */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                400: components["responses"]["BadRequest"];
+                403: components["responses"]["Forbidden"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/transfers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Projects being offered to the signed-in user
+         * @description An offer of ownership is not a change of ownership. It waits here until the recipient
+         *     accepts it, because ownership carries responsibility for somebody's data and eventually
+         *     for a bill, and neither is a thing one person may assign to another (M5-5).
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Offers awaiting an answer */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TransferOffer"][];
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/transfers/{projectId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Accept an offer of ownership
+         * @description The recipient is identified by an email address the identity provider has **verified**,
+         *     never by possession of a link. A forwarded message therefore grants nothing.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    projectId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Accepted; ownership has moved */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                404: components["responses"]["NotFound"];
+            };
+        };
+        /** Decline an offer of ownership */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    projectId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Declined */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                401: components["responses"]["Unauthorized"];
+                404: components["responses"]["NotFound"];
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+}
+export type webhooks = Record<string, never>;
+export interface components {
+    schemas: {
+        /**
+         * @description `read` and `write` map onto CouchDB's `_security`. `manage` and `owner` are
+         *     enforced by this API only - CouchDB cannot express them, since it has no concept
+         *     of "may change who else has access".
+         * @enum {string}
+         */
+        Role: "owner" | "manage" | "write" | "read";
+        /**
+         * @description Polymorphic owner. Only `user` exists today; `org` is the seam that lets
+         *     organisations arrive later without a data migration (ADR 0004, tenancy decision).
+         *     Nothing in the codebase may compare against a bare user id.
+         */
+        Principal: {
             /** @enum {string} */
-            locale: 'auto' | 'en' | 'de'
-            displayName?: string
-          }
-        }
-      }
-      responses: {
-        /** @description The updated profile */
-        200: {
-          headers: {
-            [name: string]: unknown
-          }
-          content: {
-            'application/json': components['schemas']['Profile']
-          }
-        }
-        400: components['responses']['BadRequest']
-        401: components['responses']['Unauthorized']
-      }
-    }
-    post?: never
-    delete?: never
-    options?: never
-    head?: never
-    patch?: never
-    trace?: never
-  }
-  '/projects': {
-    parameters: {
-      query?: never
-      header?: never
-      path?: never
-      cookie?: never
-    }
-    /** List projects the signed-in user can access */
-    get: {
-      parameters: {
-        query?: never
-        header?: never
-        path?: never
-        cookie?: never
-      }
-      requestBody?: never
-      responses: {
-        /** @description Accessible projects */
-        200: {
-          headers: {
-            [name: string]: unknown
-          }
-          content: {
-            'application/json': components['schemas']['ProjectSummary'][]
-          }
-        }
-        401: components['responses']['Unauthorized']
-      }
-    }
-    put?: never
-    /**
-     * Create a project
-     * @description The ONLY operation in the entire application that requires connectivity.
-     *
-     *     Creating a project means creating a CouchDB database, writing its `_security`
-     *     document and installing `_design/access` - all of which need admin credentials the
-     *     browser does not and must not have.
-     */
-    post: {
-      parameters: {
-        query?: never
-        header?: never
-        path?: never
-        cookie?: never
-      }
-      requestBody: {
-        content: {
-          'application/json': {
-            name: string
-            address?: string
-          }
-        }
-      }
-      responses: {
-        /** @description Project created and its database provisioned */
-        201: {
-          headers: {
-            [name: string]: unknown
-          }
-          content: {
-            'application/json': components['schemas']['ProjectSummary']
-          }
-        }
-        401: components['responses']['Unauthorized']
-        /** @description Entitlement check refused (see ADR 0009) */
-        403: {
-          headers: {
-            [name: string]: unknown
-          }
-          content?: never
-        }
-      }
-    }
-    delete?: never
-    options?: never
-    head?: never
-    patch?: never
-    trace?: never
-  }
-  '/projects/{projectId}': {
-    parameters: {
-      query?: never
-      header?: never
-      path: {
-        projectId: string
-      }
-      cookie?: never
-    }
-    get?: never
-    put?: never
-    post?: never
-    delete?: never
-    options?: never
-    head?: never
-    /**
-     * Change a project's name, address or archived state
-     * @description A settings change, not a permission change. Requires `owner` or `manage` — the role
-     *     that may decide who has access may certainly correct a name, or put the project away.
-     *
-     *     All three fields are optional and independent, so a client may send any one alone.
-     *     `address` may be `null`, which removes it; that is spelled as a value rather than as a
-     *     missing field, so that a body which simply forgot the address does not erase one.
-     *     `archived` has no such spelling because it has no third state: absent leaves it alone,
-     *     and `true` or `false` sets it.
-     *
-     *     Answers 404 rather than 403 to a caller who is not a participant, for the reason the
-     *     member operations do: a 403 would confirm that a project with this id exists, which is
-     *     a fact about somebody else's home.
-     */
-    patch: {
-      parameters: {
-        query?: never
-        header?: never
-        path: {
-          projectId: string
-        }
-        cookie?: never
-      }
-      requestBody: {
-        content: {
-          'application/json': {
-            name?: string
-            address?: string | null
-            /**
-             * @description Put the project away, or bring it back. A state rather than an event, so
-             *     it can be undone — a project that could be archived and not unarchived
-             *     would be deleted with extra steps.
-             */
-            archived?: boolean
-          }
-        }
-      }
-      responses: {
-        /** @description The project as it now stands */
-        200: {
-          headers: {
-            [name: string]: unknown
-          }
-          content: {
-            'application/json': components['schemas']['ProjectSummary']
-          }
-        }
-        /** @description Nothing to change, or a name that is not a name */
-        400: {
-          headers: {
-            [name: string]: unknown
-          }
-          content?: never
-        }
-        401: components['responses']['Unauthorized']
-        /** @description Read or write access does not include changing settings */
-        403: {
-          headers: {
-            [name: string]: unknown
-          }
-          content?: never
-        }
-        404: components['responses']['NotFound']
-      }
-    }
-    trace?: never
-  }
-  '/projects/{projectId}/members': {
-    parameters: {
-      query?: never
-      header?: never
-      path: {
-        projectId: string
-      }
-      cookie?: never
-    }
-    /** List project members and their roles */
-    get: {
-      parameters: {
-        query?: never
-        header?: never
-        path: {
-          projectId: string
-        }
-        cookie?: never
-      }
-      requestBody?: never
-      responses: {
-        /** @description Members */
-        200: {
-          headers: {
-            [name: string]: unknown
-          }
-          content: {
-            'application/json': components['schemas']['Member'][]
-          }
-        }
-        403: components['responses']['Forbidden']
-      }
-    }
-    /**
-     * Grant or change a member's role
-     * @description Rewrites the database's `_security` document: readers go in `members.names`, and
-     *     the subset allowed to write additionally in `writers.names`.
-     *
-     *     Revocation stops future replication. It cannot recall what already replicated to
-     *     someone's device - see SECURITY.md.
-     */
-    put: {
-      parameters: {
-        query?: never
-        header?: never
-        path: {
-          projectId: string
-        }
-        cookie?: never
-      }
-      requestBody: {
-        content: {
-          'application/json': {
+            ownerType: "user" | "org";
+            ownerId: string;
+        };
+        Profile: {
+            /** @description Internal user id; also the CouchDB username */
+            sub: string;
             /** Format: email */
-            email: string
-            /** @enum {string} */
-            role: 'manage' | 'write' | 'read'
-          }
-        }
-      }
-      responses: {
-        /** @description Applied */
-        204: {
-          headers: {
-            [name: string]: unknown
-          }
-          content?: never
-        }
-        400: components['responses']['BadRequest']
-        403: components['responses']['Forbidden']
-      }
-    }
-    post?: never
-    delete?: never
-    options?: never
-    head?: never
-    patch?: never
-    trace?: never
-  }
-  '/projects/{projectId}/transfer': {
-    parameters: {
-      query?: never
-      header?: never
-      path: {
-        projectId: string
-      }
-      cookie?: never
-    }
-    get?: never
-    put?: never
-    /**
-     * Transfer ownership
-     * @description The installer hand-over: an installer commissions a house, then transfers the
-     *     project to the homeowner, optionally retaining read access.
-     */
-    post: {
-      parameters: {
-        query?: never
-        header?: never
-        path: {
-          projectId: string
-        }
-        cookie?: never
-      }
-      requestBody: {
-        content: {
-          'application/json': {
-            /** Format: email */
-            toEmail: string
+            email: string;
+            displayName: string;
             /**
-             * @description Retain read-only access after transfer. Omit to leave entirely.
+             * @description `auto` follows the browser; anything else overrides it.
              * @enum {string}
              */
-            retainAccess?: 'read'
-          }
-        }
-      }
-      responses: {
-        /** @description Offered; the recipient must accept before ownership moves */
-        204: {
-          headers: {
-            [name: string]: unknown
-          }
-          content?: never
-        }
-        400: components['responses']['BadRequest']
-        403: components['responses']['Forbidden']
-      }
-    }
-    delete?: never
-    options?: never
-    head?: never
-    patch?: never
-    trace?: never
-  }
-  '/transfers': {
-    parameters: {
-      query?: never
-      header?: never
-      path?: never
-      cookie?: never
-    }
-    /**
-     * Projects being offered to the signed-in user
-     * @description An offer of ownership is not a change of ownership. It waits here until the recipient
-     *     accepts it, because ownership carries responsibility for somebody's data and eventually
-     *     for a bill, and neither is a thing one person may assign to another (M5-5).
-     */
-    get: {
-      parameters: {
-        query?: never
-        header?: never
-        path?: never
-        cookie?: never
-      }
-      requestBody?: never
-      responses: {
-        /** @description Offers awaiting an answer */
-        200: {
-          headers: {
-            [name: string]: unknown
-          }
-          content: {
-            'application/json': components['schemas']['TransferOffer'][]
-          }
-        }
-        401: components['responses']['Unauthorized']
-      }
-    }
-    put?: never
-    post?: never
-    delete?: never
-    options?: never
-    head?: never
-    patch?: never
-    trace?: never
-  }
-  '/transfers/{projectId}': {
-    parameters: {
-      query?: never
-      header?: never
-      path: {
-        projectId: string
-      }
-      cookie?: never
-    }
-    get?: never
-    put?: never
-    /**
-     * Accept an offer of ownership
-     * @description The recipient is identified by an email address the identity provider has **verified**,
-     *     never by possession of a link. A forwarded message therefore grants nothing.
-     */
-    post: {
-      parameters: {
-        query?: never
-        header?: never
-        path: {
-          projectId: string
-        }
-        cookie?: never
-      }
-      requestBody?: never
-      responses: {
-        /** @description Accepted; ownership has moved */
-        204: {
-          headers: {
-            [name: string]: unknown
-          }
-          content?: never
-        }
-        400: components['responses']['BadRequest']
-        401: components['responses']['Unauthorized']
-        404: components['responses']['NotFound']
-      }
-    }
-    /** Decline an offer of ownership */
-    delete: {
-      parameters: {
-        query?: never
-        header?: never
-        path: {
-          projectId: string
-        }
-        cookie?: never
-      }
-      requestBody?: never
-      responses: {
-        /** @description Declined */
-        204: {
-          headers: {
-            [name: string]: unknown
-          }
-          content?: never
-        }
-        401: components['responses']['Unauthorized']
-        404: components['responses']['NotFound']
-      }
-    }
-    options?: never
-    head?: never
-    patch?: never
-    trace?: never
-  }
+            locale: "auto" | "en" | "de";
+            /**
+             * @description Set by an operator through `PUT /customer`, or by an operator's own
+             *     `PATCH /profile`; never by the account itself.
+             *
+             *     A stored value this build does not know - an operator's typo, or a tier from a
+             *     later version - reads as `free` rather than as an error, so the enum here is what
+             *     a client will actually receive and not merely what CouchDB may hold.
+             * @enum {string}
+             */
+            plan: "free" | "user" | "pro";
+            /**
+             * @description How many projects this plan may own. **`-1` means unlimited** and must be tested before it is compared - `owned >= limit` is true for every count when the limit is `-1`, so a client that compares directly refuses every project on the one plan that has no limit.
+             *     A number rather than a null or an absence, so one fact arrives in one shape. Reported at all so a page can say "3 of 5 used" without a second copy of the policy table, which is the duplication ADR 0009 exists to prevent.
+             */
+            projectLimit: number;
+        };
+        ProjectSummary: {
+            /** Format: uuid */
+            projectId: string;
+            /** @description CouchDB database to replicate, e.g. project_<uuid> */
+            dbName: string;
+            name: string;
+            /**
+             * @description The street address of the building. Optional, and absent rather than empty when
+             *     there is none.
+             *
+             *     Accepted by `POST /projects` since M5-1 and, until #128, silently discarded: the
+             *     length was checked and the value went no further. For a catalogue whose purpose is
+             *     finding a device in a building years later, this is not decoration.
+             */
+            address?: string;
+            role: components["schemas"]["Role"];
+            owner: components["schemas"]["Principal"];
+            /**
+             * @description Whether the project has been put away (#55).
+             *
+             *     **Not a deletion.** An archived project keeps its database, its members and its
+             *     name, and an owner or manager can bring it back. What changes is what a client
+             *     does with it: stop replicating it, and stop offering it in the switcher.
+             *
+             *     Archived projects are still returned by `GET /projects`. Filtering them out here
+             *     would leave a client unable to show what it had put away and therefore unable to
+             *     unarchive it, which would make archiving a deletion after all.
+             *
+             *     Always present, even for projects created before this field existed: the registry
+             *     view emits `doc.archived === true`, so an absent field reads as `false` rather
+             *     than as null. No migration of stored pointers was needed or performed.
+             */
+            archived: boolean;
+        };
+        Member: {
+            sub: string;
+            /** Format: email */
+            email: string;
+            displayName?: string;
+            role: components["schemas"]["Role"];
+        };
+        /**
+         * @description An offer of ownership awaiting an answer. Carries no token: acceptance is by signing in
+         *     with the address it was sent to.
+         */
+        TransferOffer: {
+            /** Format: uuid */
+            projectId: string;
+            projectName: string;
+            /**
+             * @description What the current owner keeps once the offer is accepted.
+             * @enum {string}
+             */
+            retainAccess: "read" | "none";
+            /** Format: date-time */
+            expiresAt: string;
+        };
+        /** @description Setting a plan was refused: the caller does not hold `_admin` or `customerservice`. */
+        NotAnOperator: {
+            /** Format: uri */
+            type?: string;
+            title: string;
+            status: number;
+            detail?: string;
+            /**
+             * @description Pinned, so a handler that renamed it or stopped sending it fails the contract check rather than silently becoming a refusal no client recognises.
+             * @constant
+             */
+            reason: "not-an-operator";
+        };
+        /**
+         * @description Creating a project was refused: this plan has no room for another one (ADR 0009). The
+         *     count includes archived projects, which still have a database and still cost.
+         */
+        ProjectLimitReached: {
+            /** Format: uri */
+            type?: string;
+            title: string;
+            status: number;
+            detail?: string;
+            /**
+             * @description Pinned, so a handler that renamed it or stopped sending it fails the contract check rather than silently becoming a refusal no client recognises.
+             * @constant
+             */
+            reason: "project-limit-reached";
+        };
+        /** @description RFC 9457 problem details. */
+        Problem: {
+            /** Format: uri */
+            type?: string;
+            title: string;
+            status: number;
+            detail?: string;
+            /**
+             * @description A stable, machine-readable name for *which* refusal this is, for the cases where a
+             *     client must do something different about two refusals that share a status code. A
+             *     capacity 403 and a permission 403 look identical by status, and only one of them is
+             *     fixed by upgrading.
+             *
+             *     `title` and `detail` are for a person to read; this is for code to branch on. A
+             *     client that branched on `title` would break on a rewording.
+             *
+             *     **Optional here, and deliberately not an enum.** This schema is shared by every
+             *     problem response in the contract, so an enum would have to list every reason any
+             *     operation will ever answer - a list that goes stale the moment one operation gains a
+             *     case, and that says nothing about which reasons *this* refusal can give. The
+             *     operations that answer a named reason pin their own value with `const` instead,
+             *     which is both narrower and local to the refusal it describes.
+             */
+            reason?: string;
+        };
+    };
+    responses: {
+        /** @description The request body is not one this operation accepts */
+        BadRequest: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/problem+json": components["schemas"]["Problem"];
+            };
+        };
+        /** @description Missing or invalid credentials */
+        Unauthorized: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/problem+json": components["schemas"]["Problem"];
+            };
+        };
+        /** @description Authenticated but not permitted */
+        Forbidden: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/problem+json": components["schemas"]["Problem"];
+            };
+        };
+        /**
+         * @description No such thing, as far as this caller is concerned. Used in preference to 403 where a
+         *     403 would confirm that something exists — a project id is a uuid, so the only way to
+         *     hold one is to have been told it.
+         */
+        NotFound: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/problem+json": components["schemas"]["Problem"];
+            };
+        };
+    };
+    parameters: never;
+    requestBodies: never;
+    headers: never;
+    pathItems: never;
 }
-export type webhooks = Record<string, never>
-export interface components {
-  schemas: {
-    /**
-     * @description `read` and `write` map onto CouchDB's `_security`. `manage` and `owner` are
-     *     enforced by this API only - CouchDB cannot express them, since it has no concept
-     *     of "may change who else has access".
-     * @enum {string}
-     */
-    Role: 'owner' | 'manage' | 'write' | 'read'
-    /**
-     * @description Polymorphic owner. Only `user` exists today; `org` is the seam that lets
-     *     organisations arrive later without a data migration (ADR 0004, tenancy decision).
-     *     Nothing in the codebase may compare against a bare user id.
-     */
-    Principal: {
-      /** @enum {string} */
-      ownerType: 'user' | 'org'
-      ownerId: string
-    }
-    Profile: {
-      /** @description Internal user id; also the CouchDB username */
-      sub: string
-      /** Format: email */
-      email: string
-      displayName: string
-      /**
-       * @description `auto` follows the browser; anything else overrides it.
-       * @enum {string}
-       */
-      locale: 'auto' | 'en' | 'de'
-    }
-    ProjectSummary: {
-      /** Format: uuid */
-      projectId: string
-      /** @description CouchDB database to replicate, e.g. project_<uuid> */
-      dbName: string
-      name: string
-      /**
-       * @description The street address of the building. Optional, and absent rather than empty when
-       *     there is none.
-       *
-       *     Accepted by `POST /projects` since M5-1 and, until #128, silently discarded: the
-       *     length was checked and the value went no further. For a catalogue whose purpose is
-       *     finding a device in a building years later, this is not decoration.
-       */
-      address?: string
-      role: components['schemas']['Role']
-      owner: components['schemas']['Principal']
-      /**
-       * @description Whether the project has been put away (#55).
-       *
-       *     **Not a deletion.** An archived project keeps its database, its members and its
-       *     name, and an owner or manager can bring it back. What changes is what a client
-       *     does with it: stop replicating it, and stop offering it in the switcher.
-       *
-       *     Archived projects are still returned by `GET /projects`. Filtering them out here
-       *     would leave a client unable to show what it had put away and therefore unable to
-       *     unarchive it, which would make archiving a deletion after all.
-       *
-       *     Always present, even for projects created before this field existed: the registry
-       *     view emits `doc.archived === true`, so an absent field reads as `false` rather
-       *     than as null. No migration of stored pointers was needed or performed.
-       */
-      archived: boolean
-    }
-    Member: {
-      sub: string
-      /** Format: email */
-      email: string
-      displayName?: string
-      role: components['schemas']['Role']
-    }
-    /**
-     * @description An offer of ownership awaiting an answer. Carries no token: acceptance is by signing in
-     *     with the address it was sent to.
-     */
-    TransferOffer: {
-      /** Format: uuid */
-      projectId: string
-      projectName: string
-      /**
-       * @description What the current owner keeps once the offer is accepted.
-       * @enum {string}
-       */
-      retainAccess: 'read' | 'none'
-      /** Format: date-time */
-      expiresAt: string
-    }
-    /** @description RFC 9457 problem details. */
-    Problem: {
-      /** Format: uri */
-      type?: string
-      title: string
-      status: number
-      detail?: string
-    }
-  }
-  responses: {
-    /** @description The request body is not one this operation accepts */
-    BadRequest: {
-      headers: {
-        [name: string]: unknown
-      }
-      content: {
-        'application/problem+json': components['schemas']['Problem']
-      }
-    }
-    /** @description Missing or invalid credentials */
-    Unauthorized: {
-      headers: {
-        [name: string]: unknown
-      }
-      content: {
-        'application/problem+json': components['schemas']['Problem']
-      }
-    }
-    /** @description Authenticated but not permitted */
-    Forbidden: {
-      headers: {
-        [name: string]: unknown
-      }
-      content: {
-        'application/problem+json': components['schemas']['Problem']
-      }
-    }
-    /**
-     * @description No such thing, as far as this caller is concerned. Used in preference to 403 where a
-     *     403 would confirm that something exists — a project id is a uuid, so the only way to
-     *     hold one is to have been told it.
-     */
-    NotFound: {
-      headers: {
-        [name: string]: unknown
-      }
-      content: {
-        'application/problem+json': components['schemas']['Problem']
-      }
-    }
-  }
-  parameters: never
-  requestBodies: never
-  headers: never
-  pathItems: never
-}
-export type $defs = Record<string, never>
-export type operations = Record<string, never>
+export type $defs = Record<string, never>;
+export type operations = Record<string, never>;
