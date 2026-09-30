@@ -1,5 +1,5 @@
 /**
- * `GET /profile` and `PUT /profile`.
+ * `GET /profile` and `PATCH /profile`.
  *
  * Both are authenticated by the session cookie rather than by a bearer, because they are called
  * by the *page* rather than by replication — and the page's credential is the httpOnly cookie
@@ -11,10 +11,24 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import type { SigningKey } from '../auth/jwt.js'
 import { verifyToken } from '../auth/jwt.js'
-import { isLocale, type ProfileStore } from './store.js'
+import { isLocale, isPlan, type ProfileStore } from './store.js'
 
 /** The cookie the sign-in flow sets. Named here too rather than exported across modules. */
 const SESSION_COOKIE = 'mm_session'
+
+/**
+ * The roles that may set a plan.
+ *
+ * `_admin` is CouchDB's own. `customerservice` is granted by editing a `_users` document, and
+ * neither is grantable through this API — `store.update` spreads the existing document and takes
+ * only named fields, so a user cannot give themselves the role that would let them do this. That
+ * property is what the whole gate rests on.
+ *
+ * Exported because the operator endpoint checks the same thing, and a second literal list would
+ * be free to drift from this one — a role removed here and left there is a gate that is still
+ * open in one place.
+ */
+export const OPERATOR_ROLES: readonly string[] = ['_admin', 'customerservice']
 
 export interface ProfileDependencies {
   readonly store: ProfileStore
@@ -81,18 +95,54 @@ export function registerProfileRoutes(app: FastifyInstance, deps: ProfileDepende
     return profile
   })
 
-  app.put('/profile', async (request, reply) => {
+  app.patch('/profile', async (request, reply) => {
     const sub = subjectOf(request, deps.sessionKey, now)
     if (sub === undefined) return reply.code(401).send({ title: 'Not signed in', status: 401 })
 
-    const body = request.body as { locale?: unknown; displayName?: unknown } | undefined
-    if (!isLocale(body?.locale)) {
-      // Named rather than generic. "Invalid request" leaves the caller guessing which of two
-      // fields was wrong, and this endpoint has exactly two.
+    const body = request.body as
+      | { locale?: unknown; displayName?: unknown; plan?: unknown }
+      | undefined
+
+    // PATCH: an absent field is one the caller is not changing. `locale` was required before,
+    // which made the endpoint a PATCH wearing a PUT's name — it already treated an absent
+    // display name as "leave it alone". A `locale` that is present and wrong is still refused;
+    // only *nothing at all* means "leave it".
+    const locale = body?.locale
+    if (locale !== undefined && !isLocale(locale)) {
+      // Named rather than generic. "Invalid request" leaves the caller guessing which field was
+      // wrong, and this endpoint has three.
       return reply.code(400).send({
         title: 'locale must be one of auto, en, de',
         status: 400,
       })
+    }
+
+    if (body?.plan !== undefined) {
+      if (!isPlan(body.plan)) {
+        return reply.code(400).send({ title: 'plan must be one of free, user, pro', status: 400 })
+      }
+
+      // Exact membership, by `includes` on the role rather than by any test over its text. A
+      // substring match would make `customerservices` — somebody else's role — into this one,
+      // and a case fold would make `Customerservice` into it; either way a user who can get any
+      // role at all named near this one can pay themselves whatever they like.
+      const roles = await deps.store.rolesOf(sub)
+      if (!roles.some((role) => OPERATOR_ROLES.includes(role))) {
+        // Refused out loud rather than dropped. A caller that asked for something and was not
+        // told it was refused concludes the field does not exist — and nothing else in the
+        // request is applied either, because half of an operator's intent is not an outcome
+        // anybody asked for.
+        return reply.code(403).send({
+          title: 'Changing a plan is not something this account may do.',
+          status: 403,
+          reason: 'not-an-operator',
+        })
+      }
+
+      // `setPlan` rather than a field on the update, because the two differ in who may call
+      // them. It cannot raise `UnknownSubjectError` from here: a subject with no `_users`
+      // document has no roles, so the 403 above is reached first.
+      await deps.store.setPlan(sub, body.plan)
     }
 
     // `sub` comes from the session, never from the body. A profile endpoint that accepted an
@@ -100,8 +150,14 @@ export function registerProfileRoutes(app: FastifyInstance, deps: ProfileDepende
     // their settings. The contract says so too, and this is where it is true.
     const displayName = typeof body?.displayName === 'string' ? body.displayName.trim() : undefined
 
+    // `store.update` still requires a locale, so a PATCH that changed only the display name has
+    // to supply the current one. Reading it here rather than making the parameter optional keeps
+    // the store's contract — "this is the locale now" — intact. Defaulting to `auto` instead of
+    // reading would silently return a German speaker to whatever their browser says, the first
+    // time they edited anything else.
+    const current = await deps.store.read(sub)
     const profile = await deps.store.update(sub, {
-      locale: body.locale,
+      locale: locale ?? current?.locale ?? 'auto',
       // An empty display name is a name nobody has. Absent means "leave it alone", which is
       // what a form that only changed the language sends.
       ...(displayName === undefined || displayName === '' ? {} : { displayName }),

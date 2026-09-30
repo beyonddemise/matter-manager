@@ -250,10 +250,10 @@ describe('the profile endpoints', () => {
     expect(validate(response.json(), schema)).toEqual([])
   })
 
-  it('answers PUT with what the contract declares', async () => {
+  it('answers PATCH with what the contract declares', async () => {
     const { app: server, cookie } = serve()
     const response = await server.inject({
-      method: 'PUT',
+      method: 'PATCH',
       url: '/profile',
       headers: { cookie, 'content-type': 'application/json' },
       payload: { locale: 'en' },
@@ -261,8 +261,12 @@ describe('the profile endpoints', () => {
 
     expect(response.statusCode).toBe(200)
     const schema = operationsOf(loadContract()).find(
-      (operation) => operation.method === 'PUT' && operation.path === '/profile',
+      (operation) => operation.method === 'PATCH' && operation.path === '/profile',
     )?.responses['200']
+    // Asserted before it is used: `validate` against an undefined schema finds nothing wrong, so
+    // a contract that no longer describes this method and path would make the check below pass
+    // while checking nothing — which is exactly what renaming `put` to `patch` would have done.
+    expect(schema).toBeDefined()
     expect(validate(response.json(), schema)).toEqual([])
     expect((response.json() as Profile).locale).toBe('en')
   })
@@ -274,7 +278,7 @@ describe('the profile endpoints', () => {
     expect(
       (
         await server.inject({
-          method: 'PUT',
+          method: 'PATCH',
           url: '/profile',
           headers: { 'content-type': 'application/json' },
           payload: { locale: 'en' },
@@ -288,7 +292,7 @@ describe('the profile endpoints', () => {
     // primitive: send somebody else's id, change their settings.
     const { app: server, cookie, writes } = serve()
     await server.inject({
-      method: 'PUT',
+      method: 'PATCH',
       url: '/profile',
       headers: { cookie, 'content-type': 'application/json' },
       payload: { locale: 'en', sub: 'google|victim', name: 'attacker' },
@@ -300,12 +304,12 @@ describe('the profile endpoints', () => {
 
   it.each([
     ['a locale the interface does not have', { locale: 'fr' }],
-    ['no locale at all', {}],
     ['a locale that is not a string', { locale: 42 }],
+    ['a locale explicitly set to nothing', { locale: null }],
   ])('refuses %s, naming the field', async (_case, payload) => {
     const { app: server, cookie } = serve()
     const response = await server.inject({
-      method: 'PUT',
+      method: 'PATCH',
       url: '/profile',
       headers: { cookie, 'content-type': 'application/json' },
       payload,
@@ -315,12 +319,31 @@ describe('the profile endpoints', () => {
     expect(JSON.stringify(response.json())).toContain('locale')
   })
 
+  it('keeps the stored locale when the request does not mention one', async () => {
+    // What "no locale at all" became. Under PUT that was a 400; under PATCH it is a request
+    // that changes something else, and the stored preference has to survive it. Defaulting to
+    // `auto` here instead would silently return a German speaker to whatever their browser
+    // says the first time they edited their display name.
+    const { app: server, cookie, writes } = serve()
+    const response = await server.inject({
+      method: 'PATCH',
+      url: '/profile',
+      headers: { cookie, 'content-type': 'application/json' },
+      payload: { displayName: 'Ada Lovelace' },
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect((response.json() as Profile).locale).toBe('de')
+    expect(writes[0]?.locale).toBe('de')
+    expect(writes[0]?.displayName).toBe('Ada Lovelace')
+  })
+
   it('leaves a display name alone when the request does not mention one', async () => {
     // What a form that only changed the language sends. An empty display name is a name nobody
     // has, so it is treated the same way.
     const { app: server, cookie, writes } = serve()
     await server.inject({
-      method: 'PUT',
+      method: 'PATCH',
       url: '/profile',
       headers: { cookie, 'content-type': 'application/json' },
       payload: { locale: 'en', displayName: '   ' },
@@ -346,6 +369,154 @@ describe('the profile endpoints', () => {
     const response = await server.inject({ method: 'GET', url: '/profile', headers: { cookie } })
 
     expect(response.statusCode).toBe(401)
+  })
+})
+
+describe('the plan a PATCH may carry', () => {
+  /**
+   * A server whose one user holds exactly `roles`, has a stored locale and has never been given
+   * a plan.
+   *
+   * Separate from `serve` above because these tests are about *whose* roles the gate reads, so
+   * the roles have to be the parameter rather than Ada's fixed `project_x_reader`.
+   */
+  function serveWithRoles(roles: readonly string[]) {
+    const key = newKey()
+    const { couch } = fakeCouch({
+      [`_users/${userDocumentId('user-1')}`]: {
+        _id: userDocumentId('user-1'),
+        _rev: '1-a',
+        name: 'user-1',
+        roles,
+        type: 'user',
+        email: 'user-1@example.test',
+        displayName: 'User One',
+        locale: 'de',
+      },
+    })
+    const store = profileStore(couch)
+    app = buildServer({ logger: false, profile: { store, sessionKey: key } })
+    const token = mintToken(key, {
+      purpose: 'session',
+      sub: 'user-1',
+      exp: Math.floor(Date.now() / 1000) + 3600,
+    })
+
+    return {
+      app,
+      cookie: `mm_session=${encodeURIComponent(token)}`,
+      // Read back through the store rather than out of the raw document, so a document with no
+      // `plan` at all reads as `free` here the same way it reads as `free` everywhere else.
+      storedPlan: async () => (await store.read('user-1'))?.plan,
+    }
+  }
+
+  /** One PATCH, since every test below is the same request with a different body. */
+  const patch = (server: Server, cookie: string, payload: Record<string, unknown>) =>
+    server.inject({
+      method: 'PATCH',
+      url: '/profile',
+      headers: { cookie, 'content-type': 'application/json' },
+      payload,
+    })
+
+  it('changes the locale without requiring anything else', async () => {
+    // PATCH because the semantics were already partial: the old handler treated an absent
+    // displayName as "leave it alone" while requiring locale on every request.
+    const { app: server, cookie } = serveWithRoles([])
+    const response = await patch(server, cookie, { locale: 'en' })
+
+    expect(response.statusCode).toBe(200)
+    expect((response.json() as Profile).locale).toBe('en')
+  })
+
+  it('refuses a plan from an ordinary user, and does not quietly ignore it', async () => {
+    // Silently dropping the field would be the wrong refusal: a caller that asked for something
+    // and was not told it was refused concludes the field does not exist.
+    const { app: server, cookie, storedPlan } = serveWithRoles([])
+    const response = await patch(server, cookie, { plan: 'pro' })
+
+    expect(response.statusCode).toBe(403)
+    expect(JSON.stringify(response.json())).toContain('not-an-operator')
+    expect(await storedPlan()).toBe('free')
+  })
+
+  it('accepts a plan from a role holder', async () => {
+    const { app: server, cookie, storedPlan } = serveWithRoles(['customerservice'])
+    const response = await patch(server, cookie, { plan: 'pro' })
+
+    expect(response.statusCode).toBe(200)
+    expect(await storedPlan()).toBe('pro')
+    // The body has to agree with the store. The handler writes the plan and *then* updates the
+    // profile, so a second write built on a stale document would answer `free` to a request
+    // that had just succeeded.
+    expect((response.json() as Profile).plan).toBe('pro')
+  })
+
+  it('accepts a plan from CouchDB’s own administrator', async () => {
+    // `_admin` is the other half of OPERATOR_ROLES, and a gate that had only ever been tried
+    // with `customerservice` would not notice it going missing.
+    const { app: server, cookie, storedPlan } = serveWithRoles(['_admin'])
+
+    expect((await patch(server, cookie, { plan: 'user' })).statusCode).toBe(200)
+    expect(await storedPlan()).toBe('user')
+  })
+
+  it.each([['customerservices'], ['Customerservice'], ['customer'], ['CUSTOMERSERVICE']])(
+    'refuses a plan from somebody whose only role is %s',
+    async (role) => {
+      // `customerservices` is somebody else's role and `Customerservice` is a typo. Either
+      // passing would make the gate an approximation of itself: a substring test lets the
+      // plural and the prefix through, and a case fold lets the typo through.
+      const { app: server, cookie, storedPlan } = serveWithRoles([role])
+      const response = await patch(server, cookie, { plan: 'pro' })
+
+      expect(response.statusCode).toBe(403)
+      expect(await storedPlan()).toBe('free')
+    },
+  )
+
+  it('refuses a plan string it does not know', async () => {
+    const { app: server, cookie, storedPlan } = serveWithRoles(['customerservice'])
+    const response = await patch(server, cookie, { plan: 'enterprise' })
+
+    expect(response.statusCode).toBe(400)
+    expect(JSON.stringify(response.json())).toContain('plan')
+    expect(await storedPlan()).toBe('free')
+  })
+
+  it('applies a locale and a plan from one request', async () => {
+    // Both fields in one body, because the plan is written by `setPlan` and the locale by
+    // `update` — two writes, and the second must not undo the first.
+    const { app: server, cookie, storedPlan } = serveWithRoles(['customerservice'])
+    const response = await patch(server, cookie, { locale: 'en', plan: 'pro' })
+
+    expect(response.statusCode).toBe(200)
+    expect((response.json() as Profile).locale).toBe('en')
+    expect(await storedPlan()).toBe('pro')
+  })
+
+  it('applies nothing at all when the plan is refused', async () => {
+    // All or nothing. Applying the locale and refusing the plan would answer 403 to a request
+    // that had in fact changed something, and the caller would have no way to know which half
+    // landed.
+    const { app: server, cookie, storedPlan } = serveWithRoles([])
+    const response = await patch(server, cookie, { locale: 'en', plan: 'pro' })
+
+    expect(response.statusCode).toBe(403)
+    expect(await storedPlan()).toBe('free')
+    const after = await server.inject({ method: 'GET', url: '/profile', headers: { cookie } })
+    expect((after.json() as Profile).locale).toBe('de')
+  })
+
+  it('writes no plan at all when the request does not mention one', async () => {
+    // The gate is only reached by a request that asked for a plan. An ordinary locale change
+    // from a user with no roles must not be refused, which is the regression a role check
+    // placed above the `plan !== undefined` guard would cause.
+    const { app: server, cookie, storedPlan } = serveWithRoles([])
+
+    expect((await patch(server, cookie, { locale: 'en' })).statusCode).toBe(200)
+    expect(await storedPlan()).toBe('free')
   })
 })
 

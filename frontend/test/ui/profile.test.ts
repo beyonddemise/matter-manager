@@ -235,7 +235,9 @@ describe('talking to the profile endpoint', () => {
     const { impl, calls } = recording(200, PROFILE)
     await profileApi('https://api.test', impl).update({ locale: 'de' })
 
-    expect(calls[0]?.method).toBe('PUT')
+    // PATCH, matching the route. A fire-and-forget save does not surface a 405, so a settings
+    // page still sending PUT would look like it had saved and would have changed nothing.
+    expect(calls[0]?.method).toBe('PATCH')
     expect(calls[0]?.body).toBe('{"locale":"de"}')
   })
 

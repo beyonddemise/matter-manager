@@ -71,7 +71,7 @@ describe('a fully configured deployment', () => {
   it('serves the profile routes', () => {
     // Sign-in writes a `_users` document through the same store `GET /profile` reads. Wiring
     // one without the other gives a user who can sign in and then cannot be shown their name.
-    expect(routesFor(COMPLETE)).toEqual(expect.arrayContaining(['GET /profile', 'PUT /profile']))
+    expect(routesFor(COMPLETE)).toEqual(expect.arrayContaining(['GET /profile', 'PATCH /profile']))
   })
 
   it('sends the browser back to the application, not to the API', () => {

@@ -131,25 +131,36 @@ paths:
               schema: { $ref: '#/components/schemas/Profile' }
         '401': { $ref: '#/components/responses/Unauthorized' }
 
-    put:
+    patch:
       tags: [profile]
       summary: Update the signed-in user's own settings
       description: |
         Only the fields a user may change about themselves. `sub` and `email` come from the
         identity provider and are not writable here — a profile endpoint that accepted an
         arbitrary `sub` would be an account-takeover primitive.
+
+        PATCH rather than PUT, and every field is optional: an absent field is one the caller is
+        not changing. A `locale` that is present and not one of the three is still refused — only
+        nothing at all means "leave it alone".
+
+        `plan` is the exception to "about themselves": it may be sent only by an account holding
+        `_admin` or `customerservice`, and anybody else is answered 403 rather than having the
+        field quietly dropped. See ADR 0009 — what a plan then permits is decided by the policy
+        table, never by a comparison against a tier.
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [locale]
               properties:
                 locale:
                   type: string
                   enum: [auto, en, de]
                 displayName: { type: string }
+                plan:
+                  type: string
+                  enum: [free, user, pro]
       responses:
         '200':
           description: The updated profile
@@ -158,6 +169,7 @@ paths:
               schema: { $ref: '#/components/schemas/Profile' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
 
   /projects:
     get:

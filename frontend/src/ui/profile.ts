@@ -69,7 +69,7 @@ export function profileApi(baseUrl: string, fetchImpl: typeof fetch = fetch): Pr
 
     async update(update: { locale: Locale }): Promise<Profile> {
       const response = await fetchImpl(`${base}/profile`, {
-        method: 'PUT',
+        method: 'PATCH',
         credentials: 'include',
         headers: { 'content-type': 'application/json', accept: 'application/json' },
         body: JSON.stringify(update),
