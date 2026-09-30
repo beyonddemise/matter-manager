@@ -56,7 +56,7 @@ const SKIP = new Set([
  * which is the only failure mode worse than not having one.
  */
 function runsTsc(word) {
-  return /^tsc(\.(js|cjs|mjs|cmd|exe))?$/.test(word.split('/').pop() ?? '')
+  return /^tsc(\.(js|cjs|mjs|cmd|exe))?$/.test(word.split(/[/\\]/).pop() ?? '')
 }
 
 /**
