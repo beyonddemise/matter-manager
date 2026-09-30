@@ -1,13 +1,21 @@
 import { generateKeyPairSync } from 'node:crypto'
 import { afterEach, describe, expect, it } from 'vitest'
 import { mintToken, type SigningKey } from '../../src/auth/jwt.js'
-import { ACTIONS, type Action, type Principal } from '../../src/domain/index.js'
+import { ACTIONS, type Action, PROJECT_LIMITS, type Principal } from '../../src/domain/index.js'
 import { ENFORCEMENT, gate, gatedRoutes, NotEntitledError } from '../../src/entitlements/gate.js'
+import { profileStore } from '../../src/profile/store.js'
 import { forgetRegistry } from '../../src/projects/registry.js'
 import { buildServer, type Server } from '../../src/server.js'
 import { fakeCouch } from '../support/couch.js'
 
-const ADA: Principal = { sub: 'google|1234', plan: 'free' }
+/**
+ * Somebody who has used nothing yet.
+ *
+ * `ownedProjects: 0` is a statement about Ada, not an arrangement to stay under a limit: an
+ * account that owns nothing is below every entry in {@link PROJECT_LIMITS}, because a tier
+ * whose limit were zero would be a tier that cannot create a project at all.
+ */
+const ADA: Principal = { sub: 'google|1234', plan: 'free', ownedProjects: 0 }
 
 let app: Server | undefined
 
@@ -17,13 +25,30 @@ afterEach(async () => {
 })
 
 describe('the seam itself', () => {
-  it('permits everything today', () => {
+  it('permits every action for an account that has used nothing', () => {
     // ADR 0009: the seam exists so that billing at M8 is a policy table change rather than an
-    // audit of every handler. Until then every answer is yes, and that has to be *asserted* —
-    // a seam nobody has watched permit anything is a seam nobody knows is wired up.
+    // audit of every handler — and that has to be *asserted*, because a seam nobody has watched
+    // permit anything is a seam nobody knows is wired up.
+    //
+    // Named for what it checks rather than "permits everything today", which stopped being true
+    // when `project.create` gained a capacity policy. A test whose name overstates its
+    // assertion is worse than no test: the next reader trusts the name.
     for (const action of ACTIONS) {
       expect(() => gate(ADA, action, { id: 'project-1' })).not.toThrow()
     }
+  })
+
+  it('refuses the one action a plan now limits', () => {
+    // The other half, and the reason the name above had to change. Without this the file would
+    // describe a seam that only ever says yes, while `POLICIES` already contains one that says
+    // no — and a reader would believe the file.
+    //
+    // The count is *derived* from the table rather than written as a number, so raising or
+    // lowering a tier's capacity leaves this test meaning what it means today. A literal `1`
+    // would fail for the wrong reason the day `free` changed.
+    const atCapacity: Principal = { ...ADA, ownedProjects: PROJECT_LIMITS[ADA.plan] }
+
+    expect(() => gate(atCapacity, 'project.create')).toThrow(NotEntitledError)
   })
 
   it('refuses by throwing rather than by returning false', () => {
@@ -94,6 +119,7 @@ function serverWithGatedRoutes() {
     projects: {
       couch: fakeCouch().couch,
       key,
+      profiles: profileStore(fakeCouch().couch),
       validator: () => 'function (doc) { return doc }',
       gate: (_principal, action) => {
         calls.push(action)

@@ -1,14 +1,17 @@
 import { generateKeyPairSync } from 'node:crypto'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { mintToken, type SigningKey } from '../../src/auth/jwt.js'
-import type { Action, Principal } from '../../src/domain/index.js'
-import { NotEntitledError } from '../../src/entitlements/gate.js'
+import type { Action, Plan, Principal } from '../../src/domain/index.js'
+import { NotEntitledError, gate as realGate } from '../../src/entitlements/gate.js'
+import { profileStore, userDocumentId } from '../../src/profile/store.js'
 import { forgetRegistry, REGISTRY_DATABASE } from '../../src/projects/registry.js'
 import { buildServer, type Server } from '../../src/server.js'
 import { loadContract, operationsOf, validate } from '../support/contract.js'
 import { type CouchFailures, type FakeCouch, fakeCouch } from '../support/couch.js'
 
 const OWNER = 'google|1234'
+/** The caller in the capacity tests. Distinct from {@link OWNER}, which owns nothing here. */
+const SUBJECT = 'user-1'
 const PROJECT_ID = '8f14e45f-ceea-467a-9c0e-1b2c3d4e5f60'
 const DATABASE = `project_${PROJECT_ID}`
 
@@ -22,6 +25,9 @@ const KEY = signingKey()
 /** A valid access token for `sub`. */
 const tokenFor = (sub: string) =>
   mintToken(KEY, { purpose: 'access', sub, exp: Math.floor(Date.now() / 1000) + 3600 })
+
+/** The whole header value, for the requests that are written out rather than built by `create`. */
+const bearer = (sub: string) => `Bearer ${tokenFor(sub)}`
 
 let app: Server | undefined
 let couch: FakeCouch
@@ -37,11 +43,19 @@ function server(options: { fails?: CouchFailures; gateRefuses?: boolean } = {}) 
       couch: couch.couch,
       key: KEY,
       validator: () => 'function (newDoc) { return newDoc }',
+      // The real store against the fake CouchDB, so a test states a plan by seeding the
+      // `_users` document an operator would have edited - rather than by stubbing the read
+      // and proving only that a stub returns what it was given.
+      profiles: profileStore(couch.couch),
       newId: () => PROJECT_ID,
       clock: () => '2026-08-27T09:00:00.000Z',
-      gate: (principal, action) => {
+      // A spy *over* the real gate, not a stand-in for it. A recording gate that always
+      // returned would let a capacity limit be absent from the policy table and leave every
+      // test in this file green - which is the one failure ADR 0009's seam exists to prevent.
+      gate: (principal, action, project) => {
         gateCalls.push({ principal, action })
         if (options.gateRefuses === true) throw new NotEntitledError(action)
+        realGate(principal, action, project)
       },
       findUser: async (value: string) =>
         value.includes('grace')
@@ -142,7 +156,7 @@ describe('the entitlement seam', () => {
     await create(built, { name: 'Musterstraße 12' })
 
     expect(gateCalls[0]).toEqual({
-      principal: { sub: OWNER, plan: 'free' },
+      principal: { sub: OWNER, plan: 'free', ownedProjects: 0 },
       action: 'project.create',
     })
   })
@@ -158,10 +172,15 @@ describe('the entitlement seam', () => {
 
   it('refusing creates nothing', async () => {
     // A gate called after the database exists is a gate that does not gate anything.
+    //
+    // Named, rather than `databases.size`. The registry is established before the caller's
+    // projects can be counted, so the deployment legitimately holds one database by the time
+    // the gate answers - and a count of all of them would report that as the project this test
+    // says was never made.
     const { app: built, couch: fake } = server({ gateRefuses: true })
     await create(built, { name: 'Musterstraße 12' })
 
-    expect(fake.databases.size).toBe(0)
+    expect(fake.databases.has(DATABASE)).toBe(false)
   })
 })
 
@@ -245,10 +264,11 @@ describe('a request that will not do', () => {
   })
 
   it('creates nothing', async () => {
+    // The project database by name, for the reason 'refusing creates nothing' gives above.
     const { app: built, couch: fake } = server()
     await create(built, { name: '' })
 
-    expect(fake.databases.size).toBe(0)
+    expect(fake.databases.has(DATABASE)).toBe(false)
   })
 })
 
@@ -636,6 +656,26 @@ describe('sharing a project', () => {
     expect(built.gateCalls.map((call) => call.action)).toContain('project.invite')
   })
 
+  it('hands the gate the real owned count of the caller, not a literal', async () => {
+    // `project.invite` is `ALLOW` today and reads nothing from the principal, so a hard-coded
+    // `0` here would be invisible - and silently wrong on the day a policy starts reading the
+    // count, which is exactly the failure the seam exists to prevent. Nothing else in the suite
+    // can see this, so it is asserted directly.
+    const built = seedProject(server())
+    built.couch.rows = [
+      { value: { projectId: 'a', dbName: 'p_a', projectName: 'A', role: 'owner', ownerId: OWNER } },
+      { value: { projectId: 'b', dbName: 'p_b', projectName: 'B', role: 'owner', ownerId: OWNER } },
+    ]
+
+    await share(built.app, { email: 'grace@example.test', role: 'read' })
+
+    expect(built.gateCalls.find((call) => call.action === 'project.invite')?.principal).toEqual({
+      sub: OWNER,
+      plan: 'free',
+      ownedProjects: 2,
+    })
+  })
+
   it('is 401 without a token', async () => {
     const built = seedProject(server())
 
@@ -879,5 +919,149 @@ describe('handing a project to somebody else', () => {
     })
 
     expect(response.statusCode).toBe(404)
+  })
+})
+
+/**
+ * A server whose registry already holds what this caller owns, and whose `_users` document
+ * carries their plan.
+ *
+ * Separate from {@link server} because these tests are about a *precondition*: what matters is
+ * how many projects exist before the request, and reaching that state by creating them would
+ * mean driving the very route under test through the very limit under test.
+ *
+ * @param options.plan what the `_users` document holds, as an operator would have typed it
+ * @param options.owned how many projects this subject owns
+ * @param options.archived whether those owned projects are archived - they count either way (#55)
+ * @param options.memberOf how many further projects this subject can see but does not own
+ */
+function serverWithProjects(options: {
+  plan: Plan
+  owned: number
+  archived?: boolean
+  memberOf?: number
+}): Server {
+  const built = server()
+
+  built.couch.documents.set(`_users/${userDocumentId(SUBJECT)}`, {
+    _id: userDocumentId(SUBJECT),
+    name: SUBJECT,
+    roles: [],
+    type: 'user',
+    plan: options.plan,
+  })
+
+  // One row per participation, which is what the view emits: a project somebody shared with
+  // this subject is a row of theirs carrying somebody else's `ownerId`. `read` rather than the
+  // `member` a reader might expect - `ProjectRole` has four values and that is not one of them.
+  const rows = (count: number, role: string, archived: boolean, prefix: string) =>
+    Array.from({ length: count }, (_unused, index) => ({
+      value: {
+        projectId: `${prefix}-${index}`,
+        dbName: `project_${prefix}_${index}`,
+        projectName: `Project ${index}`,
+        address: null,
+        role,
+        archived,
+        ownerId: role === 'owner' ? SUBJECT : 'google|somebody-else',
+      },
+    }))
+
+  built.couch.rows = [
+    ...rows(options.owned, 'owner', options.archived === true, 'owned'),
+    ...rows(options.memberOf ?? 0, 'read', false, 'shared'),
+  ]
+
+  return built.app
+}
+
+describe('creating a project against the plan', () => {
+  it('creates the first project on a free plan', async () => {
+    const built = serverWithProjects({ plan: 'free', owned: 0 })
+    const response = await built.inject({
+      method: 'POST',
+      url: '/projects',
+      headers: { authorization: bearer(SUBJECT) },
+      payload: { name: 'Home' },
+    })
+    expect(response.statusCode).toBe(201)
+  })
+
+  it('refuses the second, and says why in a way a client can branch on', async () => {
+    // An empty 403 leaves the page unable to tell "you have used all your slots" from "you may
+    // not do this", and those deserve different sentences.
+    const built = serverWithProjects({ plan: 'free', owned: 1 })
+    const response = await built.inject({
+      method: 'POST',
+      url: '/projects',
+      headers: { authorization: bearer(SUBJECT) },
+      payload: { name: 'Second' },
+    })
+    expect(response.statusCode).toBe(403)
+    expect(response.json()).toMatchObject({ reason: 'project-limit-reached' })
+  })
+
+  it('counts an archived project against the limit', async () => {
+    // Archiving is not deletion (#55) - the database still exists and still costs - so an
+    // archived project occupies its slot. The alternative would let a free account accumulate
+    // databases without limit by archiving each one.
+    const built = serverWithProjects({ plan: 'free', owned: 1, archived: true })
+    const response = await built.inject({
+      method: 'POST',
+      url: '/projects',
+      headers: { authorization: bearer(SUBJECT) },
+      payload: { name: 'Second' },
+    })
+    expect(response.statusCode).toBe(403)
+  })
+
+  it('does not count a project somebody else owns', async () => {
+    // Membership is not ownership. A free user invited to a colleague's project keeps their
+    // own slot, which is the point of counting ownership rather than visibility.
+    const built = serverWithProjects({ plan: 'free', owned: 0, memberOf: 3 })
+    const response = await built.inject({
+      method: 'POST',
+      url: '/projects',
+      headers: { authorization: bearer(SUBJECT) },
+      payload: { name: 'Mine' },
+    })
+    expect(response.statusCode).toBe(201)
+  })
+
+  it('never refuses a pro account', async () => {
+    const built = serverWithProjects({ plan: 'pro', owned: 50 })
+    const response = await built.inject({
+      method: 'POST',
+      url: '/projects',
+      headers: { authorization: bearer(SUBJECT) },
+      payload: { name: 'Another' },
+    })
+    expect(response.statusCode).toBe(201)
+  })
+
+  it('creates nothing when it refuses', async () => {
+    // The refusal has to happen before provisioning, not alongside it. A limit enforced after
+    // the database exists is a limit that costs exactly as much as no limit at all.
+    const built = serverWithProjects({ plan: 'free', owned: 1 })
+    await built.inject({
+      method: 'POST',
+      url: '/projects',
+      headers: { authorization: bearer(SUBJECT) },
+      payload: { name: 'Second' },
+    })
+    expect(couch.databases.has(`project_${PROJECT_ID}`)).toBe(false)
+  })
+
+  it('reads the plan from the account rather than assuming one', async () => {
+    // The positive control for the refusal above: a handler that ignored `_users` entirely and
+    // hard-coded `free` would pass every test in this block but this one.
+    const built = serverWithProjects({ plan: 'user', owned: 1 })
+    const response = await built.inject({
+      method: 'POST',
+      url: '/projects',
+      headers: { authorization: bearer(SUBJECT) },
+      payload: { name: 'Second' },
+    })
+    expect(response.statusCode).toBe(201)
   })
 })

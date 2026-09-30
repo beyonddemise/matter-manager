@@ -25,6 +25,7 @@ import {
   TransferError,
 } from '../domain/index.js'
 import { type Gate, NotEntitledError, gate as realGate } from '../entitlements/gate.js'
+import type { ProfileStore } from '../profile/store.js'
 import { accessValidator } from './design-docs.js'
 import { type InvitationSender, storeInvitation } from './invitations.js'
 import {
@@ -39,7 +40,7 @@ import {
   ProvisioningError,
   provisionProject,
 } from './provision.js'
-import { pointerId, projectsFor, REGISTRY_DATABASE } from './registry.js'
+import { ensureRegistry, pointerId, projectsFor, REGISTRY_DATABASE } from './registry.js'
 import { SettingsRefused, updateProjectSettings } from './settings.js'
 import {
   acceptTransfer,
@@ -56,6 +57,15 @@ export interface ProjectDependencies {
   readonly couch: CouchClient
   /** The key the access token is verified with — the same one CouchDB validates it with. */
   readonly key: SigningKey
+  /**
+   * Where a subject's plan is read from.
+   *
+   * **Required, not optional.** An absent store would have to mean something, and the only
+   * thing it could mean is `free` for everybody — which is a deployment that silently stops
+   * charging, looks exactly like one that works, and is found by an invoice rather than by a
+   * test. A missing wire is a compile error instead.
+   */
+  readonly profiles: ProfileStore
   /**
    * The entitlement seam.
    *
@@ -125,19 +135,58 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDepende
   const now = deps.now ?? (() => Math.floor(Date.now() / 1000))
   const gate = deps.gate ?? realGate
 
+  /**
+   * Who is asking, and what they already have.
+   *
+   * Read before the gate, because the gate cannot read: `Policy` is
+   * `(principal, project?) => boolean` and stays synchronous so the policy table can be tested
+   * without a database. The I/O therefore lives out here, once, rather than at each call site.
+   *
+   * `role === 'owner'` rather than the row's presence: the view emits one row **per
+   * participant**, so a project somebody shared with this user is theirs to open and not theirs
+   * to count. Archived ones do count, because archiving is not deletion (#55) — the database
+   * still exists — and the alternative lets a free account accumulate databases without limit
+   * by archiving each one.
+   *
+   * `ensureRegistry` first, for the reason `provisionProject` gives for doing it as its own
+   * step 1: a registry that cannot be reached costs nothing at this point. Without it the
+   * **first** project on a fresh deployment would query a view in a database that does not
+   * exist yet and answer 500 — a count that has to happen before provisioning cannot rely on
+   * provisioning to have created the thing it counts. It is remembered per process, so every
+   * later call is free.
+   *
+   * **Two requests racing at the limit can both pass**: each counts before the gate and nothing
+   * holds a lock. Accepted rather than solved. The cost is one project over on a race nobody is
+   * trying to win, against a serialisation point on project creation for every account — and a
+   * limit that is one out under concurrency is a different thing from a limit that is not
+   * enforced.
+   */
+  const principalFor = async (sub: string): Promise<Principal> => {
+    await ensureRegistry(deps.couch)
+    const owned = (await projectsFor(deps.couch, sub)).filter((row) => row.role === 'owner').length
+    const profile = await deps.profiles.read(sub)
+    // `free` is the only tier literal ADR 0009 permits outside the policy table, and it is here
+    // because a subject with no `_users` document has no plan to read rather than a cheap one.
+    return { sub, plan: profile?.plan ?? 'free', ownedProjects: owned }
+  }
+
   app.post('/projects', async (request, reply) => {
     const sub = bearerSubject(request, deps.key, now)
     if (sub === undefined) return reply.code(401).send({ title: 'Not signed in', status: 401 })
 
-    // Everyone is on `free` until billing arrives (ADR 0009), and `can()` says yes to
-    // everything today. The point is that the call is *here*, so M8 is a policy table change
-    // rather than an audit of every handler.
-    const principal: Principal = { sub, plan: 'free' }
+    const principal = await principalFor(sub)
+
     try {
       gate(principal, CREATE)
     } catch (error) {
       if (!(error instanceof NotEntitledError)) throw error
-      return reply.code(403).send()
+      // Named, not empty. `reply.code(403).send()` told the page nothing, so it could not tell
+      // a capacity refusal from a permission one — and only one of those is fixed by upgrading.
+      return reply.code(403).send({
+        title: 'This plan has no room for another project.',
+        status: 403,
+        reason: 'project-limit-reached',
+      })
     }
 
     const body = (request.body ?? {}) as CreateBody
@@ -302,7 +351,13 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDepende
     const sub = bearerSubject(request, deps.key, now)
     if (sub === undefined) return reply.code(401).send({ title: 'Not signed in', status: 401 })
 
-    const principal: Principal = { sub, plan: 'free' }
+    // The real count, by the same rule the creation route uses, and deliberately not a
+    // literal `0`. `project.invite` is `ALLOW` today and reads nothing from the principal, so a
+    // literal would be invisible now and silently wrong on the day a policy starts reading it —
+    // which is precisely the failure ADR 0009's seam exists to prevent. One extra read on this
+    // route is the price.
+    const principal = await principalFor(sub)
+
     try {
       gate(principal, INVITE, { id: (request.params as { projectId: string }).projectId })
     } catch (error) {

@@ -167,7 +167,9 @@ export function serverOptions(env: Environment = process.env): ServerOptions {
 
   return {
     security,
-    projects: { couch, key },
+    // The same store the profile routes use. One reader of `_users` per process, so a plan an
+    // operator sets is the plan the gate sees without a second path to keep in step.
+    projects: { couch, key, profiles: store },
     // Needs the **session** key, because it authenticates by the session cookie. Present only
     // when there is one, since a route that can never authenticate anybody is not a route.
     ...(sessionKey === undefined ? {} : { profile: { store, sessionKey } }),

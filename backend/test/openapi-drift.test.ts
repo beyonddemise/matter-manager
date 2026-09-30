@@ -2,6 +2,7 @@ import { generateKeyPairSync } from 'node:crypto'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { SigningKey } from '../src/auth/jwt.js'
 import type { ProfileDependencies } from '../src/profile/routes.js'
+import { profileStore } from '../src/profile/store.js'
 import { buildServer, type Server } from '../src/server.js'
 import {
   loadContract,
@@ -76,6 +77,7 @@ const server = (): Server => {
     projects: {
       couch: fakeCouch().couch,
       key,
+      profiles: profileStore(fakeCouch().couch),
       validator: () => 'function (doc) { return doc }',
       identityOf: async (sub: string) => ({
         sub,
