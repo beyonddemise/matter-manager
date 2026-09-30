@@ -790,7 +790,16 @@ components:
         three times, and then answers this. A conflict that survives three attempts is
         something the caller should be told about rather than be made to wait through.
 
-        **Safe to retry**, and the only refusal in this contract that is: nothing was written.
+        **Safe to retry** — the retry re-reads the current state rather than replaying a stale
+        one — but not a promise that nothing changed. Both operations that answer this write the
+        database's `_security` document before the registry document this conflict is about,
+        whenever the change narrows somebody's access (a transfer always does; a role change
+        does when it revokes or demotes). An exhausted retry can therefore leave `_security`
+        already rewritten to the access that change intended — and, for a transfer, the offer
+        still pending — while the registry still names the old participants. When the change
+        widens access instead, the ordering is reversed and nothing has been written. A caller
+        who needs to know which happened should re-read the members or the transfer offers
+        rather than assume either outcome.
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
