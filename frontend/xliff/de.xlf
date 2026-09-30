@@ -674,6 +674,18 @@
   <source>Upload an image</source>
   <target>Bild hochladen</target>
 </trans-unit>
+<trans-unit id="sca80944eb187d088">
+  <source>About Matter Manager</source>
+  <target>Über Matter Manager</target>
+</trans-unit>
+<trans-unit id="se78c02e9a98a0f47">
+  <source>Privacy</source>
+  <target>Datenschutz</target>
+</trans-unit>
+<trans-unit id="sd4647caeb94889ec">
+  <source>Terms</source>
+  <target>Nutzungsbedingungen</target>
+</trans-unit>
 </body>
 </file>
 </xliff>

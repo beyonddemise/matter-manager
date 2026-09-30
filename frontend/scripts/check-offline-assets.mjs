@@ -81,6 +81,13 @@ const ALLOWED_IN_JS = new Map([
       'BY 4.0 asks for it. A comment in an SVG, not a request.',
   ],
   [
+    'https://www.matter-manager.io',
+    'The public website, used only as the `href` of the About, Privacy and Terms links in the ' +
+      "shell's footer (`WEBSITE` in src/ui/app-shell.ts, its sole use). Navigation the reader " +
+      'chooses, never a request the application makes; app-shell.browser.test.ts asserts the ' +
+      'three hrefs.',
+  ],
+  [
     'https://github.com',
     "In `uuid`'s error message about `crypto.getRandomValues`, and in the producer string " +
       '`pdf-lib` writes into a generated document. Both are text.',
