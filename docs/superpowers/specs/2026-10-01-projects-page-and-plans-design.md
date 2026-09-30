@@ -94,45 +94,99 @@ one query on the one route that needs it.
 Limits live beside the policy as a table, not as a conditional:
 
 ```ts
-export const PROJECT_LIMITS: Readonly<Record<Plan, number | undefined>> = Object.freeze({
+export const PROJECT_LIMITS: Readonly<Record<Plan, number>> = Object.freeze({
   free: 1,
   user: 5,
-  // Absent rather than Infinity. `Infinity` survives arithmetic and comparison but does not
-  // survive JSON — it serialises as `null`, so an API that computed with it would report
-  // something it did not mean. Unlimited is the absence of a limit, and the API says `null`.
-  pro: undefined,
+  /**
+   * Unlimited, as a sentinel rather than as `Infinity` or an absence.
+   *
+   * `Infinity` compares correctly and then serialises to `null`, so the API would report
+   * something it did not mean. `undefined` forces every reader to handle two shapes. `-1` is
+   * one number, survives JSON, and is what the contract describes.
+   *
+   * **It must be tested before it is compared, never after.** `count >= limit` with `limit`
+   * of `-1` is true for every count including zero, so the plan with no limit would be the
+   * only one that can never create a project — a failure that is both silent and exactly
+   * backwards. Every read of this table goes through {@link withinLimit}.
+   */
+  pro: -1,
 })
+
+/** Whether one more project is allowed. The only place the `-1` sentinel is interpreted. */
+export const withinLimit = (owned: number, limit: number): boolean =>
+  limit < 0 || owned < limit
 ```
 
 ADR 0009's rule holds throughout: no component and no handler asks `plan === 'free'`. They ask
 `can()`, or they read the limit the API reports.
 
-### Where a plan lives, and the escalation it invites
+### Where a plan lives, and who may set it
 
 `plan` joins `locale` and `displayName` on `org.couchdb.user:<sub>`, the document
 `backend/src/profile/store.ts` already owns. Absent means `free`, so nothing has to be migrated
 and a user who has never been touched by an operator reads correctly.
 
-**`PUT /profile` must keep ignoring it, and a test must say so.** That endpoint lets a user write
-their own document. It currently constructs the update from two named fields, so today the
-escalation is impossible by construction rather than by intention — and the refactor that
-replaces two named fields with a spread of the body is exactly the change somebody makes while
-tidying, at which point any user can grant themselves `pro` with one request. The test is not
-about today's code; it is about that refactor.
+**What makes a role-based gate sound here is that roles are not user-writable.** `store.ts`
+builds every update by spreading the existing document first and then applying named fields, so
+`name`, `roles` and `type` are carried through from CouchDB and never taken from a request body
+— the file says why, and it is about accounts that stop being able to authenticate. A user
+therefore cannot grant themselves the role that would let them set their plan, which is the
+property the whole gate rests on. A refactor that replaced those named fields with a spread of
+the request body would destroy it silently, and the tests below exist for that refactor rather
+than for today's code.
 
-Setting a plan is an operator action on the `_users` document until billing exists. The spec says
-so rather than leaving a gap where a reader assumes a mechanism.
+Roles are read from the caller's own `_users` document. The access token carries none today
+(`mintToken` writes `purpose`, `sub`, `exp` and `iat`), and adding them would put an
+authorization decision into a credential that CouchDB also verifies — two consumers, one claim,
+and a change to either affecting both.
+
+Two endpoints, because two different people are asking:
+
+**`PATCH /profile`** replaces `PUT /profile` and keeps its rule that the subject comes from the
+session and never from the body — the existing comment calls the alternative "an account-takeover
+primitive". `locale` and `displayName` are writable by anybody; **`plan` is accepted only from a
+caller holding `_admin` or `customerservice`**, and silently ignoring it for everybody else would
+be the wrong refusal: a request that asked for something and was not told it was refused is how a
+caller concludes the field does not exist. It answers 403 with a named reason.
+
+PATCH rather than PUT because the semantics were already partial — the current handler treats an
+absent `displayName` as "leave it alone" while requiring `locale` on every request, which is a
+PATCH wearing a PUT's name. Making it a PATCH also makes `locale` optional, which is the
+behaviour the existing comment describes wanting.
+
+**`PUT /customer`** is the operator route, gated on the same two roles, and sets a **named**
+subject's plan. It exists because `PATCH /profile` can only ever reach the caller, so without it
+a role-holder could upgrade themselves and nobody else — an operator tool that cannot serve a
+customer. Keeping it a separate endpoint is what lets `/profile` retain its rule intact: the
+subject arrives in a body on a route whose entire purpose is acting on another account, rather
+than being smuggled into one whose comment forbids it.
+
+`customerservice` is a plain CouchDB role granted by editing `_users`; `_admin` is CouchDB's own.
+Neither is grantable through this API.
 
 ### The API contract
 
-- **`GET /profile`** gains `plan` and `projectLimit` — a number, or `null` for unlimited.
+- **`GET /profile`** gains `plan` and `projectLimit`, the latter always a number, with `-1`
+  meaning unlimited. The page interprets it through the same rule the policy does rather than
+  comparing it directly.
 - **`GET /projects`** is unchanged. It already reports each project's role, so the page derives
   the owned count from the list it fetches anyway. One source for each fact: the profile knows
   the plan, the list knows the count.
+- **`PATCH /profile`** replaces `PUT /profile`: `locale` and `displayName` optional, `plan`
+  accepted only from `_admin` or `customerservice` and refused with a named 403 otherwise.
+- **`PUT /customer`** sets a named subject's plan, same two roles, 403 otherwise and 404 for a
+  subject with no `_users` document — distinct answers, because "you may not" and "there is no
+  such account" send an operator to different places.
 - **`POST /projects`** refuses at the limit with a **distinguishable** body. It currently answers
   `reply.code(403).send()` — no body at all — which leaves the page unable to tell "you have used
   all your slots" from "you may not do this", and those deserve different sentences. It gains a
   `title` and a machine-readable reason.
+
+**`PUT` → `PATCH` breaks the existing client.** `frontend/src/ui/profile.ts:72` sends
+`method: 'PUT'`, so the two move in the same change or the settings page silently stops saving —
+silently because a 404 or 405 from a fire-and-forget save is not something that page currently
+surfaces. This is the one place phase 1 reaches into the frontend, and it is a two-line reach
+rather than a reason to merge the phases.
 
 `openapi.yaml` at the repository root is the contract of record and changes with these routes.
 The drift between it and the running server is caught by `backend/test/openapi-drift.test.ts`,
@@ -206,7 +260,9 @@ is the thing `set()` is idempotent in order to protect.
 
 | Failure | Why it would go unnoticed | What answers it |
 | --- | --- | --- |
-| A user grants themselves `pro` | `PUT /profile` succeeds and nothing looks wrong | The endpoint names the fields it writes; a test asserts `plan` in the body changes nothing |
+| A user grants themselves `pro` | `PATCH /profile` succeeds and nothing looks wrong | `plan` is refused with a 403 for a caller without the role; a test sends it as an ordinary user and asserts both the refusal and that the stored plan is unchanged |
+| A refactor makes roles writable | The gate still reads roles, and now the caller sets them | A test writes `roles` through both endpoints and asserts the stored roles are untouched |
+| `-1` compared instead of tested | `pro` is the only plan that can never create a project | Every read goes through `withinLimit`; a test covers `pro` at zero, one and many owned projects |
 | The limit is enforced in the page only | Creation through the API still works, so the limit is decorative | The gate is on `POST /projects`; the page reads the limit but never decides it |
 | Promotion runs twice | A second database, and a local project silently split in two | Promotion is idempotent on the project it targets, and the page disables the control while it runs |
 | `offline` shown as an error | Users are told the application is broken when it is working as designed | Rendered quietly, and a test pins that it is not the error styling |
@@ -216,8 +272,13 @@ is the thing `set()` is idempotent in order to protect.
 
 - **Domain**: `PROJECT_LIMITS` and the `project.create` policy at every boundary — at the limit,
   one under, one over, and unlimited — as a table, in the style `can.test.ts` already uses.
-- **API**: `POST /projects` answers 201 under the limit and a *named* 403 at it; `GET /profile`
-  reports plan and limit; `PUT /profile` with `plan` in the body leaves the stored plan unchanged.
+- **API**: `POST /projects` answers 201 under the limit and a *named* 403 at it, and never
+  refuses on `pro` however many projects exist; `GET /profile` reports plan and limit;
+  `PATCH /profile` with `plan` is refused for an ordinary caller, accepted for one holding
+  `customerservice`, and in both cases the stored document is checked rather than the response
+  believed; `PUT /customer` sets another subject's plan for a role-holder, 403s without the role
+  and 404s for an unknown subject; and neither endpoint writes `roles` or `type` whatever the
+  body contains.
 - **Frontend**: slot rendering for each plan including the unlimited list; the three location
   states from the two lists; live status per project including `offline` rendered quietly; and
   each of the three manual actions, with promotion refused when at capacity.
