@@ -557,13 +557,26 @@ describe('the plan a PATCH may carry', () => {
     expect((response.json() as Profile).plan).toBe('pro')
   })
 
-  it('accepts a plan from CouchDB’s own administrator', async () => {
-    // `_admin` is the other half of OPERATOR_ROLES, and a gate that had only ever been tried
-    // with `customerservice` would not notice it going missing.
+  it('refuses a plan from a caller holding CouchDB’s `_admin` role', async () => {
+    // `_admin` was on OPERATOR_ROLES and has been deliberately removed, so this pins the
+    // decision rather than merely dropping the coverage that asserted the opposite.
+    //
+    // Two facts make putting it back a mistake. `rolesOf` reads the caller's `_users` document
+    // and nothing else, and a CouchDB *server* admin is configured in `local.ini [admins]` with
+    // no `_users` document at all — so listing the role never admitted the administrator it
+    // looked like it was for. The only account it could match is one with `roles: ["_admin"]`
+    // written into its document, and `infra/couchdb/design-docs/access.js` gives that role an
+    // unconditional bypass of `validate_doc_update` on every project database in the
+    // deployment. So the entry admitted nobody who needed it and, if it ever did fire, only an
+    // account that could already write any document belonging to anybody.
     const { app: server, cookie, storedPlan } = serveWithRoles(['_admin'])
+    const response = await patch(server, cookie, { plan: 'user' })
 
-    expect((await patch(server, cookie, { plan: 'user' })).statusCode).toBe(200)
-    expect(await storedPlan()).toBe('user')
+    expect(response.statusCode).toBe(403)
+    expect(JSON.stringify(response.json())).toContain('not-an-operator')
+    // The store, not only the status. A handler that refused *after* writing would read as
+    // correct from the outside, which is the failure every test in this file guards against.
+    expect(await storedPlan()).toBe('free')
   })
 
   it.each([['customerservices'], ['Customerservice'], ['customer'], ['CUSTOMERSERVICE']])(

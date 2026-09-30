@@ -1450,3 +1450,39 @@ the failure's exact observable shape is, and assert on that. A list of exception
 incident at a time and is never finished; the precise condition is finished the day it is
 written. And when a verdict cannot be reached, say that — "a Function answered (403)" was the
 convenient sentence and it was not true.
+
+## L41 — A warning nobody owns is a warning nobody fixes
+
+`npm run verify` exited 0 on the plans-and-capacity branch with three backend and nine frontend
+Biome warnings. Every per-task reviewer saw them, and every one classified them the same way:
+*pre-existing, in files this branch does not touch.* Accurate, and it meant twelve warnings had
+been passed over by seven reviews in a row.
+
+The user's correction was one sentence: **regardless of pre-existing or new, problems, warnings
+and errors get fixed when discovered.**
+
+The reasoning is about what a number teaches people. A build that reports "3 warnings" every
+time trains everybody reading it that three is the resting state — and the moment that is true,
+a fourth warning is invisible. The count only works as a signal while it is zero, so the passing
+condition is *zero warnings*, not *exit code 0*. "Not mine" is an accurate description of
+ownership and a useless one for the codebase: the whole point of a shared warning count is that
+nobody has to own it for it to be worth keeping clean.
+
+The same argument reached further on the same branch. `npm run openapi:types` had been broken
+since the generated file was first committed — `openapi-typescript` needs `ts.factory`, which
+TypeScript 7's Go port does not expose — and nothing failed when the generated output went three
+contract edits stale. Nobody had introduced that; everybody had inherited it. It went unnoticed
+for exactly as long as it was nobody's.
+
+**Rule:** when a verification run reports anything short of clean, fix it in the work that found
+it. Do not report a pre-existing warning as out of scope, and do not defer it to a follow-up you
+are not also creating. Where a fix needs a decision that is genuinely not yours — a dependency
+change, a privilege boundary — ask for it rather than deferring in silence, because a deferral
+nobody was told about is indistinguishable from not having looked.
+
+Two judgement calls this does *not* license. A rule that is wrong for a deliberate case gets a
+suppression with a written reason, not a change that makes the code worse to make the tool
+quiet: six `!important` declarations overriding a component library are not a mistake, and
+removing them to reach zero would trade a warning for a rendering bug. And an unused variable in
+a test is usually evidence that an assertion was dropped — deleting it reaches zero while
+throwing away the thing the warning was pointing at.

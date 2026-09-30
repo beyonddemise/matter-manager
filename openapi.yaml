@@ -38,8 +38,13 @@ tags:
     description: The signed-in user's own settings
   - name: admin
     description: |
-      Operator endpoints. Reached only by an account holding `_admin` or `customerservice`,
-      and the only operations in this contract that name a subject other than the caller.
+      Operator endpoints. Reached only by an account holding the `customerservice` role, and
+      the only operations in this contract that name a subject other than the caller.
+
+      The role is granted by editing the account's `_users` document in CouchDB and cannot be
+      granted through this API at all. CouchDB's own `_admin` role is **not** accepted here: it
+      carries an unconditional bypass of every project database's write rules, so accepting it
+      would make "may change a plan" inseparable from "may write anything belonging to anyone".
 
 security:
   - bearerAuth: []
@@ -148,9 +153,10 @@ paths:
         nothing at all means "leave it alone".
 
         `plan` is the exception to "about themselves": it may be sent only by an account holding
-        `_admin` or `customerservice`, and anybody else is answered 403 rather than having the
-        field quietly dropped. See ADR 0009 — what a plan then permits is decided by the policy
-        table, never by a comparison against a tier.
+        the `customerservice` role, and anybody else is answered 403 rather than having the field
+        quietly dropped. CouchDB's `_admin` is not accepted — see the `admin` tag for why that
+        role is excluded rather than merely unnecessary. See ADR 0009 — what a plan then permits
+        is decided by the policy table, never by a comparison against a tier.
       requestBody:
         required: true
         content:
@@ -179,7 +185,7 @@ paths:
         # rather than composed from `Problem`.
         '403':
           description: |
-            The caller sent `plan` and does not hold `_admin` or `customerservice`.
+            The caller sent `plan` and does not hold the `customerservice` role.
 
             **Nothing in the request was applied**, including the `locale` or `displayName` that
             came with it: half of an operator's intent is not an outcome anybody asked for. So
@@ -200,7 +206,8 @@ paths:
         who can upgrade themselves and nobody else is not an operator tool. This operation names
         a subject, and being a separate operation is what lets `/profile` keep that rule.
 
-        Reached only by an account holding `_admin` or `customerservice`. **The role is checked
+        Reached only by an account holding the `customerservice` role — and deliberately not
+        CouchDB's `_admin`, for the reason the `admin` tag gives. **The role is checked
         before the body is validated and before the subject is looked up**, so the answer to a
         caller without the role is 403 whether or not the named account exists, and is identical
         in both cases: answering 404 or 400 first would make this an oracle telling any
@@ -242,7 +249,7 @@ paths:
         # refusal indistinguishable from every other 403 in the file.
         '403':
           description: |
-            The caller does not hold `_admin` or `customerservice`.
+            The caller does not hold the `customerservice` role.
 
             Answered **before** the body is validated and before the named subject is looked up,
             so it is byte-for-byte the answer a non-operator gets whether or not that account
@@ -635,7 +642,7 @@ components:
     NotAnOperator:
       type: object
       description: |
-        Setting a plan was refused: the caller does not hold `_admin` or `customerservice`.
+        Setting a plan was refused: the caller does not hold the `customerservice` role.
       required: [title, status, reason]
       properties:
         type: { type: string, format: uri }

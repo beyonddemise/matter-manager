@@ -143,7 +143,7 @@ describe('PUT /customer', () => {
       cookie,
       storedPlan,
     } = customerServer({
-      callerRoles: ['_admin'],
+      callerRoles: ['customerservice'],
       subjects: ['other'],
     })
 
@@ -175,10 +175,11 @@ describe('PUT /customer', () => {
     ['CUSTOMERSERVICE'],
     ['admin'],
   ])('refuses a caller whose only role is %s', async (role) => {
-    // `customerservices` is somebody else's role and `Customerservice` is a typo; `admin` is
-    // not `_admin`. A substring test lets the plural and the prefix through and a case fold
-    // lets the typo through, and on *this* route that is one account rewriting another's
-    // entitlements rather than a self-grant.
+    // `customerservices` is somebody else's role and `Customerservice` is a typo; `admin` is a
+    // role somebody may plausibly have granted themselves for an unrelated reason. A substring
+    // test lets the plural and the prefix through and a case fold lets the typo through, and on
+    // *this* route that is one account rewriting another's entitlements rather than a
+    // self-grant.
     const {
       app: server,
       cookie,
@@ -193,11 +194,47 @@ describe('PUT /customer', () => {
     expect(await storedPlan('other')).toBe('free')
   })
 
+  it('refuses a caller whose only role is CouchDB’s `_admin`', async () => {
+    // `_admin` was on OPERATOR_ROLES and has been deliberately removed. Asserting the refusal
+    // rather than deleting the test that asserted the opposite is what pins the decision: the
+    // next person to read "surely the administrator should be able to do this" finds the answer
+    // here instead of re-adding the entry.
+    //
+    // It never worked as it appeared to. `rolesOf` reads the caller's `_users` document and
+    // nothing else, while a CouchDB *server* admin lives in `local.ini [admins]` and has no
+    // such document — so the real administrator was answered 403 either way. The only account
+    // the entry could match is one with `roles: ["_admin"]` written into its document, and
+    // `infra/couchdb/design-docs/access.js` gives that role an unconditional bypass of
+    // `validate_doc_update` on every project database in the deployment. On *this* route, which
+    // rewrites somebody else's entitlements, admitting a role that already means "may write
+    // anything belonging to anyone" is the widest possible reading of "may change a plan".
+    const {
+      app: server,
+      cookie,
+      storedPlan,
+      writes,
+    } = customerServer({
+      callerRoles: ['_admin'],
+      subjects: ['other'],
+    })
+    const response = await put(server, { sub: 'other', plan: 'pro' }, cookie)
+
+    expect(response.statusCode).toBe(403)
+    expect(JSON.stringify(response.json())).toContain('not-an-operator')
+    // Nothing reached the store. A 403 answered after the write would look identical here
+    // without this line, and on this route the write is somebody else's account.
+    expect(await storedPlan('other')).toBe('free')
+    expect(writes).toEqual([])
+  })
+
   it('answers 404 for a subject that has never signed in', async () => {
     // Distinct from 403 on purpose: "you may not" and "there is no such account" send an
     // operator to different places, and `store.setPlan` throws a nameable error for exactly
     // this so the route does not have to guess from a bare Error.
-    const { app: server, cookie } = customerServer({ callerRoles: ['_admin'], subjects: [] })
+    const { app: server, cookie } = customerServer({
+      callerRoles: ['customerservice'],
+      subjects: [],
+    })
     const response = await put(server, { sub: 'ghost', plan: 'user' }, cookie)
 
     expect(response.statusCode).toBe(404)
@@ -213,7 +250,7 @@ describe('PUT /customer', () => {
       storedPlan,
       writes,
     } = customerServer({
-      callerRoles: ['_admin'],
+      callerRoles: ['customerservice'],
       subjects: ['other'],
     })
     const response = await put(server, { sub: 'other', plan: 'pro' })

@@ -19,16 +19,38 @@ const SESSION_COOKIE = 'mm_session'
 /**
  * The roles that may set a plan.
  *
- * `_admin` is CouchDB's own. `customerservice` is granted by editing a `_users` document, and
- * neither is grantable through this API — `store.update` spreads the existing document and takes
- * only named fields, so a user cannot give themselves the role that would let them do this. That
- * property is what the whole gate rests on.
+ * One role, and the list is short on purpose.
+ *
+ * `customerservice` is granted by editing a `_users` document directly, and is not grantable
+ * through this API — `store.update` and `store.setPlan` both spread the existing document and
+ * take only named fields, so no request can add a role. A user cannot give themselves the role
+ * that would let them do this, and that property is what the whole gate rests on.
+ *
+ * **`_admin` is deliberately not here, and adding it back would grant every project database in
+ * the deployment.** It reads as harmless — "CouchDB's own administrator should obviously be able
+ * to do this" — and it is the opposite, for two reasons that only make sense together:
+ *
+ *   - It cannot do the job it looks like it does. `rolesOf` is `(await load(sub))?.roles ?? []`:
+ *     it reads the caller's `_users` document and nothing else. A CouchDB *server* admin is
+ *     configured in `local.ini [admins]` and has no `_users` document at all, so `rolesOf`
+ *     answers `[]` and the real administrator is refused 403 regardless. Listing the role buys
+ *     that person nothing.
+ *   - So the only account it can ever match is one with `roles: ["_admin"]` written into its
+ *     `_users` document — and `infra/couchdb/design-docs/access.js` gives that role an
+ *     unconditional early return from `validate_doc_update` on **every project database in the
+ *     deployment**. Holding it is not "may change a plan"; it is "may write any document in
+ *     anybody's project, past every access rule this system has".
+ *
+ * Together those mean the entry could only ever have admitted an account that already had total
+ * write access to every customer's data, while doing nothing for the administrator it appeared
+ * to be for. Granting somebody the ability to change a plan must not require granting them
+ * everything, so the way to make an operator is `customerservice` and nothing else.
  *
  * Exported because the operator endpoint checks the same thing, and a second literal list would
  * be free to drift from this one — a role removed here and left there is a gate that is still
  * open in one place.
  */
-export const OPERATOR_ROLES: readonly string[] = ['_admin', 'customerservice']
+export const OPERATOR_ROLES: readonly string[] = ['customerservice']
 
 export interface ProfileDependencies {
   readonly store: ProfileStore

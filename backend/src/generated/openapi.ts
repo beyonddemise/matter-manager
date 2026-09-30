@@ -252,9 +252,10 @@ export interface paths {
          *     nothing at all means "leave it alone".
          *
          *     `plan` is the exception to "about themselves": it may be sent only by an account holding
-         *     `_admin` or `customerservice`, and anybody else is answered 403 rather than having the
-         *     field quietly dropped. See ADR 0009 — what a plan then permits is decided by the policy
-         *     table, never by a comparison against a tier.
+         *     the `customerservice` role, and anybody else is answered 403 rather than having the field
+         *     quietly dropped. CouchDB's `_admin` is not accepted — see the `admin` tag for why that
+         *     role is excluded rather than merely unnecessary. See ADR 0009 — what a plan then permits
+         *     is decided by the policy table, never by a comparison against a tier.
          */
         patch: {
             parameters: {
@@ -287,7 +288,7 @@ export interface paths {
                 400: components["responses"]["BadRequest"];
                 401: components["responses"]["Unauthorized"];
                 /**
-                 * @description The caller sent `plan` and does not hold `_admin` or `customerservice`.
+                 * @description The caller sent `plan` and does not hold the `customerservice` role.
                  *
                  *     **Nothing in the request was applied**, including the `locale` or `displayName` that
                  *     came with it: half of an operator's intent is not an outcome anybody asked for. So
@@ -322,7 +323,8 @@ export interface paths {
          *     who can upgrade themselves and nobody else is not an operator tool. This operation names
          *     a subject, and being a separate operation is what lets `/profile` keep that rule.
          *
-         *     Reached only by an account holding `_admin` or `customerservice`. **The role is checked
+         *     Reached only by an account holding the `customerservice` role — and deliberately not
+         *     CouchDB's `_admin`, for the reason the `admin` tag gives. **The role is checked
          *     before the body is validated and before the subject is looked up**, so the answer to a
          *     caller without the role is 403 whether or not the named account exists, and is identical
          *     in both cases: answering 404 or 400 first would make this an oracle telling any
@@ -368,7 +370,7 @@ export interface paths {
                 400: components["responses"]["BadRequest"];
                 401: components["responses"]["Unauthorized"];
                 /**
-                 * @description The caller does not hold `_admin` or `customerservice`.
+                 * @description The caller does not hold the `customerservice` role.
                  *
                  *     Answered **before** the body is validated and before the named subject is looked up,
                  *     so it is byte-for-byte the answer a non-operator gets whether or not that account
@@ -926,7 +928,7 @@ export interface components {
             /** Format: date-time */
             expiresAt: string;
         };
-        /** @description Setting a plan was refused: the caller does not hold `_admin` or `customerservice`. */
+        /** @description Setting a plan was refused: the caller does not hold the `customerservice` role. */
         NotAnOperator: {
             /** Format: uri */
             type?: string;
