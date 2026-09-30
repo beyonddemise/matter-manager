@@ -40,8 +40,49 @@ export const ACTIONS = [
 /** An action a plan may one day gate. */
 export type Action = (typeof ACTIONS)[number]
 
-/** Subscription tiers. One today; M8 adds the rest, and the policy table is where they land. */
-export type Plan = 'free'
+/**
+ * Subscription tiers.
+ *
+ * `free` was the only one until capacity became real. The others are named for what they are
+ * to a person rather than for what they cost, so a price change is not a type change.
+ */
+export type Plan = 'free' | 'user' | 'pro'
+
+/**
+ * How many projects each plan may own.
+ *
+ * A table rather than a conditional, for the reason the policy table below is a table: ADR 0009
+ * forbids `plan === 'free'` anywhere, and a lookup cannot drift from the type the way a chain of
+ * `if` can.
+ */
+export const PROJECT_LIMITS: Readonly<Record<Plan, number>> = Object.freeze({
+  free: 1,
+  user: 5,
+  /**
+   * Unlimited, as a sentinel rather than as `Infinity` or an absence.
+   *
+   * `Infinity` compares correctly and then serialises to `null`, so an API that computed with
+   * it would report something it did not mean. `undefined` forces every reader to handle two
+   * shapes. `-1` is one number, it survives JSON, and it is what the contract describes.
+   *
+   * **It must be tested before it is compared, never after.** `owned >= limit` with a limit of
+   * `-1` is true for every count including zero, so the plan with no limit would be the only
+   * one that can never create a project — a failure that is both silent and exactly backwards.
+   * Every read of this table goes through {@link withinLimit}, which is why that function
+   * exists rather than the comparison being written out at each call site.
+   */
+  pro: -1,
+} satisfies Record<Plan, number>)
+
+/**
+ * Whether one more project is allowed.
+ *
+ * The only place the `-1` sentinel is interpreted. Negative first, so unlimited never reaches
+ * the comparison.
+ */
+export function withinLimit(owned: number, limit: number): boolean {
+  return limit < 0 || owned < limit
+}
 
 /** Whoever is asking. `plan` is carried from the first migration so there is somewhere to put the answer. */
 export interface Principal {

@@ -7,7 +7,9 @@ import {
   evaluate,
   POLICIES,
   type Policy,
+  PROJECT_LIMITS,
   type Principal,
+  withinLimit,
 } from '../../src/domain/can.js'
 
 const owner: Principal = { sub: 'auth0|owner', plan: 'free' }
@@ -321,5 +323,41 @@ describe('the policy table is complete at compile time', () => {
     } satisfies Record<Action, Policy>
 
     expect(Object.keys(invented).length).toBeGreaterThan(ACTIONS.length)
+  })
+})
+
+describe('the project limit table', () => {
+  it('gives each plan the capacity the product sells', () => {
+    expect(PROJECT_LIMITS.free).toBe(1)
+    expect(PROJECT_LIMITS.user).toBe(5)
+  })
+
+  it('says unlimited with -1 rather than with Infinity or an absence', () => {
+    // Infinity compares correctly and then serialises to null, so an API computing with it
+    // would report something it did not mean. `undefined` makes every reader handle two
+    // shapes. -1 is one number that survives JSON.
+    expect(PROJECT_LIMITS.pro).toBe(-1)
+  })
+
+  it('allows a project below the limit and refuses one at it', () => {
+    expect(withinLimit(0, 1)).toBe(true)
+    expect(withinLimit(1, 1)).toBe(false)
+    expect(withinLimit(4, 5)).toBe(true)
+    expect(withinLimit(5, 5)).toBe(false)
+  })
+
+  it('allows every count when the limit is the -1 sentinel', () => {
+    // The failure this pins is silent and exactly backwards: `owned >= limit` is true for
+    // every count when limit is -1, including zero, so the plan with no limit would be the
+    // only one that could never create a project.
+    expect(withinLimit(0, PROJECT_LIMITS.pro)).toBe(true)
+    expect(withinLimit(1, PROJECT_LIMITS.pro)).toBe(true)
+    expect(withinLimit(9999, PROJECT_LIMITS.pro)).toBe(true)
+  })
+
+  it('refuses everything when the limit is zero', () => {
+    // Not a plan today, and the table is a place somebody will one day write a suspended
+    // account. Zero has to mean none rather than falling into the sentinel branch.
+    expect(withinLimit(0, 0)).toBe(false)
   })
 })
