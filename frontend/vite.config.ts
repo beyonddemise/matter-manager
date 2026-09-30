@@ -86,7 +86,30 @@ export default defineConfig(({ mode }) => {
       emptyOutDir: true,
       rolldownOptions: {
         output: {
-          advancedChunks: {
+          /**
+           * The PDF writer gets a chunk of its own, and this is load-bearing rather than tidy.
+           *
+           * `device-list.ts` loads `pdf/inventory.js` and `pdf/labels.js` with `import()`,
+           * because `pdf-lib`, `@pdf-lib/standard-fonts`, `@pdf-lib/upng` and `pako` are 408 kB
+           * — 40% of the bundle every visitor downloads — for a feature reached by pressing
+           * Export. Without this group that split reported success and delivered nothing:
+           * rolldown emits its CommonJS interop helpers once and had parked them in the pdf
+           * chunk, so the entry statically imported all 422 kB to get three small functions.
+           * Unminified the edge read
+           * `import { c as __exportAll, l as __toESM, s as __commonJSMin } from "./yield-….js"`.
+           * The entry needs those helpers for `pouchdb-browser`, which is CommonJS.
+           *
+           * Naming the group separates the two: the helpers get their own 0.58 kB
+           * `rolldown-runtime` chunk and the writer is reached only through the dynamic import.
+           * `scripts/check-lazy-pdf.mjs` is what noticed, and what keeps noticing — it walks the
+           * entry's static closure rather than trusting the size column.
+           *
+           * **`tslib` is deliberately not in the test.** It is only here as a dependency of
+           * `pdf-lib` and follows it into this chunk on its own. Naming it would mean that the
+           * first entry-side dependency to use it would drag the whole writer back into the
+           * first load.
+           */
+          codeSplitting: {
             groups: [{ name: 'pdf', test: /node_modules[\\/](pdf-lib|@pdf-lib|pako)[\\/]/ }],
           },
         },
