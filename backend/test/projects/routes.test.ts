@@ -709,35 +709,18 @@ describe('changing a project settings', () => {
     expect((await patch(built, { name: 'x' }, 'google|stranger')).statusCode).toBe(404)
   })
 
-  it('refuses a participant who may not change settings', async () => {
-    // The 403 this operation has always been able to answer, and which no test had driven: a
-    // reader is a participant, so they are not told 404, and `canManageMembers` refuses them.
-    // Reaching it needs a *second* subject in the pointer, which is why every earlier refusal
-    // test here is a 404 - a stranger never gets this far.
-    const { app: built } = server()
-    await create(built, { name: 'Musterstraße 12' })
-    const pointer = couch.documents.get(`${REGISTRY_DATABASE}/project:${PROJECT_ID}`) as {
-      participants: unknown[]
-    }
-    couch.documents.set(`${REGISTRY_DATABASE}/project:${PROJECT_ID}`, {
-      ...pointer,
-      participants: [...pointer.participants, { role: 'read', userid: 'google|grace' }],
-    })
-
-    expect((await patch(built, { name: 'x' }, 'google|grace')).statusCode).toBe(403)
-  })
-
   for (const [status, drive] of [
     ['400', (built: Server) => patch(built, {})],
     ['404', (built: Server) => patch(built, { name: 'x' }, 'google|stranger')],
   ] as const) {
     it(`answers the ${status} the contract declares`, async () => {
-      // The contract declared both of these as a bare `description:` with no `content:` at all,
-      // which reads as complete and is not: `operationsOf` keys `responses` only by the statuses
-      // that declare a body, so the drift check could not tell them from a 204 and silently
-      // validated neither the schema nor the media type. A client generated from the file got no
-      // body for either, while the handler had been sending RFC 9457 through `problem()` all
-      // along. Driven here so the declaration is checked against the real response.
+      // `400` was a bare `description:` with no `content:`, which reads as complete and is not:
+      // `operationsOf` keys `responses` only by the statuses that declare a body, so the drift
+      // check could not tell it from a 204 and silently validated neither its schema nor its
+      // media type. The handler had been sending RFC 9457 through `problem()` all along, so a
+      // client generated from the file got no body for it. `404` was already a proper `$ref` to
+      // `NotFound` and needed no fix; it is driven through the same loop so both refusals this
+      // operation can answer get the same schema check.
       const { app: built } = server()
       await create(built, { name: 'Musterstraße 12' })
 
@@ -752,6 +735,9 @@ describe('changing a project settings', () => {
   }
 
   it('answers the 403 the contract declares', async () => {
+    // Reaching this needs a *second* subject in the pointer - a reader is a participant, so
+    // they are not told 404, and `canManageMembers` refuses them instead - which is why every
+    // other refusal test here is a 404: a stranger never gets this far.
     const { app: built } = server()
     await create(built, { name: 'Musterstraße 12' })
     const pointer = couch.documents.get(`${REGISTRY_DATABASE}/project:${PROJECT_ID}`) as {
