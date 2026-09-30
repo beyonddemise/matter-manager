@@ -95,6 +95,36 @@ const THEME_NAMES: ReadonlySet<string> = new Set(THEMES)
 const PALETTE_NAMES: ReadonlySet<string> = new Set(PALETTES)
 
 /**
+ * The loader for a stylesheet that is **already in the entry bundle**.
+ *
+ * `main.ts` imports `themes/glossy.css` and `color/palettes/anodized.css` statically, because
+ * `index.html` ships `class="wa-theme-glossy wa-palette-anodized"` and the first paint has to be
+ * right — a theme arriving over a second round trip is a visible flash of the wrong one. So for
+ * those two there is nothing to fetch, and the `import()` that used to stand here claimed
+ * otherwise.
+ *
+ * Rolldown said so on every build, twice:
+ *
+ * ```
+ * [INEFFECTIVE_DYNAMIC_IMPORT] …/themes/glossy.css is dynamically imported by src/ui/theme.ts
+ * but also statically imported by src/ui/main.ts, dynamic import will not move module into
+ * another chunk.
+ * ```
+ *
+ * Both imports were right. The static one has to stay or the first paint flashes; the dynamic
+ * one was a promise the bundler could not keep, and keeping it meant two true warnings on every
+ * build that nobody could act on without reading all of this.
+ *
+ * Exported so `test/ui/theme/preference.test.ts` can assert that **exactly** the default theme
+ * and the default palette use it. That assertion is load-bearing: "what the first paint is" is
+ * stated in three places — `index.html`'s class attribute, `main.ts`'s static imports, and these
+ * two tables — and changing {@link DEFAULT_THEME} without moving the static import would leave
+ * the new default arriving late and the old one, still marked bundled here, never arriving at
+ * all. A theme that silently stops loading is a worse outcome than a build warning.
+ */
+export const BUNDLED: () => Promise<void> = () => Promise.resolve()
+
+/**
  * One loader per theme, written out rather than built from a template string.
  *
  * A dynamic import with an interpolated path is not statically analysable, so a bundler has to
@@ -102,15 +132,14 @@ const PALETTE_NAMES: ReadonlySet<string> = new Set(PALETTES)
  * Listing them means the graph is exact and each theme becomes its own chunk, so a reader who
  * never leaves the default never downloads the other ten.
  *
- * `default` and `glossy` resolve to modules that are already in the entry bundle, because
- * `main.ts` imports the default look statically: the first paint has to be right, and a theme
- * arriving over a second round trip is a visible flash of the wrong one.
+ * Exported for the drift assertion described on {@link BUNDLED}; `loadLook` is still the way to
+ * use it.
  */
-const THEME_LOADERS: Readonly<Record<Theme, () => Promise<unknown>>> = {
+export const THEME_LOADERS: Readonly<Record<Theme, () => Promise<unknown>>> = {
   active: () => import('@awesome.me/webawesome-pro/dist/styles/themes/active.css'),
   awesome: () => import('@awesome.me/webawesome-pro/dist/styles/themes/awesome.css'),
   default: () => import('@awesome.me/webawesome-pro/dist/styles/themes/default.css'),
-  glossy: () => import('@awesome.me/webawesome-pro/dist/styles/themes/glossy.css'),
+  glossy: BUNDLED,
   matter: () => import('@awesome.me/webawesome-pro/dist/styles/themes/matter.css'),
   mellow: () => import('@awesome.me/webawesome-pro/dist/styles/themes/mellow.css'),
   playful: () => import('@awesome.me/webawesome-pro/dist/styles/themes/playful.css'),
@@ -118,8 +147,8 @@ const THEME_LOADERS: Readonly<Record<Theme, () => Promise<unknown>>> = {
 }
 
 /** One loader per palette. Same reasoning as {@link THEME_LOADERS}. */
-const PALETTE_LOADERS: Readonly<Record<Palette, () => Promise<unknown>>> = {
-  anodized: () => import('@awesome.me/webawesome-pro/dist/styles/color/palettes/anodized.css'),
+export const PALETTE_LOADERS: Readonly<Record<Palette, () => Promise<unknown>>> = {
+  anodized: BUNDLED,
   base: () => import('@awesome.me/webawesome-pro/dist/styles/color/palettes/base.css'),
   bright: () => import('@awesome.me/webawesome-pro/dist/styles/color/palettes/bright.css'),
   default: () => import('@awesome.me/webawesome-pro/dist/styles/color/palettes/default.css'),
