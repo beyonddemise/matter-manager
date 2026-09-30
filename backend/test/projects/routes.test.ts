@@ -1,8 +1,10 @@
 import { generateKeyPairSync } from 'node:crypto'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { mintToken, type SigningKey } from '../../src/auth/jwt.js'
+import { type CouchClient, CouchError } from '../../src/couch/client.js'
 import type { Action, Plan, Principal } from '../../src/domain/index.js'
 import { NotEntitledError, gate as realGate } from '../../src/entitlements/gate.js'
+import { PROBLEM_JSON } from '../../src/problem.js'
 import { profileStore, userDocumentId } from '../../src/profile/store.js'
 import { forgetRegistry, REGISTRY_DATABASE } from '../../src/projects/registry.js'
 import { buildServer, type Server } from '../../src/server.js'
@@ -29,24 +31,83 @@ const tokenFor = (sub: string) =>
 /** The whole header value, for the requests that are written out rather than built by `create`. */
 const bearer = (sub: string) => `Bearer ${tokenFor(sub)}`
 
+/**
+ * The contract's schema for one response, **asserted to exist** before it is handed back.
+ *
+ * `validate(value, undefined)` reports nothing wrong, so a lookup that misses — a path renamed,
+ * a status removed from `openapi.yaml`, `operationsOf` changed — turns an assertion that checks
+ * a response against the contract into an assertion that checks nothing, and does it while
+ * staying green. This file had four unguarded lookups; `openapi-drift.test.ts` had four more,
+ * and that is where the same helper and the same reasoning came from.
+ *
+ * A function rather than an `expect` line per lookup, because the guard has to be at *every*
+ * lookup to be worth anything: here there is no way to get a schema without it.
+ */
+const contractSchema = (method: string, path: string, status: string): unknown => {
+  const operation = operationsOf(loadContract()).find(
+    (candidate) => candidate.method === method && candidate.path === path,
+  )
+  const schema = operation?.responses[status]
+  expect(schema, `the contract declares no ${status} for ${method} ${path}`).toBeDefined()
+  return schema
+}
+
+/**
+ * A CouchDB whose registry writes always conflict.
+ *
+ * `fakeCouch` raises 409 on a stale `_rev`, which is correct and unreachable from here: every
+ * retry loop in `members.ts` and `transfers.ts` re-reads the pointer at the top of each attempt,
+ * so the `_rev` it writes back is always the current one. A **persistent** conflict is a
+ * different thing — somebody else winning the race on all three attempts — and it is the only
+ * way to reach the 409 those loops answer when they give up.
+ *
+ * Without it that branch is code no test can enter, and a status the contract cannot honestly
+ * declare. Scoped to the registry so `_security` writes still land, and **design documents are
+ * exempt**: `ensureRegistry` installs `_design/by_participant` through this same client, on the
+ * way in, and conflicting that write made every request fail before it reached the handler - a
+ * raw 500 from the bootstrap rather than the refusal under test. A design document is written
+ * once at bootstrap and is not what two managers editing one project contend over.
+ *
+ * @param refused every registry write it turned down, in order. The count is the substance of
+ *   the positive control: a handler that gave up on the first conflict would answer the same 409
+ *   as one that retried, and only one of those is the behaviour `CONFLICT_ATTEMPTS` promises.
+ *   Recorded here rather than read off `FakeCouch.calls`, because this wrapper refuses *before*
+ *   delegating, so the fake underneath never sees the write and never records it.
+ */
+const conflictingRegistry = (couch: CouchClient, refused: string[]): CouchClient => ({
+  ...couch,
+  putDoc: async (database, document) => {
+    if (database !== REGISTRY_DATABASE || document._id.startsWith('_design/')) {
+      return couch.putDoc(database, document)
+    }
+    refused.push(document._id)
+    throw new CouchError(409, 'conflict', `Document update conflict: ${document._id}`)
+  },
+})
+
 let app: Server | undefined
 let couch: FakeCouch
 
 /** A server with the project routes wired to a fake CouchDB and a watchable gate. */
-function server(options: { fails?: CouchFailures; gateRefuses?: boolean } = {}) {
+function server(
+  options: { fails?: CouchFailures; gateRefuses?: boolean; registryConflicts?: boolean } = {},
+) {
   couch = fakeCouch(options.fails === undefined ? {} : { fails: options.fails })
+  const refused: string[] = []
+  const client =
+    options.registryConflicts === true ? conflictingRegistry(couch.couch, refused) : couch.couch
   const gateCalls: Array<{ principal: Principal; action: Action }> = []
 
   app = buildServer({
     logger: false,
     projects: {
-      couch: couch.couch,
+      couch: client,
       key: KEY,
       validator: () => 'function (newDoc) { return newDoc }',
       // The real store against the fake CouchDB, so a test states a plan by seeding the
       // `_users` document an operator would have edited - rather than by stubbing the read
       // and proving only that a stub returns what it was given.
-      profiles: profileStore(couch.couch),
+      profiles: profileStore(client),
       newId: () => PROJECT_ID,
       clock: () => '2026-08-27T09:00:00.000Z',
       // A spy *over* the real gate, not a stand-in for it. A recording gate that always
@@ -71,7 +132,7 @@ function server(options: { fails?: CouchFailures; gateRefuses?: boolean } = {}) 
     },
   })
 
-  return { app, couch, gateCalls, inject: app.inject.bind(app) }
+  return { app, couch, gateCalls, refused, inject: app.inject.bind(app) }
 }
 
 /**
@@ -119,15 +180,11 @@ describe('creating a project', () => {
     const { app: built } = server()
     const response = await create(built, { name: 'Musterstraße 12' })
 
-    const schema = operationsOf(loadContract()).find(
-      (operation) => operation.method === 'POST' && operation.path === '/projects',
-    )?.responses['201']
-
-    // Asserted before it is used. `validate` against an undefined schema reports nothing wrong
-    // - correct for a validator, and fatal here: a contract that no longer described this
-    // method and path would make the line below pass while checking nothing at all.
-    expect(schema, 'the contract declares no 201 for POST /projects').toBeDefined()
-    expect(validate(response.json(), schema)).toEqual([])
+    // Looked up through `contractSchema`, which asserts the schema exists before returning it.
+    // `validate` against an undefined schema reports nothing wrong - correct for a validator,
+    // and fatal here: a contract that no longer described this method and path would make the
+    // line below pass while checking nothing at all.
+    expect(validate(response.json(), contractSchema('POST', '/projects', '201'))).toEqual([])
   })
 
   it('provisions the database for the caller, not for whoever the body names', async () => {
@@ -323,11 +380,7 @@ describe('when CouchDB cannot say what the caller already has', () => {
     const { app: built } = server({ fails: { view: true } })
     const response = await create(built, { name: 'Musterstraße 12' })
 
-    const schema = operationsOf(loadContract()).find(
-      (operation) => operation.method === 'POST' && operation.path === '/projects',
-    )?.responses['500']
-    expect(schema, 'the contract declares no 500 for POST /projects').toBeDefined()
-    expect(validate(response.json(), schema)).toEqual([])
+    expect(validate(response.json(), contractSchema('POST', '/projects', '500'))).toEqual([])
   })
 })
 
@@ -655,6 +708,68 @@ describe('changing a project settings', () => {
 
     expect((await patch(built, { name: 'x' }, 'google|stranger')).statusCode).toBe(404)
   })
+
+  it('refuses a participant who may not change settings', async () => {
+    // The 403 this operation has always been able to answer, and which no test had driven: a
+    // reader is a participant, so they are not told 404, and `canManageMembers` refuses them.
+    // Reaching it needs a *second* subject in the pointer, which is why every earlier refusal
+    // test here is a 404 - a stranger never gets this far.
+    const { app: built } = server()
+    await create(built, { name: 'Musterstraße 12' })
+    const pointer = couch.documents.get(`${REGISTRY_DATABASE}/project:${PROJECT_ID}`) as {
+      participants: unknown[]
+    }
+    couch.documents.set(`${REGISTRY_DATABASE}/project:${PROJECT_ID}`, {
+      ...pointer,
+      participants: [...pointer.participants, { role: 'read', userid: 'google|grace' }],
+    })
+
+    expect((await patch(built, { name: 'x' }, 'google|grace')).statusCode).toBe(403)
+  })
+
+  for (const [status, drive] of [
+    ['400', (built: Server) => patch(built, {})],
+    ['404', (built: Server) => patch(built, { name: 'x' }, 'google|stranger')],
+  ] as const) {
+    it(`answers the ${status} the contract declares`, async () => {
+      // The contract declared both of these as a bare `description:` with no `content:` at all,
+      // which reads as complete and is not: `operationsOf` keys `responses` only by the statuses
+      // that declare a body, so the drift check could not tell them from a 204 and silently
+      // validated neither the schema nor the media type. A client generated from the file got no
+      // body for either, while the handler had been sending RFC 9457 through `problem()` all
+      // along. Driven here so the declaration is checked against the real response.
+      const { app: built } = server()
+      await create(built, { name: 'Musterstraße 12' })
+
+      const response = await drive(built)
+
+      expect(response.statusCode).toBe(Number(status))
+      expect(response.headers['content-type']).toMatch(PROBLEM_JSON)
+      expect(
+        validate(response.json(), contractSchema('PATCH', '/projects/{projectId}', status)),
+      ).toEqual([])
+    })
+  }
+
+  it('answers the 403 the contract declares', async () => {
+    const { app: built } = server()
+    await create(built, { name: 'Musterstraße 12' })
+    const pointer = couch.documents.get(`${REGISTRY_DATABASE}/project:${PROJECT_ID}`) as {
+      participants: unknown[]
+    }
+    couch.documents.set(`${REGISTRY_DATABASE}/project:${PROJECT_ID}`, {
+      ...pointer,
+      participants: [...pointer.participants, { role: 'read', userid: 'google|grace' }],
+    })
+
+    const response = await patch(built, { name: 'x' }, 'google|grace')
+
+    expect(response.statusCode).toBe(403)
+    expect(response.headers['content-type']).toMatch(PROBLEM_JSON)
+    expect(
+      validate(response.json(), contractSchema('PATCH', '/projects/{projectId}', '403')),
+    ).toEqual([])
+  })
 })
 
 describe('sharing a project', () => {
@@ -796,6 +911,56 @@ describe('sharing a project', () => {
     expect(response.statusCode).toBe(404)
   })
 
+  it('answers the 404 the contract declares', async () => {
+    // `MembershipRefused` carries 404 from three places this route can reach - no pointer, a
+    // caller who is not a participant, and an address with no account - and the contract declared
+    // only 204, 400, 401 and 403. The widened drift check could not find it: it drives one
+    // request per operation with an empty body, so this route answers 400 for the missing email
+    // long before it looks a project up.
+    const built = seedProject(server())
+    const response = await share(
+      built.app,
+      { email: 'grace@example.test', role: 'read' },
+      'google|stranger',
+    )
+
+    expect(response.statusCode).toBe(404)
+    expect(response.headers['content-type']).toMatch(PROBLEM_JSON)
+    expect(
+      validate(response.json(), contractSchema('PUT', '/projects/{projectId}/members', '404')),
+    ).toEqual([])
+  })
+
+  it('gives up with a 409 when the registry keeps conflicting', async () => {
+    // `changeMembership` re-reads and retries a conflicting pointer three times and then refuses,
+    // because a conflict that keeps happening is something the caller should hear about rather
+    // than wait through. Undeclared until now, and unreachable through the drift check for the
+    // same reason as the 404 above.
+    const built = seedProject(server({ registryConflicts: true }))
+    const response = await share(built.app, { email: 'grace@example.test', role: 'read' })
+
+    expect(response.statusCode).toBe(409)
+    expect(response.headers['content-type']).toMatch(PROBLEM_JSON)
+    expect(
+      validate(response.json(), contractSchema('PUT', '/projects/{projectId}/members', '409')),
+    ).toEqual([])
+  })
+
+  it('retried before giving up, rather than refusing the first conflict', async () => {
+    // The positive control for the 409 above. A handler that answered 409 on the first conflict
+    // would pass that test exactly, and would turn an ordinary simultaneous edit - two managers
+    // on the same project, which the single-document registry makes routine - into a failure the
+    // caller has to retry by hand. Three attempts is what `CONFLICT_ATTEMPTS` promises.
+    const built = seedProject(server({ registryConflicts: true }))
+    await share(built.app, { email: 'grace@example.test', role: 'read' })
+
+    expect(built.refused).toEqual([
+      `project:${PROJECT_ID}`,
+      `project:${PROJECT_ID}`,
+      `project:${PROJECT_ID}`,
+    ])
+  })
+
   it('lists the members', async () => {
     const built = seedProject(server())
     const response = await built.inject({
@@ -878,6 +1043,21 @@ describe('handing a project to somebody else', () => {
     ).toBe(404)
   })
 
+  it('answers the 404 the contract declares', async () => {
+    // Two 404s on this route - a project with no pointer, and a caller who is not its owner -
+    // against a contract declaring 204, 400, 401 and 403. Undeclared since the route was
+    // written. The drift check drives it with an empty body, so it reports the missing `toEmail`
+    // as a 400 and never reaches the pointer read.
+    const built = seedProject(server())
+    const response = await transfer(built.app, { toEmail: 'grace@example.test' }, 'google|stranger')
+
+    expect(response.statusCode).toBe(404)
+    expect(response.headers['content-type']).toMatch(PROBLEM_JSON)
+    expect(
+      validate(response.json(), contractSchema('POST', '/projects/{projectId}/transfer', '404')),
+    ).toEqual([])
+  })
+
   it('is 401 without a token', async () => {
     const built = seedProject(server())
 
@@ -951,6 +1131,67 @@ describe('handing a project to somebody else', () => {
     })
 
     expect(response.statusCode).toBe(404)
+  })
+
+  /**
+   * An offer written straight into the registry, because the route that would write one cannot.
+   *
+   * The 409 below needs a registry whose writes always conflict, and `POST .../transfer` stores
+   * the offer with exactly such a write - so making the offer through the API and then breaking
+   * the API's writes is not a state this test can reach in that order. Seeded instead, in the
+   * shape `storeTransfer` produces.
+   */
+  const seedOffer = (built: ReturnType<typeof server>) => {
+    built.couch.documents.set(`${REGISTRY_DATABASE}/transfer:${PROJECT_ID}`, {
+      _id: `transfer:${PROJECT_ID}`,
+      _rev: '1-a',
+      type: 'transfer',
+      projectId: PROJECT_ID,
+      toEmail: 'grace@example.test',
+      fromSub: OWNER,
+      retainAccess: 'none',
+      createdAt: '2026-08-27T09:00:00.000Z',
+      expiresAt: '2026-09-10T09:00:00.000Z',
+    })
+    return built
+  }
+
+  it('gives up with a 409 when accepting keeps conflicting', async () => {
+    // `acceptTransfer` retries a conflicting registry three times and then throws
+    // `MembershipRefused(409)`. The contract declared 204, 400, 401 and 404, so this was the one
+    // status of the four the error type can carry that the file did not mention.
+    const built = seedOffer(seedProject(server({ registryConflicts: true })))
+
+    const response = await built.app.inject({
+      method: 'POST',
+      url: `/transfers/${PROJECT_ID}`,
+      headers: { authorization: `Bearer ${tokenFor('google|grace')}` },
+    })
+
+    expect(response.statusCode).toBe(409)
+    expect(response.headers['content-type']).toMatch(PROBLEM_JSON)
+    expect(
+      validate(response.json(), contractSchema('POST', '/transfers/{projectId}', '409')),
+    ).toEqual([])
+  })
+
+  it('retried the acceptance before giving up', async () => {
+    // The positive control, as on the sharing route: refusing the first conflict answers the
+    // same 409, and would turn an ordinary simultaneous edit into a failure the recipient has to
+    // resolve by hand.
+    const built = seedOffer(seedProject(server({ registryConflicts: true })))
+
+    await built.app.inject({
+      method: 'POST',
+      url: `/transfers/${PROJECT_ID}`,
+      headers: { authorization: `Bearer ${tokenFor('google|grace')}` },
+    })
+
+    expect(built.refused).toEqual([
+      `project:${PROJECT_ID}`,
+      `project:${PROJECT_ID}`,
+      `project:${PROJECT_ID}`,
+    ])
   })
 
   it('withdraws the offer when the recipient declines', async () => {
@@ -1078,11 +1319,7 @@ describe('creating a project against the plan', () => {
     })
 
     expect(response.statusCode).toBe(403)
-    const schema = operationsOf(loadContract()).find(
-      (operation) => operation.method === 'POST' && operation.path === '/projects',
-    )?.responses['403']
-    expect(schema, 'the contract declares no 403 for POST /projects').toBeDefined()
-    expect(validate(response.json(), schema)).toEqual([])
+    expect(validate(response.json(), contractSchema('POST', '/projects', '403'))).toEqual([])
   })
 
   it('would notice a refusal that stopped naming itself', async () => {
@@ -1090,10 +1327,7 @@ describe('creating a project against the plan', () => {
     // test above would go on passing if `reason` left the 403 schema - and the page would branch
     // on a field the contract no longer promised. This asserts both ways the pin can come
     // loose: the field leaving `required`, and the `const` naming a different refusal.
-    const schema = operationsOf(loadContract()).find(
-      (operation) => operation.method === 'POST' && operation.path === '/projects',
-    )?.responses['403']
-    expect(schema).toBeDefined()
+    const schema = contractSchema('POST', '/projects', '403')
 
     expect(validate({ title: 'No', status: 403 }, schema)).toEqual([
       { at: '$.reason', says: 'is required and missing' },

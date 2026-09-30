@@ -569,21 +569,9 @@ export interface paths {
                         "application/json": components["schemas"]["ProjectSummary"];
                     };
                 };
-                /** @description Nothing to change, or a name that is not a name */
-                400: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
+                400: components["responses"]["BadRequest"];
                 401: components["responses"]["Unauthorized"];
-                /** @description Read or write access does not include changing settings */
-                403: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
+                403: components["responses"]["Forbidden"];
                 404: components["responses"]["NotFound"];
             };
         };
@@ -662,6 +650,8 @@ export interface paths {
                 400: components["responses"]["BadRequest"];
                 401: components["responses"]["Unauthorized"];
                 403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                409: components["responses"]["Conflict"];
             };
         };
         post?: never;
@@ -720,6 +710,7 @@ export interface paths {
                 400: components["responses"]["BadRequest"];
                 401: components["responses"]["Unauthorized"];
                 403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
             };
         };
         delete?: never;
@@ -807,6 +798,7 @@ export interface paths {
                 400: components["responses"]["BadRequest"];
                 401: components["responses"]["Unauthorized"];
                 404: components["responses"]["NotFound"];
+                409: components["responses"]["Conflict"];
             };
         };
         /** Decline an offer of ownership */
@@ -1031,6 +1023,26 @@ export interface components {
          *     hold one is to have been told it.
          */
         NotFound: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/problem+json": components["schemas"]["Problem"];
+            };
+        };
+        /**
+         * @description Somebody else changed the same thing at the same time, and this service gave up
+         *     retrying.
+         *
+         *     The registry holds every participant of a project in a **single document**
+         *     (docs/DATA-MODEL.md), so two changes to the same project collide rather than merge.
+         *     The API is the document's only writer, so it re-reads and retries rather than merging —
+         *     three times, and then answers this. A conflict that survives three attempts is
+         *     something the caller should be told about rather than be made to wait through.
+         *
+         *     **Safe to retry**, and the only refusal in this contract that is: nothing was written.
+         */
+        Conflict: {
             headers: {
                 [name: string]: unknown;
             };

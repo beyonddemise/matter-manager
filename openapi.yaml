@@ -389,11 +389,15 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ProjectSummary' }
-        '400':
-          description: Nothing to change, or a name that is not a name
+        # Both of these were a bare `description:` with no `content:`, which reads as complete
+        # and is not: `operationsOf` in the drift check keys a response schema only where the
+        # contract declares a body, so it could not tell these from a 204 and validated neither
+        # their schema nor their media type. The handler has been answering RFC 9457 through
+        # `problem()` the whole time, and a client generated from this file got no body for
+        # either. Declared properly and driven by a test per status in `projects/routes.test.ts`.
+        '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '403':
-          description: Read or write access does not include changing settings
+        '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
 
   /projects/{projectId}/members:
@@ -456,6 +460,15 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
+        # Three separate 404s: no project with this id, a caller who is not a participant of it,
+        # and an address that belongs to nobody (when this deployment cannot send invitations).
+        # The first two are 404 rather than 403 for the reason `NotFound` gives.
+        #
+        # Undeclared since the route was written, and invisible to the drift check, which drives
+        # one request per operation with an empty body - so this route answers 400 for the
+        # missing email long before it looks a project up. Found by reading the handler.
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
 
   /projects/{projectId}/transfer:
     parameters:
@@ -490,6 +503,12 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
+        # No project with this id, and "you are not its owner" - which is answered 404 rather
+        # than 403 because whether a project exists is a fact about somebody else's house, and
+        # the caller may not be a participant at all. Undeclared until the handlers were read
+        # operation by operation; the drift check cannot reach it, because an empty body is
+        # refused 400 for the missing `toEmail` before the pointer is read.
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /transfers:
     get:
@@ -526,6 +545,11 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        # `acceptTransfer` re-reads and retries a conflicting registry write three times and then
+        # refuses, because a conflict that keeps happening is something the recipient should hear
+        # about rather than wait through. The one status `MembershipRefused` can carry that this
+        # operation did not declare.
+        '409': { $ref: '#/components/responses/Conflict' }
     delete:
       tags: [projects]
       summary: Decline an offer of ownership
@@ -752,6 +776,21 @@ components:
         No such thing, as far as this caller is concerned. Used in preference to 403 where a
         403 would confirm that something exists — a project id is a uuid, so the only way to
         hold one is to have been told it.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    Conflict:
+      description: |
+        Somebody else changed the same thing at the same time, and this service gave up
+        retrying.
+
+        The registry holds every participant of a project in a **single document**
+        (docs/DATA-MODEL.md), so two changes to the same project collide rather than merge.
+        The API is the document's only writer, so it re-reads and retries rather than merging —
+        three times, and then answers this. A conflict that survives three attempts is
+        something the caller should be told about rather than be made to wait through.
+
+        **Safe to retry**, and the only refusal in this contract that is: nothing was written.
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
