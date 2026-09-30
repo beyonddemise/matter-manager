@@ -44,6 +44,26 @@ function fakeCouch(seed: Record<string, Record<string, unknown>> = {}) {
   return { couch, documents, writes }
 }
 
+/**
+ * A `profileStore` over the fake CouchDB, seeded with zero or one `_users` document at the id
+ * CouchDB itself would use. Kept separate from `storedAda`/`fakeCouch` above because the plan
+ * tests below care only about one document's fields, not Ada's full fixture shape.
+ */
+function storeWith(document?: { name: string; roles: string[]; type: 'user'; plan?: string }) {
+  const seed =
+    document === undefined
+      ? {}
+      : {
+          [`_users/${userDocumentId(document.name)}`]: {
+            _id: userDocumentId(document.name),
+            _rev: '1-a',
+            ...document,
+          },
+        }
+  const { couch } = fakeCouch(seed)
+  return profileStore(couch)
+}
+
 const ADA = `_users/${userDocumentId('google|1234')}`
 
 const storedAda = (extra: Record<string, unknown> = {}) => ({
@@ -80,6 +100,7 @@ describe('reading a profile', () => {
       email: 'ada@example.com',
       displayName: 'Ada',
       locale: 'de',
+      plan: 'free',
     })
   })
 
@@ -368,5 +389,61 @@ describe('an address that was already stored', () => {
     })
 
     expect(documents.get(`_users/${userDocumentId('google|1234')}`)?.email).toBe('ada@new.test')
+  })
+})
+
+describe('the plan on a user document', () => {
+  it('reads free when the document has never been given one', async () => {
+    // Nothing is migrated. A user who predates capacity, or whom no operator has touched,
+    // reads correctly rather than reading undefined.
+    const store = storeWith({ name: 'user-1', roles: [], type: 'user' })
+    expect((await store.read('user-1'))?.plan).toBe('free')
+  })
+
+  it('reads the plan an operator wrote', async () => {
+    const store = storeWith({ name: 'user-1', roles: [], type: 'user', plan: 'pro' })
+    expect((await store.read('user-1'))?.plan).toBe('pro')
+  })
+
+  it('falls back to free for a plan string the code does not know', async () => {
+    // `plan` is hand-edited into CouchDB by an operator, so "Pro", "premium" and typos will
+    // happen. An unknown string must not become a lookup miss: PROJECT_LIMITS[plan] would be
+    // undefined, every comparison against it false, and the account either crashes a request
+    // or is silently granted something. Free is the safe reading of "I do not know".
+    const store = storeWith({ name: 'user-1', roles: [], type: 'user', plan: 'Pro' })
+    expect((await store.read('user-1'))?.plan).toBe('free')
+  })
+
+  it('reports the roles CouchDB holds', async () => {
+    const store = storeWith({ name: 'user-1', roles: ['customerservice'], type: 'user' })
+    expect(await store.rolesOf('user-1')).toEqual(['customerservice'])
+  })
+
+  it('reports no roles for a subject with no document', async () => {
+    // The gate asks this before it knows whether the subject exists, and an absent user has no
+    // roles rather than an error - the 404 belongs to the route, not to a role check.
+    const store = storeWith()
+    expect(await store.rolesOf('nobody')).toEqual([])
+  })
+
+  it('does not take roles or type from an ordinary update', async () => {
+    // This is the property the whole role gate rests on: a user cannot grant themselves the
+    // role that would let them set their plan. It is true today by construction - `update`
+    // spreads the existing document and applies named fields - and this test is about the
+    // tidying refactor that replaces those named fields with a spread of the request body.
+    const store = storeWith({ name: 'user-1', roles: ['customerservice'], type: 'user' })
+    await store.update('user-1', {
+      locale: 'de',
+      ...({ roles: ['_admin'], type: 'evil', plan: 'pro' } as object),
+    })
+    const stored = await store.read('user-1')
+    expect(await store.rolesOf('user-1')).toEqual(['customerservice'])
+    expect(stored?.plan).toBe('free')
+  })
+
+  it('sets a plan through the path meant for it', async () => {
+    const store = storeWith({ name: 'user-1', roles: [], type: 'user' })
+    expect((await store.setPlan('user-1', 'user')).plan).toBe('user')
+    expect((await store.read('user-1'))?.plan).toBe('user')
   })
 })

@@ -16,6 +16,7 @@
 
 import type { Identity } from '../auth/oidc.js'
 import type { CouchClient } from '../couch/client.js'
+import type { Plan } from '../domain/index.js'
 
 /** What a user may choose. `auto` follows the browser, as the contract says. */
 export type Locale = 'auto' | 'en' | 'de'
@@ -29,6 +30,8 @@ export interface Profile {
   readonly email: string
   readonly displayName: string
   readonly locale: Locale
+  /** What the account may do. Absent from the document means `free`; see {@link isPlan}. */
+  readonly plan: Plan
 }
 
 /** What a user is allowed to change about themselves. */
@@ -53,6 +56,11 @@ interface UserDocument {
   readonly email?: string
   readonly displayName?: string
   readonly locale?: Locale
+  /**
+   * `string`, not `Plan` — this is whatever an operator typed by hand, and the narrowing to a
+   * plan this build knows happens in one place, {@link toProfile}, via {@link isPlan}.
+   */
+  readonly plan?: string
 }
 
 /** CouchDB's own id scheme for a user. */
@@ -68,11 +76,31 @@ export interface ProfileStore {
   remember(identity: Identity): Promise<void>
   /** Applies what the user chose. Returns the profile as stored. */
   update(sub: string, update: ProfileUpdate): Promise<Profile>
+  /** The roles CouchDB holds for this subject, or none when there is no document. */
+  rolesOf(sub: string): Promise<readonly string[]>
+  /** Sets the plan. Separate from {@link update} because a user may not do this to themselves. */
+  setPlan(sub: string, plan: Plan): Promise<Profile>
 }
 
 /** Whether a value is a locale this interface can honour. */
 export function isLocale(value: unknown): value is Locale {
   return typeof value === 'string' && (LOCALES as readonly string[]).includes(value)
+}
+
+/** Whether a value is a plan this build knows. */
+export function isPlan(value: unknown): value is Plan {
+  return value === 'free' || value === 'user' || value === 'pro'
+}
+
+/** Raised when a subject has no `_users` document. The route turns this into a 404. */
+export class UnknownSubjectError extends Error {
+  constructor(readonly sub: string) {
+    // `update` throws a bare Error for the same condition, which a route cannot tell from a
+    // bug. This one is nameable, so "no such account" and "something went wrong" can be
+    // different answers to an operator who needs to know which.
+    super(`No profile for ${sub}`)
+    this.name = 'UnknownSubjectError'
+  }
 }
 
 /** A `_users` document as a profile, filling in what CouchDB does not hold. */
@@ -85,6 +113,11 @@ function toProfile(document: UserDocument): Profile {
     // `auto` are the same thing to the interface, and writing `en` in for a new user would give
     // a German-speaking visitor an English interface they never asked for.
     locale: isLocale(document.locale) ? document.locale : 'auto',
+    // Unknown reads as free, for the same reason an unknown locale reads as `auto`: this field
+    // is hand-edited by an operator, so a typo is a question of when. A miss would make
+    // PROJECT_LIMITS[plan] undefined and every comparison against it false, which is a crash
+    // or a silent grant depending on where it lands.
+    plan: isPlan(document.plan) ? document.plan : 'free',
   }
 }
 
@@ -149,6 +182,22 @@ export function profileStore(couch: CouchClient): ProfileStore {
         ...(update.displayName === undefined ? {} : { displayName: update.displayName }),
       }
 
+      await couch.putDoc(USERS, document)
+      return toProfile(document)
+    },
+
+    async rolesOf(sub: string): Promise<readonly string[]> {
+      return (await load(sub))?.roles ?? []
+    },
+
+    async setPlan(sub: string, plan: Plan): Promise<Profile> {
+      const existing = await load(sub)
+      if (existing === undefined) {
+        throw new UnknownSubjectError(sub)
+      }
+      // Spread first, exactly as `update` does, so CouchDB's own fields survive. The difference
+      // between this and `update` is not how it writes but who is allowed to call it.
+      const document: UserDocument = { ...existing, plan }
       await couch.putDoc(USERS, document)
       return toProfile(document)
     },
