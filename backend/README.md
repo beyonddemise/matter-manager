@@ -63,13 +63,26 @@ only thing that binds, and is deliberately short enough that nothing hides in it
 ## Types from the contract
 
 ```bash
-npm run openapi:types --prefix backend
+npm run openapi:types          # from the repository root, not from here
+npm run check:openapi-types    # fails if the committed file is stale
 ```
 
 `src/generated/openapi.ts` is produced from `openapi.yaml` by
 `openapi-typescript` and **committed**, so a fresh clone builds without a code-generation step —
 the same reasoning the translation catalogue follows. A handler returning a shape the contract
 does not declare is a compile error.
+
+**The generator is a root script, and that is not arbitrary.** It needs the TypeScript compiler
+API to build its output, and this package compiles with `typescript@^7` — the Go port, which
+publishes `version` and `versionMajorMinor` and none of that API. Installing a `typescript@5`
+here to satisfy it repoints `node_modules/.bin/tsc`, because both declare `bin.tsc`, and
+`npm run typecheck` quietly becomes a 5.9.3 build. So the generator and its TypeScript 5 live in
+the root package, which compiles nothing and already owns `openapi.yaml`; see
+`scripts/openapi-types.mjs` for the options that were rejected.
+
+Never edit `src/generated/openapi.ts` by hand. Biome does not format it and nothing used to
+notice when it drifted, which is how it once went three contract edits stale. `npm run verify`
+now regenerates it in memory and compares.
 
 What a compiler cannot check — that the registered routes are exactly the operations the
 contract describes — is M4-2's CI check. [ADR 0015](../docs/adr/0015-openapi-checked-not-executed.md)

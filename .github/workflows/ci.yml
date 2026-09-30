@@ -130,6 +130,25 @@ jobs:
       - name: Dependency policy
         run: npm run check:deps
 
+      # `backend/src/generated/openapi.ts` is compiled from `openapi.yaml` and committed, so a
+      # checkout builds without a code generation step. A committed generated file goes stale
+      # silently, and this one did: the generator could not run at all — `openapi-typescript`
+      # builds its output by constructing a TypeScript AST and the backend compiles with
+      # `typescript@^7`, the Go port, which has none of that API — so it threw on import, and
+      # nothing invoked it to find out. The file went three contract edits stale and each was
+      # patched by hand.
+      #
+      # Invisible to every other check in this file, which is the point of adding one. A stale
+      # `paths` type describes a service that no longer exists and the compiler agrees with it
+      # perfectly, so the Backend job's TypeScript step cannot see it. This regenerates in
+      # memory and compares; it writes nothing.
+      #
+      # In this job rather than the Backend one because the generator is a root devDependency:
+      # two TypeScripts in `backend/node_modules` collide on `bin.tsc`, which was measured to
+      # repoint `npm run typecheck` at 5.9.3. See `scripts/openapi-types.mjs`.
+      - name: The generated types match the contract
+        run: npm run check:openapi-types
+
       # Web Awesome Pro's presence, and the translation catalogue's currency. Both are in
       # `npm run verify`; the webawesome one was missing here, so a laptop and CI disagreed
       # about what "green" meant.
