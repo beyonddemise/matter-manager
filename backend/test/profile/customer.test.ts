@@ -348,7 +348,13 @@ describe('the body PUT /customer accepts', () => {
     expect(response.statusCode).toBe(400)
   })
 
-  it('never writes a plan for an account the request did not name', async () => {
+  it('takes only the plan from the body, never roles, type or a display name', async () => {
+    // Renamed to what it checks. It was called "never writes a plan for an account the request
+    // did not name" — a real property, and one this test never looked at; it is pinned by
+    // "leaves the caller's own plan alone" above. What this one actually asserts is that no
+    // other field of the `_users` document can be smuggled in beside `plan`, which nothing else
+    // covers and which the role gate depends on entirely.
+    //
     // `setPlan` spreads the stored document, so `roles` and `type` cannot come from a body -
     // and this asserts that the route does not hand them over either. An operator who could
     // set `roles` could mint more operators, and then the role gate above means nothing.
@@ -367,6 +373,10 @@ describe('the body PUT /customer accepts', () => {
     )
 
     expect(response.statusCode).toBe(200)
+    // One write, to the named account, and the fields CouchDB owns are the stored ones rather
+    // than the ones the body offered. `roles: []` is the assertion that matters: the body sent
+    // `['_admin']`, and a route that passed it through would have minted an account with the
+    // total write bypass described in `OPERATOR_ROLES`.
     expect(writes).toHaveLength(1)
     expect(writes[0]).toMatchObject({ name: 'other', roles: [], type: 'user', plan: 'pro' })
     expect(writes[0]?.displayName).toBe('other')

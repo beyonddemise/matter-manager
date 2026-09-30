@@ -158,7 +158,11 @@ paths:
         role is excluded rather than merely unnecessary. See ADR 0009 — what a plan then permits
         is decided by the policy table, never by a comparison against a tier.
       requestBody:
-        required: true
+        # Not `required`, because the handler does not require one: every field is optional, so
+        # an empty body is a PATCH that changes nothing and is answered 200 with the profile as
+        # it stands. Declaring it required said the opposite, and a generated client would have
+        # refused to make a request this service accepts.
+        required: false
         content:
           application/json:
             schema:
@@ -327,6 +331,16 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/ProjectLimitReached' }
+        # The one operation in this contract that can fail for the deployment's reasons rather
+        # than the caller's: it creates a database, writes its `_security` and installs its
+        # access rules, so a CouchDB that is unreachable mid-sequence is a real outcome. The
+        # body deliberately says nothing about which step or which database - that goes to the
+        # log, because a database name in a response is a fact about the deployment.
+        '500':
+          description: The project could not be created, for a reason the caller cannot act on
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
 
   /projects/{projectId}:
     parameters:

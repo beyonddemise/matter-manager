@@ -78,6 +78,38 @@ interface UserDocument {
 /** CouchDB's own id scheme for a user. */
 export const userDocumentId = (sub: string): string => `org.couchdb.user:${sub}`
 
+/**
+ * How this store reports a `plan` it does not recognise.
+ *
+ * @param event - The account, and the value that was found on its document.
+ */
+export type UnknownPlanReporter = (event: { readonly sub: string; readonly plan: string }) => void
+
+/**
+ * Where an unrecognised plan is reported when nobody says otherwise.
+ *
+ * Not `request.log`, and that is a constraint rather than a preference: the store is built by
+ * `serverOptions` *before* `buildServer` exists, so there is no Fastify logger to reach at the
+ * point this has to be decided. Hence a seam with a default that works — the alternative
+ * default is a no-op, and a no-op default for a diagnostic means the deployment that forgot to
+ * wire it has exactly the silence this exists to end.
+ *
+ * One JSON object on stderr, in pino's field names, so it reads the same way as every other
+ * line the service emits and is greppable by `msg`. Neither field is redactable: `sub` is
+ * already logged by name elsewhere, and the plan is a string an operator typed. Nothing here
+ * comes from a request body.
+ */
+const reportToStderr: UnknownPlanReporter = ({ sub, plan }) => {
+  console.warn(
+    JSON.stringify({
+      level: 'warn',
+      msg: 'unknown plan on a _users document; this account is being treated as free',
+      sub,
+      plan,
+    }),
+  )
+}
+
 /** The database CouchDB keeps users in. */
 const USERS = '_users'
 
@@ -116,7 +148,7 @@ export class UnknownSubjectError extends Error {
 }
 
 /** A `_users` document as a profile, filling in what CouchDB does not hold. */
-function toProfile(document: UserDocument): Profile {
+function toProfile(document: UserDocument, reportUnknownPlan: UnknownPlanReporter): Profile {
   // Narrowed once, into a name, and then used twice. Unknown reads as free, for the same reason
   // an unknown locale reads as `auto`: this field is hand-edited by an operator, so a typo is a
   // question of when. A miss would make `PROJECT_LIMITS[plan]` undefined and every comparison
@@ -126,6 +158,21 @@ function toProfile(document: UserDocument): Profile {
   // saying `Pro` must not report `plan: 'free'` beside `projectLimit: undefined`, which is what
   // a second, separate test of `document.plan` would eventually produce.
   const plan: Plan = isPlan(document.plan) ? document.plan : 'free'
+
+  // Narrowing quietly was the whole problem. The field is guarded *because* an operator
+  // hand-editing a `_users` document will eventually write `Pro` or `premium` or `user ` — and
+  // when they do, the account behaves as `free`, the operator sees the change they made sitting
+  // in the document, and nothing anywhere connects the two. The support conversation that
+  // follows is "I upgraded them and it did not work", with no evidence to look at.
+  //
+  // `document.plan !== undefined` rather than `!isPlan(...)` alone, and this is the difference
+  // between a useful warning and a log nobody reads. An **absent** plan is the ordinary case —
+  // every account that has never been upgraded has no such field — so warning on it would emit
+  // a line per profile read and teach an operator to filter this message out. Only a value that
+  // is *there* and unrecognised is a mistake somebody made.
+  if (document.plan !== undefined && !isPlan(document.plan)) {
+    reportUnknownPlan({ sub: document.name, plan: document.plan })
+  }
 
   return {
     sub: document.name,
@@ -149,15 +196,25 @@ function toProfile(document: UserDocument): Profile {
 /**
  * Creates a profile store backed by CouchDB's `_users` database.
  *
+ * @param couch - The CouchDB client.
+ * @param reportUnknownPlan - Where a `plan` this build does not know is reported. Injectable so
+ *   a test can assert the warning happened rather than read a log, and so a deployment can send
+ *   it wherever its other lines go. See {@link reportToStderr} for why the default is not a
+ *   no-op.
  * @returns A store for reading, creating, and updating user profiles
  */
-export function profileStore(couch: CouchClient): ProfileStore {
+export function profileStore(
+  couch: CouchClient,
+  reportUnknownPlan: UnknownPlanReporter = reportToStderr,
+): ProfileStore {
   const load = (sub: string) => couch.getDoc<UserDocument>(USERS, userDocumentId(sub))
+  /** Bound once, so no call site below can forget to pass it. */
+  const asProfile = (document: UserDocument) => toProfile(document, reportUnknownPlan)
 
   return {
     async read(sub: string): Promise<Profile | undefined> {
       const document = await load(sub)
-      return document === undefined ? undefined : toProfile(document)
+      return document === undefined ? undefined : asProfile(document)
     },
 
     async remember(identity: Identity): Promise<void> {
@@ -208,7 +265,7 @@ export function profileStore(couch: CouchClient): ProfileStore {
       }
 
       await couch.putDoc(USERS, document)
-      return toProfile(document)
+      return asProfile(document)
     },
 
     async rolesOf(sub: string): Promise<readonly string[]> {
@@ -224,7 +281,7 @@ export function profileStore(couch: CouchClient): ProfileStore {
       // between this and `update` is not how it writes but who is allowed to call it.
       const document: UserDocument = { ...existing, plan }
       await couch.putDoc(USERS, document)
-      return toProfile(document)
+      return asProfile(document)
     },
   }
 }

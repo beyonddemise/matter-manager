@@ -2,8 +2,11 @@
  * Where the entitlement seam meets HTTP.
  *
  * `can()` in `core` answers the question; this decides *which* routes have to ask it, and turns
- * a "no" into a 403. Today every answer is `true` (ADR 0009) — the seam exists so that when
- * billing arrives at M8 it is a policy table change rather than an audit of every handler.
+ * a "no" into a 403. Not every answer is `true`: `project.create` refuses a principal already
+ * at their plan's project limit, and `POST /projects` turns that into a named 403 the page can
+ * branch on. The seam (ADR 0009) is what made that a policy-table change rather than an audit
+ * of every handler, and the remaining four actions are still permitted so that the next one
+ * costs the same.
  *
  * **The point of this module is the map below, not the function.** A seam that each handler
  * remembers to call is a seam with a hole in it the first time somebody forgets, and the hole is

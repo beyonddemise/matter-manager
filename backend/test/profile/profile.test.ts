@@ -1,5 +1,5 @@
 import { generateKeyPairSync } from 'node:crypto'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { mintToken, signingKeyFromPem } from '../../src/auth/jwt.js'
 import type { Identity } from '../../src/auth/oidc.js'
 import type { CouchClient, Revision } from '../../src/couch/client.js'
@@ -7,6 +7,7 @@ import {
   isLocale,
   type Profile,
   profileStore,
+  type UnknownPlanReporter,
   UnknownSubjectError,
   userDocumentId,
 } from '../../src/profile/store.js'
@@ -55,7 +56,13 @@ function fakeCouch(seed: Record<string, Record<string, unknown>> = {}) {
  * CouchDB itself would use. Kept separate from `storedAda`/`fakeCouch` above because the plan
  * tests below care only about one document's fields, not Ada's full fixture shape.
  */
-function storeWith(document?: { name: string; roles: string[]; type: 'user'; plan?: string }) {
+function storeWith(
+  document?: { name: string; roles: string[]; type: 'user'; plan?: string },
+  // A no-op by default, so the suite is not narrated by the unknown-plan warning. The real
+  // default — a line on stderr — is asserted directly in `the unknown-plan warning` below,
+  // because a reporter nobody ever calls is the failure this parameter exists to make visible.
+  reportUnknownPlan: UnknownPlanReporter = () => undefined,
+) {
   const seed =
     document === undefined
       ? {}
@@ -67,7 +74,7 @@ function storeWith(document?: { name: string; roles: string[]; type: 'user'; pla
           },
         }
   const { couch } = fakeCouch(seed)
-  return profileStore(couch)
+  return profileStore(couch, reportUnknownPlan)
 }
 
 const ADA = `_users/${userDocumentId('google|1234')}`
@@ -493,6 +500,21 @@ describe('the plan a PATCH may carry', () => {
     expect((response.json() as Profile).locale).toBe('en')
   })
 
+  it('answers 200 to a body that changes nothing', async () => {
+    // Every field is optional, so an empty body is a PATCH that changes nothing — which is a
+    // request, not a mistake. The contract declared `requestBody: required: true` against this
+    // behaviour until now, and a client generated from it would have refused to send a request
+    // this service accepts. Asserted here so the contract cannot drift back.
+    const { app: server, cookie } = serveWithRoles([])
+    const response = await patch(server, cookie, {})
+
+    expect(response.statusCode).toBe(200)
+    // The profile as it stands, not a default. A handler that treated an absent locale as
+    // `auto` would return a German speaker to whatever their browser says the first time they
+    // saved a form that changed nothing.
+    expect((response.json() as Profile).locale).toBe('de')
+  })
+
   it('refuses a plan from an ordinary user, and does not quietly ignore it', async () => {
     // Silently dropping the field would be the wrong refusal: a caller that asked for something
     // and was not told it was refused concludes the field does not exist.
@@ -746,5 +768,96 @@ describe('the plan on a user document', () => {
 
     await expect(store.setPlan('nobody', 'pro')).rejects.toBeInstanceOf(UnknownSubjectError)
     await expect(store.setPlan('nobody', 'pro')).rejects.toThrow('nobody')
+  })
+})
+
+describe('the unknown-plan warning', () => {
+  // The headline failure this whole field is guarded against: an operator hand-edits a `_users`
+  // document, writes `Pro`, and the account goes on behaving as `free`. The narrowing is
+  // correct and was silent, which made the one mistake the guard anticipates the one mistake
+  // nothing could diagnose.
+
+  it('names the account and the value when the plan is not one it knows', async () => {
+    const seen: Array<{ sub: string; plan: string }> = []
+    const store = storeWith({ name: 'user-1', roles: [], type: 'user', plan: 'Pro' }, (event) =>
+      seen.push(event),
+    )
+
+    expect((await store.read('user-1'))?.plan).toBe('free')
+    // Both fields, not merely that something was reported. A warning that said "unknown plan"
+    // and named neither the account nor the value would send an operator to grep `_users`.
+    expect(seen).toEqual([{ sub: 'user-1', plan: 'Pro' }])
+  })
+
+  it('says nothing when the document has no plan at all', async () => {
+    // The reason the check is `plan !== undefined && !isPlan(plan)` rather than `!isPlan(plan)`.
+    // Every account that has never been upgraded has no such field, so warning on an absent one
+    // would emit a line per profile read — and a warning that fires constantly is a warning an
+    // operator filters out, which leaves the real one unread.
+    const seen: unknown[] = []
+    const store = storeWith({ name: 'user-1', roles: [], type: 'user' }, (event) =>
+      seen.push(event),
+    )
+
+    expect((await store.read('user-1'))?.plan).toBe('free')
+    expect(seen).toEqual([])
+  })
+
+  it('says nothing about a plan it does know', async () => {
+    const seen: unknown[] = []
+    const store = storeWith({ name: 'user-1', roles: [], type: 'user', plan: 'pro' }, (event) =>
+      seen.push(event),
+    )
+
+    expect((await store.read('user-1'))?.plan).toBe('pro')
+    expect(seen).toEqual([])
+  })
+
+  it('warns from a plan read back after a write, not only from a fresh read', async () => {
+    // `setPlan` returns `toProfile(document)` on the document it just wrote, and `update`
+    // returns one too. Three paths produce a `Profile`, and a warning wired into one of them is
+    // a warning that is absent from the other two — which is the shape of the bug the store's
+    // own comment warns about for `projectLimit`.
+    const seen: Array<{ sub: string; plan: string }> = []
+    const store = storeWith({ name: 'user-1', roles: [], type: 'user', plan: 'premium' }, (event) =>
+      seen.push(event),
+    )
+
+    await store.update('user-1', { locale: 'de' })
+    expect(seen).toEqual([{ sub: 'user-1', plan: 'premium' }])
+  })
+
+  it('reports to stderr when nobody wires it anywhere else', async () => {
+    // The default, asserted rather than assumed. A no-op default would mean the deployment that
+    // forgot to wire a reporter has exactly the silence this exists to end — and the store is
+    // built by `serverOptions` before `buildServer` exists, so the default is what production
+    // actually runs.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    try {
+      const { couch } = fakeCouch({
+        [`_users/${userDocumentId('user-1')}`]: {
+          _id: userDocumentId('user-1'),
+          _rev: '1-a',
+          name: 'user-1',
+          roles: [],
+          type: 'user',
+          plan: 'Pro',
+        },
+      })
+
+      await profileStore(couch).read('user-1')
+
+      expect(warn).toHaveBeenCalledTimes(1)
+      // Parsed, not matched as text. The line is consumed by whatever collects stderr, so it
+      // has to be one JSON object with the fields named — `toContain('Pro')` would pass for a
+      // line that had the value in a message and nothing machine-readable in it.
+      expect(JSON.parse(String(warn.mock.calls[0]?.[0]))).toMatchObject({
+        level: 'warn',
+        sub: 'user-1',
+        plan: 'Pro',
+      })
+    } finally {
+      warn.mockRestore()
+    }
   })
 })

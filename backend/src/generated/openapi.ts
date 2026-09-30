@@ -264,7 +264,7 @@ export interface paths {
                 path?: never;
                 cookie?: never;
             };
-            requestBody: {
+            requestBody?: {
                 content: {
                     "application/json": {
                         /** @enum {string} */
@@ -487,6 +487,15 @@ export interface paths {
                     };
                     content: {
                         "application/problem+json": components["schemas"]["ProjectLimitReached"];
+                    };
+                };
+                /** @description The project could not be created, for a reason the caller cannot act on */
+                500: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
                     };
                 };
             };

@@ -276,12 +276,70 @@ describe('a request that will not do', () => {
   })
 })
 
+describe('when CouchDB cannot say what the caller already has', () => {
+  // `principalFor` does three pieces of I/O before the gate is asked — `ensureRegistry`, the
+  // owned-projects view, and the profile read — and any of them can raise `CouchError`. The
+  // call sat outside every try in the handler, so a CouchDB failure there escaped as a raw
+  // Fastify 500 carrying CouchDB's own message, on the one route that has a test named "says
+  // nothing about CouchDB". The failure walked past it because it happened before the code that
+  // test covers.
+
+  it('answers the same shaped 500 a failed cleanup gets', async () => {
+    const { app: built } = server({ fails: { view: true } })
+    const response = await create(built, { name: 'Musterstraße 12' })
+
+    expect(response.statusCode).toBe(500)
+    expect(JSON.parse(response.body)).toEqual({
+      title: 'That project could not be created.',
+      status: 500,
+    })
+  })
+
+  it('says nothing about CouchDB', async () => {
+    // The property, stated as the sibling test above states it. Unwrapped, the body was
+    // Fastify's own `{"statusCode":500,"error":"Internal Server Error","message":"<CouchError>"}`
+    // — which names the database, the operation and the status CouchDB gave.
+    const { app: built } = server({ fails: { view: true } })
+    const response = await create(built, { name: 'Musterstraße 12' })
+
+    // `internal server error` with spaces, which is how Fastify spells it in a raw error body
+    // (`{"statusCode":500,"error":"Internal Server Error","message":"<CouchError>"}`). The
+    // sibling assertion below was written `internal_server_error`, with underscores, and so
+    // could never have matched the thing it was guarding against.
+    expect(response.body).not.toMatch(/internal server error|couch|_design/i)
+  })
+
+  it('creates nothing', async () => {
+    // It refuses before the gate, so certainly before provisioning. Asserted rather than
+    // assumed: a handler that logged the failure and carried on with a default principal would
+    // pass both tests above and create a project for an account whose capacity is unknown.
+    const { app: built, couch: fake } = server({ fails: { view: true } })
+    await create(built, { name: 'Musterstraße 12' })
+
+    expect(fake.databases.has(DATABASE)).toBe(false)
+  })
+
+  it('answers what the contract declares for it', async () => {
+    const { app: built } = server({ fails: { view: true } })
+    const response = await create(built, { name: 'Musterstraße 12' })
+
+    const schema = operationsOf(loadContract()).find(
+      (operation) => operation.method === 'POST' && operation.path === '/projects',
+    )?.responses['500']
+    expect(schema, 'the contract declares no 500 for POST /projects').toBeDefined()
+    expect(validate(response.json(), schema)).toEqual([])
+  })
+})
+
 describe('when provisioning fails', () => {
   it('answers 400 and says nothing about CouchDB', async () => {
     const { app: built } = server({ fails: { putSecurity: true } })
     const response = await create(built, { name: 'Musterstraße 12' })
 
-    expect(response.body).not.toMatch(/internal_server_error|couch/i)
+    // `internal server error`, spaced. It was `internal_server_error` — underscores, which is
+    // not how Fastify spells a raw error body, so this assertion could not have failed for the
+    // leak it names. It passes for the right reason now: provisioning failures are mapped.
+    expect(response.body).not.toMatch(/internal server error|couch/i)
   })
 
   it('leaves no database behind', async () => {

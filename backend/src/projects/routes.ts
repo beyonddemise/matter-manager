@@ -175,7 +175,23 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDepende
     const sub = bearerSubject(request, deps.key, now)
     if (sub === undefined) return problem(reply, { title: 'Not signed in', status: 401 })
 
-    const principal = await principalFor(sub)
+    let principal: Principal
+    try {
+      principal = await principalFor(sub)
+    } catch (error) {
+      // `principalFor` does three pieces of I/O — `ensureRegistry`, the owned-projects view and
+      // the profile read — and any of them can raise `CouchError`. Unwrapped, that escaped as a
+      // raw Fastify 500 carrying CouchDB's own message, on the one route whose every other
+      // failure is deliberately mapped and scrubbed: there is a test in this file named "says
+      // nothing about CouchDB", and this path walked straight past it.
+      //
+      // Answered as the same shaped 500 `OrphanedDatabaseError` gets, and logged the same way,
+      // because they are the same thing to the caller: the deployment could not do its job, the
+      // request was not their fault, and there is nothing in the detail they can act on. The
+      // detail goes to the log, where somebody can.
+      request.log.error({ err: error }, 'could not read the principal for a project creation')
+      return problem(reply, { title: 'That project could not be created.', status: 500 })
+    }
 
     try {
       gate(principal, CREATE)
