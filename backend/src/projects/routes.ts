@@ -25,6 +25,7 @@ import {
   TransferError,
 } from '../domain/index.js'
 import { type Gate, NotEntitledError, gate as realGate } from '../entitlements/gate.js'
+import { problem } from '../problem.js'
 import type { ProfileStore } from '../profile/store.js'
 import { accessValidator } from './design-docs.js'
 import { type InvitationSender, storeInvitation } from './invitations.js'
@@ -172,7 +173,7 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDepende
 
   app.post('/projects', async (request, reply) => {
     const sub = bearerSubject(request, deps.key, now)
-    if (sub === undefined) return reply.code(401).send({ title: 'Not signed in', status: 401 })
+    if (sub === undefined) return problem(reply, { title: 'Not signed in', status: 401 })
 
     const principal = await principalFor(sub)
 
@@ -182,7 +183,7 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDepende
       if (!(error instanceof NotEntitledError)) throw error
       // Named, not empty. `reply.code(403).send()` told the page nothing, so it could not tell
       // a capacity refusal from a permission one — and only one of those is fixed by upgrading.
-      return reply.code(403).send({
+      return problem(reply, {
         title: 'This plan has no room for another project.',
         status: 403,
         reason: 'project-limit-reached',
@@ -191,7 +192,7 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDepende
 
     const body = (request.body ?? {}) as CreateBody
     if (typeof body.name !== 'string') {
-      return reply.code(400).send({ title: 'A project needs a name.', status: 400 })
+      return problem(reply, { title: 'A project needs a name.', status: 400 })
     }
     const address = typeof body.address === 'string' ? body.address : undefined
 
@@ -213,13 +214,13 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDepende
       // the caller can neither help nor be told about the deployment.
       if (error instanceof OrphanedDatabaseError) {
         request.log.error({ err: error, database: error.database }, 'orphaned project database')
-        return reply.code(500).send({ title: 'That project could not be created.', status: 500 })
+        return problem(reply, { title: 'That project could not be created.', status: 500 })
       }
       if (error instanceof ProvisioningError) {
         request.log.warn({ err: error }, 'provisioning failed')
         // The message is the domain's own — "a project needs a name", "at most 200 characters"
         // — which is safe to repeat because it describes the request, not the deployment.
-        return reply.code(400).send({ title: error.message, status: 400 })
+        return problem(reply, { title: error.message, status: 400 })
       }
       throw error
     }
@@ -229,7 +230,7 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDepende
 
   app.get('/projects', async (request, reply) => {
     const sub = bearerSubject(request, deps.key, now)
-    if (sub === undefined) return reply.code(401).send({ title: 'Not signed in', status: 401 })
+    if (sub === undefined) return problem(reply, { title: 'Not signed in', status: 401 })
 
     const rows = await projectsFor(deps.couch, sub)
 
@@ -295,7 +296,7 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDepende
 
   app.patch('/projects/:projectId', async (request, reply) => {
     const sub = bearerSubject(request, deps.key, now)
-    if (sub === undefined) return reply.code(401).send({ title: 'Not signed in', status: 401 })
+    if (sub === undefined) return problem(reply, { title: 'Not signed in', status: 401 })
 
     const { projectId } = request.params as { projectId: string }
     const body = (request.body ?? {}) as { name?: unknown; address?: unknown; archived?: unknown }
@@ -304,16 +305,14 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDepende
     // string sets it. Collapsing absent and null would make a body that forgot the address
     // erase the one that is stored.
     if (body.name !== undefined && typeof body.name !== 'string') {
-      return reply.code(400).send({ title: 'A project name is text.', status: 400 })
+      return problem(reply, { title: 'A project name is text.', status: 400 })
     }
     if (body.address !== undefined && body.address !== null && typeof body.address !== 'string') {
-      return reply
-        .code(400)
-        .send({ title: 'An address is text, or null to remove it.', status: 400 })
+      return problem(reply, { title: 'An address is text, or null to remove it.', status: 400 })
     }
 
     if (body.archived !== undefined && typeof body.archived !== 'boolean') {
-      return reply.code(400).send({ title: 'Archiving a project is true or false.', status: 400 })
+      return problem(reply, { title: 'Archiving a project is true or false.', status: 400 })
     }
 
     try {
@@ -325,7 +324,7 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDepende
       return reply.code(200).send(summary)
     } catch (error) {
       if (error instanceof SettingsRefused) {
-        return reply.code(error.status).send({ title: error.message, status: error.status })
+        return problem(reply, { title: error.message, status: error.status })
       }
       throw error
     }
@@ -333,7 +332,7 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDepende
 
   app.get('/projects/:projectId/members', async (request, reply) => {
     const sub = bearerSubject(request, deps.key, now)
-    if (sub === undefined) return reply.code(401).send({ title: 'Not signed in', status: 401 })
+    if (sub === undefined) return problem(reply, { title: 'Not signed in', status: 401 })
 
     const { projectId } = request.params as { projectId: string }
 
@@ -341,7 +340,7 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDepende
       return await listMembers(membership, projectId, sub)
     } catch (error) {
       if (error instanceof MembershipRefused) {
-        return reply.code(error.status).send({ title: error.message, status: error.status })
+        return problem(reply, { title: error.message, status: error.status })
       }
       throw error
     }
@@ -349,7 +348,7 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDepende
 
   app.put('/projects/:projectId/members', async (request, reply) => {
     const sub = bearerSubject(request, deps.key, now)
-    if (sub === undefined) return reply.code(401).send({ title: 'Not signed in', status: 401 })
+    if (sub === undefined) return problem(reply, { title: 'Not signed in', status: 401 })
 
     // The real count, by the same rule the creation route uses, and deliberately not a
     // literal `0`. `project.invite` is `ALLOW` today and reads nothing from the principal, so a
@@ -362,20 +361,32 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDepende
       gate(principal, INVITE, { id: (request.params as { projectId: string }).projectId })
     } catch (error) {
       if (!(error instanceof NotEntitledError)) throw error
-      return reply.code(403).send()
+      // A body, where this sent none. The contract declares this 403 as `Forbidden`, whose
+      // schema requires `title` and `status`, and an empty body satisfies neither — so the
+      // response was undescribed as well as unhelpful. `project.invite` is `ALLOW` today, which
+      // is why nothing had noticed: the branch is unreachable with the real policy table and
+      // reachable the moment M8 gives the action a real one.
+      //
+      // No `reason`. The contract names one only for the refusals a client has to tell apart,
+      // and this operation has a single 403; inventing a name here would put a value in the
+      // contract that no page branches on. See `POST /projects` for the case that does.
+      return problem(reply, {
+        title: 'This plan does not include sharing a project.',
+        status: 403,
+      })
     }
 
     const { projectId } = request.params as { projectId: string }
     const body = (request.body ?? {}) as { email?: unknown; role?: unknown }
 
     if (typeof body.email !== 'string' || body.email.trim() === '') {
-      return reply.code(400).send({ title: 'An email address is needed.', status: 400 })
+      return problem(reply, { title: 'An email address is needed.', status: 400 })
     }
     // `null` revokes. Spelled as a value rather than as a missing field, so that a body which
     // forgot `role` is a mistake rather than an accidental revocation.
     const revoking = body.role === null
     if (!revoking && (typeof body.role !== 'string' || !ROLES.has(body.role))) {
-      return reply.code(400).send({ title: 'That is not a role.', status: 400 })
+      return problem(reply, { title: 'That is not a role.', status: 400 })
     }
 
     try {
@@ -388,7 +399,7 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDepende
       )
     } catch (error) {
       if (error instanceof MembershipRefused) {
-        return reply.code(error.status).send({ title: error.message, status: error.status })
+        return problem(reply, { title: error.message, status: error.status })
       }
       throw error
     }
@@ -401,19 +412,19 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDepende
 
   app.post('/projects/:projectId/transfer', async (request, reply) => {
     const sub = bearerSubject(request, deps.key, now)
-    if (sub === undefined) return reply.code(401).send({ title: 'Not signed in', status: 401 })
+    if (sub === undefined) return problem(reply, { title: 'Not signed in', status: 401 })
 
     const { projectId } = request.params as { projectId: string }
     const body = (request.body ?? {}) as { toEmail?: unknown; retainAccess?: unknown }
 
     if (typeof body.toEmail !== 'string') {
-      return reply.code(400).send({ title: 'An email address is needed.', status: 400 })
+      return problem(reply, { title: 'An email address is needed.', status: 400 })
     }
     // The contract's enum is `[read]` and deliberately not a reference to `Role`: a departing
     // owner who could retain `owner` or `manage` could remove the new owner afterwards, which
     // is not a transfer.
     if (body.retainAccess !== undefined && body.retainAccess !== 'read') {
-      return reply.code(400).send({ title: 'Only read access can be retained.', status: 400 })
+      return problem(reply, { title: 'Only read access can be retained.', status: 400 })
     }
     const retainAccess: RetainedAccess = body.retainAccess === 'read' ? 'read' : 'none'
 
@@ -424,7 +435,7 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDepende
     // 404 for a project the caller cannot see, and for one that is not there. `planTransfer`
     // refuses anybody who is not the owner, so this only decides which of the two it is.
     if (pointer === undefined) {
-      return reply.code(404).send({ title: 'No such project.', status: 404 })
+      return problem(reply, { title: 'No such project.', status: 404 })
     }
 
     try {
@@ -439,7 +450,7 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDepende
         // 404 rather than 403 for "you are not the owner": whether a project exists is a fact
         // about somebody else's house, and the caller may not be a participant at all.
         const status = /only the owner/i.test(error.message) ? 404 : 400
-        return reply.code(status).send({ title: error.message, status })
+        return problem(reply, { title: error.message, status })
       }
       throw error
     }
@@ -449,7 +460,7 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDepende
 
   app.get('/transfers', async (request, reply) => {
     const sub = bearerSubject(request, deps.key, now)
-    if (sub === undefined) return reply.code(401).send({ title: 'Not signed in', status: 401 })
+    if (sub === undefined) return problem(reply, { title: 'Not signed in', status: 401 })
 
     const account = await membership.findUser(sub)
     if (account === undefined) return []
@@ -474,7 +485,7 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDepende
 
   app.post('/transfers/:projectId', async (request, reply) => {
     const sub = bearerSubject(request, deps.key, now)
-    if (sub === undefined) return reply.code(401).send({ title: 'Not signed in', status: 401 })
+    if (sub === undefined) return problem(reply, { title: 'Not signed in', status: 401 })
 
     const { projectId } = request.params as { projectId: string }
 
@@ -483,14 +494,14 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDepende
     // is what sign-in recorded, so it is the provider's answer rather than the caller's.
     const identity = await deps.identityOf?.(sub)
     if (identity === undefined) {
-      return reply.code(404).send({ title: 'No such transfer.', status: 404 })
+      return problem(reply, { title: 'No such transfer.', status: 404 })
     }
 
     try {
       await acceptTransfer(membership, projectId, identity, millis)
     } catch (error) {
       if (error instanceof MembershipRefused) {
-        return reply.code(error.status).send({ title: error.message, status: error.status })
+        return problem(reply, { title: error.message, status: error.status })
       }
       throw error
     }
@@ -500,7 +511,7 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDepende
 
   app.delete('/transfers/:projectId', async (request, reply) => {
     const sub = bearerSubject(request, deps.key, now)
-    if (sub === undefined) return reply.code(401).send({ title: 'Not signed in', status: 401 })
+    if (sub === undefined) return problem(reply, { title: 'Not signed in', status: 401 })
 
     const { projectId } = request.params as { projectId: string }
     const account = await membership.findUser(sub)
@@ -516,7 +527,7 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDepende
       account === undefined ||
       offer.toEmail !== account.email.trim().toLowerCase()
     ) {
-      return reply.code(404).send({ title: 'No such transfer.', status: 404 })
+      return problem(reply, { title: 'No such transfer.', status: 404 })
     }
 
     await removeTransfer(deps.couch, offer)

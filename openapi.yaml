@@ -306,6 +306,11 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ProjectSummary' }
+        # The handler's own validation: a body with no `name`, or a name the domain refuses as
+        # too long, is answered 400 carrying the domain's message. Undeclared until the drift
+        # check began driving every operation rather than only `/healthz` - the response has
+        # existed since the route did, and nothing compared it against this file.
+        '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         # Previously a bare description with no schema at all, which meant the contract said
         # nothing a check could read: `reason` was already being sent by the handler and was
@@ -394,7 +399,16 @@ paths:
               schema:
                 type: array
                 items: { $ref: '#/components/schemas/Member' }
+        # Every route in this service answers 401 to a request with no usable bearer, and three
+        # operations - this one, `PUT` below, and `POST .../transfer` - declared everything
+        # except that. The first thing the widened drift check found.
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
+        # `listMembers` refuses a project with no pointer, and one the caller is not a
+        # participant of, with 404 rather than 403 - whether a project exists is a fact about
+        # somebody else's house. Undeclared until the drift check drove a credentialed request
+        # at a project id nobody owns.
+        '404': { $ref: '#/components/responses/NotFound' }
 
     put:
       tags: [projects]
@@ -426,6 +440,7 @@ paths:
         # A missing address, a role outside the enum above, or `owner` - which this route
         # refuses because ownership moves through /projects/{projectId}/transfer.
         '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
 
   /projects/{projectId}/transfer:
@@ -459,6 +474,7 @@ paths:
       responses:
         '204': { description: Offered; the recipient must accept before ownership moves }
         '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
 
   /transfers:

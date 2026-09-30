@@ -69,7 +69,13 @@ describe('finding out whether this browser has a session', () => {
   })
 
   it('reports signed out on a 401', async () => {
-    const fetchImpl = vi.fn(async () => response(401, { error: 'not signed in' }))
+    // The body is the RFC 9457 problem the API actually sends, not the `{ error }` this fixture
+    // held — that shape was the backend's own drift from a contract that has always declared a
+    // problem detail here, and a double that keeps sending it is a double that describes a
+    // server nobody runs. `readSessionState` branches on the status and never reads the body,
+    // deliberately, so the fixture being wrong changed no outcome and would have gone on being
+    // the only description of this response anywhere in the frontend.
+    const fetchImpl = vi.fn(async () => response(401, { title: 'Not signed in', status: 401 }))
     expect(await readSessionState(fetchImpl as unknown as typeof fetch)).toBe('signed-out')
     expect(accessToken()).toBeUndefined()
   })

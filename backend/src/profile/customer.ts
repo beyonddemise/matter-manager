@@ -17,6 +17,7 @@
  */
 
 import type { FastifyInstance, FastifyRequest } from 'fastify'
+import { problem } from '../problem.js'
 import { isPlan, type ProfileStore, UnknownSubjectError } from './store.js'
 
 export interface CustomerDependencies {
@@ -44,7 +45,7 @@ export function registerCustomerRoutes(app: FastifyInstance, deps: CustomerDepen
   app.put('/customer', async (request, reply) => {
     const caller = deps.subjectOf(request)
     if (caller === undefined) {
-      return reply.code(401).send({ title: 'Not signed in', status: 401 })
+      return problem(reply, { title: 'Not signed in', status: 401 })
     }
 
     // The gate, before the body is looked at and before the subject is loaded. Both orderings
@@ -64,7 +65,7 @@ export function registerCustomerRoutes(app: FastifyInstance, deps: CustomerDepen
     // it. On this route that is not a self-grant: it is a stranger rewriting an account.
     const roles = await deps.store.rolesOf(caller)
     if (!roles.some((role) => deps.operatorRoles.includes(role))) {
-      return reply.code(403).send({
+      return problem(reply, {
         title: 'Changing a plan is not something this account may do.',
         status: 403,
         reason: 'not-an-operator',
@@ -73,14 +74,14 @@ export function registerCustomerRoutes(app: FastifyInstance, deps: CustomerDepen
 
     const body = request.body as { sub?: unknown; plan?: unknown } | undefined
     if (typeof body?.sub !== 'string' || body.sub === '') {
-      return reply.code(400).send({ title: 'sub must name an account.', status: 400 })
+      return problem(reply, { title: 'sub must name an account.', status: 400 })
     }
     // `isPlan` rather than a comparison against a tier. ADR 0009: what a plan permits is the
     // policy table's business, and this route's only interest is whether the string is a plan
     // this build knows. An unknown one must not be stored — `toProfile` would read it back as
     // `free`, so it would look like a refusal that had in fact written something.
     if (!isPlan(body.plan)) {
-      return reply.code(400).send({ title: 'plan must be one of free, user, pro', status: 400 })
+      return problem(reply, { title: 'plan must be one of free, user, pro', status: 400 })
     }
 
     try {
@@ -105,7 +106,7 @@ export function registerCustomerRoutes(app: FastifyInstance, deps: CustomerDepen
       // operator to different places, which is the whole reason `setPlan` throws something
       // nameable rather than the bare Error `update` throws for the same condition. Reached
       // only after the gate, so it tells this to an operator and to nobody else.
-      return reply.code(404).send({ title: 'No such account.', status: 404 })
+      return problem(reply, { title: 'No such account.', status: 404 })
     }
   })
 }

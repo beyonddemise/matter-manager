@@ -11,6 +11,7 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import type { SigningKey } from '../auth/jwt.js'
 import { verifyToken } from '../auth/jwt.js'
+import { problem } from '../problem.js'
 import { isLocale, isPlan, type ProfileStore } from './store.js'
 
 /** The cookie the sign-in flow sets. Named here too rather than exported across modules. */
@@ -121,14 +122,14 @@ export function registerProfileRoutes(app: FastifyInstance, deps: ProfileDepende
 
   app.get('/profile', async (request, reply) => {
     const sub = callerOf(request)
-    if (sub === undefined) return reply.code(401).send({ title: 'Not signed in', status: 401 })
+    if (sub === undefined) return problem(reply, { title: 'Not signed in', status: 401 })
 
     const profile = await deps.store.read(sub)
     if (profile === undefined) {
       // A signed-in user always has a profile — `rememberUser` writes one during sign-in. If
       // there is none, the session outlived the account, and the honest answer is that this
       // credential no longer identifies anybody.
-      return reply.code(401).send({ title: 'Not signed in', status: 401 })
+      return problem(reply, { title: 'Not signed in', status: 401 })
     }
 
     // A profile is per-user and changes when the user changes it. A shared cache holding one is
@@ -139,7 +140,7 @@ export function registerProfileRoutes(app: FastifyInstance, deps: ProfileDepende
 
   app.patch('/profile', async (request, reply) => {
     const sub = callerOf(request)
-    if (sub === undefined) return reply.code(401).send({ title: 'Not signed in', status: 401 })
+    if (sub === undefined) return problem(reply, { title: 'Not signed in', status: 401 })
 
     const body = request.body as
       | { locale?: unknown; displayName?: unknown; plan?: unknown }
@@ -153,7 +154,7 @@ export function registerProfileRoutes(app: FastifyInstance, deps: ProfileDepende
     if (locale !== undefined && !isLocale(locale)) {
       // Named rather than generic. "Invalid request" leaves the caller guessing which field was
       // wrong, and this endpoint has three.
-      return reply.code(400).send({
+      return problem(reply, {
         title: 'locale must be one of auto, en, de',
         status: 400,
       })
@@ -161,7 +162,7 @@ export function registerProfileRoutes(app: FastifyInstance, deps: ProfileDepende
 
     if (body?.plan !== undefined) {
       if (!isPlan(body.plan)) {
-        return reply.code(400).send({ title: 'plan must be one of free, user, pro', status: 400 })
+        return problem(reply, { title: 'plan must be one of free, user, pro', status: 400 })
       }
 
       // Exact membership, by `includes` on the role rather than by any test over its text. A
@@ -174,7 +175,7 @@ export function registerProfileRoutes(app: FastifyInstance, deps: ProfileDepende
         // told it was refused concludes the field does not exist — and nothing else in the
         // request is applied either, because half of an operator's intent is not an outcome
         // anybody asked for.
-        return reply.code(403).send({
+        return problem(reply, {
           title: 'Changing a plan is not something this account may do.',
           status: 403,
           reason: 'not-an-operator',
@@ -198,8 +199,21 @@ export function registerProfileRoutes(app: FastifyInstance, deps: ProfileDepende
     // reading would silently return a German speaker to whatever their browser says, the first
     // time they edited anything else.
     const current = await deps.store.read(sub)
+    if (current === undefined) {
+      // The same answer `GET /profile` gives, and for the same reason: a signed-in user always
+      // has a profile, because `remember` writes one during sign-in, so no document means the
+      // session outlived the account and this credential no longer identifies anybody.
+      //
+      // Without this the request reached `store.update`, which throws a bare `Error` for the
+      // condition — and a bare Error out of a handler is a raw Fastify 500 carrying its message
+      // to the caller. So a stale cookie produced `500 {"message":"No profile for <sub>; a
+      // signed-in user always has one."}`: an internal invariant, quoted verbatim, with the
+      // subject in it, on a route every other failure of which is deliberately shaped. Found by
+      // the drift check once it began driving credentialed requests at every operation.
+      return problem(reply, { title: 'Not signed in', status: 401 })
+    }
     const profile = await deps.store.update(sub, {
-      locale: locale ?? current?.locale ?? 'auto',
+      locale: locale ?? current.locale,
       // An empty display name is a name nobody has. Absent means "leave it alone", which is
       // what a form that only changed the language sends.
       ...(displayName === undefined || displayName === '' ? {} : { displayName }),
