@@ -31,7 +31,7 @@
  */
 
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { dirname, join, posix } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
@@ -71,14 +71,20 @@ const entryScripts = (html) =>
   [...html.matchAll(/<script[^>]+src="([^"]+)"/g)].map((match) => match[1].replace(/^\//, ''))
 
 /**
- * The chunks a chunk pulls in **statically**.
+ * The chunks a chunk pulls in **statically**, resolved against *its own* location.
  *
  * `import("./x.js")` — with the parenthesis — is the dynamic form and is deliberately not
  * matched. That is the distinction this whole script exists to make.
+ *
+ * Resolved with `posix.join` against `from`'s directory rather than assumed to be a sibling
+ * under `assets/`, because a chunk emitted anywhere else under `dist` would write a `../`
+ * specifier to reach it, and `./` alone cannot see that. Matches `../` too, for the same
+ * reason - a specifier this regex does not capture is a specifier `eagerlyReachable` never
+ * walks, which is silence, not safety.
  */
-const staticImports = (code) =>
-  [...code.matchAll(/(?:from|import)\s*["'](\.\/[^"']+\.js)["']/g)].map((match) =>
-    match[1].replace(/^\.\//, 'assets/'),
+const staticImports = (code, from) =>
+  [...code.matchAll(/(?:from|import)\s*["'](\.\.?\/[^"']+\.js)["']/g)].map((match) =>
+    posix.join(posix.dirname(from), match[1]),
   )
 
 const html = readFileSync(join(dist, 'index.html'), 'utf8')
@@ -98,23 +104,52 @@ const chunks = new Map(
     : [],
 )
 
-/** Everything a visitor downloads before the application runs: the entries and their closure. */
+/**
+ * Everything a visitor downloads before the application runs: the entries and their closure.
+ *
+ * `unresolved` is a static import this walk could not find under `dist/assets` - a chunk the
+ * bundler emitted somewhere else, or a specifier that no longer matches what is on disk. Such
+ * an import used to be silently dropped: `chunks.get(name)` came back `undefined`, nothing was
+ * queued from it, and the walk carried on as if that branch of the bundle did not exist. That
+ * is exactly the gap a PDF writer reached through such an import would fall through - the
+ * check would report success on the one case it could not actually evaluate. Returned instead
+ * of thrown, so the caller can report every one of them rather than just the first.
+ */
 function eagerlyReachable() {
   const seen = new Set()
-  const queue = [...entries]
+  const unresolved = []
+  const queue = entries.map((name) => ({ name, from: 'index.html' }))
   while (queue.length > 0) {
-    const name = queue.shift()
-    if (name === undefined || seen.has(name)) continue
-    seen.add(name)
-    const code = chunks.get(name)
-    if (code !== undefined) queue.push(...staticImports(code))
+    const next = queue.shift()
+    if (next === undefined || seen.has(next.name)) continue
+    seen.add(next.name)
+    const code = chunks.get(next.name)
+    if (code === undefined) {
+      if (next.from !== 'index.html') unresolved.push(next)
+      continue
+    }
+    queue.push(...staticImports(code, next.name).map((name) => ({ name, from: next.name })))
   }
-  return seen
+  return { seen, unresolved }
 }
 
 const holdsWriter = (code) => WRITER_TOKENS.some((token) => code.includes(token))
 
-const eager = eagerlyReachable()
+const { seen: eager, unresolved } = eagerlyReachable()
+
+if (unresolved.length > 0) {
+  // Not a verdict on the PDF writer - a refusal to give one. This check can only prove the
+  // writer is absent from the first load by seeing the whole closure of what that load pulls
+  // in; a chunk it cannot find is a chunk it cannot rule out, and reporting "ok" anyway is how
+  // this kind of guard passes while checking nothing.
+  console.error('Found a static import this check cannot resolve under dist/assets, so it')
+  console.error("cannot tell whether that chunk's contents are part of the first load:\n")
+  for (const { name, from } of unresolved) console.error(`  ${name} (imported from ${from})`)
+  console.error('\nEither the bundler emitted it outside assets/, or the specifier no longer')
+  console.error('matches what is on disk. Fix the mismatch, or teach this check the new layout.')
+  process.exit(1)
+}
+
 const carrying = [...chunks].filter(([, code]) => holdsWriter(code)).map(([name]) => name)
 const shipped = carrying.filter((name) => eager.has(name))
 
