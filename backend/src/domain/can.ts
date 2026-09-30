@@ -89,6 +89,17 @@ export interface Principal {
   /** The OIDC subject, which is also the CouchDB user name. */
   readonly sub: string
   readonly plan: Plan
+  /**
+   * How many projects this subject owns.
+   *
+   * On the principal rather than passed to the policy, because `Policy` is
+   * `(principal, project?) => boolean` and a creation has no project to inspect — the count is
+   * a fact about the actor, which is what a principal is for. The cost is that the caller has
+   * to read it: `POST /projects` counts before it may ask. That is one query on the one route
+   * that needs it, against the alternative of a third argument threaded through every policy
+   * and every call site.
+   */
+  readonly ownedProjects: number
 }
 
 /** The project an action targets. Absent for actions that create one. */
@@ -122,7 +133,8 @@ export const ALLOW: Policy = () => true
  * far earlier than the runtime error does.
  */
 export const POLICIES: Readonly<Record<Action, Policy>> = Object.freeze({
-  'project.create': ALLOW,
+  'project.create': (principal) =>
+    withinLimit(principal.ownedProjects, PROJECT_LIMITS[principal.plan]),
   'project.invite': ALLOW,
   'device.create': ALLOW,
   'device.attachPhoto': ALLOW,

@@ -5,6 +5,7 @@ import {
   ALLOW,
   can,
   evaluate,
+  type Plan,
   POLICIES,
   type Policy,
   PROJECT_LIMITS,
@@ -12,7 +13,7 @@ import {
   withinLimit,
 } from '../../src/domain/can.js'
 
-const owner: Principal = { sub: 'auth0|owner', plan: 'free' }
+const owner: Principal = { sub: 'auth0|owner', plan: 'free', ownedProjects: 0 }
 const project = { id: 'project:6ba7b810-9dad-11d1-80b4-00c04fd430c8' }
 
 describe('can', () => {
@@ -359,5 +360,37 @@ describe('the project limit table', () => {
     // Not a plan today, and the table is a place somebody will one day write a suspended
     // account. Zero has to mean none rather than falling into the sentinel branch.
     expect(withinLimit(0, 0)).toBe(false)
+  })
+})
+
+describe('creating a project against a plan', () => {
+  const principal = (plan: Plan, ownedProjects: number): Principal => ({
+    sub: 'user-1',
+    plan,
+    ownedProjects,
+  })
+
+  it('lets a free account create its first project and refuse its second', () => {
+    expect(can(principal('free', 0), 'project.create')).toBe(true)
+    expect(can(principal('free', 1), 'project.create')).toBe(false)
+  })
+
+  it('lets a user account up to five', () => {
+    expect(can(principal('user', 4), 'project.create')).toBe(true)
+    expect(can(principal('user', 5), 'project.create')).toBe(false)
+  })
+
+  it('never refuses a pro account', () => {
+    // The sentinel reaching the policy is the case that matters: a comparison written here
+    // rather than in withinLimit would refuse every one of these.
+    expect(can(principal('pro', 0), 'project.create')).toBe(true)
+    expect(can(principal('pro', 500), 'project.create')).toBe(true)
+  })
+
+  it('still permits the actions no plan gates yet', () => {
+    // The policy table is all-or-nothing to a careless edit: replacing ALLOW for one action is
+    // an easy way to replace it for the neighbours too.
+    expect(can(principal('free', 99), 'device.create')).toBe(true)
+    expect(can(principal('free', 99), 'pdf.export')).toBe(true)
   })
 })
