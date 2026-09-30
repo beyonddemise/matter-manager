@@ -23,6 +23,12 @@ not-found-view {
   padding: var(--wa-space-l);
 }
 
+.app-footer {
+  padding: var(--wa-space-s) var(--wa-space-l);
+  font-size: var(--wa-font-size-s);
+  color: var(--wa-color-text-quiet);
+}
+
 wa-page {
   /* 15rem, derived from the space scale rather than written as a literal: --wa-space-5xl is
      5rem, and this constraint (src/ui/styles/app.css: only --wa-* tokens, no raw
@@ -223,6 +229,7 @@ a.app-device:hover {
      remembered on every new control, and the one nobody remembers is the one that prints. */
   [slot="header"],
   [slot="navigation"],
+  [slot="footer"],
   [data-search],
   [data-include-disabled],
   [data-export],

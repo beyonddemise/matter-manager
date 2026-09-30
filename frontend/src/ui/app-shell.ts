@@ -43,6 +43,16 @@ import './views/not-found.js'
 import './views/settings.js'
 
 /**
+ * The public website: what Matter Manager is, its privacy notice and its terms.
+ *
+ * Absolute, because the application and the website are separate deployments on separate
+ * hosts. A constant rather than configuration: a self-hosted instance is governed by its own
+ * operator and the Apache-2.0 licence, not by these pages - whoever runs one and wants their
+ * own notice changes this line.
+ */
+export const WEBSITE = 'https://www.matter-manager.io'
+
+/**
  * View id to markup, given whatever the route captured.
  *
  * `Record<string, …>` accepts any key, so a route whose `view` has no entry here is not a type
@@ -593,6 +603,15 @@ export class AppShell extends LitElement {
           }
           ${view && match ? view(match.params) : html`<not-found-view></not-found-view>`}
         </main>
+
+        <!-- In the footer slot, not the navigation: on a phone the navigation is a closed
+             drawer. Google's OAuth review expects the purpose and the privacy policy to be
+             reachable from the application, and so does anybody deciding whether to sign in. -->
+        <footer slot="footer" class="wa-cluster wa-gap-m app-footer">
+          <a href="${WEBSITE}/">${msg('About Matter Manager')}</a>
+          <a href="${WEBSITE}/privacy">${msg('Privacy')}</a>
+          <a href="${WEBSITE}/tos">${msg('Terms')}</a>
+        </footer>
       </wa-page>
     `
   }

@@ -319,3 +319,24 @@ it('hands the waiting worker over when the user accepts', async () => {
 
   expect(taken).toEqual([waiting])
 })
+
+it('links the public website, privacy notice and terms from a footer on every view', async () => {
+  // Google's OAuth review follows the app to its purpose and its privacy policy. The footer is
+  // in wa-page's `footer` slot rather than the navigation, because on a phone the navigation
+  // is a closed drawer and a reviewer - or anybody else - would never see it.
+  const element = await shell()
+  const footer = element.querySelector('footer[slot="footer"]')
+  expect(footer, 'the shell has no footer').not.toBeNull()
+
+  const hrefs = [...(footer?.querySelectorAll('a') ?? [])].map((a) => a.getAttribute('href'))
+  expect(hrefs).toEqual([
+    'https://www.matter-manager.io/',
+    'https://www.matter-manager.io/privacy',
+    'https://www.matter-manager.io/tos',
+  ])
+
+  // Assigned to wa-page's real slot, not merely present in the light DOM.
+  const page = element.querySelector('wa-page')
+  const slot = page?.shadowRoot?.querySelector('slot[name="footer"]') as HTMLSlotElement | null
+  expect(slot?.assignedElements()).toContain(footer)
+})
