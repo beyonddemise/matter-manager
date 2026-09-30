@@ -161,8 +161,18 @@ customer. Keeping it a separate endpoint is what lets `/profile` retain its rule
 subject arrives in a body on a route whose entire purpose is acting on another account, rather
 than being smuggled into one whose comment forbids it.
 
-`customerservice` is a plain CouchDB role granted by editing `_users`; `_admin` is CouchDB's own.
-Neither is grantable through this API.
+`customerservice` is a plain CouchDB role granted by editing `_users`, and is not grantable
+through this API.
+
+> **Superseded, after implementation.** This section and the contract list below say the two
+> operator routes accept `_admin` *or* `customerservice`. They were built that way and the
+> `_admin` half has been removed; the operator role is `customerservice` alone. `_admin` never
+> granted what it appeared to — the role check reads the caller's `_users` document, and a
+> CouchDB *server* admin lives in `local.ini [admins]` and has none — while the only account it
+> could match is one holding a role that bypasses `validate_doc_update` on every project
+> database in the deployment. Left in place above as the record of what was specified; see
+> `docs/SECURITY-MODEL.md` § *Operator accounts and plans* for what is true, and do not restore
+> it when building the page.
 
 ### The API contract
 
