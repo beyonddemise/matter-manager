@@ -228,6 +228,17 @@ jobs:
         run: npm run check:lazy
         working-directory: frontend
 
+      # The other half of the same decision, and it was not being kept. `pdf-lib`, its
+      # standard-font tables, `@pdf-lib/upng` and `pako` were 408 kB of a 1,022 kB entry chunk -
+      # 40% of the first load - for a feature reached by pressing Export. The builders are loaded
+      # on demand now, and a single static import puts them back with every test still green and
+      # the only symptom a first load nobody counts. The quiet way to undo it is a *type* import:
+      # `ExportCancelled` lives in `src/ui/pdf/progress.ts` precisely so the view can hold it
+      # without naming a module that imports `pdf-lib`.
+      - name: The PDF writer is not in the bundle everyone downloads
+        run: npm run check:lazy-pdf
+        working-directory: frontend
+
       # #106 shipped an offline-first application whose icons and typography arrived from two
       # CDNs on every visit. Finding that took serving `dist` under a strict CSP and reading the
       # violations by hand, which nobody does twice - so both halves are checked here instead.

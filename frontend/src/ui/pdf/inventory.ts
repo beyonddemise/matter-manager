@@ -20,9 +20,16 @@ import {
   layoutInventory,
   type PageGeometry,
 } from '../../domain/index.js'
+import { ExportCancelled, type InventoryProgress } from './progress.js'
 import { renderQrPng } from './qr-image.js'
 import { winAnsiSafe } from './win-ansi.js'
 import { yieldToBrowser } from './yield.js'
+
+// Re-exported from where they used to be declared, because this is the module every caller and
+// every test already names them from. They moved to `progress.ts` so that `device-list.ts` can
+// hold `ExportCancelled` for its `catch` without statically importing this file and dragging
+// `pdf-lib` back into the entry bundle; see that module for the whole reason.
+export { ExportCancelled, type InventoryProgress }
 
 /** How large the code is drawn, in points. About 34mm — comfortably scannable off paper. */
 const QR_SIZE = 96
@@ -47,23 +54,12 @@ export interface InventoryLabels {
   readonly nothingToExport: string
 }
 
-/** Progress, so a long export can say what it is doing. M3-5 builds on this. */
-export interface InventoryProgress {
-  readonly done: number
-  readonly total: number
-}
-
 export interface InventoryOptions {
   readonly labels: InventoryLabels
   readonly geometry?: PageGeometry
   readonly onProgress?: (progress: InventoryProgress) => void
   /** Checked between devices; when it returns true the export stops and throws. */
   readonly cancelled?: () => boolean
-}
-
-/** Thrown when {@link InventoryOptions.cancelled} asked for a stop. */
-export class ExportCancelled extends Error {
-  override readonly name = 'ExportCancelled'
 }
 
 /** A device's product, in whatever form is known. */

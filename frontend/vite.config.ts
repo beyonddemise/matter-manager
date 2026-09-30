@@ -81,7 +81,17 @@ export default defineConfig(({ mode }) => {
     // repo's node >=22 engine requirement.
     root: import.meta.dirname,
     plugins: [stripThirdPartyFontImports()],
-    build: { outDir: 'dist', emptyOutDir: true },
+    build: {
+      outDir: 'dist',
+      emptyOutDir: true,
+      rolldownOptions: {
+        output: {
+          advancedChunks: {
+            groups: [{ name: 'pdf', test: /node_modules[\\/](pdf-lib|@pdf-lib|pako)[\\/]/ }],
+          },
+        },
+      },
+    },
 
     server: {
       // Fail rather than move. Vite picks the next free port when 5173 is taken, and everything

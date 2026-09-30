@@ -21,7 +21,7 @@ import {
   MM,
   type PlacedLabel,
 } from '../../domain/index.js'
-import { ExportCancelled, type InventoryProgress } from './inventory.js'
+import { ExportCancelled, type InventoryProgress } from './progress.js'
 import { renderQrPng } from './qr-image.js'
 import { winAnsiSafe } from './win-ansi.js'
 import { yieldToBrowser } from './yield.js'
