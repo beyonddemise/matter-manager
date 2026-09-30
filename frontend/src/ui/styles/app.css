@@ -239,20 +239,31 @@ a.app-device:hover {
     display: none;
   }
 
-  /* `<wa-page>` is a fixed, scrolling application frame, and its layout comes from inside its
-     own shadow root — so this is one of the two places `!important` genuinely earns itself.
-     Printed as a scrolling frame it produces a single page containing whatever happened to be
-     in the viewport: the classic "only the first page prints" bug, which is a
-     scrolling-container problem rather than a clipping one. */
+  /* `<wa-page>` is a fixed, scrolling application frame whose layout comes from inside its own
+     shadow root. Printed as a scrolling frame it produces a single page containing whatever
+     happened to be in the viewport: the classic "only the first page prints" bug, which is a
+     scrolling-container problem rather than a clipping one. The rule below is what stops that,
+     and measurably so — without it every part computes `display: grid`.
+
+     **No `!important`, and it was not needed.** These carried one on the reading that a rule
+     reaching into a shadow root has to shout to be heard. That is not how the shadow cascade
+     works: for `::part()`, a *normal* declaration from the outer page already beats the shadow
+     tree's own rule whatever its specificity, and an `!important` one from the outer page in
+     fact *loses* to an inner `!important`. So the flag can never be what makes a `::part()`
+     override land — if the component does not use `!important` you do not need it, and if it
+     does, yours will not win regardless. `wa-page`'s stylesheet contains no `!important` at
+     all, and the computed values here are identical with and without, at both the desktop and
+     the mobile breakpoint. Verified against the real component under `media: print` rather
+     than argued from the specification. */
   wa-page,
   wa-page::part(base),
   wa-page::part(body),
   wa-page::part(main) {
-    display: block !important;
-    height: auto !important;
-    max-height: none !important;
-    overflow: visible !important;
-    position: static !important;
+    display: block;
+    height: auto;
+    max-height: none;
+    overflow: visible;
+    position: static;
   }
 
   .app-main {
@@ -285,11 +296,14 @@ a.app-device:hover {
     border: var(--wa-border-width-s) dashed #999;
   }
 
-  /* The other place `!important` earns itself. The QR's quiet zone must stay white whatever
-     the surrounding palette does — a code printed as dark modules on nothing does not scan,
-     and that is the one thing on the page nobody can work around. */
+  /* The QR's quiet zone must stay white whatever the surrounding palette does — a code printed
+     as dark modules on nothing does not scan, and that is the one thing on the page nobody can
+     work around. It does not need `!important` to do that: the only other rule touching this
+     class is the `.app-qr-plate` block above, at the same specificity and earlier in the file,
+     which already sets `background-color: white` and which this overrides by order. The
+     `padding` below has always relied on exactly that and has always worked. */
   .app-qr-plate {
-    background-color: white !important;
+    background-color: white;
     padding: 4mm;
   }
 

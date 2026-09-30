@@ -63,9 +63,17 @@ describe('a design document that is already installed', () => {
       forget()
 
       // Without a `_rev` this throws `409 conflict`, and because `established` is only set
-      // after a successful write, it throws again on every subsequent call — so ${breaks}
-      // stays broken for as long as the deployment runs.
-      await expect(ensure(couch)).resolves.toBeUndefined()
+      // after a successful write, it throws again on every subsequent call — so whatever this
+      // document carries stays broken for as long as the deployment runs.
+      //
+      // `breaks` is in the assertion message rather than in a comment. It was written as
+      // `${breaks}` inside a `//` comment, which does not interpolate — so the stakes of this
+      // failure were dead text, and the field went unused. Here it is the first thing somebody
+      // reads when the test goes red, which is the moment the information is worth having.
+      await expect(
+        ensure(couch),
+        `${what} must survive a restart, or ${breaks} stays broken`,
+      ).resolves.toBeUndefined()
     })
 
     it(`leaves ${what} usable after a restart`, async () => {
