@@ -74,11 +74,31 @@ function subjectOf(
   }
 }
 
-export function registerProfileRoutes(app: FastifyInstance, deps: ProfileDependencies): void {
+/**
+ * How a caller is identified on the cookie-authenticated routes.
+ *
+ * Exported so that the operator endpoint in `customer.ts` identifies its caller by exactly this
+ * code path — including the default for `now`, which is the part a second copy would get wrong
+ * without anything going red. A route that still verified the cookie, but against a different
+ * clock or against the key CouchDB validates rather than the key that signs a session, would
+ * look identical from the outside and admit callers this one refuses.
+ *
+ * @returns A function reading the authenticated subject from a request, `undefined` when there
+ *   is no valid session.
+ */
+export function sessionSubject(
+  deps: Pick<ProfileDependencies, 'sessionKey' | 'now'>,
+): (request: FastifyRequest) => string | undefined {
   const now = deps.now ?? (() => Math.floor(Date.now() / 1000))
+  return (request) => subjectOf(request, deps.sessionKey, now)
+}
+
+export function registerProfileRoutes(app: FastifyInstance, deps: ProfileDependencies): void {
+  // The same function `PUT /customer` uses. See `sessionSubject`.
+  const callerOf = sessionSubject(deps)
 
   app.get('/profile', async (request, reply) => {
-    const sub = subjectOf(request, deps.sessionKey, now)
+    const sub = callerOf(request)
     if (sub === undefined) return reply.code(401).send({ title: 'Not signed in', status: 401 })
 
     const profile = await deps.store.read(sub)
@@ -96,7 +116,7 @@ export function registerProfileRoutes(app: FastifyInstance, deps: ProfileDepende
   })
 
   app.patch('/profile', async (request, reply) => {
-    const sub = subjectOf(request, deps.sessionKey, now)
+    const sub = callerOf(request)
     if (sub === undefined) return reply.code(401).send({ title: 'Not signed in', status: 401 })
 
     const body = request.body as

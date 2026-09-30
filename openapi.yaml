@@ -36,6 +36,10 @@ tags:
     description: Project lifecycle and membership
   - name: profile
     description: The signed-in user's own settings
+  - name: admin
+    description: |
+      Operator endpoints. Reached only by an account holding `_admin` or `customerservice`,
+      and the only operations in this contract that name a subject other than the caller.
 
 security:
   - bearerAuth: []
@@ -170,6 +174,64 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
+
+  /customer:
+    put:
+      tags: [admin]
+      summary: Set another account's plan
+      description: |
+        The operator counterpart to `PATCH /profile`. That operation takes its subject from the
+        session and never from the body - a profile endpoint accepting an arbitrary `sub` would
+        be an account-takeover primitive - so it can only ever reach the caller, and an operator
+        who can upgrade themselves and nobody else is not an operator tool. This operation names
+        a subject, and being a separate operation is what lets `/profile` keep that rule.
+
+        Reached only by an account holding `_admin` or `customerservice`. **The role is checked
+        before the body is validated and before the subject is looked up**, so the answer to a
+        caller without the role is 403 whether or not the named account exists, and is identical
+        in both cases: answering 404 or 400 first would make this an oracle telling any
+        signed-in user which accounts exist.
+
+        Only `plan` is applied. `name`, `roles` and `type` are CouchDB's own and are written
+        back unchanged - an operator who could set `roles` could mint more operators, and the
+        role check above would then mean nothing.
+
+        What a plan then permits is decided by the policy table, never by a comparison against a
+        tier (ADR 0009).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sub, plan]
+              properties:
+                sub:
+                  type: string
+                  description: |
+                    The account to change; also the CouchDB username. Not the caller - that is
+                    the whole point of this operation.
+                plan:
+                  type: string
+                  enum: [free, user, pro]
+      responses:
+        '200':
+          description: The named account's profile, as stored
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Profile' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: |
+            No `_users` document for that subject - an account that has never signed in. Distinct
+            from 403 because "you may not" and "there is no such account" send an operator to
+            different places, and reached only *after* the role check, so it says that to an
+            operator and to nobody else.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
 
   /projects:
     get:

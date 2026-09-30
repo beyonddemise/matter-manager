@@ -3,7 +3,13 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { mintToken, signingKeyFromPem } from '../../src/auth/jwt.js'
 import type { Identity } from '../../src/auth/oidc.js'
 import type { CouchClient, Revision } from '../../src/couch/client.js'
-import { isLocale, type Profile, profileStore, userDocumentId } from '../../src/profile/store.js'
+import {
+  isLocale,
+  type Profile,
+  profileStore,
+  UnknownSubjectError,
+  userDocumentId,
+} from '../../src/profile/store.js'
 import { buildServer, type Server } from '../../src/server.js'
 import { loadContract, operationsOf, validate } from '../support/contract.js'
 
@@ -616,5 +622,18 @@ describe('the plan on a user document', () => {
     const store = storeWith({ name: 'user-1', roles: [], type: 'user' })
     expect((await store.setPlan('user-1', 'user')).plan).toBe('user')
     expect((await store.read('user-1'))?.plan).toBe('user')
+  })
+
+  it('names the failure when the subject has no document at all', async () => {
+    // `PUT /customer` answers 404 rather than 500 for a subject who has never signed in, and it
+    // decides that by the *class* of this error — `update` throws a bare `Error` for the same
+    // condition, which a route cannot tell from a bug. So the class is the contract between the
+    // store and the route, and nothing else asserted it: a `setPlan` that threw a plain Error
+    // would leave the route's catch falling through to a 500 with every route test still green
+    // except the one 404, and the reason would not be visible from there.
+    const store = storeWith()
+
+    await expect(store.setPlan('nobody', 'pro')).rejects.toBeInstanceOf(UnknownSubjectError)
+    await expect(store.setPlan('nobody', 'pro')).rejects.toThrow('nobody')
   })
 })
