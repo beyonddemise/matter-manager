@@ -469,6 +469,15 @@ paths:
         # missing email long before it looks a project up. Found by reading the handler.
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
+        # This route reads the caller's principal the same way `POST /projects` does -
+        # `ensureRegistry`, the owned-projects view and a profile read - so it can fail for the
+        # deployment's reasons rather than the caller's. The body says nothing about which step
+        # or which database, for the reason `POST /projects`'s 500 gives.
+        '500':
+          description: The membership could not be changed, for a reason the caller cannot act on
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
 
   /projects/{projectId}/transfer:
     parameters:

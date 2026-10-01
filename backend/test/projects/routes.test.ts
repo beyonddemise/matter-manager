@@ -960,6 +960,58 @@ describe('sharing a project', () => {
       { sub: OWNER, email: 'ada@example.test', role: 'owner' },
     ])
   })
+
+  describe('when CouchDB cannot say what the caller already has', () => {
+    // `principalFor` is the same function `POST /projects` wraps, shared rather than
+    // duplicated — and until this fix, this route called it outside every `try`. `ensureRegistry`,
+    // the owned-projects view and the profile read can each raise `CouchError`, and unwrapped
+    // that escaped as a raw Fastify 500 carrying CouchDB's own message, on a route whose every
+    // other failure is deliberately mapped and scrubbed.
+
+    it('answers the same shaped 500 the creation route answers for the identical failure', async () => {
+      const built = seedProject(server({ fails: { view: true } }))
+      const response = await share(built.app, { email: 'grace@example.test', role: 'read' })
+
+      expect(response.statusCode).toBe(500)
+      expect(JSON.parse(response.body)).toEqual({
+        title: 'That membership could not be changed.',
+        status: 500,
+      })
+    })
+
+    it('says nothing about CouchDB', async () => {
+      // The property, stated as `POST /projects`'s sibling test states it. Unwrapped, the body
+      // was Fastify's own `{"statusCode":500,"error":"Internal Server Error","message":"<CouchError>"}`
+      // — which names the database, the operation and the status CouchDB gave.
+      const built = seedProject(server({ fails: { view: true } }))
+      const response = await share(built.app, { email: 'grace@example.test', role: 'read' })
+
+      expect(response.body).not.toMatch(/internal server error|couch|_design/i)
+    })
+
+    it('changes nothing', async () => {
+      // It refuses before the gate, so certainly before `changeMembership`. Asserted rather
+      // than assumed: a handler that logged the failure and carried on with a default
+      // principal would pass the two tests above and still grant access on a plan it could
+      // not verify.
+      const built = seedProject(server({ fails: { view: true } }))
+      await share(built.app, { email: 'grace@example.test', role: 'read' })
+
+      expect(
+        (built.couch.documents.get(`projects/project:${PROJECT_ID}`) as { participants: unknown[] })
+          .participants,
+      ).toEqual([{ role: 'owner', userid: OWNER }])
+    })
+
+    it('answers what the contract declares for it', async () => {
+      const built = seedProject(server({ fails: { view: true } }))
+      const response = await share(built.app, { email: 'grace@example.test', role: 'read' })
+
+      expect(
+        validate(response.json(), contractSchema('PUT', '/projects/{projectId}/members', '500')),
+      ).toEqual([])
+    })
+  })
 })
 
 describe('handing a project to somebody else', () => {

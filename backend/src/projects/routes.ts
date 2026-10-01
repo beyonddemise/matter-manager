@@ -371,7 +371,24 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDepende
     // literal would be invisible now and silently wrong on the day a policy starts reading it —
     // which is precisely the failure ADR 0009's seam exists to prevent. One extra read on this
     // route is the price.
-    const principal = await principalFor(sub)
+    let principal: Principal
+    try {
+      principal = await principalFor(sub)
+    } catch (error) {
+      // The same three pieces of I/O `POST /projects` wraps for the same reason —
+      // `ensureRegistry`, the owned-projects view and the profile read — any of which can raise
+      // `CouchError`. Unwrapped, that escaped as a raw Fastify 500 carrying CouchDB's own
+      // message, on a route that otherwise maps and scrubs every failure. Before this route
+      // counted the caller's owned projects it built the principal from literal values and did
+      // no I/O at all, so this path did not exist until `principalFor` replaced that literal.
+      //
+      // Answered as the same shaped 500 `POST /projects` answers for the identical failure, and
+      // logged the same way: the deployment could not do its job, the request was not the
+      // caller's fault, and there is nothing in the detail they can act on. The detail goes to
+      // the log, where somebody can.
+      request.log.error({ err: error }, 'could not read the principal for a membership change')
+      return problem(reply, { title: 'That membership could not be changed.', status: 500 })
+    }
 
     try {
       gate(principal, INVITE, { id: (request.params as { projectId: string }).projectId })
