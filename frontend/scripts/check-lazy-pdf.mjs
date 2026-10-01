@@ -107,13 +107,21 @@ const chunks = new Map(
 /**
  * Everything a visitor downloads before the application runs: the entries and their closure.
  *
- * `unresolved` is a static import this walk could not find under `dist/assets` - a chunk the
- * bundler emitted somewhere else, or a specifier that no longer matches what is on disk. Such
- * an import used to be silently dropped: `chunks.get(name)` came back `undefined`, nothing was
- * queued from it, and the walk carried on as if that branch of the bundle did not exist. That
- * is exactly the gap a PDF writer reached through such an import would fall through - the
- * check would report success on the one case it could not actually evaluate. Returned instead
- * of thrown, so the caller can report every one of them rather than just the first.
+ * `unresolved` is a static import — or an entry script `index.html` loads directly — that this
+ * walk could not find under `dist/assets`: a chunk the bundler emitted somewhere else, or a
+ * specifier that no longer matches what is on disk. Such a reference used to be silently
+ * dropped: `chunks.get(name)` came back `undefined`, nothing was queued from it, and the walk
+ * carried on as if that branch of the bundle did not exist. That is exactly the gap a PDF writer
+ * reached through such a reference would fall through - the check would report success on the
+ * one case it could not actually evaluate. Returned instead of thrown, so the caller can report
+ * every one of them rather than just the first.
+ *
+ * The entry case is not a special one. It was once excluded here (`next.from !== 'index.html'`
+ * guarded the push), which meant an entry script `index.html` pointed outside `assets/` was
+ * skipped rather than flagged — the walk never queued anything from it, so its whole import
+ * graph, writer included, went unchecked while the check still reported success. An unresolvable
+ * entry is exactly as uninformative as an unresolvable import: either way, this check cannot see
+ * what that script loads, so it cannot rule out the writer being in it.
  */
 function eagerlyReachable() {
   const seen = new Set()
@@ -125,7 +133,7 @@ function eagerlyReachable() {
     seen.add(next.name)
     const code = chunks.get(next.name)
     if (code === undefined) {
-      if (next.from !== 'index.html') unresolved.push(next)
+      unresolved.push(next)
       continue
     }
     queue.push(...staticImports(code, next.name).map((name) => ({ name, from: next.name })))
@@ -142,9 +150,11 @@ if (unresolved.length > 0) {
   // writer is absent from the first load by seeing the whole closure of what that load pulls
   // in; a chunk it cannot find is a chunk it cannot rule out, and reporting "ok" anyway is how
   // this kind of guard passes while checking nothing.
-  console.error('Found a static import this check cannot resolve under dist/assets, so it')
-  console.error("cannot tell whether that chunk's contents are part of the first load:\n")
-  for (const { name, from } of unresolved) console.error(`  ${name} (imported from ${from})`)
+  console.error('Found a script this check cannot resolve under dist/assets, so it cannot tell')
+  console.error("whether that chunk's contents are part of the first load:\n")
+  for (const { name, from } of unresolved) {
+    console.error(`  ${name} (${from === 'index.html' ? 'loaded by' : 'imported from'} ${from})`)
+  }
   console.error('\nEither the bundler emitted it outside assets/, or the specifier no longer')
   console.error('matches what is on disk. Fix the mismatch, or teach this check the new layout.')
   process.exit(1)
