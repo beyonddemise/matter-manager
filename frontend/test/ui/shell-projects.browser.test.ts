@@ -7,22 +7,23 @@ import '@awesome.me/webawesome-pro/dist/components/dialog/dialog.js'
 import '@awesome.me/webawesome-pro/dist/components/icon/icon.js'
 import '@awesome.me/webawesome-pro/dist/components/input/input.js'
 import '@awesome.me/webawesome-pro/dist/components/tag/tag.js'
-import { fixture, html, waitUntil } from '@open-wc/testing-helpers'
+import { fixture, fixtureCleanup, html, waitUntil } from '@open-wc/testing-helpers'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { CachedProfile, LocalProjectEntry } from '../../src/data/index.js'
 import type { AppShell } from '../../src/ui/app-shell.js'
 import '../../src/ui/app-shell.js'
-import { CURRENT_PROJECT_KEY } from '../../src/ui/current-project.js'
+import { CURRENT_PROJECT_KEY, writeCurrentProjectId } from '../../src/ui/current-project.js'
 import {
   currentProjectDatabaseName,
   projectIsEditable,
   useProjectDatabase,
 } from '../../src/ui/db/project-database.js'
 import type { LocalProjectDependencies } from '../../src/ui/local-projects.js'
+import { beginProjectAction } from '../../src/ui/project-busy.js'
 import type { Project } from '../../src/ui/projects.js'
 import type { SyncableProject } from '../../src/ui/sync/manager.js'
 import type { ProjectsView } from '../../src/ui/views/projects.js'
-import { refresherReporting } from './refresher-stub.js'
+import { refresherNeverAnswering, refresherReporting } from './refresher-stub.js'
 import { destroyProjectStores, isolatedProjectStore } from './support/project-store.js'
 
 /**
@@ -98,7 +99,7 @@ function recordingSync() {
 }
 
 interface Options {
-  readonly session?: 'signed-in' | 'signed-out' | 'expired'
+  readonly session?: 'signed-in' | 'signed-out' | 'expired' | 'unanswered'
   readonly local?: readonly LocalProjectEntry[]
   readonly cachedProfile?: CachedProfile
   readonly list?: () => Promise<readonly Project[]>
@@ -121,7 +122,11 @@ async function mount(options: Options = {}) {
   )
   const element = (await fixture(html`
     <app-shell
-      .refresher=${refresherReporting(options.session ?? 'signed-in')}
+      .refresher=${
+        options.session === 'unanswered'
+          ? refresherNeverAnswering
+          : refresherReporting(options.session ?? 'signed-in')
+      }
       .connectivity=${options.network ?? fakeNetwork(true)}
       .followLocale=${options.followLocale ?? (async () => undefined)}
       .listProjects=${list}
@@ -161,6 +166,8 @@ beforeEach(() => {
 })
 
 afterEach(async () => {
+  // Disconnected, so no earlier test's shell answers a later test's refresh or idle signal.
+  fixtureCleanup()
   window.location.hash = ''
   localStorage.removeItem(CURRENT_PROJECT_KEY)
   useProjectDatabase('project_local')
@@ -272,6 +279,37 @@ describe('what replicates', () => {
 })
 
 describe('a project the server refuses', () => {
+  it('stops being reported once it is no longer replicated', async () => {
+    // A copy removed while it was denied must not hold the header at "No permission to sync".
+    let report: (projectId: string, state: string) => void = () => {}
+    const sync = recordingSync()
+    const store = isolatedProjectStore()
+    await store.cache().addLocalProject(copy)
+    await store.cache().writeProfile(profile())
+    const element = (await fixture(html`
+      <app-shell
+        .refresher=${refresherReporting('signed-in')}
+        .connectivity=${fakeNetwork(true)}
+        .followLocale=${async () => undefined}
+        .listProjects=${async () => [project()]}
+        .makeSync=${(onState: (projectId: string, state: string) => void) => {
+          report = onState
+          return sync.manager
+        }}
+        .projectStore=${store}
+      ></app-shell>
+    `)) as AppShell
+    await inputSettles(element, (i) => i.server !== undefined, 'no list arrived')
+    report('p1', 'denied')
+    await waitUntil(() => element.querySelector('[data-syncing]') !== null, 'no summary')
+
+    await store.cache().removeLocalProject(copy.dbName)
+    await projectsView(element)?.refresh?.()
+    await element.updateComplete
+
+    expect(element.querySelector('[data-syncing]')).toBeNull()
+  })
+
   it('stops replicating it, and keeps saying why on its row', async () => {
     // Spec: a `denied` state stops replication for that project. Cancelling a replication
     // reports `stopped`, which must not overwrite the reason the page shows.
@@ -318,6 +356,85 @@ describe('the first run', () => {
     expect(await store.cache().readLocalProjects()).toMatchObject([
       { dbName: 'project_local', name: '' },
     ])
+  })
+
+  it('is not a member removing their last local copy', async () => {
+    // Ruling C-R7, refined: their projects are on the server, and an empty project nobody
+    // made would count against their plan.
+    const store = isolatedProjectStore()
+    await store
+      .cache()
+      .writeProjects(
+        [{ projectId: 'p1', dbName: 'project_p1', name: 'Beta', role: 'owner' }],
+        'then',
+      )
+
+    const { element } = await mount({
+      store,
+      cachedProfile: profile(),
+      list: async () => [project()],
+    })
+    await inputSettles(element, (i) => i.server !== undefined, 'no list arrived')
+
+    expect(await store.cache().readLocalProjects()).toEqual([])
+    expect(element.querySelector('[data-name-project]')).toBeNull()
+  })
+})
+
+describe('while a project action runs', () => {
+  it('a refresh neither reopens the project nor hands replication a list; the end applies', async () => {
+    // The shape of a promotion half way: the source's entry records the new id, the views have
+    // moved to the survivor, and replication was handed the survivor — none of which the index
+    // says yet. A refresh landing now (the profile, a reconnection) must not undo any of it.
+    const source = entry()
+    const { element, store, sync } = await mount({
+      local: [source],
+      cachedProfile: profile(),
+      list: async () => [project()],
+    })
+    await inputSettles(element, (i) => i.server !== undefined, 'no list arrived')
+
+    const end = beginProjectAction()
+    try {
+      await store.cache().updateLocalProject(source.dbName, { projectId: 'p1' })
+      writeCurrentProjectId(() => localStorage, 'p1')
+      useProjectDatabase('project_p1', true)
+      sync.manager.set([{ projectId: 'p1', dbName: 'project_p1' }])
+      const handed = sync.sets.length
+
+      await projectsView(element)?.refresh?.()
+
+      expect(currentProjectDatabaseName()).toBe('project_p1')
+      expect(sync.sets.length).toBe(handed)
+
+      // The action finishes: the survivor listed, the source gone.
+      await store.cache().addLocalProject(copy)
+      await store.cache().removeLocalProject(source.dbName)
+    } finally {
+      end()
+    }
+
+    await waitUntil(
+      () =>
+        JSON.stringify(sync.sets.at(-1)) ===
+        JSON.stringify([{ projectId: 'p1', dbName: 'project_p1' }]),
+      'the end was not applied',
+    )
+    await inputSettles(
+      element,
+      (i) => i.local.length === 1 && i.local[0]?.dbName === 'project_p1',
+      'index not re-read',
+    )
+    expect(currentProjectDatabaseName()).toBe('project_p1')
+  })
+})
+
+describe('the session before its first answer', () => {
+  it('is told to the page as being checked, not as signed out', async () => {
+    const { element } = await mount({ session: 'unanswered' })
+    const input = await inputSettles(element, () => true, 'no page')
+    expect(input.session).toBe('checking')
+    expect(element.querySelector('[data-hint="signed-out"]')).toBeNull()
   })
 })
 

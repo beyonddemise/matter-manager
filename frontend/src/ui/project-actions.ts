@@ -34,6 +34,7 @@ import {
   indexServerProject,
   type LocalProjectDependencies,
 } from './local-projects.js'
+import { beginProjectAction } from './project-busy.js'
 import {
   createProject,
   type Project,
@@ -236,122 +237,139 @@ export function projectActions(deps: ProjectActionDependencies): ProjectActions 
     return created
   }
 
+  /**
+   * Runs an action's work while holding `project-busy`, so a shell refresh in the middle cannot
+   * switch the open project or hand replication a list of its own (see that module), then
+   * refreshes the page's inputs — after letting go, so the refresh is applied in full.
+   */
+  const held = async (work: () => Promise<void>): Promise<void> => {
+    const end = beginProjectAction()
+    try {
+      await work()
+    } finally {
+      end()
+    }
+    await deps.refresh()
+  }
+
   return {
-    async promote(model, row) {
-      ensure(row.actions.promote)
-      const project = await target(row)
-      const source = local.database(row.dbName)
-      const survivor = local.database(project.dbName)
+    promote: (model, row) =>
+      held(async () => {
+        ensure(row.actions.promote)
+        const project = await target(row)
+        const source = local.database(row.dbName)
+        const survivor = local.database(project.dbName)
 
-      // Started first, because `pushNow` only pushes projects it has been given.
-      sync.set(replicated(model, { add: { projectId: project.projectId, dbName: project.dbName } }))
-      // Before the copy, so that every write this tab makes from now on lands in the survivor.
-      const back = leave(
-        row.dbName,
-        () => ({
-          dbName: project.dbName,
-          id: project.projectId,
-          editable: true,
-        }),
-        row,
-      )
-      try {
-        // Into the server-named database (ruling C-R1), so live sync pairs it with its server
-        // namesake. Without the `project` document: on a server database the service owns it,
-        // and it arrives by replication. Copying again copies only what is missing.
-        await settled(source, async () => {
-          const copied = await source.replicate.to(survivor, {
-            filter: (doc: { _id: string }) => doc._id !== PROJECT_DOCUMENT_ID,
-          })
-          if (copied.doc_write_failures > 0) {
-            throw new Error(`${copied.doc_write_failures} documents could not be copied.`)
-          }
-          await push(project.projectId)
-        })
-        // The server has everything the old database ever held. Only now is it expendable.
-        // Listed after the check, not inside the transfer: a transfer that is then refused must
-        // leave no entry for a copy that is not finished. It writes `mm-local`, not the source.
-        await indexServerProject(project, local)
-      } catch (error) {
-        back()
-        throw error
-      }
-      await destroyLocalProject(row.dbName, local)
-      await deps.refresh()
-    },
-
-    async download(model, row) {
-      ensure(row.actions.download)
-      const { projectId, dbName, name, client, role } = row
-      if (projectId === undefined || role === undefined) throw new Error('Not a server project.')
-      // The role is recorded so an offline device can still tell a share from its own (C-R4).
-      await indexServerProject(
-        { projectId, dbName, name, role, ...(client === undefined ? {} : { client }) },
-        local,
-      )
-      sync.set(replicated(model, { add: { projectId, dbName } }))
-      await deps.refresh()
-    },
-
-    async removeLocalCopy(model, row) {
-      ensure(row.actions.removeLocal)
-      // The model's `online` may be a render old; the browser's own answer is asked again.
-      if (!deps.online()) throw new ProjectActionError('offline')
-      const { projectId } = row
-      if (projectId === undefined) throw new Error('Not a synchronized project.')
-
-      // Held still for the whole removal, so that no reconnection restarts the replication.
-      sync.suspend(projectId)
-      try {
-        // Off it before the push, so this tab writes nothing into it that the push could miss.
-        const back = leave(row.dbName, () => elsewhere(model, row.dbName), row)
+        // Started first, because `pushNow` only pushes projects it has been given.
+        sync.set(
+          replicated(model, { add: { projectId: project.projectId, dbName: project.dbName } }),
+        )
+        // Before the copy, so that every write this tab makes from now on lands in the survivor.
+        const back = leave(
+          row.dbName,
+          () => ({
+            dbName: project.dbName,
+            id: project.projectId,
+            editable: true,
+          }),
+          row,
+        )
         try {
-          await settled(local.database(row.dbName), () => push(projectId))
+          // Into the server-named database (ruling C-R1), so live sync pairs it with its server
+          // namesake. Without the `project` document: on a server database the service owns it,
+          // and it arrives by replication. Copying again copies only what is missing.
+          await settled(source, async () => {
+            const copied = await source.replicate.to(survivor, {
+              filter: (doc: { _id: string }) => doc._id !== PROJECT_DOCUMENT_ID,
+            })
+            if (copied.doc_write_failures > 0) {
+              throw new Error(`${copied.doc_write_failures} documents could not be copied.`)
+            }
+            await push(project.projectId)
+          })
+          // The server has everything the old database ever held. Only now is it expendable.
+          // Listed after the check, not inside the transfer: a transfer that is then refused must
+          // leave no entry for a copy that is not finished. It writes `mm-local`, not the source.
+          await indexServerProject(project, local)
         } catch (error) {
           back()
           throw error
         }
         await destroyLocalProject(row.dbName, local)
-        // Dropped before the hold is lifted, so lifting it does not start it again.
+      }),
+
+    download: (model, row) =>
+      held(async () => {
+        ensure(row.actions.download)
+        const { projectId, dbName, name, client, role } = row
+        if (projectId === undefined || role === undefined) throw new Error('Not a server project.')
+        // The role is recorded so an offline device can still tell a share from its own (C-R4).
+        await indexServerProject(
+          { projectId, dbName, name, role, ...(client === undefined ? {} : { client }) },
+          local,
+        )
+        sync.set(replicated(model, { add: { projectId, dbName } }))
+      }),
+
+    removeLocalCopy: (model, row) =>
+      held(async () => {
+        ensure(row.actions.removeLocal)
+        // The model's `online` may be a render old; the browser's own answer is asked again.
+        if (!deps.online()) throw new ProjectActionError('offline')
+        const { projectId } = row
+        if (projectId === undefined) throw new Error('Not a synchronized project.')
+
+        // Held still for the whole removal, so that no reconnection restarts the replication.
+        sync.suspend(projectId)
+        try {
+          // Off it before the push, so this tab writes nothing into it that the push could miss.
+          const back = leave(row.dbName, () => elsewhere(model, row.dbName), row)
+          try {
+            await settled(local.database(row.dbName), () => push(projectId))
+          } catch (error) {
+            back()
+            throw error
+          }
+          await destroyLocalProject(row.dbName, local)
+          // Dropped before the hold is lifted, so lifting it does not start it again.
+          sync.set(replicated(model, { drop: projectId }))
+        } finally {
+          sync.resume(projectId)
+        }
+      }),
+
+    deleteLocalProject: (model, row, typedName) =>
+      held(async () => {
+        ensure(row.actions.deleteLocal)
+        const name = row.name.trim()
+        if (name === '' || typedName.trim() !== name) throw new ProjectActionError('name-mismatch')
+        // A copy of a server project (an archived one's, an orphan) may still be replicating:
+        // held still, then dropped, as for a removal. A half-done promotion's id is left alone:
+        // what replicates under it is the new server-named copy, not this database.
+        const replicating = isLocalOnlyDatabase(row.dbName) ? undefined : row.projectId
+        if (replicating !== undefined) sync.suspend(replicating)
+        try {
+          leave(row.dbName, () => elsewhere(model, row.dbName), row)
+          await destroyLocalProject(row.dbName, local)
+          if (replicating !== undefined) sync.set(replicated(model, { drop: replicating }))
+        } finally {
+          if (replicating !== undefined) sync.resume(replicating)
+        }
+      }),
+
+    removeFromServer: (model, row) =>
+      held(async () => {
+        ensure(row.actions.removeServer)
+        const { projectId } = row
+        if (projectId === undefined) throw new Error('Not a server project.')
+        // Best effort: once archived the server refuses every write, so whatever the copy has not
+        // sent yet never will be. A failure does not stop the archive — the reader asked for it —
+        // and the copy left behind warns before it can be deleted (`projects-model.ts`).
+        if (row.location === 'synced') await push(projectId).catch(() => undefined)
+        await updateProject(serverDeps, projectId, { archived: true })
+        // The server now refuses every write to it, so replicating it would only report denials.
+        // A local copy stays, and the model opens it read-only.
         sync.set(replicated(model, { drop: projectId }))
-      } finally {
-        sync.resume(projectId)
-      }
-      await deps.refresh()
-    },
-
-    async deleteLocalProject(model, row, typedName) {
-      ensure(row.actions.deleteLocal)
-      const name = row.name.trim()
-      if (name === '' || typedName.trim() !== name) throw new ProjectActionError('name-mismatch')
-      // A copy of a server project (an archived one's, an orphan) may still be replicating:
-      // held still, then dropped, as for a removal. A half-done promotion's id is left alone:
-      // what replicates under it is the new server-named copy, not this database.
-      const replicating = isLocalOnlyDatabase(row.dbName) ? undefined : row.projectId
-      if (replicating !== undefined) sync.suspend(replicating)
-      try {
-        leave(row.dbName, () => elsewhere(model, row.dbName), row)
-        await destroyLocalProject(row.dbName, local)
-        if (replicating !== undefined) sync.set(replicated(model, { drop: replicating }))
-      } finally {
-        if (replicating !== undefined) sync.resume(replicating)
-      }
-      await deps.refresh()
-    },
-
-    async removeFromServer(model, row) {
-      ensure(row.actions.removeServer)
-      const { projectId } = row
-      if (projectId === undefined) throw new Error('Not a server project.')
-      // Best effort: once archived the server refuses every write, so whatever the copy has not
-      // sent yet never will be. A failure does not stop the archive — the reader asked for it —
-      // and the copy left behind warns before it can be deleted (`projects-model.ts`).
-      if (row.location === 'synced') await push(projectId).catch(() => undefined)
-      await updateProject(serverDeps, projectId, { archived: true })
-      // The server now refuses every write to it, so replicating it would only report denials.
-      // A local copy stays, and the model opens it read-only.
-      sync.set(replicated(model, { drop: projectId }))
-      await deps.refresh()
-    },
+      }),
   }
 }

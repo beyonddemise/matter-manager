@@ -557,3 +557,19 @@ describe('a promotion that stopped half way', () => {
     expect(row.actions.deleteLocal).toEqual(ok)
   })
 })
+
+describe('a session not yet known', () => {
+  // Until the token exchange answers, the shell does not know whether anybody is signed in.
+  // Saying "sign in" to somebody who is would be wrong for that moment; saying "waiting" is not.
+  const checking = projectsModel(input({ session: 'checking', serverStale: true }))
+
+  it('allows nothing that needs the server, and says it is waiting', () => {
+    const row = byKey(checking, 'project_local_alpha')
+    expect(row.actions.promote).toEqual(no('stale'))
+    expect(checking.canCreate).toEqual(no('offline-server'))
+  })
+
+  it('still opens what is on this device', () => {
+    expect(byKey(checking, 'project_local_alpha').actions.open).toEqual(ok)
+  })
+})

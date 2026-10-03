@@ -438,7 +438,8 @@ export class ProjectsView extends LitElement {
     const { session, online } = this.input
     return html`
       ${
-        session === 'signed-in'
+        // Not while the session is still being checked: the reader may well be signed in.
+        session === 'signed-in' || session === 'checking'
           ? nothing
           : html`<wa-callout variant="neutral" data-hint="signed-out">
               <wa-icon slot="icon" name="circle-info"></wa-icon>

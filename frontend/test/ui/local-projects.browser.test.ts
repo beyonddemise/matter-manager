@@ -172,6 +172,20 @@ describe('adopting on a device with nothing to adopt', () => {
     })
   })
 
+  it('creates and indexes nothing on a device that has heard of server projects', async () => {
+    // A signed-in member who removed their last local copy: their projects are on the server,
+    // and an empty project they never made would count against their plan.
+    await localProfileCache().writeProjects(
+      [{ projectId: 'p1', dbName: 'project_p1', name: 'Beta', role: 'owner' }],
+      '2026-10-03T08:00:00.000Z',
+    )
+
+    await adoptLegacyCatalogue('')
+
+    expect(await localProfileCache().readLocalProjects()).toEqual([])
+    expect(await documentCount(PROJECT_DATABASE_NAME)).toBe(0)
+  })
+
   it('creates and indexes nothing when another project is already indexed', async () => {
     // A device that has projects already has somewhere to work; an empty catalogue listed
     // beside them would be a project nobody made.

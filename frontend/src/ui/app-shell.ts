@@ -1,32 +1,20 @@
 import { msg, updateWhenLocaleChanges } from '@lit/localize'
 import { html, LitElement, type TemplateResult } from 'lit'
-import { DEFAULT_PLAN, showsUpgrade } from '../domain/plan.js'
+import { DEFAULT_PLAN } from '../domain/plan.js'
 import {
   beginSignIn,
   endSession,
   followProfileLocale,
-  projectSync,
-  projects,
   requestTokens,
   type TokenOutcome,
 } from './composition.js'
 import { browserConnectivity, type ConnectivitySource, watchConnectivity } from './connectivity.js'
-import {
-  readCurrentProjectId,
-  resolveCurrentProject,
-  writeCurrentProjectId,
-} from './current-project.js'
-import { localDatabase, useProjectDatabase } from './db/project-database.js'
+import { localDatabase } from './db/project-database.js'
 import { negotiateLocale } from './i18n/locale.js'
 import { activateLocale } from './i18n/localization.js'
-import {
-  adoptLegacyCatalogue,
-  type LocalProjectDependencies,
-  localProjectDefaults,
-} from './local-projects.js'
-import { fetchProjectList, type ProjectFacts, readProjectFacts } from './project-inputs.js'
+import type { LocalProjectDependencies } from './local-projects.js'
 import type { Project } from './projects.js'
-import { type ProjectsInput, projectsModel, synchronizedProjects } from './projects-model.js'
+import { ProjectsController } from './projects-controller.js'
 import { matchRoute } from './router/match.js'
 import { NAV_ROUTES, ROUTES } from './router/routes.js'
 import {
@@ -37,6 +25,14 @@ import {
   writePreference,
 } from './scheme.js'
 import { type SessionState, sessionExpired } from './session.js'
+import {
+  renderAccount,
+  renderNetwork,
+  renderSignOut,
+  renderSignOutConfirmation,
+  renderSyncing,
+  renderUpgrade,
+} from './shell-header.js'
 import type { SyncManager } from './sync/manager.js'
 import type { SyncState } from './sync/replication.js'
 import { startRefresher } from './token-refresher.js'
@@ -93,14 +89,6 @@ export const VIEWS: Readonly<
   'edit-device': (params) => html`<edit-device-view uuid=${params.id ?? ''}></edit-device-view>`,
   rooms: () => html`<rooms-view></rooms-view>`,
   settings: () => html`<settings-view></settings-view>`,
-}
-
-/** What the projects page reads before the first refresh: a device holding nothing yet. */
-const NO_FACTS: ProjectFacts = {
-  local: [],
-  server: undefined,
-  serverStale: true,
-  plan: DEFAULT_PLAN,
 }
 
 /**
@@ -178,8 +166,6 @@ export class AppShell extends LitElement implements ViewHost {
 
   static override properties = {
     session: { state: true },
-    syncing: { state: true },
-    facts: { state: true },
     signingOut: { state: true },
     upgrading: { state: true },
     refresher: { attribute: false },
@@ -210,20 +196,6 @@ export class AppShell extends LitElement implements ViewHost {
    */
   declare session: SessionState | undefined
 
-  /**
-   * What replication is doing across every project, or `undefined` when none is running.
-   *
-   * The worst state wins, because a summary that reported `idle` while one project was
-   * unreachable would be reassuring and wrong. `offline` is not an error - the local database
-   * is complete and usable - so it is shown as quietly as the connectivity tag beside it.
-   */
-  declare syncing: SyncState | undefined
-
-  /**
-   * What the projects page and the header are computed from: the local index, the server list
-   * (fresh or remembered), and the cached plan and email. `undefined` until first read.
-   */
-  declare facts: ProjectFacts | undefined
   /** Whether the sign-out confirmation is open. */
   declare signingOut: boolean
   /** Whether the upgrade dialog is open. */
@@ -283,7 +255,6 @@ export class AppShell extends LitElement implements ViewHost {
     // its old strings while its neighbours change - a silent failure, hence the test in
     // `i18n.browser.test.ts` that switches locale and checks each view's text.
     updateWhenLocaleChanges(this)
-    this.facts = undefined
     this.signingOut = false
     this.upgrading = false
     this.sessionEndedNotice = false
@@ -307,13 +278,9 @@ export class AppShell extends LitElement implements ViewHost {
         this.online = online
         // The list may have changed while the connection was gone, and the page can only act on
         // a list this session heard (C-R5).
-        if (regained && this.session === 'signed-in') void this.refreshProjects(true)
+        if (regained && this.session === 'signed-in') void this.projects.refresh(true)
       },
     )
-
-    // The index, the remembered list and the cached plan, and the first-run catalogue adopted:
-    // none of it waits for the session, so the page is right offline from the first render.
-    void this.refreshProjects(false)
 
     // Not awaited, and nothing waits for it. The application is local-first: every view works
     // without a session, so holding the shell back on a network request would delay the whole
@@ -357,7 +324,7 @@ export class AppShell extends LitElement implements ViewHost {
         this.session = 'signed-out'
         // Re-read either way: on a first answer this is the page's session arriving, after a
         // sign-in it is this session's list going stale.
-        void this.refreshProjects(false)
+        void this.projects.refresh(false)
         return
       case 'ended':
         // Local data stays: `sessionExpired` forgets the in-memory access token and nothing
@@ -367,7 +334,7 @@ export class AppShell extends LitElement implements ViewHost {
         this.session = sessionExpired({ forgetTokens })
         this.sessionEndedNotice = true
         // No longer this session's list: the page falls back to the remembered one, stale.
-        void this.refreshProjects(false)
+        void this.projects.refresh(false)
         return
       case 'unreachable':
         return
@@ -375,28 +342,18 @@ export class AppShell extends LitElement implements ViewHost {
   }
 
   /**
-   * Stops replication for a session that has ended without the user signing out here.
-   *
-   * The generation moves first, as in `onSignOut`, so a startup still in flight cannot finish
-   * into the session that has just ended.
+   * Stops replication for a session that has ended without the user signing out here. The
+   * generation moves first (in `end`), so a startup still in flight cannot finish into the
+   * session that has just ended.
    */
   private endReplication(): void {
-    this.sessionGeneration += 1
-    this.sync?.stopAll()
-    this.sync = undefined
-    this.states.clear()
-    this.syncing = undefined
-    this.fresh = undefined
+    this.projects.end()
   }
 
   override disconnectedCallback(): void {
-    // The same guard, for a shell torn down rather than signed out of. A replication left
-    // running against a detached component is a request nobody will read the answer to.
-    this.sessionGeneration += 1
+    // Replication is ended by the projects controller, which is disconnected with the shell.
     this.tokenRefresher?.stop()
     this.tokenRefresher = undefined
-    this.sync?.stopAll()
-    this.sync = undefined
     window.removeEventListener('hashchange', this.onHashChange)
     this.stopWatchingNetwork?.()
     this.stopWatchingNetwork = undefined
@@ -453,245 +410,17 @@ export class AppShell extends LitElement implements ViewHost {
     }
   }
 
-  /**
-   * What replication is doing, when it is doing anything.
-   *
-   * Nothing at all when it is `idle`: the steady state is everything being fine, and a badge
-   * that is always present says nothing when it matters.
-   */
-  private renderSyncing(): TemplateResult | '' {
-    if (this.syncing === undefined || this.syncing === 'idle') return ''
-
-    return html`
-      <wa-tag
-        data-syncing
-        variant=${this.syncing === 'denied' ? 'warning' : 'neutral'}
-        size="s"
-      >
-        <wa-icon slot="start" name="arrows-rotate"></wa-icon>
-        ${
-          this.syncing === 'denied'
-            ? msg('No permission to sync')
-            : this.syncing === 'offline'
-              ? msg('Waiting to sync')
-              : msg('Syncing')
-        }
-      </wa-tag>
-    `
-  }
-
-  /**
-   * The account, top right: the signed-in email, or the way to sign in, or nothing at all until
-   * the first answer arrives — offering "Sign in" to somebody who *is* signed in, for the moment
-   * it takes to find out, is worse than offering nothing for that moment.
-   *
-   * `expired` gets the same control as `signed-out` and a different word. The remedy is
-   * identical - sign in again - but "your session ended" and "you are not signed in" are
-   * different facts, and the first one reassures somebody whose data is still on the device
-   * that nothing has been lost.
-   *
-   * Signing out is not here but in the navigation (`renderSignOut`): it is rarely wanted, and
-   * the header is for what is true now.
-   */
-  private renderAccount(): TemplateResult | '' {
-    if (this.session === undefined) return ''
-
-    if (this.session === 'signed-in') {
-      const email = this.facts?.email
-      return email === undefined
-        ? ''
-        : html`<span data-user-email class="app-email">${email}</span>`
-    }
-
-    return html`
-      <wa-button data-sign-in appearance="plain" @click=${this.onSignIn}>
-        ${this.session === 'expired' ? msg('Session ended - sign in again') : msg('Sign in')}
-      </wa-button>
-    `
-  }
-
-  /**
-   * Signing out, as the navigation's last item while there is a session. It still asks first:
-   * see {@link renderSignOutConfirmation}.
-   */
-  private renderSignOut(): TemplateResult | '' {
-    if (this.session !== 'signed-in') return ''
-    return html`
-      <wa-button
-        data-sign-out
-        data-drawer="close"
-        appearance="plain"
-        class="app-nav-action"
-        @click=${this.onAskSignOut}
-      >
-        <wa-icon slot="start" name="right-from-bracket"></wa-icon>
-        ${msg('Sign out')}
-      </wa-button>
-    `
-  }
-
-  /**
-   * The way to a bigger plan, while there is one (`showsUpgrade`, never a tier literal: ADR
-   * 0009). There is nothing to buy yet, and the dialog says so plainly.
-   */
-  private renderUpgrade(): TemplateResult | '' {
-    if (!showsUpgrade(this.facts?.plan ?? DEFAULT_PLAN)) return ''
-    return html`
-      <wa-button data-upgrade size="s" variant="brand" appearance="outlined" @click=${this.onUpgrade}>
-        <wa-icon slot="start" name="rocket"></wa-icon>
-        ${msg('Upgrade')}
-      </wa-button>
-      ${
-        this.upgrading
-          ? html`<wa-dialog
-              data-upgrade-dialog
-              open
-              label=${msg('Upgrade')}
-              @wa-after-hide=${(event: Event) => {
-                // Only the dialog's own hide: an element inside it can fire the same event.
-                if (event.target === event.currentTarget) this.upgrading = false
-              }}
-            >
-              <p>${msg("It's just alpha — coming soon")}</p>
-              <wa-button slot="footer" data-close-upgrade @click=${this.onCloseUpgrade}>
-                ${msg('Close')}
-              </wa-button>
-            </wa-dialog>`
-          : ''
-      }
-    `
-  }
-
-  /**
-   * Whether the browser has a network, said quietly either way.
-   *
-   * Always present since the projects page: whether a project can be created on the server,
-   * promoted or removed depends on it, so the reader should not have to infer it from a
-   * refusal. Neutral in both states — nothing in this application is blocked by being offline:
-   * every write goes to a local database first, so offline explains a delay in sharing rather
-   * than a loss of function. `data-offline` exists only while offline, which is what the
-   * offline journey asserts.
-   */
-  private renderNetwork(): TemplateResult {
-    return this.online
-      ? html`<wa-tag data-online variant="neutral" size="s">
-          <wa-icon slot="start" name="plug-circle-check"></wa-icon>
-          ${msg('Online')}
-        </wa-tag>`
-      : html`<wa-tag data-offline variant="neutral" size="s">
-          <wa-icon slot="start" name="plug-circle-xmark"></wa-icon>
-          ${msg('Offline')}
-        </wa-tag>`
-  }
-
   /** The projects page, given the shell's state and its replication. See {@link ViewHost}. */
   renderProjects(): TemplateResult {
     return html`<projects-view
-      .input=${this.projectsInput()}
-      .sync=${this.sync}
+      .input=${this.projects.input()}
+      .sync=${this.projects.sync}
       .refresh=${this.refreshFromPage}
     ></projects-view>`
   }
 
-  /**
-   * The projects page's input, from the facts last read and what the shell knows now.
-   *
-   * A list is fresh only within the signed-in session that fetched it, so any other session
-   * marks it stale whatever the facts say (see `ProjectsInput.serverStale`).
-   */
-  private projectsInput(): ProjectsInput {
-    const facts = this.facts ?? NO_FACTS
-    const session = this.session ?? 'signed-out'
-    return {
-      local: facts.local,
-      server: facts.server,
-      serverStale: facts.serverStale || session !== 'signed-in',
-      plan: facts.plan,
-      ...(facts.reportedLimit === undefined ? {} : { reportedLimit: facts.reportedLimit }),
-      session,
-      online: this.online,
-      syncStates: (projectId) => this.states.get(projectId),
-    }
-  }
-
   /** The page's `refresh`: the list fetched again, then everything re-read. */
-  private refreshFromPage = (): Promise<void> => this.refreshProjects(true)
-
-  /**
-   * Reads the projects again and applies them: the current project, and what replicates.
-   *
-   * The fetch runs outside the queue and the read inside it. Reads are local and quick, so
-   * queueing them keeps two refreshes from interleaving (the first-run adoption above all);
-   * a fetch can take as long as the network likes, and queued it would hold up every later
-   * refresh — the one after a sign-out included — behind a request nobody is waiting for.
-   *
-   * @param fetchList whether to ask the server for the list first (only signed in and online)
-   */
-  private async refreshProjects(fetchList: boolean): Promise<void> {
-    const generation = this.sessionGeneration
-    if (fetchList && this.session === 'signed-in' && this.online) {
-      const store = this.store()
-      const listed = await fetchProjectList(
-        this.listProjects ?? (() => projects().list()),
-        store.cache(),
-      )
-      // A list asked for by a session that has since ended belongs to nobody.
-      if (generation !== this.sessionGeneration) return
-      // A failed fetch drops the fresh list: the remembered one stands in, stale (C-R5).
-      this.fresh = listed
-    }
-    const read = this.reading.then(() => this.readProjects())
-    this.reading = read.catch(() => undefined)
-    await read
-  }
-
-  /** The tail of the refresh queue. */
-  private reading: Promise<void> = Promise.resolve()
-
-  /** This session's `GET /projects`, if it answered. Dropped whenever the session ends. */
-  private fresh: readonly Project[] | undefined
-
-  /** One queued read: adopt on a first run, read the facts, apply them. */
-  private async readProjects(): Promise<void> {
-    const generation = this.sessionGeneration
-    const store = this.store()
-    // Ruling C-R7: a device with nothing indexed adopts its catalogue, even empty, so it always
-    // has one project to name and open. Idempotent and a no-op once anything is indexed. A
-    // failure leaves the page offering to create a project instead, which loses nothing.
-    await adoptLegacyCatalogue('', store).catch(() => undefined)
-    const facts = await readProjectFacts(
-      store.cache(),
-      this.session === 'signed-in' ? this.fresh : undefined,
-    )
-    if (generation !== this.sessionGeneration) return
-    this.facts = facts
-    this.applyProjects()
-  }
-
-  /**
-   * Opens the current project and hands replication its list, both from the page's model, so the
-   * shell and the page never disagree about what a project is.
-   *
-   * Replication gets **only the copies on this device** (`synchronizedProjects`), never every
-   * server project: one listed but not downloaded would be downloaded, a copy just removed
-   * downloaded again. A project an action holds (`SyncManager.suspend`) stays held whatever this
-   * list says.
-   */
-  private applyProjects(): void {
-    const model = projectsModel(this.projectsInput())
-    const stored = readCurrentProjectId(() => localStorage)
-    const current = resolveCurrentProject(stored, model)
-    // The *choice* is corrected too, not only the database: a stored id that matches nothing
-    // would be re-resolved, and fall back again, on every load.
-    if (current.id !== stored) writeCurrentProjectId(() => localStorage, current.id)
-    useProjectDatabase(current.dbName, current.editable)
-    this.sync?.set(synchronizedProjects(model))
-  }
-
-  /** The local index and databases, the injected ones or the application's. */
-  private store(): LocalProjectDependencies {
-    return this.projectStore ?? localProjectDefaults
-  }
+  private refreshFromPage = (): Promise<void> => this.projects.refresh(true)
 
   /**
    * Starts replicating this account's projects, and follows the profile's locale.
@@ -707,80 +436,26 @@ export class AppShell extends LitElement implements ViewHost {
    * summary is what replication resuming later looks like.
    */
   private startSyncing(): void {
-    // Found by review. The list request and the locale callback both outlive this call. Somebody
-    // who signs out while either is in flight would otherwise get the list applied - and a
-    // replication handed projects - *after* the sign-out that stopped the previous one, with a
-    // token that has been forgotten, and a locale from the account they have left.
-    //
-    // The generation is the same guard `theme.ts` uses for stylesheet loads and `device.ts` for
-    // saves. Signing out increments it, so everything started before is answered by nobody.
-    const generation = this.sessionGeneration
+    // Found by review. The locale callback outlives this call: somebody who signs out while it
+    // is in flight would otherwise get a locale from the account they have left. The same
+    // generation guards the list request and replication, inside the controller.
+    const generation = this.projects.generation
 
     void (this.followLocale ?? followProfileLocale)(
       (locale) => {
-        if (generation !== this.sessionGeneration) return
+        if (!this.projects.isCurrent(generation)) return
         void activateLocale(negotiateLocale(locale as never, navigator.languages))
       },
       () => {
         // The fetched profile is in the cache: the email and the plan are read again.
-        if (generation === this.sessionGeneration) void this.refreshProjects(false)
+        if (this.projects.isCurrent(generation)) void this.projects.refresh(false)
       },
     )
-
-    this.sync = (this.makeSync ?? ((onState) => projectSync(onState)))((projectId, state) => {
-      if (generation !== this.sessionGeneration) return
-      // A refusal stops that project's replication (spec): retrying a write the server refuses
-      // only refuses it again. Cancelling reports `stopped`, which must not overwrite the reason
-      // the page shows on the row. The next list handed over (a refresh, a reconnection) starts
-      // it again, which is when a changed permission or plan would let it through.
-      if (state === 'stopped' && this.states.get(projectId) === 'denied') return
-      this.states.set(projectId, state)
-      if (state === 'denied') this.sync?.stop(projectId)
-      this.syncing = worstOf([...this.states.values()])
-      // The projects page shows each row's state, and the summary changing is not the only
-      // change worth a render: one project going from `active` to `idle` leaves it unchanged.
-      this.requestUpdate()
-    })
-    void this.refreshProjects(true)
+    this.projects.start()
   }
 
-  /** One replication per project, and what each is doing. */
-  private sync: SyncManager | undefined
-  private states = new Map<string, SyncState>()
-  /**
-   * Counts sessions, so work started under one cannot land under the next.
-   *
-   * A plain field rather than a reactive property: nothing renders it, and assigning a reactive
-   * property from inside an update schedules a second update for no reason.
-   */
-  private sessionGeneration = 0
-
-  /**
-   * The sign-out confirmation.
-   *
-   * It exists because signing out now has a question in it. Everything the *account* put on this
-   * browser goes either way; the catalogue on this device predates accounts and holds whatever
-   * was recorded before signing in, so taking it would be destroying data the account never
-   * owned. Unticked by default: the safe answer is the one that keeps things.
-   */
-  private renderSignOutConfirmation(): TemplateResult | '' {
-    if (!this.signingOut) return ''
-
-    return html`
-      <wa-dialog data-sign-out-dialog open label=${msg('Sign out')}>
-        <p>${msg('Everything this account put on this browser will be removed.')}</p>
-        <wa-checkbox data-remove-local>
-          ${msg('Also remove the devices stored only on this device')}
-        </wa-checkbox>
-        <wa-button slot="footer" data-cancel-sign-out @click=${this.onCancelSignOut}>
-          ${msg('Cancel')}
-        </wa-button>
-        <wa-button slot="footer" variant="brand" data-confirm-sign-out @click=${this.onSignOut}>
-          ${msg('Sign out')}
-        </wa-button>
-      </wa-dialog>
-    `
-  }
+  /** The projects: their facts, the open project, and replication. */
+  private readonly projects = new ProjectsController(this)
 
   private onDismissSessionEnded = (): void => {
     this.sessionEndedNotice = false
@@ -814,17 +489,11 @@ export class AppShell extends LitElement implements ViewHost {
     // The generation moves first of all, so a startup still in flight cannot finish into the
     // session that is ending - stopping what is running says nothing about what is about to
     // start.
-    this.sessionGeneration += 1
+    this.projects.end()
     // Stopped before the sign-out runs, so a refresh in flight cannot re-store a token that the
     // sign-out is about to forget.
     this.tokenRefresher?.stop()
     this.tokenRefresher = undefined
-    this.sync?.stopAll()
-    this.sync = undefined
-    this.states.clear()
-    this.syncing = undefined
-
-    this.fresh = undefined
 
     await (this.signOutOf ?? endSession)(includeLocalCatalogue)
     this.session = 'signed-out'
@@ -832,7 +501,7 @@ export class AppShell extends LitElement implements ViewHost {
     // so the open project falls back to the first local one (or a freshly adopted catalogue);
     // leaving the views on a destroyed copy would show an empty list that looks exactly like
     // having lost everything.
-    await this.refreshProjects(false)
+    await this.projects.refresh(false)
   }
 
   private onUpgrade = (): void => {
@@ -857,16 +526,21 @@ export class AppShell extends LitElement implements ViewHost {
             <strong>${msg('Matter Manager')}</strong>
           </div>
           <div class="wa-cluster wa-gap-s">
-            ${this.renderNetwork()}
-            ${this.renderSyncing()}
-            ${this.renderUpgrade()}
+            ${renderNetwork(this.online)}
+            ${renderSyncing(this.projects.syncing)}
+            ${renderUpgrade(
+              this.projects.facts?.plan ?? DEFAULT_PLAN,
+              this.upgrading,
+              this.onUpgrade,
+              this.onCloseUpgrade,
+            )}
             <wa-button data-scheme-toggle appearance="plain" @click=${this.cycleScheme}>
               <wa-icon
                 name=${SCHEME_ICON[this.schemePreference]}
                 label=${this.schemeToggleLabel()}
               ></wa-icon>
             </wa-button>
-            ${this.renderAccount()}
+            ${renderAccount(this.session, this.projects.facts?.email, this.onSignIn)}
           </div>
         </header>
 
@@ -884,9 +558,9 @@ export class AppShell extends LitElement implements ViewHost {
               </a>
             `,
           )}
-          ${this.renderSignOut()}
+          ${renderSignOut(this.session, this.onAskSignOut)}
         </nav>
-        ${this.renderSignOutConfirmation()}
+        ${renderSignOutConfirmation(this.signingOut, this.onCancelSignOut, this.onSignOut)}
 
         <main class="wa-stack wa-gap-m app-main">
           <!-- Offered, never applied by itself. Reloading out from under someone mid-form is
@@ -936,16 +610,3 @@ export class AppShell extends LitElement implements ViewHost {
 }
 
 customElements.define('app-shell', AppShell)
-
-/**
- * The state worth reporting when several replications disagree.
- *
- * Worst wins. A summary saying `idle` while one project cannot reach the server would be
- * reassuring and wrong, and the reader's question is "is everything through?" rather than "is
- * anything through?".
- * `denied` outranks `offline`: offline heals itself, a refusal does not.
- */
-function worstOf(states: readonly SyncState[]): SyncState | undefined {
-  const order: readonly SyncState[] = ['denied', 'offline', 'stopped', 'active', 'idle']
-  return order.find((state) => states.includes(state))
-}

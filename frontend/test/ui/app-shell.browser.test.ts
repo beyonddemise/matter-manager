@@ -372,6 +372,18 @@ const NETWORK = { addEventListener: () => {}, removeEventListener: () => {}, onL
  *   shell did about it
  */
 const driven = async () => {
+  // Two downloaded copies, so the projects the tests report states for are ones replication is
+  // handed: states of anything else are forgotten at the next refresh.
+  const store = isolatedProjectStore()
+  for (const projectId of ['p1', 'p2']) {
+    await store.cache().addLocalProject({
+      dbName: `project_${projectId}`,
+      name: projectId,
+      projectId,
+      role: 'owner',
+      createdAt: '2026-10-01T00:00:00.000Z',
+    })
+  }
   const report: { current?: (outcome: TokenOutcome) => void } = {}
   const stop = vi.fn()
   const stopAll = vi.fn()
@@ -394,10 +406,17 @@ const driven = async () => {
       }}
       .connectivity=${NETWORK}
       .followLocale=${async () => undefined}
-      .listProjects=${async () => [{ projectId: 'p1', dbName: 'project_p1', name: 'Beta', role: 'owner', archived: false }]}
+      .listProjects=${async () =>
+        ['p1', 'p2'].map((projectId) => ({
+          projectId,
+          dbName: `project_${projectId}`,
+          name: projectId,
+          role: 'owner',
+          archived: false,
+        }))}
       .makeSync=${makeSync}
       .signOutOf=${signOutOf}
-      .projectStore=${isolatedProjectStore()}
+      .projectStore=${store}
     ></app-shell>
   `)) as HTMLElement & { updateComplete: Promise<unknown> }
   await element.updateComplete

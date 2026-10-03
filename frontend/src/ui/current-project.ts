@@ -8,6 +8,7 @@
  * @module
  */
 
+import { isLocalOnlyDatabase } from '../data/index.js'
 import { writeStoredPreference } from './preferences.js'
 import type { ProjectsModel } from './projects-model.js'
 
@@ -69,9 +70,9 @@ export function writeCurrentProjectId(
 /**
  * The project the views open, given the stored choice and the page's model.
  *
- * The choice is matched by **project id or database name**, because Open stores
+ * The choice is matched by **database name, then project id**, because Open stores
  * `projectId ?? dbName`: a local-only project has only its name, and a project promoted since it
- * was chosen keeps its old name in storage. The legacy {@link LOCAL_PROJECT_ID} means the
+ * was chosen keeps its old name in storage. A promotion's source never matches by id. The legacy {@link LOCAL_PROJECT_ID} means the
  * first-run catalogue. Only projects with a database on this device are candidates.
  *
  * When nothing matches — a copy removed, signed out, a stale id — it falls back to the first
@@ -86,7 +87,11 @@ export function resolveCurrentProject(storedId: string, model: ProjectsModel): C
   const onDevice = [...model.owned, ...model.shared].filter((row) => row.location !== 'server')
   const wanted = storedId === LOCAL_PROJECT_ID ? LOCAL_DATABASE_NAME : storedId
   const chosen =
-    onDevice.find((row) => row.projectId === wanted || row.dbName === wanted) ??
+    // The database named first: it is the exact choice, and for a local-only project the only one.
+    onDevice.find((row) => row.dbName === wanted) ??
+    // Then the project id — never on a promotion's source, which records the id before its data
+    // has moved: the choice then means the survivor, and the source is about to be destroyed.
+    onDevice.find((row) => row.projectId === wanted && !isLocalOnlyDatabase(row.dbName)) ??
     onDevice.find((row) => row.projectId === undefined) ??
     onDevice[0]
   if (chosen === undefined) {

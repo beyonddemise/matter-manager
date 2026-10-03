@@ -78,8 +78,12 @@ export type ListedProject = Pick<
  *
  * `expired` is a session whose refresh was refused (401). It allows exactly what `signed-out`
  * allows; it exists so the view can say "your session has ended" rather than "sign in".
+ *
+ * `checking` is the moment before the token exchange first answers (or while it cannot be
+ * reached at all). It also allows only what `signed-out` allows, but its refusals read as waiting
+ * (`stale`, `offline-server`) rather than "sign in": the reader may well be signed in.
  */
-export type Session = 'signed-in' | 'signed-out' | 'expired'
+export type Session = 'signed-in' | 'signed-out' | 'expired' | 'checking'
 
 /** Where a project lives, as the page labels it. */
 export type Location = 'local' | 'server' | 'synced'
@@ -289,8 +293,10 @@ export function projectsModel(input: ProjectsInput): ProjectsModel {
   // Every action that needs the server asks these, in this order. Only a fresh list lets one
   // through: a stale one (offline, or the request failed) is good enough to count against, never
   // to act on, and an unheard one is not even that.
+  // While the session is still being checked, "sign in" may be wrong; "waiting" is not.
+  const noSession = input.session === 'checking' ? 'stale' : 'signed-out'
   const needsServer = [
-    [signedIn, 'signed-out'],
+    [signedIn, noSession],
     [online, 'offline'],
     [fresh, 'stale'],
   ] as const
@@ -375,7 +381,7 @@ export function projectsModel(input: ProjectsInput): ProjectsModel {
     ownedCount,
     overLimit,
     canCreate: gate<CreateRefusal>(
-      [signedIn, 'signed-out'],
+      [signedIn, input.session === 'checking' ? 'offline-server' : 'signed-out'],
       [canOwnAnother(plan, ownedCount, input.reportedLimit), 'limit'],
       // A server create needs the server to have just answered: an unheard or stale list cannot
       // vouch for the count the service will check.

@@ -103,6 +103,21 @@ describe('which project the views open', () => {
     expect(current.dbName).toBe('project_p1')
   })
 
+  it('never reopens the source of a promotion by its new project id', () => {
+    // Mid-promotion the source is a local-only database whose entry already records the server
+    // id, and the stored choice is that id (the views were moved to the survivor). Matching the
+    // source by id would put this tab's next write into a database about to be destroyed.
+    const source = entry({ projectId: 'p1' })
+    const current = resolveCurrentProject('p1', model({ local: [source, synced] }))
+    expect(current.dbName).toBe('project_p1')
+  })
+
+  it('prefers the database named over a project id that happens to match it', () => {
+    const source = entry({ projectId: 'p1' })
+    const current = resolveCurrentProject('project_local_a', model({ local: [source, synced] }))
+    expect(current.dbName).toBe('project_local_a')
+  })
+
   it('reads the legacy "local" choice as the first-run catalogue', () => {
     const legacy = entry({ dbName: LOCAL_DATABASE_NAME, name: 'Home' })
     const current = resolveCurrentProject(LOCAL_PROJECT_ID, model({ local: [synced, legacy] }))

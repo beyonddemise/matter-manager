@@ -574,6 +574,12 @@ describe('every plan', () => {
     expect(create.disabled).toBe(true)
   })
 
+  it('says nothing about signing in while the session is still being checked', async () => {
+    const view = await page({ session: 'checking', server: undefined })
+
+    expect(view.querySelector('[data-hint="signed-out"]')).toBeNull()
+  })
+
   it('signed out, says to sign in and disables creation', async () => {
     const view = await page({ plan: 'member', session: 'signed-out', server: undefined })
 

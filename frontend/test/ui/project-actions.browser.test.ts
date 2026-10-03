@@ -13,6 +13,7 @@ import {
   ProjectActionError,
   projectActions,
 } from '../../src/ui/project-actions.js'
+import { projectActionRunning } from '../../src/ui/project-busy.js'
 import {
   type NewProject,
   type Project,
@@ -129,6 +130,7 @@ function world(options: { fault?: FaultAt } = {}) {
      */
     duringPush: undefined as ((attempt: number) => Promise<void>) | undefined,
     refreshed: 0,
+    onRefresh: undefined as (() => void) | undefined,
   }
 
   const deps: ProjectActionDependencies = {
@@ -181,6 +183,7 @@ function world(options: { fault?: FaultAt } = {}) {
       state.current = target.dbName
     },
     refresh: async () => {
+      state.onRefresh?.()
       state.refreshed += 1
     },
   }
@@ -253,6 +256,35 @@ async function refusal(action: Promise<void>): Promise<string> {
 }
 
 describe('promoting a local-only project', () => {
+  it('holds the tab busy while it works, and lets go before refreshing', async () => {
+    // A shell refresh in the middle would reopen the source and drop the survivor from
+    // replication (`project-busy.ts`); the action's own refresh must see it let go.
+    const w = world()
+    const alpha = await w.localProject()
+    w.state.current = alpha.dbName
+    const seen: boolean[] = []
+    w.state.duringPush = async () => {
+      seen.push(projectActionRunning())
+    }
+    w.state.onRefresh = () => seen.push(projectActionRunning())
+    const { model, row } = await w.view(alpha.dbName)
+
+    await w.actions.promote(model, row)
+
+    expect(seen).toEqual([true, false])
+    expect(projectActionRunning()).toBe(false)
+  })
+
+  it('lets go when it is refused', async () => {
+    const w = world({ fault: 'push' })
+    const alpha = await w.localProject()
+    const { model, row } = await w.view(alpha.dbName)
+
+    await expect(w.actions.promote(model, row)).rejects.toThrow()
+
+    expect(projectActionRunning()).toBe(false)
+  })
+
   it('puts it on the server, moves its data under the server name and drops the old copy', async () => {
     const w = world()
     const alpha = await w.localProject('Alpha', 'Acme')
