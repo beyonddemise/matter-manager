@@ -43,6 +43,17 @@ export interface CustomerDependencies {
 }
 
 /**
+ * Whether `value` has the shape `local@domain.tld`, matching the contract's `format: email`.
+ *
+ * Deliberately minimal: one `@` with something on each side and a dot inside the domain that
+ * has text either side of it, and no whitespace. Real validation is the mail provider's job;
+ * this exists so a typo is a 400 here rather than a stray record keyed by a non-address.
+ */
+export function looksLikeEmail(value: unknown): value is string {
+  return typeof value === 'string' && /^[^\s@]+@[^\s@.]+(\.[^\s@.]+)+$/.test(value.trim())
+}
+
+/**
  * Registers `PUT /customer`.
  *
  * @param deps - The user records, how to identify the caller, and which roles may act.
@@ -74,7 +85,7 @@ export function registerCustomerRoutes(app: FastifyInstance, deps: CustomerDepen
     }
 
     const body = request.body as { email?: unknown; plan?: unknown } | undefined
-    if (typeof body?.email !== 'string' || !body.email.includes('@')) {
+    if (!looksLikeEmail(body?.email)) {
       return problem(reply, { title: 'email must name an account.', status: 400 })
     }
     // `isPlan` rather than a comparison against a tier. ADR 0009: what a plan permits is the

@@ -134,7 +134,8 @@ export interface paths {
         /**
          * Issue an access token, and a refresh token
          * @description Returns a five-minute ES256 (EC P-256) access token whose `sub` is the CouchDB username
-         *     and whose `_couchdb.roles` carry the plan, read on every call. PouchDB sends it as a
+         *     and whose `_couchdb.roles` carry the plan, read from the user record on every call, so a
+         *     plan change reaches CouchDB within five minutes. PouchDB sends it as a
          *     bearer token on replication requests; CouchDB validates it with the public key without
          *     consulting this API.
          *
@@ -288,7 +289,7 @@ export interface paths {
          *     nothing at all means "leave it alone".
          *
          *     `plan` is the exception to "about themselves": it may be sent only by an account holding
-         *     the `customerservice` role, and anybody else is answered 403 rather than having the field
+         *     the `customerservice` role on its user record, and anybody else is answered 403 rather than having the field
          *     quietly dropped. CouchDB's `_admin` is not accepted — see the `admin` tag for why that
          *     role is excluded rather than merely unnecessary. See ADR 0009 — what a plan then permits
          *     is decided by the policy table, never by a comparison against a tier.
@@ -413,9 +414,9 @@ export interface paths {
                 /**
                  * @description The caller does not hold the `customerservice` role.
                  *
-                 *     Answered **before** the body is validated and before the named subject is looked up,
-                 *     so it is byte-for-byte the answer a non-operator gets whether or not that account
-                 *     exists. See this operation's description for why that ordering is a requirement.
+                 *     Answered **before** the body is validated, so it precedes any 400 and is
+                 *     byte-for-byte the answer a non-operator gets whatever the body says and whether or not
+                 *     the account named by address has a record. See this operation's description for why that ordering is a requirement.
                  */
                 403: {
                     headers: {
@@ -899,7 +900,7 @@ export interface components {
             locale: "auto" | "en" | "de";
             /**
              * @description Set by an operator through `PUT /customer`, or by an operator's own
-             *     `PATCH /profile`; never by the account itself.
+             *     `PATCH /profile`; never by the account itself. Stored on the user record.
              *
              *     A stored value this build does not know - an operator's typo, or a tier from a
              *     later version - reads as `free` rather than as an error, so the enum here is what

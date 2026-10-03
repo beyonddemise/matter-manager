@@ -1,9 +1,9 @@
 /**
  * User records in `matter_manager`: profile, plan, operator roles and refresh-token hashes.
  *
- * Replaces the old CouchDB user-database document entirely (see the spec, "What moves off _users"). A record
- * exists only once something needed one. A user without a record is `free`, and their profile is
- * built from their token's claims by {@link profileOf}.
+ * Replaces the old CouchDB user-database document entirely (see the spec, "What moves off
+ * _users"). A record exists only once something needed one. A user without a record is `free`, and
+ * their profile is built from their token's claims by {@link profileOf}.
  *
  * **Updates name their fields.** Every write spreads the stored document and then applies
  * specific fields, never a request body, so `roles`, `plan`, `sub`, `email` and

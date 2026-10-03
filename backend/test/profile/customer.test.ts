@@ -208,7 +208,7 @@ describe('the body PUT /customer accepts', () => {
     expect((await put(server, { email: 'a@b.c', plan: 'user' }, asOperator)).statusCode).toBe(400)
   })
 
-  it.each([[undefined], [''], ['no-at-sign'], [42], [null]])(
+  it.each([[undefined], [''], ['no-at-sign'], ['@'], ['a@b'], ['a b@c.d'], [42], [null]])(
     'refuses an email of %s',
     async (email) => {
       const { app: server, asOperator, writes } = customerServer()

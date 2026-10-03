@@ -354,7 +354,7 @@ describe('a request that will not do', () => {
 
 describe('when CouchDB cannot say what the caller already has', () => {
   // `principalFor` does three pieces of I/O before the gate is asked — `ensureRegistry`, the
-  // owned-projects view, and the profile read — and any of them can raise `CouchError`. The
+  // owned-projects view, and the user-record read — and any of them can raise `CouchError`. The
   // call sat outside every try in the handler, so a CouchDB failure there escaped as a raw
   // Fastify 500 carrying CouchDB's own message, on the one route that has a test named "says
   // nothing about CouchDB". The failure walked past it because it happened before the code that
@@ -1011,7 +1011,7 @@ describe('sharing a project', () => {
   describe('when CouchDB cannot say what the caller already has', () => {
     // `principalFor` is the same function `POST /projects` wraps, shared rather than
     // duplicated — and until this fix, this route called it outside every `try`. `ensureRegistry`,
-    // the owned-projects view and the profile read can each raise `CouchError`, and unwrapped
+    // the owned-projects view and the user-record read can each raise `CouchError`, and unwrapped
     // that escaped as a raw Fastify 500 carrying CouchDB's own message, on a route whose every
     // other failure is deliberately mapped and scrubbed.
 

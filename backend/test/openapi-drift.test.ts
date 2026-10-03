@@ -4,8 +4,9 @@ import { denyList } from '../src/auth/deny-list.js'
 import { mintToken, type SigningKey } from '../src/auth/jwt.js'
 import { refreshStore } from '../src/auth/refresh-store.js'
 import { buildServer, type Server } from '../src/server.js'
-import { forgetUsersDatabase } from '../src/users/database.js'
+import { forgetUsersDatabase, USERS_DB } from '../src/users/database.js'
 import { recordEnsurer } from '../src/users/ensure.js'
+import { userDocId } from '../src/users/key.js'
 import { userRecords } from '../src/users/records.js'
 import {
   loadContract,
@@ -47,7 +48,9 @@ afterEach(async () => {
  * like coverage and was a second copy of the anonymous pass.
  */
 const SIGNING: SigningKey = (() => {
-  const { privateKey, publicKey } = generateKeyPairSync('ec', { namedCurve: 'prime256v1' })
+  const { privateKey, publicKey } = generateKeyPairSync('ec', {
+    namedCurve: 'prime256v1',
+  })
   return { kid: 'drift', privateKey, publicKey }
 })()
 
@@ -60,6 +63,8 @@ const SIGNING: SigningKey = (() => {
  * list of things nobody has written. The two are indistinguishable from the outside, which is
  * exactly the kind of check that reads as thorough and is not.
  */
+const CALLER_EMAIL = 'drift@example.test'
+
 const server = (): Server => {
   // **One** CouchDB, wired to both the user records and the project routes.
   //
@@ -70,7 +75,19 @@ const server = (): Server => {
   // what it was asserting. One instance means the server behaves like a deployment, where there
   // is one database behind both.
   forgetUsersDatabase()
-  const couch = fakeCouch().couch
+  const fake = fakeCouch()
+  const couch = fake.couch
+  // The credentialed caller is an operator, written into the record directly (the Fauxton
+  // equivalent: roles are never granted through the API), so `PUT /customer` can reach its 200
+  // rather than only the 403 every other caller gets.
+  fake.documents.set(`${USERS_DB}/${userDocId(CALLER_EMAIL)}`, {
+    _id: userDocId(CALLER_EMAIL),
+    _rev: '1-a',
+    type: 'user',
+    sub: 'drift-user',
+    email: CALLER_EMAIL,
+    roles: ['customerservice'],
+  })
   const records = userRecords(couch)
   const clock = () => Math.floor(Date.now() / 1000)
   const key = SIGNING
@@ -92,7 +109,11 @@ const server = (): Server => {
       },
       key,
       sessionKey: key,
-      verifyIdToken: async () => ({ sub: 'google|1234', email: 'ada@example.test', name: 'Ada' }),
+      verifyIdToken: async () => ({
+        sub: 'google|1234',
+        email: 'ada@example.test',
+        name: 'Ada',
+      }),
       appOrigin: 'https://app.test',
       records,
       refresh,
@@ -226,14 +247,23 @@ describe('every implemented route answers what the contract declares', () => {
    * one — which is itself worth pinning.
    */
   const credentials = () => {
-    const claims = { sub: 'drift-user', exp: Math.floor(Date.now() / 1000) + 3600 }
-    const access = mintToken(SIGNING, { purpose: 'access', ...claims })
+    const claims = {
+      sub: 'drift-user',
+      exp: Math.floor(Date.now() / 1000) + 3600,
+    }
+    // `email` on the access token because `/profile` and `/customer` look the caller's record up
+    // by address; without it every bearer route answered 401 and the pass reached no 200.
+    const access = mintToken(SIGNING, {
+      purpose: 'access',
+      ...claims,
+      email: CALLER_EMAIL,
+    })
     // A fresh `jti` per request, because a handoff is single use and each operation's pass
     // should reach `POST /auth/token`'s 200 rather than a 401 for a handoff already spent.
     const handoff = mintToken(SIGNING, {
       purpose: 'handoff',
       ...claims,
-      email: 'drift@example.test',
+      email: CALLER_EMAIL,
       jti: randomUUID(),
     })
     return {
@@ -241,6 +271,59 @@ describe('every implemented route answers what the contract declares', () => {
       authorization: `Bearer ${access}`,
       cookie: `mm_handoff=${encodeURIComponent(handoff)}`,
     }
+  }
+
+  /**
+   * The extra requests an operation needs beyond the two empty-body passes, because its
+   * interesting answers hang on a body those passes do not send.
+   *
+   * - `POST /auth/token` by a **refresh body**: the first pass spends a handoff cookie and gets
+   *   a refresh token back, which is then presented the way every later call does.
+   * - `POST /auth/signout` **with a body**, so the revoke path runs and not only the no-body one.
+   * - `PUT /customer` **with an `email`**, which reaches the operator's 200.
+   *
+   * Async because the refresh token is a real one, issued by this same server.
+   */
+  const extraRequests = async (
+    instance: Server,
+    method: string,
+    path: string,
+  ): Promise<{ headers: Record<string, string>; payload: object }[]> => {
+    const refreshToken = async (): Promise<string> => {
+      const issued = await instance.inject({
+        method: 'POST',
+        url: '/auth/token',
+        payload: {},
+        headers: credentials(),
+      })
+      return (issued.json() as { refreshToken: string }).refreshToken
+    }
+    const route = `${method} ${path}`
+    if (route === 'POST /auth/token') {
+      return [
+        {
+          headers: { 'content-type': 'application/json' },
+          payload: { refreshToken: await refreshToken() },
+        },
+      ]
+    }
+    if (route === 'POST /auth/signout') {
+      return [
+        {
+          headers: credentials(),
+          payload: { refreshToken: await refreshToken() },
+        },
+      ]
+    }
+    if (route === 'PUT /customer') {
+      return [
+        {
+          headers: credentials(),
+          payload: { email: 'someone@example.test', plan: 'member' },
+        },
+      ]
+    }
+    return []
   }
 
   /**
@@ -273,11 +356,16 @@ describe('every implemented route answers what the contract declares', () => {
       // way this file's predecessor passed while checking nothing.
       expect(operation, `the contract lost ${method} ${path} between two reads`).toBeDefined()
 
-      for (const headers of [{}, credentials()]) {
+      const requests = [
+        { headers: {}, payload: {} },
+        { headers: credentials(), payload: {} },
+        ...(await extraRequests(instance, method, path)),
+      ]
+      for (const { headers, payload } of requests) {
         const response = await instance.inject({
           method: method as 'GET',
           url: urlFor(path),
-          payload: {},
+          payload,
           headers: { 'content-type': 'application/json', ...headers },
         })
         const status = String(response.statusCode)
@@ -408,7 +496,11 @@ describe('the check catches drift it was built to catch', () => {
     const schema = {
       type: 'object',
       required: ['a', 'b'],
-      properties: { a: { type: 'string' }, b: { type: 'string' }, c: { type: 'integer' } },
+      properties: {
+        a: { type: 'string' },
+        b: { type: 'string' },
+        c: { type: 'integer' },
+      },
     }
 
     expect(validate({ c: 1.5 }, schema)).toHaveLength(3)
