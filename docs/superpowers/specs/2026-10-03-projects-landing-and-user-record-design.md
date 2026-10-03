@@ -23,6 +23,7 @@ stops touching it entirely.
 | --- | --- |
 | Where the user record lives | `matter_manager` database, document `user:<base64url(lowercase(trim(email)))>` |
 | Does the backend use `_users`? | **No, not at all**: profile, plan, operator role, invitation lookup and refresh tokens all live on the user record |
+| When a record exists | **Only once server interaction requires one** (accepting an invitation, saving a profile, an operator setting a plan). Signing in alone creates nothing; it is logged |
 | Plan field | `plan`: `free` \| `member` \| `pro`; missing document, missing field or unknown value means `free` |
 | Tier rename | `user` → `member` everywhere |
 | Plan in the JWT | As a CouchDB role, `_couchdb.roles: [plan]`, re-read on every token mint; the server still checks limits itself |
@@ -31,8 +32,8 @@ stops touching it entirely.
 | Shared projects | The owner's plan pays; invited writers are governed by `writers.names` alone |
 | Totals | free 1, member 5, pro unlimited: **local and server together**, shared projects not counted |
 | Creating (member/pro) | Synchronized when signed in and online, otherwise local-only and promotable later |
-| Tokens | `POST /auth/token` returns both: an access token (**5 min**) and a refresh token (30 days, not rotated, stored hashed on the user record; deleting the hash revokes it) |
-| Logout | Refresh token removed from the record; the access token's `jti` is denied in memory until it expires |
+| Tokens | `POST /auth/token` returns both: an access token (**5 min**) and a refresh token (30 days, not rotated, stored hashed on the user record, or in server memory for a user who has none yet; deleting the hash revokes it) |
+| Logout | Refresh token removed from the record (or memory); the access token's `jti` is denied in memory until it expires |
 | Remove from server | Archive; hidden from the list; frees its slot unless a local copy exists; hard-deleted after 90 days by a job tracked as an issue |
 | Remove a synced local copy | Only online, only after a completed push; refused otherwise |
 | Remove a local-only project | Permanent deletion, confirmed by typing the project name |
@@ -65,10 +66,8 @@ stops touching it entirely.
 - **`matter_manager` is admin-only.** It is created on first use, the way `ensureRegistry` creates
   `projects`, and its `_security` is written immediately with `admins` and `members` restricted to
   `_admin`. It holds refresh-token hashes and plans, so no user token may ever read it.
-- **A `by_sub` view** answers "which record has this subject" for the two callers that hold a
-  subject but no address: an operator's `PUT /customer`, and `GET /profile` when the access token
-  is the only credential (the token also carries `email`, so the view is a fallback, not the
-  common path).
+- **Every lookup is by address.** Both tokens carry `email`, and `PUT /customer` names its
+  target by address, so no view by subject is needed.
 - **`plan`** is narrowed exactly as `toProfile` narrows it today: unknown values are reported and
   read as `free`.
 - **`roles`** is set by hand by an operator in Fauxton. `customerservice` is the only role read.
@@ -81,40 +80,75 @@ stops touching it entirely.
 | Today | After |
 | --- | --- |
 | `profile/store.ts` reads/writes `org.couchdb.user:<sub>` | Reads/writes the user record |
-| `rememberUser` at sign-in | Upserts the user record (sub, email, displayName on first sight) |
+| `rememberUser` at sign-in | **Logs** the sign-in (below); creates nothing, unless pending invitations make a record necessary |
 | `projects/users.ts` `by_email` view on `_users` | Direct `GET user:<key>`; same outcome as today when nobody has that address |
 | `customerservice` read from `_users` roles | Read from the record's `roles` |
-| `PUT /customer` writes `_users.plan` | Writes the record's `plan` (subject resolved via `by_sub`) |
+| `PUT /customer` writes `_users.plan` for a subject | Writes the record's `plan` for an **address**, creating the record if there is none |
 
 **No migration.** There is no live data yet, so existing `_users` documents and project
 databases are not carried over; environments are reset when this ships. Records are created by
-the first sign-in, and every project database provisioned afterwards has the `owners` key and
+the first server interaction that needs one (next section), and every project database provisioned afterwards has the `owners` key and
 the new validator from birth.
+
+### Records are created on demand, not at sign-in
+
+Many people sign in to look around and never use the product. A record for each of them is a
+row of personal data kept for nothing, so **signing in creates no record**. A record is created
+the first time one of these needs it, and never otherwise:
+
+| Trigger | Why it needs a record |
+| --- | --- |
+| Signing in with pending invitations for the address | Accepting them names the user on project databases; the record is where their plan and tokens then live |
+| Accepting an invitation later | Same |
+| `PATCH /profile` | The user asked the server to keep a display name or locale |
+| `PUT /customer` | An operator set a plan, which has nowhere else to live; `sub` is filled in at the user's next sign-in |
+
+`POST /projects` is not a trigger: a user without a record is `free`, and `free` may not own
+server projects, so it is refused before anything is written. A user who could create one
+already has a record from the operator who gave them the plan.
+
+Without a record, a user is `free` by definition, and `GET /profile` answers from the token's
+claims (`sub`, `email`, `name`) with defaults for the rest. All record writes go through one
+`ensureRecord(email, sub, name)` so the four triggers cannot create records four ways.
+
+**Sign-ins are logged**, for now as one structured `console.log` line per successful sign-in:
+`{ msg: 'sign-in', at, sub, email, provider, hasRecord }`. It goes to stdout like the backend's
+other structured logs. An issue tracks replacing it with something with retention and a PII
+policy.
 
 ### Tokens
 
 | Token | Transport | Lifetime | Claims |
 | --- | --- | --- | --- |
-| Refresh | Response body; the page keeps it in `mm-local` and sends it in the body of the next `POST /auth/token` | 30 days, not rotated | `purpose:'refresh'`, `sub`, `email`, `jti`, `exp`, `iat`; signed with the session key CouchDB never sees |
+| Refresh | Response body; the page keeps it in `mm-local` and sends it in the body of the next `POST /auth/token` | 30 days, not rotated | `purpose:'refresh'`, `sub`, `email`, `name?`, `jti`, `exp`, `iat`; signed with the session key CouchDB never sees |
 | Access | Response body | **5 minutes** (`ACCESS_TOKEN_TTL = 300`) | `purpose:'access'`, `sub`, `email`, `jti`, `exp`, `iat`, `_couchdb.roles: [plan]` |
 
-- **Login.** The OIDC callback upserts the record and sets a short-lived (minutes),
+- **Login.** The OIDC callback logs the sign-in, accepts pending invitations (creating the
+  record only if there are any), and sets a short-lived (minutes),
   single-use `purpose:'flow'` cookie, a purpose `jwt.ts` already defines, then redirects. Tokens
   never travel in the redirect URL, where they would leak into history and referrers.
 - **`POST /auth/token` returns both tokens**, `{ accessToken, expiresIn, refreshToken }`, in
   `cache-control: no-store`. It accepts either credential:
   - the **flow cookie** (first call after login): mints a refresh token, stores `sha256(jti)`
-    with its `exp` and `createdAt` in `refreshTokens`, clears the cookie;
-  - a **refresh token** in the body (every later call): verifies it, loads the record by
-    `userKey(email)`, and requires `sha256(jti)` to be present and unexpired in
-    `refreshTokens`. The same refresh token is returned; it is **not rotated**.
+    with its `exp` and `createdAt`, and clears the cookie;
+  - a **refresh token** in the body (every later call): verifies it and requires `sha256(jti)`
+    to be present and unexpired in the store. The same refresh token is returned; it is **not
+    rotated**.
 
-  Either way it reads `plan` and mints the access token. A refresh token that verifies
+  **Where the hash is stored** depends on whether the user has a record: in its
+  `refreshTokens` if so, otherwise in an in-memory `Map<hash, { email, exp }>` on the backend.
+  `ensureRecord` moves every in-memory entry for the address into the new record, so creating a
+  record never signs anybody out. The cost of memory is stated plainly: **a backend restart or
+  deploy ends every record-less session**. The next refresh is a 401, the page shows its
+  "session ended" toast and signs out keeping local data, and the user signs in again. That falls
+  on people who have used nothing that needed the server, which is the reason it is acceptable.
+
+  Either way it reads `plan` (`free` without a record) and mints the access token. A refresh token that verifies
   cryptographically but is no longer stored answers the same 401 as an absent one.
-- **Revocation is deletion.** Because a refresh must find its hash on the record, removing an
-  entry from `refreshTokens` (by sign-out, or by a database admin in Fauxton) invalidates that
+- **Revocation is deletion.** Because a refresh must find its hash, removing an entry from
+  `refreshTokens` (by sign-out, or by a database admin in Fauxton) invalidates that
   token at its next use; the access token it last minted lives out its five minutes.
-- **Logout: `POST /auth/signout`.** Removes the presented refresh token's hash from the record and
+- **Logout: `POST /auth/signout`.** Removes the presented refresh token's hash from wherever it is stored and
   adds the presented access token's `jti` to the deny list until its `exp`. The page deletes the
   refresh token from `mm-local` on **every** sign-out, whether or not local data is removed.
 - **The trade-off of a body token.** A refresh token that script can read is one an XSS could
@@ -289,6 +323,8 @@ The page decides from `can()` and the reported `projectLimit`, never from a tier
 | `matter_manager` readable by users | Refresh hashes and plans exposed | `_security` written on creation; a test asserts a user token gets 403 |
 | A user writes their own plan or roles | `PATCH /profile` looks successful | Named fields only; tests send `plan`, `roles`, `refreshTokens` and assert the stored document is unchanged |
 | A revoked refresh token still mints | It still verifies cryptographically | Refresh requires the stored hash; tests sign out, and separately delete the hash directly in the database, and assert the next refresh is 401 |
+| Sign-in quietly creates records again | A refactor puts the upsert back in the callback; nothing breaks visibly | A test signs in a new address with no invitations and asserts `matter_manager` has no document for it, and one log line |
+| Creating a record signs the user out | Their in-memory refresh hash is left behind | `ensureRecord` moves in-memory entries; a test refreshes with the same token after `PATCH /profile` |
 | A denied access token still reaches the API | The signature is valid | `bearer.ts` checks the deny list; a test signs out and reuses the token |
 | Removing a synced local copy loses edits | Pending changes vanish with the database | Online-only, after a completed push; a test with pending changes and a failing push asserts refusal and an intact database |
 | A network blip signs the user out | Looks like a session bug | Network failures retry; only a 401 signs out; tests cover both |
@@ -297,8 +333,9 @@ The page decides from `can()` and the reported `projectLimit`, never from a tier
 
 ## Tests
 
-- **Backend.** `userKey`; the record store (upsert, named-field updates, unknown plan,
-  admin-only database); `PUT /customer` and `PATCH /profile` against the record; invitations by
+- **Backend.** `userKey`; the record store (named-field updates, unknown plan, admin-only
+  database); on-demand creation (no record after a plain sign-in, one after each trigger,
+  in-memory hashes moved, `GET /profile` from claims without a record, the sign-in log line); `PUT /customer` and `PATCH /profile` against the record; invitations by
   address; token lifecycle (login → refresh → sign-out → refresh refused; deny list; plan change
   visible at next refresh; claims carry `_couchdb.roles`); `project.sync` and `project.create`
   tables including archived rows not counting; `archivedAt`; `client`; the `project` document on
@@ -319,6 +356,8 @@ The page decides from `can()` and the reported `projectLimit`, never from a tier
 3. A deny list shared across backend instances, needed once there is more than one.
 4. A read-only grace period for downgraded owners: after a downgrade their server projects stay
    readable for a set period, then are archived and, 90 days later, deleted by the job in (1).
+5. Refine sign-in logging: a proper sink, retention, and a PII policy for the address it records
+   (today one `console.log` line per sign-in).
 
 ## Out of scope
 
