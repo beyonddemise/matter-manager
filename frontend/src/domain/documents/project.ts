@@ -23,6 +23,10 @@ export interface ProjectDocument {
   /**
    * The name of the project's database on the server. Absent while the project is local-only:
    * the frontend writes this document there, and there is no server database to name yet.
+   *
+   * Vestigial on the frontend: the service writes it on server databases, and promote no longer
+   * does — the copy is the server-named database itself, and the `project` document does not
+   * travel with it. Kept optional so a document written either way still reads as valid.
    */
   readonly serverDb?: string
 }

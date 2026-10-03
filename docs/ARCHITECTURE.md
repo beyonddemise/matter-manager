@@ -199,12 +199,23 @@ the source's `update_seq` must be unchanged before the destroy. While an action 
 the **busy registry** (`project-busy.ts`); the shell still reads facts during that time but does
 not switch the project or rewrite the replication list, so a refresh cannot undo the action.
 
+A read that spans an action (begun before or during it, finished after) is dropped whole: the
+registry keeps an epoch that moves whenever an action begins or ends, and the idle refresh that
+follows the action applies fresh facts.
+
 Replication runs for **every indexed synchronized copy** and only those, handed over as a whole
-set. A refused project reports `denied`, which stays until a push succeeds or sync stops, and is
-shown as access removed. Sign-in, email, network state and sign-out sit in the header menu;
-signing out destroys `mm-local` and the server copies, and keeps local-only projects unless
-"remove local data" is ticked (the kept index entries are re-written into the fresh `mm-local`).
-A refused refresh token ends the session without deleting anything.
+set. A refused project reports `denied`; live sync keeps running (pulls are still valid), but the
+shell shows the project as denied until a push of it succeeds or it leaves the replicated set, so
+a later `idle` cannot hide the refusal. The page shows it as "No permission to sync", or
+"Archived — read-only" for an archived project.
+
+The header bar carries the email (or Sign in), the network state, the sync summary and Upgrade;
+**Sign out** is the last item of the left navigation. Signing out first pushes every
+synchronized copy once; if any push fails, or the device is offline, the dialog names those
+projects and asks a second time before going on. It holds the busy registry throughout, then
+destroys `mm-local` and the server copies, and keeps local-only projects unless "Also remove
+projects stored only on this device" is ticked (the kept index entries are re-written into the
+fresh `mm-local`). A refused refresh token ends the session without deleting anything.
 
 Known limit: tabs are not coordinated, so an edit in a second tab during the last round trip of
 a promote or removal is not protected ([#220](https://github.com/beyonddemise/matter-manager/issues/220)).

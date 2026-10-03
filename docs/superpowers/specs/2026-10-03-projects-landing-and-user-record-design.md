@@ -458,9 +458,15 @@ Deviations from the phase C text above. Everything not listed was built as speci
   the transfer, or the transfer repeats once and is then refused.
 - **The frontend plan tables mirror the backend's `can.ts`** (no shared package). The limit
   prefers the server-reported `projectLimit`.
-- **Sign-out keeps today's semantics.** Server copies (indexed with a `projectId`) and `mm-local`
-  are always destroyed; local-only projects, `project_local` included, only with "remove local
-  data". Kept local-only entries are re-written into the fresh `mm-local`.
+- **Sign-out keeps today's semantics, and pushes first.** Server copies (indexed with a
+  `projectId`) and `mm-local` are always destroyed; local-only projects, `project_local`
+  included, only with "Also remove projects stored only on this device". Kept local-only entries
+  are re-written into the fresh `mm-local`. Before anything is destroyed every synchronized copy
+  is pushed once (`pushNow`, checkpoint-free); if any push fails, times out, or the device is
+  offline, the dialog lists those projects ("These projects have changes that are not on the
+  server yet. Signing out removes them from this device.") and needs a second confirm, and
+  cancel keeps everything (ruling C-R10). The whole sign-out holds the busy registry. Copies of
+  archived projects are not pushed: the server refuses every write to them.
 - **`LocalProjectEntry` gained an optional `role`**, written on download and promote, so an
   offline device can tell a shared copy from an owned one. Missing on an entry with a `projectId`
   reads as owner.
@@ -473,28 +479,52 @@ Deviations from the phase C text above. Everything not listed was built as speci
   required for every delete.
 - **First run adopts `project_local` only on a device that never knew a project:** nothing
   indexed and no server list ever remembered. Rename of a local-only project is always allowed.
-- **A busy registry** (`project-busy.ts`) is held by promote, remove, delete and sign-out. While
-  held, the shell reads facts but neither switches the project nor rewrites the replication set,
-  and applies what it skipped when the last action ends.
+- **A busy registry** (`project-busy.ts`) is held by promote, remove, delete, a server create's
+  indexing and sign-out. While held, the shell reads facts but neither switches the project nor
+  rewrites the replication set, and applies what it skipped when the last action ends. Its epoch
+  moves whenever an action begins or ends, and a read that saw it move is dropped, so a read
+  spanning an action cannot resurrect what the action removed.
 - **`pushOnce` runs with `checkpoint: false`.** Sharing the live sync's checkpoint let a push
   resolve with refused documents unpushed, the one path to destroying the only copy.
-- **A `denied` replication state** is reported once per refusal and stays until a push succeeds
-  or sync stops; the page shows it as access removed.
+- **A `denied` replication state is sticky in the shell** (ruling C-R12): live sync keeps
+  running, and the project is shown as denied until a `pushNow` of it succeeds or it leaves the
+  replicated set. The page says "No permission to sync", or "Archived — read-only" for an
+  archived project; the header summary says "No permission to sync".
 - **A promotion that stopped half way** (`POST /projects` answered, data not yet moved) reads
   `local`, stays editable, offers promote again and delete, and is matched to its server project
   by id so it is counted once. `isLocalOnlyDatabase` (the name) decides whether data is elsewhere,
-  not the entry's `projectId`.
+  not the entry's `projectId`. When only the source's destroy failed (both entries carry the id),
+  the page shows and counts the server-named copy alone.
+- **A refused promote copies the survivor back** into the source (without the `project`
+  document) before the views return to it (ruling C-R11), so an edit made during the transfer is
+  not stranded in the unindexed copy.
+- **Promote does not write `serverDb`.** The copy is the server-named database, and the
+  `project` document does not travel with it; the service writes `serverDb` on server databases.
+  The optional field stays in the frontend type, vestigial.
+- **Remove from server stays owner-only** (stricter than the API, ruling C-R13); a manager is told
+  "Only the owner can remove this from the server".
+- **The free layout has no sync controls** (ruling C-R14): its card's menu omits promote and
+  download, and the upgrade hint says what syncing takes. Name and client fields carry the
+  contract's `maxlength` of 200.
 - **Routes:** `/` is the projects page and `/devices` the current project's list. The header
-  switcher and the settings project controls are gone; email, network, sign-out and upgrade
-  moved into the header menu.
+  switcher and the settings project controls are gone. Email (or Sign in), network state, the
+  sync summary and Upgrade sit in the header bar; Sign out is the last item of the left
+  navigation.
+- **No end-to-end promote journey** (ruling C-R15). The offline → online → promote journey needs
+  a backend the e2e setup lacks; promote is covered by browser tests on real PouchDB with a fake
+  server and replication, failed at every step.
 
 Known limits:
 
 - **Tabs are not coordinated (#220).** A write in a second tab during the last round trip of a
   promote or removal can be lost. Web Locks around destructive actions would close it.
 - **A refused promote may leave an unindexed, partial `project_<id>`**, and deleting a
-  half-promotion can strand one. The source is never touched in that case; the survivor is
-  invisible, not lost data.
+  half-promotion can strand one. The source is never touched in that case, and what was written
+  to the survivor during the transfer is copied back into it first (C-R11); the leftover copy
+  holds nothing the source lacks unless that copy-back itself failed.
+- **A promotion whose source destroy failed leaves the source on disk**, still indexed but not
+  shown (the page shows the copy). Its data is on the server; it goes with "Also remove projects
+  stored only on this device" at sign-out.
 - **The stale list can be up to a session old.** It is trusted for facts, never for acts.
 - A transient list omission right after `POST /projects` can mint a duplicate server project (no
   data loss).

@@ -239,8 +239,11 @@ range and one database has exactly one entry (`LocalProjectEntry`, `frontend/src
 A **promote** copies `project_local_<uuid>` into `project_<id>`, pushes, and only then destroys
 the source. The destroy is guarded by the source's `update_seq` (unchanged since the copy, or the
 transfer is repeated once and then refused), so an edit that lands mid-transfer is not destroyed
-unsent. It can still leave an unindexed, partial `project_<id>` when a step is refused midway;
-that is harmless to the source, which is kept.
+unsent. A step refused midway leaves an unindexed, partial `project_<id>` and keeps the source.
+The views wrote into the survivor from the moment the copy began, so before they move back the
+survivor is replicated into the source (without its `project` document): an edit made during a
+refused promote is in the source, not stranded in the unindexed copy. If only the source's
+destroy fails, both entries carry the project id and the page shows the server-named copy alone.
 
 **First run adopts `project_local` only on a device that never knew a project:** nothing indexed
 and no server list ever remembered. Then every device has one project to name ("Name your
