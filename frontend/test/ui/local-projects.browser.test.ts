@@ -219,6 +219,28 @@ describe('signing out with indexed local projects', () => {
     expect(destroyed).not.toContain(dbName)
   })
 
+  it('keeps a local-only project whose promotion stopped half way, unless asked', async () => {
+    // Its entry already carries the server's id, but its data is still only here: the id does
+    // not make it a server copy, its database name says what it is.
+    const dbName = 'project_local_00000000-0000-4000-8000-000000000003'
+    const untouched = new PouchDB(dbName)
+    await untouched.put({ _id: 'device:unpushed' })
+    await untouched.close()
+    await localProfileCache().addLocalProject({
+      dbName,
+      name: 'Half',
+      projectId: 'p7',
+      createdAt: 'x',
+    })
+
+    await removeLocalDatabases()
+
+    expect(await documentCount(dbName)).toBe(1)
+    expect(await localProfileCache().readLocalProjects()).toMatchObject([
+      { dbName, projectId: 'p7' },
+    ])
+  })
+
   it('always destroys a downloaded server copy', async () => {
     const dbName = 'project_p9'
     const copy = new PouchDB(dbName)

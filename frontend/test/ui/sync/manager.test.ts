@@ -217,3 +217,68 @@ describe('what the interface is told', () => {
     expect(running.stateOf('p1')).toBeUndefined()
   })
 })
+
+describe('holding one project still while its copy is removed', () => {
+  it('stops it, and a later set() listing it does not start it again', () => {
+    // A reconnection re-sends the whole list. Restarting a project whose copy is about to be
+    // destroyed would recreate (or refill) the database under the destroy.
+    const { started, cancelled, deps } = manager()
+    const running = syncManager(deps)
+    running.set([KITCHEN, GARAGE])
+
+    running.suspend('p1')
+    running.set([KITCHEN, GARAGE])
+
+    expect(cancelled).toEqual(['project_p1'])
+    expect(started).toEqual(['project_p1', 'project_p2'])
+    expect(running.running()).toEqual(['p2'])
+  })
+
+  it('restarts it on resume while it is still listed', () => {
+    const { started, deps } = manager()
+    const running = syncManager(deps)
+    running.set([KITCHEN])
+    running.suspend('p1')
+
+    running.resume('p1')
+
+    expect(started).toEqual(['project_p1', 'project_p1'])
+    expect(running.running()).toEqual(['p1'])
+  })
+
+  it('does not restart it on resume once a set() has dropped it', () => {
+    const { started, deps } = manager()
+    const running = syncManager(deps)
+    running.set([KITCHEN])
+    running.suspend('p1')
+    running.set([])
+
+    running.resume('p1')
+
+    expect(started).toEqual(['project_p1'])
+    expect(running.running()).toEqual([])
+  })
+
+  it('ignores resume for a project that was never suspended', () => {
+    const { started, deps } = manager()
+    const running = syncManager(deps)
+    running.set([KITCHEN])
+    running.stop('p1')
+
+    running.resume('p1')
+
+    expect(started).toEqual(['project_p1'])
+  })
+
+  it('forgets every hold on stopAll', () => {
+    const { started, deps } = manager()
+    const running = syncManager(deps)
+    running.set([KITCHEN])
+    running.suspend('p1')
+    running.stopAll()
+
+    running.set([KITCHEN])
+
+    expect(started).toEqual(['project_p1', 'project_p1'])
+  })
+})

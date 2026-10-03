@@ -858,6 +858,70 @@
   <source>Projects your plan allows: <x id="0" equiv-text="${limit}"/>. Projects you own: <x id="1" equiv-text="${owned}"/>. Everything stays usable, but no new project can be created.</source>
   <target>Projekte, die Ihr Tarif erlaubt: <x id="0" equiv-text="${limit}"/>. Projekte, die Ihnen gehören: <x id="1" equiv-text="${owned}"/>. Alles bleibt nutzbar, aber neue Projekte können nicht angelegt werden.</target>
 </trans-unit>
+<trans-unit id="s9e9324100c6d35d1">
+  <source>Project actions</source>
+  <target>Projektaktionen</target>
+</trans-unit>
+<trans-unit id="s1e86539302492dfb">
+  <source>Remove the local copy?</source>
+  <target>Lokale Kopie entfernen?</target>
+</trans-unit>
+<trans-unit id="s6890d3681a918304">
+  <source>The server keeps it. Changes not yet uploaded are uploaded first.</source>
+  <target>Der Server behält das Projekt. Noch nicht hochgeladene Änderungen werden zuerst hochgeladen.</target>
+</trans-unit>
+<trans-unit id="s2d7d8669a523601c">
+  <source>Remove from the server?</source>
+  <target>Vom Server entfernen?</target>
+</trans-unit>
+<trans-unit id="sd1fc9a3e720ca9b5">
+  <source>Collaborators lose access. Deleted permanently after 90 days.</source>
+  <target>Mitwirkende verlieren den Zugriff. Nach 90 Tagen wird das Projekt endgültig gelöscht.</target>
+</trans-unit>
+<trans-unit id="s5d6f2b65f6de0341">
+  <source>Delete from this device?</source>
+  <target>Von diesem Gerät löschen?</target>
+</trans-unit>
+<trans-unit id="s2d21e03305254dd8">
+  <source>“<x id="0" equiv-text="${row.name}"/>” and everything in it is deleted from this device. This cannot be undone.</source>
+  <target>„<x id="0" equiv-text="${row.name}"/>“ wird mit allem, was es enthält, von diesem Gerät gelöscht. Das lässt sich nicht rückgängig machen.</target>
+</trans-unit>
+<trans-unit id="s52b43872b9427298">
+  <source>This project is no longer on the server. Changes not yet uploaded will be lost.</source>
+  <target>Dieses Projekt ist nicht mehr auf dem Server. Noch nicht hochgeladene Änderungen gehen verloren.</target>
+</trans-unit>
+<trans-unit id="sb981951451a1b92f">
+  <source>Type the project name to confirm</source>
+  <target>Geben Sie zur Bestätigung den Projektnamen ein</target>
+</trans-unit>
+<trans-unit id="s03daa792818ba91c">
+  <source>Not everything could be uploaded, so the local copy was kept. Please try again.</source>
+  <target>Nicht alles konnte hochgeladen werden, daher wurde die lokale Kopie behalten. Bitte versuchen Sie es erneut.</target>
+</trans-unit>
+<trans-unit id="s033f47026d02c003">
+  <source>Type the project name exactly to delete it</source>
+  <target>Geben Sie den Projektnamen genau ein, um es zu löschen</target>
+</trans-unit>
+<trans-unit id="s076c0c69ea9cfd5d">
+  <source>Synchronize</source>
+  <target>Synchronisieren</target>
+</trans-unit>
+<trans-unit id="sd3386a2ef42e80b9">
+  <source>Download</source>
+  <target>Herunterladen</target>
+</trans-unit>
+<trans-unit id="sd6890563b2bf597f">
+  <source>Remove local copy</source>
+  <target>Lokale Kopie entfernen</target>
+</trans-unit>
+<trans-unit id="s7cf69b5464066504">
+  <source>Delete from this device</source>
+  <target>Von diesem Gerät löschen</target>
+</trans-unit>
+<trans-unit id="s5f4a46b486085426">
+  <source>Remove from server</source>
+  <target>Vom Server entfernen</target>
+</trans-unit>
 </body>
 </file>
 </xliff>

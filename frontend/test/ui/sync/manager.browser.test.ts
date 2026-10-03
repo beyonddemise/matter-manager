@@ -87,6 +87,19 @@ describe('pushing one project now', () => {
 
     expect((await remote('project_p1').get('device:late'))._id).toBe('device:late')
   })
+
+  it('still works for a suspended project that set() listed again meanwhile', async () => {
+    const { manager, local, remote } = realManager()
+    manager.set([ONE])
+    manager.suspend('p1')
+    manager.set([ONE])
+    await local('project_p1').put(device('device:held'))
+
+    await manager.pushNow('p1')
+
+    expect(manager.running()).toEqual([])
+    expect((await remote('project_p1').get('device:held'))._id).toBe('device:held')
+  })
 })
 
 describe('stopping one project', () => {

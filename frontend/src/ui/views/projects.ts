@@ -4,13 +4,21 @@ import type { LocalProjectEntry } from '../../data/index.js'
 import { DEFAULT_PLAN, showsUpgrade } from '../../domain/plan.js'
 import { projects } from '../composition.js'
 import { writeCurrentProjectId } from '../current-project.js'
-import { useProjectDatabase } from '../db/project-database.js'
+import { currentProjectDatabaseName, useProjectDatabase } from '../db/project-database.js'
 import {
   createLocalProject,
   indexServerProject,
+  localProjectDefaults,
   renameLocalProject,
   setLocalClient,
 } from '../local-projects.js'
+import {
+  type ActionSync,
+  type CurrentTarget,
+  ProjectActionError,
+  type ProjectActions,
+  projectActions,
+} from '../project-actions.js'
 import {
   createProject,
   type NewProject,
@@ -27,9 +35,20 @@ import {
   projectsModel,
   type Row,
 } from '../projects-model.js'
-import type { SyncManager } from '../sync/manager.js'
+import {
+  type Confirmation,
+  needsConfirmation,
+  renderActionsMenu,
+  renderConfirmDialog,
+} from './project-action-menu.js'
 import { clearFields, fieldValue, replicated, type Sort, sortRows } from './projects-helpers.js'
-import { locationText, openRefusalText, overLimitText, reasonText } from './projects-text.js'
+import {
+  locationText,
+  type MenuAction,
+  openRefusalText,
+  overLimitText,
+  reasonText,
+} from './projects-text.js'
 
 /**
  * The projects page: what this device and the server hold, and the way into each project.
@@ -45,7 +64,8 @@ import { locationText, openRefusalText, overLimitText, reasonText } from './proj
  * and a test to fakes. After every change it asks its host to {@link ProjectsView.refresh} the
  * inputs rather than patching them itself, so the page never shows a list nobody has read back.
  *
- * Promoting, downloading and removing projects are not here yet; they come with the actions menu.
+ * Promoting, downloading and removing go through each row's actions menu
+ * (`project-action-menu.ts`), and run in `project-actions.ts`; removals are confirmed first.
  *
  * @module
  */
@@ -66,6 +86,19 @@ const LOCAL_PROJECTS: LocalProjects = {
   rename: (dbName, name) => renameLocalProject(dbName, name),
   setClient: (dbName, client) => setLocalClient(dbName, client),
   indexServerProject: (project) => indexServerProject(project),
+}
+
+/**
+ * Replication when the host has given none: nothing replicates and nothing can be pushed, so
+ * every action that needs a push refuses rather than destroying anything.
+ */
+const NO_SYNC: ActionSync = {
+  set: () => {},
+  pushNow: async () => {
+    throw new Error('Nothing is being synchronized.')
+  },
+  suspend: () => {},
+  resume: () => {},
 }
 
 /** What the page shows before its host has said anything: a signed-out device with nothing. */
@@ -92,7 +125,10 @@ export class ProjectsView extends LitElement {
     localProjects: { attribute: false },
     navigate: { attribute: false },
     refresh: { attribute: false },
+    actions: { attribute: false },
     busy: { state: true },
+    confirming: { state: true },
+    typed: { state: true },
     error: { state: true },
     editing: { state: true },
     adding: { state: true },
@@ -104,10 +140,11 @@ export class ProjectsView extends LitElement {
   /** The API. Unset in the application, where it reaches the real one. */
   declare api?: ProjectsApi
   /**
-   * Replication, so a project created on the server gets its local copy at once. Unset, the copy
-   * starts when the host next hands replication its list — which it builds from the same index.
+   * Replication, so a project created on the server gets its local copy at once, and the pushes
+   * and holds that promoting and removing need. Unset, a copy starts when the host next hands
+   * replication its list — which it builds from the same index — and every push refuses.
    */
-  declare sync?: Pick<SyncManager, 'set'>
+  declare sync?: ActionSync
   /** Local-only project operations. Unset in the application, where they reach the real ones. */
   declare localProjects?: LocalProjects
   /** Where Open goes. Unset in the application, where it sets the location hash. */
@@ -117,6 +154,8 @@ export class ProjectsView extends LitElement {
    * {@link input}. Resolves once it has. Called after every change the page makes.
    */
   declare refresh?: () => Promise<void>
+  /** Promote, download and the removals. Unset in the application, where they are the real ones. */
+  declare actions?: ProjectActions
 
   /** Whether an action is running. Every control that starts one is disabled meanwhile. */
   declare busy: boolean
@@ -127,6 +166,10 @@ export class ProjectsView extends LitElement {
   /** Whether the pro plan's "Add project" dialog is open. */
   declare adding: boolean
   declare sort: Sort
+  /** The removal being confirmed, if any. */
+  declare confirming: Confirmation | undefined
+  /** What has been typed into the delete confirmation's name field. */
+  declare typed: string
 
   constructor() {
     super()
@@ -137,6 +180,8 @@ export class ProjectsView extends LitElement {
     this.editing = undefined
     this.adding = false
     this.sort = { by: 'name', ascending: true }
+    this.confirming = undefined
+    this.typed = ''
   }
 
   /**
@@ -152,7 +197,11 @@ export class ProjectsView extends LitElement {
     try {
       await action()
     } catch (error) {
-      if (error instanceof ProjectCreationError || error instanceof ProjectUpdateError) {
+      if (
+        error instanceof ProjectCreationError ||
+        error instanceof ProjectUpdateError ||
+        error instanceof ProjectActionError
+      ) {
         this.error = reasonText(error.reason)
       } else {
         console.error('A projects page action failed.', error)
@@ -257,14 +306,73 @@ export class ProjectsView extends LitElement {
    */
   private open(row: Row): void {
     if (!row.actions.open.allowed) return
-    writeCurrentProjectId(() => localStorage, row.projectId ?? row.dbName)
-    useProjectDatabase(row.dbName, row.editable)
+    select({ dbName: row.dbName, id: row.projectId ?? row.dbName, editable: row.editable })
     const navigate =
       this.navigate ??
       ((hash: string) => {
         window.location.hash = hash
       })
     navigate('#/devices')
+  }
+
+  /**
+   * Starts a menu action: promoting and downloading at once, a removal by asking first.
+   * Ignored while another action runs; the menu is disabled then, but a click can race it.
+   */
+  private choose(row: Row, action: MenuAction): void {
+    if (this.busy || !row.actions[action].allowed) return
+    this.error = undefined
+    if (needsConfirmation(action)) {
+      this.typed = ''
+      this.confirming = { action, row }
+      return
+    }
+    const model = this.model()
+    void this.run(() =>
+      action === 'promote'
+        ? this.projectActions().promote(model, row)
+        : this.projectActions().download(model, row),
+    )
+  }
+
+  /**
+   * Runs the removal being confirmed, against the row as the page shows it **now**: the inputs
+   * may have changed while the dialog was open, and the model is the authority, not the dialog.
+   * The dialog closes once it is done, so a failure is read on the page.
+   */
+  private async confirm(): Promise<void> {
+    const asked = this.confirming
+    if (asked === undefined || this.busy) return
+    const model = this.model()
+    const row = [...model.owned, ...model.shared].find((r) => r.key === asked.row.key)
+    const actions = this.projectActions()
+    await this.run(async () => {
+      if (row === undefined) return
+      if (asked.action === 'removeLocal') await actions.removeLocalCopy(model, row)
+      else if (asked.action === 'removeServer') await actions.removeFromServer(model, row)
+      else await actions.deleteLocalProject(model, row, this.typed)
+    })
+    this.confirming = undefined
+  }
+
+  /** The actions, or the real ones over the page's seams. */
+  private projectActions(): ProjectActions {
+    return (
+      this.actions ??
+      projectActions({
+        api: this.api ?? projects(),
+        // The browser is asked as well as the input: the input may be a render old, and a
+        // `false` from `navigator.onLine` is the one answer it gives that can be trusted.
+        online: () => this.input.online && navigator.onLine,
+        sync: this.sync ?? NO_SYNC,
+        local: localProjectDefaults,
+        currentDatabase: currentProjectDatabaseName,
+        switchTo: select,
+        refresh: async () => {
+          await this.refresh?.()
+        },
+      })
+    )
   }
 
   private locals(): LocalProjects {
@@ -310,6 +418,17 @@ export class ProjectsView extends LitElement {
                 }
               </section>`
         }
+        ${renderConfirmDialog(this.confirming, {
+          busy: this.busy,
+          typed: this.typed,
+          onType: (typed) => {
+            this.typed = typed
+          },
+          onConfirm: () => void this.confirm(),
+          onCancel: () => {
+            if (!this.busy) this.confirming = undefined
+          },
+        })}
       </section>
     `
   }
@@ -424,13 +543,16 @@ export class ProjectsView extends LitElement {
               ? this.renderName(row, false)
               : html`<h2 class="wa-cluster wa-gap-xs">${this.renderName(row, false)}</h2>`
           }
-          ${
-            row.actions.open.allowed
-              ? html`<wa-button data-open variant="brand" @click=${() => this.open(row)}>
-                  ${msg(str`Continue with “${row.name}”`)}
-                </wa-button>`
-              : nothing
-          }
+          <div class="wa-cluster wa-gap-s">
+            ${
+              row.actions.open.allowed
+                ? html`<wa-button data-open variant="brand" @click=${() => this.open(row)}>
+                    ${msg(str`Continue with “${row.name}”`)}
+                  </wa-button>`
+                : nothing
+            }
+            ${this.renderMenu(row)}
+          </div>
           ${this.renderRowNote(row)}
         </div>
       </wa-card>
@@ -480,7 +602,7 @@ export class ProjectsView extends LitElement {
         <div class="wa-cluster wa-gap-xs">${this.renderName(row, false)}</div>
         <div class="wa-cluster wa-gap-s">
           ${this.renderLocation(row)} ${this.renderSync(row)} ${this.renderRowNote(row)}
-          ${this.renderOpen(row)}
+          ${this.renderOpen(row)} ${this.renderMenu(row)}
         </div>
       </li>
     `
@@ -539,7 +661,7 @@ export class ProjectsView extends LitElement {
                 <td>${this.renderSync(row)}</td>
                 <td>
                   <div class="wa-cluster wa-gap-xs">
-                    ${this.renderOpen(row)} ${this.renderRowNote(row)}
+                    ${this.renderOpen(row)} ${this.renderMenu(row)} ${this.renderRowNote(row)}
                   </div>
                 </td>
               </tr>
@@ -673,6 +795,10 @@ export class ProjectsView extends LitElement {
     `
   }
 
+  private renderMenu(row: Row): TemplateResult | typeof nothing {
+    return renderActionsMenu(row, this.busy, (action) => this.choose(row, action))
+  }
+
   private renderOpen(row: Row): TemplateResult | typeof nothing {
     if (!row.actions.open.allowed) return nothing
     return html`<wa-button data-open size="s" @click=${() => this.open(row)}>
@@ -729,6 +855,16 @@ export class ProjectsView extends LitElement {
   private containerOf(event: Event, selector: string): Element | null {
     return (event.currentTarget as Element | null)?.closest(selector) ?? null
   }
+}
+
+/**
+ * Makes a project the current one: remembered by project id when it has one, by database name
+ * while it is local-only — the only name a local-only project has — and opened with the model's
+ * `editable`, which is how a lapsed owner's server project comes to be read-only.
+ */
+function select(target: CurrentTarget): void {
+  writeCurrentProjectId(() => localStorage, target.id)
+  useProjectDatabase(target.dbName, target.editable)
 }
 
 customElements.define('projects-view', ProjectsView)

@@ -11,6 +11,7 @@
 
 import PouchDB from 'pouchdb-browser'
 import {
+  isLocalOnlyDatabase,
   type LocalCache,
   type LocalProjectEntry,
   localCache,
@@ -251,9 +252,7 @@ export async function removeLocalDatabases(
   // asked: this list exists for when the cache cannot be read, and in that state the index that
   // would say "keep these" is unavailable, so the name itself has to.
   const includeLocal = options.includeLocalCatalogue === true
-  const isLocalOnly = (name: string) =>
-    name === PROJECT_DATABASE_NAME || name.startsWith('project_local_')
-  const alsoOpened = [...opened.keys()].filter((name) => includeLocal || !isLocalOnly(name))
+  const alsoOpened = [...opened.keys()].filter((name) => includeLocal || !isLocalOnlyDatabase(name))
 
   let replicated: readonly string[] = []
   let indexed: readonly LocalProjectEntry[] = []
@@ -267,12 +266,14 @@ export async function removeLocalDatabases(
   }
 
   // What the index lists splits in two, and the sign-out control's checkbox decides one half.
-  // A database with a `projectId` is a downloaded copy of the account's server project: it is
-  // the previous user's data and always goes. One without is a local-only project (the legacy
-  // `project_local` included) - the "local catalogue" of #55, which predates accounts and so
-  // goes only when asked. Such an entry is only *kept* if it can be re-listed afterwards
-  // (below), because the index lives in `mm-local`, which is always destroyed.
-  const indexedGoing = indexed.filter((entry) => includeLocal || entry.projectId !== undefined)
+  // A server-named database is a downloaded copy of the account's server project: it is the
+  // previous user's data and always goes. A local-only one (the legacy `project_local`
+  // included) is the "local catalogue" of #55, which predates accounts and so goes only when
+  // asked. Judged by name rather than by `projectId`: a promotion that stopped half way has an
+  // id on a database whose data has not left this device yet. Such an entry is only *kept* if
+  // it can be re-listed afterwards (below), because the index lives in `mm-local`, which is
+  // always destroyed.
+  const indexedGoing = indexed.filter((entry) => includeLocal || !isLocalOnlyDatabase(entry.dbName))
   const indexedKept = indexed.filter((entry) => !indexedGoing.includes(entry))
 
   // The local catalogue is only included when the reader asked. It predates accounts and holds

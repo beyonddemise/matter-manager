@@ -501,3 +501,58 @@ describe('the first-run name', () => {
     expect(model.needsName).toBeUndefined()
   })
 })
+
+describe('a promotion that stopped half way', () => {
+  // `POST /projects` answered and the index entry recorded the id, but the data has not moved
+  // yet: the database is still the local-only one, and it is the only place the data is.
+  const halfway = local({ dbName: 'project_local_hotel', name: 'Hotel', projectId: 'hotel' })
+  const list = [server('hotel', { name: 'Hotel' })]
+
+  it('stays local and editable, and offers promote again to finish it', () => {
+    const model = projectsModel(input({ local: [halfway], server: list }))
+    const row = byKey(model, 'project_local_hotel')
+    expect(row).toMatchObject({ location: 'local', projectId: 'hotel', editable: true })
+    expect(row.actions).toEqual<RowActions>({
+      open: ok,
+      // The name now lives on the server too; changing one side only would split it.
+      rename: na,
+      promote: ok,
+      download: na,
+      removeLocal: na,
+      deleteLocal: ok,
+      removeServer: na,
+    })
+  })
+
+  it('counts once, with its server project, and lists no second row for it', () => {
+    const model = projectsModel(input({ local: [halfway], server: list }))
+    expect(rows(model)).toHaveLength(1)
+    expect(model.ownedCount).toBe(1)
+  })
+
+  it('finishes even over the limit: the server project already exists', () => {
+    const model = projectsModel(input({ local: [halfway], server: list, reportedLimit: 0 }))
+    expect(byKey(model, 'project_local_hotel').actions.promote).toEqual(ok)
+  })
+
+  it('needs the server to finish, and a plan that syncs', () => {
+    expect(
+      byKey(
+        projectsModel(input({ local: [halfway], server: list, online: false })),
+        'project_local_hotel',
+      ).actions.promote,
+    ).toEqual(no('offline'))
+    expect(
+      byKey(
+        projectsModel(input({ local: [halfway], server: list, plan: 'free' })),
+        'project_local_hotel',
+      ).actions.promote,
+    ).toEqual(no('plan'))
+  })
+
+  it('is never an orphan, even when a fresh list does not name it', () => {
+    const row = byKey(projectsModel(input({ local: [halfway], server: [] })), 'project_local_hotel')
+    expect(row).toMatchObject({ location: 'local', editable: true })
+    expect(row.actions.deleteLocal).toEqual(ok)
+  })
+})

@@ -364,6 +364,8 @@ const driven = async () => {
     stateOf: () => undefined,
     stop: () => {},
     pushNow: async () => {},
+    suspend: () => {},
+    resume: () => {},
     stopAll,
   }))
   const signOutOf = vi.fn(async () => [])

@@ -47,6 +47,20 @@ export interface SyncManager {
   /** Stops one project's replication, if it is running. The others are untouched. */
   stop(projectId: string): void
   /**
+   * Stops one project's replication and keeps it stopped, whatever later {@link set} calls
+   * list, until {@link resume}. It can still be pushed with {@link pushNow}.
+   *
+   * For removing a local copy: the shell re-sends the whole list on every reconnection, and a
+   * replication restarted under a destroy would recreate the database, or fight the destroy for
+   * it. A plain {@link stop} cannot promise that; this can.
+   */
+  suspend(projectId: string): void
+  /**
+   * Lifts a {@link suspend}. The project replicates again if the last {@link set} listed it;
+   * if a later list dropped it, it stays stopped. Does nothing for a project not suspended.
+   */
+  resume(projectId: string): void
+  /**
    * Pushes one project's pending changes once and resolves when nothing is pending.
    *
    * Rejects when the server is unreachable, when it refuses a document, or when the project is
@@ -63,6 +77,8 @@ export function syncManager(deps: ManagerDependencies): SyncManager {
   const states = new Map<string, SyncState>()
   // Remembered past `stop`: a project whose live sync was stopped can still be pushed once.
   const known = new Map<string, SyncableProject>()
+  // Held still by `suspend`: listed (and so known, and pushable) but never started by `set`.
+  const suspended = new Set<string>()
 
   const startOne = (project: SyncableProject): void => {
     const handle = replicateProject(deps.local(project.dbName), deps.remote(project.dbName), {
@@ -101,6 +117,11 @@ export function syncManager(deps: ManagerDependencies): SyncManager {
         // checkpoint and re-scan the whole database — on every reconnection, which is exactly
         // when the connection is worst.
         if (handles.has(projectId)) continue
+        if (suspended.has(projectId)) {
+          // Known, so the push that a removal waits on still finds it; not started.
+          known.set(projectId, project)
+          continue
+        }
         startOne(project)
       }
     },
@@ -110,6 +131,17 @@ export function syncManager(deps: ManagerDependencies): SyncManager {
     stateOf: (projectId) => states.get(projectId),
 
     stop: stopOne,
+
+    suspend(projectId: string): void {
+      suspended.add(projectId)
+      stopOne(projectId)
+    },
+
+    resume(projectId: string): void {
+      if (!suspended.delete(projectId)) return
+      const project = known.get(projectId)
+      if (project !== undefined && !handles.has(projectId)) startOne(project)
+    },
 
     async pushNow(projectId: string, options?: { signal?: AbortSignal }): Promise<void> {
       const project = known.get(projectId)
@@ -122,6 +154,7 @@ export function syncManager(deps: ManagerDependencies): SyncManager {
     stopAll(): void {
       for (const projectId of [...handles.keys()]) stopOne(projectId)
       known.clear()
+      suspended.clear()
     },
   }
 }

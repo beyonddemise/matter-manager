@@ -113,7 +113,10 @@ export interface LocalProjectEntry {
   readonly name: string
   /** Who the project is for. Absent rather than empty. */
   readonly client?: string
-  /** The server's id for it once it is synchronized. Absent while local-only. */
+  /**
+   * The server's id for it once it has one. Absent while local-only — except on a local-only
+   * database whose promotion has started but not finished: see {@link isLocalOnlyDatabase}.
+   */
   readonly projectId?: string
   /**
    * The caller's role on the server project, as last heard when the copy was made or refreshed.
@@ -122,12 +125,26 @@ export interface LocalProjectEntry {
    * no server list is to hand: owned ones count against the limit and follow the owner's plan.
    * Absent on a copy with a `projectId` reads as owner: counting a project that may be shared
    * can refuse a create that would have fitted, while the opposite reading could create past
-   * the limit. Promoting writes no role (the promoter owns it); downloading should write one.
+   * the limit. Promoting writes `owner`; downloading writes the role the server reported.
    * Meaningless while local-only.
    */
   readonly role?: 'owner' | 'manage' | 'write' | 'read'
   /** When this device first knew of the project, ISO-8601. */
   readonly createdAt: string
+}
+
+/**
+ * Whether a database name is a local-only project's: today's `project_local` catalogue or a
+ * `project_local_<uuid>`.
+ *
+ * **The name, not the entry's `projectId`, says whether the data is anywhere else.** A promotion
+ * records the server's id on the local-only entry the moment `POST /projects` answers, so that a
+ * retry does not create a second project, and the data only reaches the server-named copy
+ * later. Until it has, the entry has an id and the data is still only here: anything deciding
+ * whether a database may be thrown away (signing out, the projects page) has to ask this.
+ */
+export function isLocalOnlyDatabase(dbName: string): boolean {
+  return dbName === 'project_local' || dbName.startsWith('project_local_')
 }
 
 /** The id prefix that makes the local index a contiguous, listable key range. */

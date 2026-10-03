@@ -32,6 +32,13 @@
  * - **A copy a fresh list no longer names** (access revoked, deleted) — an orphan — is treated
  *   the same, and its delete carries a stronger warning, since unpushed changes cannot leave.
  *   Only a fresh list proves this; a stale one may simply predate the project.
+ * - **A promotion that stopped half way** — a local-only database (`project_local…`) whose
+ *   entry already records the server's id, because `POST /projects` answered and the data has
+ *   not yet reached the server-named copy — reads `local` and stays editable: the data is still
+ *   only here. It matches its server project by id, so it is counted once and lists no second
+ *   row. It offers promote again, to finish the job (no slot needed: the project exists), and
+ *   delete; rename waits, since the name now lives on the server too. It is never an orphan:
+ *   its data has never been anywhere else, whatever the list says.
  * - **A copy with no server project to compare with** (stale list not naming it, or unheard)
  *   reads `synced`, its last known state, so removing it still demands the push only `synced`
  *   asks for. Its role is the one the index recorded, and **owner** when none was: counting a
@@ -43,7 +50,7 @@
  * @module
  */
 
-import type { LocalProjectEntry } from '../data/index.js'
+import { isLocalOnlyDatabase, type LocalProjectEntry } from '../data/index.js'
 import {
   canOwnAnother,
   exceedsLimit,
@@ -209,12 +216,14 @@ export interface ProjectsInput {
 /**
  * What a row is, before the page's vocabulary is applied. Both `remnant` (a copy whose server
  * project is archived) and `orphan` (a copy a fresh server list no longer names) are shown as
- * `local`, but neither is a local-only project.
+ * `local`, but neither is a local-only project. `promoting` (a local-only database whose
+ * promotion stopped half way) is shown as `local` too, and its data is local-only.
  */
-type Kind = 'local-only' | 'remnant' | 'orphan' | 'synced' | 'server'
+type Kind = 'local-only' | 'promoting' | 'remnant' | 'orphan' | 'synced' | 'server'
 
 const LOCATIONS: Readonly<Record<Kind, Location>> = {
   'local-only': 'local',
+  promoting: 'local',
   remnant: 'local',
   orphan: 'local',
   synced: 'synced',
@@ -258,7 +267,10 @@ export function projectsModel(input: ProjectsInput): ProjectsModel {
   const ownedCount = sources.filter(
     (source) =>
       mine(source) &&
-      (source.kind === 'synced' || source.kind === 'server' || source.kind === 'local-only'),
+      (source.kind === 'synced' ||
+        source.kind === 'server' ||
+        source.kind === 'local-only' ||
+        source.kind === 'promoting'),
   ).length
   const limit = limitFor(plan, input.reportedLimit)
   const overLimit = exceedsLimit(ownedCount, limit)
@@ -280,7 +292,8 @@ export function projectsModel(input: ProjectsInput): ProjectsModel {
     const client = project === undefined ? entry?.client : project.client
     const syncState = projectId === undefined ? undefined : input.syncStates(projectId)
     const manages = owner || role === 'manage'
-    const removable = kind === 'local-only' || kind === 'remnant' || kind === 'orphan'
+    const removable =
+      kind === 'local-only' || kind === 'promoting' || kind === 'remnant' || kind === 'orphan'
 
     return {
       key: dbName,
@@ -299,16 +312,19 @@ export function projectsModel(input: ProjectsInput): ProjectsModel {
         rename:
           kind === 'local-only'
             ? ALLOWED
-            : kind === 'remnant' || kind === 'orphan'
-              ? gate<Refusal>([false, 'read-only'])
-              : gate<Refusal>(...needsServer, [manages, 'role']),
+            : kind === 'promoting'
+              ? gate<Refusal>([false, 'not-applicable'])
+              : kind === 'remnant' || kind === 'orphan'
+                ? gate<Refusal>([false, 'read-only'])
+                : gate<Refusal>(...needsServer, [manages, 'role']),
         // Slot-neutral on this page, but `POST /projects` counts the server's active projects
-        // only, so over the limit the server refuses what the page would offer.
+        // only, so over the limit the server refuses what the page would offer. Finishing a
+        // half-done promotion creates nothing, so the limit does not apply to it.
         promote: gate<Refusal>(
-          [kind === 'local-only', 'not-applicable'],
+          [kind === 'local-only' || kind === 'promoting', 'not-applicable'],
           ...needsServer,
           [syncs, 'plan'],
-          [!overLimit, 'limit'],
+          [kind === 'promoting' || !overLimit, 'limit'],
         ),
         // A shared project's owner pays for it, so the caller's own plan does not matter.
         download: gate<Refusal>([kind === 'server', 'not-applicable'], ...needsServer, [
@@ -379,7 +395,10 @@ function join(
     )
     if (project !== undefined) matched.add(project)
     const role =
-      project?.role ?? (entry.projectId === undefined ? undefined : (entry.role ?? 'owner'))
+      project?.role ??
+      (entry.projectId === undefined || isLocalOnlyDatabase(entry.dbName)
+        ? undefined
+        : (entry.role ?? 'owner'))
     return {
       entry,
       ...(project === undefined ? {} : { project }),
@@ -402,6 +421,8 @@ function join(
  * deleting on that evidence would destroy data the server would still have taken.
  */
 function kindOf(entry: LocalProjectEntry, project: Project | undefined, fresh: boolean): Kind {
+  // Before the server project: whatever the server says, this data has not left the device.
+  if (entry.projectId !== undefined && isLocalOnlyDatabase(entry.dbName)) return 'promoting'
   if (project !== undefined) return project.archived ? 'remnant' : 'synced'
   if (entry.projectId === undefined) return 'local-only'
   return fresh ? 'orphan' : 'synced'
@@ -410,13 +431,14 @@ function kindOf(entry: LocalProjectEntry, project: Project | undefined, fresh: b
 /**
  * Whether the project may be written to when opened.
  *
- * Local-only projects always: nothing outside this device judges them. A remnant or an orphan
+ * Local-only projects always, half-promoted ones included: nothing outside this device judges
+ * their data yet. A remnant or an orphan
  * never: the server refuses (or no longer takes) its writes. Otherwise the validator's rule is
  * predicted — readers never write, an owner only on a plan that syncs (the lapsed owner), and a
  * writer or manager always, since the owner's plan, not theirs, is what the project rests on.
  */
 function editable(kind: Kind, role: Project['role'] | undefined, owner: boolean, syncs: boolean) {
-  if (kind === 'local-only') return true
+  if (kind === 'local-only' || kind === 'promoting') return true
   if (kind === 'remnant' || kind === 'orphan' || role === 'read') return false
   return owner ? syncs : true
 }

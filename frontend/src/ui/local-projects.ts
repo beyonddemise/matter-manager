@@ -40,7 +40,8 @@ export interface LocalProjectDependencies {
   readonly now: () => string
 }
 
-const defaults: LocalProjectDependencies = {
+/** The real dependencies: the browser's databases and the shared `mm-local` index. */
+export const localProjectDefaults: LocalProjectDependencies = {
   cache: localProfileCache,
   database: rawDatabase,
   forget: forgetProject,
@@ -121,7 +122,7 @@ async function writeProjectDocument(
  */
 export async function createLocalProject(
   input: { readonly name: string; readonly client?: string },
-  deps: LocalProjectDependencies = defaults,
+  deps: LocalProjectDependencies = localProjectDefaults,
 ): Promise<LocalProjectEntry> {
   const dbName = `${LOCAL_PROJECT_PREFIX}${deps.uuid()}`
   await writeProjectDocument(deps.database(dbName), input.name, input.client)
@@ -146,7 +147,7 @@ async function entryOf(cache: LocalCache, dbName: string): Promise<LocalProjectE
 export async function renameLocalProject(
   dbName: string,
   name: string,
-  deps: LocalProjectDependencies = defaults,
+  deps: LocalProjectDependencies = localProjectDefaults,
 ): Promise<void> {
   const entry = await entryOf(deps.cache(), dbName)
   await writeProjectDocument(deps.database(dbName), name, entry.client)
@@ -160,7 +161,7 @@ export async function renameLocalProject(
 export async function setLocalClient(
   dbName: string,
   client: string | undefined,
-  deps: LocalProjectDependencies = defaults,
+  deps: LocalProjectDependencies = localProjectDefaults,
 ): Promise<void> {
   const entry = await entryOf(deps.cache(), dbName)
   await writeProjectDocument(deps.database(dbName), entry.name, client)
@@ -183,7 +184,7 @@ export async function setLocalClient(
  */
 export async function indexServerProject(
   project: Pick<Project, 'projectId' | 'dbName' | 'name' | 'client' | 'role'>,
-  deps: LocalProjectDependencies = defaults,
+  deps: LocalProjectDependencies = localProjectDefaults,
 ): Promise<void> {
   const cache = deps.cache()
   const existing = (await cache.readLocalProjects()).find(
@@ -212,7 +213,7 @@ export async function indexServerProject(
  */
 export async function destroyLocalProject(
   dbName: string,
-  deps: LocalProjectDependencies = defaults,
+  deps: LocalProjectDependencies = localProjectDefaults,
 ): Promise<void> {
   try {
     await deps.database(dbName).destroy()
@@ -237,7 +238,7 @@ export async function destroyLocalProject(
  */
 export async function adoptLegacyCatalogue(
   name: string,
-  deps: LocalProjectDependencies = defaults,
+  deps: LocalProjectDependencies = localProjectDefaults,
 ): Promise<void> {
   const cache = deps.cache()
   const indexed = await cache.readLocalProjects()

@@ -2,6 +2,8 @@ import '@awesome.me/webawesome-pro/dist/components/button/button.js'
 import '@awesome.me/webawesome-pro/dist/components/callout/callout.js'
 import '@awesome.me/webawesome-pro/dist/components/card/card.js'
 import '@awesome.me/webawesome-pro/dist/components/dialog/dialog.js'
+import '@awesome.me/webawesome-pro/dist/components/dropdown/dropdown.js'
+import '@awesome.me/webawesome-pro/dist/components/dropdown-item/dropdown-item.js'
 import '@awesome.me/webawesome-pro/dist/components/icon/icon.js'
 import '@awesome.me/webawesome-pro/dist/components/input/input.js'
 import '@awesome.me/webawesome-pro/dist/components/tag/tag.js'
@@ -16,6 +18,7 @@ import {
   useProjectDatabase,
 } from '../../../src/ui/db/project-database.js'
 import { activateLocale } from '../../../src/ui/i18n/localization.js'
+import { ProjectActionError, type ProjectActions } from '../../../src/ui/project-actions.js'
 import {
   type NewProject,
   type Project,
@@ -23,7 +26,7 @@ import {
   type ProjectPatch,
   type ProjectsApi,
 } from '../../../src/ui/projects.js'
-import type { ProjectsInput } from '../../../src/ui/projects-model.js'
+import type { ProjectsInput, Row } from '../../../src/ui/projects-model.js'
 import type { SyncableProject } from '../../../src/ui/sync/manager.js'
 import type { ProjectsView } from '../../../src/ui/views/projects.js'
 import '../../../src/ui/views/projects.js'
@@ -67,6 +70,8 @@ interface Recorded {
   readonly clients: [string, string | undefined][]
   readonly indexed: Pick<Project, 'projectId' | 'dbName' | 'name'>[]
   readonly navigated: string[]
+  /** Every project action the page asked for: which, on which database, and any typed name. */
+  readonly acted: [string, string, string?][]
   refreshed: number
 }
 
@@ -74,6 +79,33 @@ let recorded: Recorded
 
 /** How the fake API answers `create`: with a project, or by throwing. */
 let createAnswer: () => Project
+
+/** How every fake project action ends: resolving by default, or as a test says. */
+let actionAnswer: () => Promise<void>
+
+/** Project actions that record what they were asked and answer with {@link actionAnswer}. */
+const actions: ProjectActions = {
+  promote: async (_model, row: Row) => {
+    recorded.acted.push(['promote', row.dbName])
+    await actionAnswer()
+  },
+  download: async (_model, row: Row) => {
+    recorded.acted.push(['download', row.dbName])
+    await actionAnswer()
+  },
+  removeLocalCopy: async (_model, row: Row) => {
+    recorded.acted.push(['removeLocal', row.dbName])
+    await actionAnswer()
+  },
+  deleteLocalProject: async (_model, row: Row, typed: string) => {
+    recorded.acted.push(['deleteLocal', row.dbName, typed])
+    await actionAnswer()
+  },
+  removeFromServer: async (_model, row: Row) => {
+    recorded.acted.push(['removeServer', row.dbName])
+    await actionAnswer()
+  },
+}
 
 beforeEach(() => {
   recorded = {
@@ -85,8 +117,10 @@ beforeEach(() => {
     clients: [],
     indexed: [],
     navigated: [],
+    acted: [],
     refreshed: 0,
   }
+  actionAnswer = async () => {}
   createAnswer = () => project({ projectId: 'p-new', dbName: 'project_p-new', name: 'Neu' })
   localStorage.removeItem(CURRENT_PROJECT_KEY)
 })
@@ -145,6 +179,7 @@ async function page(input: Partial<ProjectsInput> = {}): Promise<ProjectsView> {
         },
       }}
       .navigate=${(hash: string) => recorded.navigated.push(hash)}
+      .actions=${actions}
       .refresh=${async () => {
         recorded.refreshed += 1
       }}
@@ -573,5 +608,179 @@ describe('every plan', () => {
     const said = text(find(view, '[data-create-card]'))
     expect(said).toContain('Ihr Projekt')
     expect(said).not.toContain('Create your project')
+  })
+})
+
+describe('the actions menu', () => {
+  const member = (input: Partial<ProjectsInput> = {}) =>
+    page({ plan: 'member', reportedLimit: 3, ...input })
+  const synced = entry({ dbName: 'project_p1', name: 'Beta', projectId: 'p1' })
+
+  /** The menu item for one action on one row. */
+  const item = (view: ProjectsView, key: string, action: string) =>
+    find<HTMLElement & { disabled: boolean }>(view, `[data-row="${key}"] [data-action="${action}"]`)
+
+  /** Chooses an action from a row's menu, as clicking its item does. */
+  async function choose(view: ProjectsView, key: string, action: string): Promise<void> {
+    item(view, key, action).click()
+    await view.updateComplete
+  }
+
+  /** The open confirmation dialog. */
+  const dialog = (view: ProjectsView) => find(view, '[data-confirm-dialog][open]')
+
+  it('offers only what applies to each row, and says why a refused one is refused', async () => {
+    const view = await member({ local: [entry(), synced], server: [project()], online: true })
+
+    expect(
+      view.querySelector('[data-row="project_local_a"] [data-action="promote"]'),
+    ).not.toBeNull()
+    expect(
+      view.querySelector('[data-row="project_local_a"] [data-action="deleteLocal"]'),
+    ).not.toBeNull()
+    expect(
+      view.querySelector('[data-row="project_local_a"] [data-action="removeLocal"]'),
+    ).toBeNull()
+    expect(view.querySelector('[data-row="project_p1"] [data-action="removeLocal"]')).not.toBeNull()
+    expect(
+      view.querySelector('[data-row="project_p1"] [data-action="removeServer"]'),
+    ).not.toBeNull()
+    expect(view.querySelector('[data-row="project_p1"] [data-action="promote"]')).toBeNull()
+
+    const offline = await member({
+      local: [entry()],
+      server: [project({ projectId: 'p3', dbName: 'project_p3', name: 'Remote' })],
+      online: false,
+      serverStale: true,
+    })
+    expect(item(offline, 'project_local_a', 'promote').disabled).toBe(true)
+    expect(text(item(offline, 'project_local_a', 'promote'))).toContain('Needs a connection')
+    expect(item(offline, 'project_p3', 'download').disabled).toBe(true)
+  })
+
+  it('promotes and downloads straight from the menu', async () => {
+    const view = await member({
+      local: [entry()],
+      server: [project({ projectId: 'p3', dbName: 'project_p3', name: 'Remote' })],
+    })
+
+    await choose(view, 'project_local_a', 'promote')
+    await settled(view)
+    await choose(view, 'project_p3', 'download')
+    await settled(view)
+
+    expect(recorded.acted).toEqual([
+      ['promote', 'project_local_a'],
+      ['download', 'project_p3'],
+    ])
+  })
+
+  it('confirms removing a local copy, saying the server keeps it', async () => {
+    const view = await member({ local: [synced], server: [project()] })
+
+    await choose(view, 'project_p1', 'removeLocal')
+    expect(text(dialog(view))).toContain(
+      'The server keeps it. Changes not yet uploaded are uploaded first.',
+    )
+    expect(recorded.acted).toEqual([])
+    await click(view, '[data-confirm]', dialog(view))
+    await settled(view)
+
+    expect(recorded.acted).toEqual([['removeLocal', 'project_p1']])
+    expect(view.querySelector('[data-confirm-dialog][open]')).toBeNull()
+  })
+
+  it('says why a local copy was kept when the upload did not get through', async () => {
+    actionAnswer = async () => {
+      throw new ProjectActionError('unpushed')
+    }
+    const view = await member({ local: [synced], server: [project()] })
+
+    await choose(view, 'project_p1', 'removeLocal')
+    await click(view, '[data-confirm]', dialog(view))
+    await settled(view)
+
+    expect(text(find(view, '[data-error]'))).toContain('Not everything could be uploaded')
+  })
+
+  it('deletes a local-only project only once its exact name is typed', async () => {
+    const view = await member({ local: [entry()] })
+
+    await choose(view, 'project_local_a', 'deleteLocal')
+    const confirm = find<HTMLElement & { disabled: boolean }>(dialog(view), '[data-confirm]')
+    expect(confirm.disabled).toBe(true)
+
+    const field = find<HTMLElement & { value: string }>(dialog(view), '[data-field="confirm-name"]')
+    field.value = 'alpha'
+    field.dispatchEvent(new Event('input', { bubbles: true }))
+    await view.updateComplete
+    expect(confirm.disabled).toBe(true)
+
+    field.value = 'Alpha'
+    field.dispatchEvent(new Event('input', { bubbles: true }))
+    await view.updateComplete
+    expect(confirm.disabled).toBe(false)
+
+    await click(view, '[data-confirm]', dialog(view))
+    await settled(view)
+    expect(recorded.acted).toEqual([['deleteLocal', 'project_local_a', 'Alpha']])
+  })
+
+  it('warns harder when an orphan copy may hold changes that never left', async () => {
+    const view = await member({ local: [synced], server: [] })
+
+    await choose(view, 'project_p1', 'deleteLocal')
+
+    expect(text(dialog(view))).toContain('Changes not yet uploaded will be lost')
+  })
+
+  it('confirms removing from the server, saying collaborators lose access', async () => {
+    const view = await member({ local: [synced], server: [project()] })
+
+    await choose(view, 'project_p1', 'removeServer')
+    expect(text(dialog(view))).toContain(
+      'Collaborators lose access. Deleted permanently after 90 days.',
+    )
+    await click(view, '[data-confirm]', dialog(view))
+    await settled(view)
+
+    expect(recorded.acted).toEqual([['removeServer', 'project_p1']])
+  })
+
+  it('disables every action while one runs', async () => {
+    let finish = () => {}
+    actionAnswer = () =>
+      new Promise<void>((resolve) => {
+        finish = resolve
+      })
+    const view = await member({ local: [entry(), synced], server: [project()] })
+
+    await choose(view, 'project_local_a', 'promote')
+
+    expect(view.busy).toBe(true)
+    expect(item(view, 'project_local_a', 'promote').disabled).toBe(true)
+    expect(item(view, 'project_p1', 'removeServer').disabled).toBe(true)
+    await choose(view, 'project_local_a', 'promote')
+    expect(recorded.acted).toHaveLength(1)
+
+    finish()
+    await settled(view)
+    expect(item(view, 'project_local_a', 'promote').disabled).toBe(false)
+  })
+
+  it('offers the free plan’s card a menu too, with sync refused by the plan', async () => {
+    const view = await page({ local: [entry()] })
+
+    expect(item(view, 'project_local_a', 'promote').disabled).toBe(true)
+    expect(item(view, 'project_local_a', 'deleteLocal').disabled).toBe(false)
+  })
+
+  it('speaks German in its confirmations', async () => {
+    await activateLocale('de')
+    const view = await member({ local: [synced], server: [project()] })
+
+    await choose(view, 'project_p1', 'removeServer')
+
+    expect(text(dialog(view))).not.toContain('Collaborators lose access')
   })
 })

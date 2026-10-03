@@ -9,11 +9,12 @@
  */
 
 import { msg, str } from '@lit/localize'
+import type { ActionRefusal } from '../project-actions.js'
 import type { UpdateFailure } from '../projects.js'
-import type { CreateRefusal, Location, Refusal } from '../projects-model.js'
+import type { CreateRefusal, Location, Refusal, RowActions } from '../projects-model.js'
 
 /** Every reason the page may have to say why something is not possible. */
-export type Reason = Refusal | CreateRefusal | UpdateFailure
+export type Reason = Refusal | CreateRefusal | UpdateFailure | ActionRefusal
 
 /**
  * The sentence for a reason. The one place reasons become words.
@@ -55,6 +56,29 @@ export function reasonText(reason: Reason): string {
       return msg('Something went wrong on the server')
     case 'not-found':
       return msg('This project is no longer on the server')
+    case 'unpushed':
+      return msg('Not everything could be uploaded, so the local copy was kept. Please try again.')
+    case 'name-mismatch':
+      return msg('Type the project name exactly to delete it')
+  }
+}
+
+/** The actions the menu offers: every row action except opening and renaming, in menu order. */
+export type MenuAction = Exclude<keyof RowActions, 'open' | 'rename'>
+
+/** What each menu action is called. */
+export function actionText(action: MenuAction): string {
+  switch (action) {
+    case 'promote':
+      return msg('Synchronize')
+    case 'download':
+      return msg('Download')
+    case 'removeLocal':
+      return msg('Remove local copy')
+    case 'deleteLocal':
+      return msg('Delete from this device')
+    case 'removeServer':
+      return msg('Remove from server')
   }
 }
 
