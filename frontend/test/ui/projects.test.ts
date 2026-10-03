@@ -4,8 +4,10 @@ import {
   type NewProject,
   type Project,
   ProjectCreationError,
+  type ProjectPatch,
   ProjectUpdateError,
   projectsApi,
+  updateProject,
 } from '../../src/ui/projects.js'
 
 const PROJECT: Project = {
@@ -105,6 +107,80 @@ describe('creating a project needs a connection', () => {
       (thrown: unknown) => thrown,
     )
     expect((error as ProjectCreationError).reason).toBe('not-entitled')
+  })
+})
+
+describe('changing a project needs a connection too', () => {
+  /** An API whose `update` records what it was asked, and can be told to fail. */
+  function updatingApi(behaviour: { fails?: unknown } = {}) {
+    const patches: [string, ProjectPatch][] = []
+    return {
+      patches,
+      api: {
+        ...fakeApi().api,
+        update: async (projectId: string, patch: ProjectPatch) => {
+          patches.push([projectId, patch])
+          if (behaviour.fails !== undefined) throw behaviour.fails
+          return { ...PROJECT, ...(patch.name === undefined ? {} : { name: patch.name }) }
+        },
+      },
+    }
+  }
+
+  const reasonOf = (error: unknown): unknown => (error as ProjectUpdateError).reason
+
+  it('sends the patch and returns the project as it now stands', async () => {
+    const { api, patches } = updatingApi()
+
+    const project = await updateProject({ api, online: () => true }, 'p1', { name: 'Neu' })
+
+    expect(project.name).toBe('Neu')
+    expect(patches).toEqual([['p1', { name: 'Neu' }]])
+  })
+
+  it('refuses offline without sending anything', async () => {
+    const { api, patches } = updatingApi()
+
+    const error = await updateProject({ api, online: () => false }, 'p1', { name: 'x' }).catch(
+      (thrown: unknown) => thrown,
+    )
+
+    expect(error).toBeInstanceOf(ProjectUpdateError)
+    expect(reasonOf(error)).toBe('offline')
+    expect(patches).toEqual([])
+  })
+
+  it('reads a request that never arrived as unreachable', async () => {
+    const { api } = updatingApi({ fails: new TypeError('Failed to fetch') })
+
+    const error = await updateProject({ api, online: () => true }, 'p1', { name: 'x' }).catch(
+      (thrown: unknown) => thrown,
+    )
+
+    expect(reasonOf(error)).toBe('unreachable')
+  })
+
+  it('keeps the reason the API gave it', async () => {
+    const { api } = updatingApi({ fails: new ProjectUpdateError('not-a-manager') })
+
+    const error = await updateProject({ api, online: () => true }, 'p1', { name: 'x' }).catch(
+      (thrown: unknown) => thrown,
+    )
+
+    expect(reasonOf(error)).toBe('not-a-manager')
+  })
+
+  it('refuses an empty patch before sending it', async () => {
+    // The contract declares `minProperties: 1`, so the server would answer 400. Asking it
+    // anyway would spend a round trip to learn what is already known.
+    const { api, patches } = updatingApi()
+
+    const error = await updateProject({ api, online: () => true }, 'p1', {}).catch(
+      (thrown: unknown) => thrown,
+    )
+
+    expect(reasonOf(error)).toBe('refused')
+    expect(patches).toEqual([])
   })
 })
 

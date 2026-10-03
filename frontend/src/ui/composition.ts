@@ -28,18 +28,6 @@ import {
   removeLocalDatabases,
 } from './db/project-database.js'
 
-// Transitional: the projects page (next task) is the real consumer. Re-exported here so the
-// module is reachable from the entry point, which `check:graph` requires of every module.
-export {
-  adoptLegacyCatalogue,
-  createLocalProject,
-  destroyLocalProject,
-  renameLocalProject,
-  setLocalClient,
-} from './local-projects.js'
-// Transitional, as above: the projects view (Task 6) renders this model.
-export { projectsModel } from './projects-model.js'
-
 import { type Locale, profileApi, resolveProfileLocale } from './profile.js'
 import { type Project, projectsApi } from './projects.js'
 import {

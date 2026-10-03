@@ -246,3 +246,31 @@ export async function createProject(
     throw new ProjectCreationError('unreachable')
   }
 }
+
+/**
+ * Changes a project's name, client or archived state, or says why it could not.
+ *
+ * The same discipline as {@link createProject}: one attempt, never queued, offline refused
+ * before anything is sent. A rename waiting for the network would be a name the user sees on
+ * one device and nobody else ever does.
+ *
+ * @throws {ProjectUpdateError} with a reason the interface can turn into a sentence
+ */
+export async function updateProject(
+  deps: CreateDependencies,
+  projectId: string,
+  patch: ProjectPatch,
+): Promise<Project> {
+  // `refused`, because that is what the server would answer: the contract declares
+  // `minProperties: 1`, so an empty patch is a 400. Known here, so not worth a round trip.
+  if (Object.keys(patch).length === 0) throw new ProjectUpdateError('refused')
+  if (!deps.online()) throw new ProjectUpdateError('offline')
+
+  try {
+    return await deps.api.update(projectId, patch)
+  } catch (error) {
+    if (error instanceof ProjectUpdateError) throw error
+    // A `TypeError` from `fetch`: see `createProject` on why this is not `offline`.
+    throw new ProjectUpdateError('unreachable')
+  }
+}

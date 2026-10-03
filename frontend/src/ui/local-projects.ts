@@ -26,6 +26,7 @@ import {
   PROJECT_DATABASE_NAME,
   rawDatabase,
 } from './db/project-database.js'
+import type { Project } from './projects.js'
 
 /** The prefix of a local-only project's database name. */
 const LOCAL_PROJECT_PREFIX = 'project_local_'
@@ -167,6 +168,35 @@ export async function setLocalClient(
   // stale one would disagree with its document.
   const { client: _stale, ...rest } = entry
   await deps.cache().addLocalProject({ ...rest, ...clientField(client) })
+}
+
+/**
+ * Lists this device's copy of a server project in the index, or brings its listing up to date.
+ *
+ * Writes the index only, never the database: on a server database the service owns the
+ * `project` document, and replication brings it down. The entry is what lets the page show the
+ * copy's name, and tell it from a server-only project, while offline. Rewritten whole, keeping
+ * only when the device first knew of it: a client the server has cleared must go from the entry
+ * too, which a patch cannot express.
+ *
+ * @param project as `POST /projects` or `PATCH /projects/:id` returned it
+ */
+export async function indexServerProject(
+  project: Pick<Project, 'projectId' | 'dbName' | 'name' | 'client' | 'role'>,
+  deps: LocalProjectDependencies = defaults,
+): Promise<void> {
+  const cache = deps.cache()
+  const existing = (await cache.readLocalProjects()).find(
+    (candidate) => candidate.dbName === project.dbName,
+  )
+  await cache.addLocalProject({
+    dbName: project.dbName,
+    name: project.name,
+    ...clientField(project.client),
+    projectId: project.projectId,
+    role: project.role,
+    createdAt: existing?.createdAt ?? deps.now(),
+  })
 }
 
 /**

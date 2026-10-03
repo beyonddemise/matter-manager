@@ -86,6 +86,9 @@ const ICONS = [
   'file-pdf',
   'pen',
   'plus',
+  // The sort direction of the projects table's active column, in `views/projects.ts`.
+  'sort-down',
+  'sort-up',
   'tags',
   'trash',
   'triangle-exclamation',

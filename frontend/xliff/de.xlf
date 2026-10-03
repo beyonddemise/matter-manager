@@ -698,6 +698,166 @@
   <source>No permission to sync</source>
   <target>Keine Berechtigung zum Synchronisieren</target>
 </trans-unit>
+<trans-unit id="s566d8645a79e1253">
+  <source>Sign in to sync</source>
+  <target>Melden Sie sich an, um zu synchronisieren</target>
+</trans-unit>
+<trans-unit id="s3ad60fb9299b0c7f">
+  <source>Needs a connection</source>
+  <target>Benötigt eine Verbindung</target>
+</trans-unit>
+<trans-unit id="s8e7345541678ac43">
+  <source>Waiting for the project list</source>
+  <target>Wartet auf die Projektliste</target>
+</trans-unit>
+<trans-unit id="sdefccbd893205167">
+  <source>Your plan does not include synchronized projects</source>
+  <target>Ihr Tarif umfasst keine synchronisierten Projekte</target>
+</trans-unit>
+<trans-unit id="se350bbf7a2d3698a">
+  <source>Your plan has no room for another project</source>
+  <target>Ihr Tarif lässt kein weiteres Projekt zu</target>
+</trans-unit>
+<trans-unit id="s0921904a26cb7e76">
+  <source>Only the owner or a manager can change this</source>
+  <target>Nur der Eigentümer oder ein Verwalter kann das ändern</target>
+</trans-unit>
+<trans-unit id="sc70cb5a0fb8377ea">
+  <source>Read-only</source>
+  <target>Nur lesbar</target>
+</trans-unit>
+<trans-unit id="s1c5e4b31f51478ba">
+  <source>The server could not be reached</source>
+  <target>Der Server war nicht erreichbar</target>
+</trans-unit>
+<trans-unit id="s6a28accdb1d59c53">
+  <source>The server did not accept this</source>
+  <target>Der Server hat das nicht angenommen</target>
+</trans-unit>
+<trans-unit id="s3d917f624d8a82a3">
+  <source>Something went wrong on the server</source>
+  <target>Auf dem Server ist etwas schiefgegangen</target>
+</trans-unit>
+<trans-unit id="sfbd747a1d61ef2ed">
+  <source>This project is no longer on the server</source>
+  <target>Dieses Projekt ist nicht mehr auf dem Server</target>
+</trans-unit>
+<trans-unit id="s3340b8b54f1707be">
+  <source>Not available offline</source>
+  <target>Offline nicht verfügbar</target>
+</trans-unit>
+<trans-unit id="s60f8a9487f3f1996">
+  <source>On the server</source>
+  <target>Auf dem Server</target>
+</trans-unit>
+<trans-unit id="s399650f9a8c247db">
+  <source>Synchronized</source>
+  <target>Synchronisiert</target>
+</trans-unit>
+<trans-unit id="s18059d87aa01352e">
+  <source>That did not work. Please try again.</source>
+  <target>Das hat nicht geklappt. Bitte versuchen Sie es erneut.</target>
+</trans-unit>
+<trans-unit id="s08d66fafa85262c2">
+  <source>Give the project a name.</source>
+  <target>Geben Sie dem Projekt einen Namen.</target>
+</trans-unit>
+<trans-unit id="s199f5853f4e718f7">
+  <source>Projects</source>
+  <target>Projekte</target>
+</trans-unit>
+<trans-unit id="sf73d7490e3579772">
+  <source>Shared with me</source>
+  <target>Mit mir geteilt</target>
+</trans-unit>
+<trans-unit id="s7f0c66f43666be59">
+  <source>Offline: new projects stay on this device for now.</source>
+  <target>Offline: Neue Projekte bleiben vorerst auf diesem Gerät.</target>
+</trans-unit>
+<trans-unit id="s6623f846eb3ae740">
+  <source>Your plan allows <x id="0" equiv-text="${model.limit}"/> projects and you have <x id="1" equiv-text="${model.ownedCount}"/>. Everything stays usable, but no new project can be created.</source>
+  <target>Ihr Tarif erlaubt <x id="0" equiv-text="${model.limit}"/> Projekte, und Sie haben <x id="1" equiv-text="${model.ownedCount}"/>. Alles bleibt nutzbar, aber neue Projekte können nicht angelegt werden.</target>
+</trans-unit>
+<trans-unit id="sba9cf1a192309c34">
+  <source>Upgrade to keep your projects in sync across devices, and to have more than one.</source>
+  <target>Mit einem Upgrade bleiben Ihre Projekte auf allen Geräten synchron, und Sie können mehr als eines haben.</target>
+</trans-unit>
+<trans-unit id="sf6843c35304c4791">
+  <source>Create your project</source>
+  <target>Erstellen Sie Ihr Projekt</target>
+</trans-unit>
+<trans-unit id="s382a2aa3984474dd">
+  <source>Create</source>
+  <target>Erstellen</target>
+</trans-unit>
+<trans-unit id="sba3dfed50cb0be74">
+  <source>Name your project</source>
+  <target>Benennen Sie Ihr Projekt</target>
+</trans-unit>
+<trans-unit id="s8a5fa5ad06a2e960">
+  <source>Everything recorded on this device so far is in it.</source>
+  <target>Alles, was Sie bisher auf diesem Gerät erfasst haben, ist darin.</target>
+</trans-unit>
+<trans-unit id="s33f85f24c0f5f008">
+  <source>Save</source>
+  <target>Speichern</target>
+</trans-unit>
+<trans-unit id="s821edf5cd7d9bb15">
+  <source>Continue with “<x id="0" equiv-text="${row.name}"/>”</source>
+  <target>Weiter mit „<x id="0" equiv-text="${row.name}"/>“</target>
+</trans-unit>
+<trans-unit id="sf28d171a302d2b60">
+  <source>New project</source>
+  <target>Neues Projekt</target>
+</trans-unit>
+<trans-unit id="s5a16cd0c7f4bfd03">
+  <source>New project name</source>
+  <target>Name des neuen Projekts</target>
+</trans-unit>
+<trans-unit id="s6d93642611649cb1">
+  <source>Add project</source>
+  <target>Projekt hinzufügen</target>
+</trans-unit>
+<trans-unit id="sace77a5253c259be">
+  <source>Client</source>
+  <target>Kunde</target>
+</trans-unit>
+<trans-unit id="see2fcaedf9743ec6">
+  <source>Location</source>
+  <target>Speicherort</target>
+</trans-unit>
+<trans-unit id="s05073d2537b45d1a">
+  <source>Sync</source>
+  <target>Abgleich</target>
+</trans-unit>
+<trans-unit id="s8af61807443f32a4">
+  <source>Actions</source>
+  <target>Aktionen</target>
+</trans-unit>
+<trans-unit id="se6fbf859804f5e3d">
+  <source>Client (optional)</source>
+  <target>Kunde (optional)</target>
+</trans-unit>
+<trans-unit id="s9c7c7681d3953216">
+  <source>Unnamed project</source>
+  <target>Unbenanntes Projekt</target>
+</trans-unit>
+<trans-unit id="s1f7698c061c208c9">
+  <source>Open</source>
+  <target>Öffnen</target>
+</trans-unit>
+<trans-unit id="s564d1648b1ceee9f">
+  <source>Up to date</source>
+  <target>Aktuell</target>
+</trans-unit>
+<trans-unit id="s5e41479bb0f6d1e3">
+  <source>Not syncing</source>
+  <target>Kein Abgleich</target>
+</trans-unit>
+<trans-unit id="scd63c970601a5baa">
+  <source>Archived — read-only</source>
+  <target>Archiviert — nur lesbar</target>
+</trans-unit>
 </body>
 </file>
 </xliff>

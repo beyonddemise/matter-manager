@@ -13,6 +13,7 @@ import {
   adoptLegacyCatalogue,
   createLocalProject,
   destroyLocalProject,
+  indexServerProject,
   renameLocalProject,
   setLocalClient,
 } from '../../src/ui/local-projects.js'
@@ -84,6 +85,48 @@ describe('local projects', () => {
     expect(await documentCount(dbName)).toBe(0)
     // A fresh handle, not a destroyed one.
     await expect(rawDatabase(dbName).info()).resolves.toMatchObject({ doc_count: 0 })
+  })
+})
+
+describe('indexing a copy of a server project', () => {
+  const server = {
+    projectId: 'p7',
+    dbName: 'project_p7',
+    name: 'Musterstraße 12',
+    client: 'Acme',
+    role: 'owner' as const,
+  }
+
+  it('lists it under its server database name, with its id and role', async () => {
+    await indexServerProject(server)
+
+    expect(await localProfileCache().readLocalProjects()).toEqual([
+      expect.objectContaining({
+        dbName: 'project_p7',
+        name: 'Musterstraße 12',
+        client: 'Acme',
+        projectId: 'p7',
+        role: 'owner',
+      }),
+    ])
+  })
+
+  it('writes nothing into the database, whose project document the service owns', async () => {
+    await indexServerProject(server)
+
+    expect(await documentCount('project_p7')).toBe(0)
+  })
+
+  it('keeps when it was first known, and drops a client the server no longer has', async () => {
+    await indexServerProject(server)
+    const [first] = await localProfileCache().readLocalProjects()
+    const { client: _cleared, ...renamed } = { ...server, name: 'Neu' }
+
+    await indexServerProject(renamed)
+
+    const [entry] = await localProfileCache().readLocalProjects()
+    expect(entry).toEqual({ ...first, name: 'Neu', client: undefined })
+    expect(entry !== undefined && 'client' in entry).toBe(false)
   })
 })
 

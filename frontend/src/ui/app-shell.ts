@@ -43,6 +43,9 @@ import './views/device-list.js'
 import './views/device.js'
 import './views/edit-device.js'
 import './views/not-found.js'
+// Registered ahead of its route: the projects page is reachable and built with the shell now,
+// and gets its path and its inputs when the shell is rewired around it.
+import './views/projects.js'
 import './views/settings.js'
 
 /**
