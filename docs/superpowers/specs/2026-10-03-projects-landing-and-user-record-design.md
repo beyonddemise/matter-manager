@@ -399,6 +399,38 @@ The page decides from `can()` and the reported `projectLimit`, never from a tier
 5. Refine sign-in logging: a proper sink, retention, and a PII policy for the address it records
    (today one `console.log` line per sign-in).
 
+## Phase B — as built
+
+Deviations from the phase B text above. Everything not listed was built as specified.
+
+- **Two more routes are gated, not one.** The spec gates `POST /projects` only. Security review
+  found that archive-create-unarchive and transfer-then-accept both walk past the limit and the
+  sync rule, so `project.sync` and `project.create` also gate:
+  - `PATCH /projects/:id` when it unarchives, judged by the **owner's** plan and the owner's
+    active count (a manager unarchiving must not lend a better plan);
+  - `POST /transfers/:id` when accepting an **active** project, judged by the **recipient's**
+    plan. Accepting an archived project is not gated.
+  Refusals are the same on all three: 403 with `reason: 'plan-no-sync'` or
+  `'project-limit-reached'`.
+- **Accept decides once.** The plan question is asked once per accept, after the offer is known to
+  be the caller's and before the recipient's record is ensured or anything is written; a conflict
+  retry does not ask again, so a refusal leaves the offer pending and a half-applied transfer is
+  never reversed by a second answer. A retry that was not gated before (the project was archived,
+  now it is not) is gated.
+- **New refusal reason `not-a-manager`.** A role refusal on `PATCH /projects/:id` now carries
+  `reason: 'not-a-manager'`, so a client can tell it from the plan refusals that share its 403.
+- **The `project` document self-heals.** Beyond being written at provisioning, every
+  `PATCH /projects/:id` brings it back in step (compared with itself, not with the pointer), so a
+  repeated PATCH repairs a failed earlier write. The document is
+  `{_id:'project', type:'project', name, client?, serverDb}`.
+- **`client` is accepted on `POST /projects` too**, not only on PATCH, and is written to the
+  pointer, the `project` document and `ProjectSummary`; `archivedAt` joins the pointer and
+  `ProjectSummary`.
+- **Reads stay ungated, as specified,** and the validator's owner rule also covers deletions
+  (placed before the `_deleted` branch), which the spec's snippet left implicit.
+- **Known limits, unchanged:** concurrent creations at the limit can both pass; no grace period
+  (#211); no hard delete yet (#208).
+
 ## Out of scope
 
 Billing and self-service plan changes; a client entity (client is free text); deleting a

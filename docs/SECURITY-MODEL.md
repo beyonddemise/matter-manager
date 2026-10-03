@@ -160,7 +160,8 @@ access token (`Authorization: Bearer`) and both are gated by one role.
 | `PATCH /profile` with a `plan` field | the **caller's** own plan | holds `customerservice` |
 | `PUT /customer` | the plan of **any account named by address** | holds `customerservice` |
 
-A plan decides what an account may do — today, how many projects it may own
+A plan decides what an account may do — today, whether it may own server projects at all
+(`project.sync`) and how many (`project.create`)
 ([ADR 0009](adr/0009-entitlement-seam-billing-deferred.md)). Setting one is therefore an
 entitlement change, and `PUT /customer` is the only operation in this service whose blast radius
 is somebody else's account. Everywhere else a hole in a check lets a user grant themselves
@@ -199,6 +200,61 @@ Granting somebody the ability to change a plan must not require granting them ev
 way to make an operator is `customerservice`, and there is a test in both
 `test/profile/profile.test.ts` and `test/profile/customer.test.ts` asserting that a caller whose
 only role is `_admin` is refused, so re-adding it fails the build.
+
+#### What a plan enforces on projects
+
+Two actions, both real policies in `backend/src/domain/can.ts`, both answered from tables keyed
+by plan so no tier literal appears outside that file:
+
+| Action | Rule | Refusal (403, `reason`) |
+|---|---|---|
+| `project.sync` | `SYNCED_PLANS[plan]`: `free` no, `member` and `pro` yes | `plan-no-sync` |
+| `project.create` | owned active projects within `PROJECT_LIMITS[plan]` (`free` 1, `member` 5, `pro` unlimited) | `project-limit-reached` |
+
+Sync is asked first, so a free account is told to upgrade rather than to archive something.
+
+**Archived projects do not count** toward the limit. This reverses the rule #55 introduced, which
+counted them so an account could not accumulate databases by archiving; the 90-day hard delete
+(#208) now bounds that accumulation. The server's count is necessarily looser than the page's,
+because only the page sees local-only projects.
+
+**Three routes make a project active, so three routes are gated**, each judged by the plan of
+whoever *becomes its paying owner*:
+
+| Route | Whose plan, whose count |
+|---|---|
+| `POST /projects` | the caller's |
+| `PATCH /projects/:id` unarchiving (`archived: false` on an archived project) | the **owner's**, not the caller's: a manager may unarchive, and a manager on a better plan must not lend it |
+| `POST /transfers/:id` accepting an active project | the **recipient's**: otherwise a free account could be handed a server project it could never have made |
+
+Without the second, archive-create-unarchive walks past the limit. Without the third, a transfer
+does. Accepting an *archived* project is not gated (it does not count); bringing it back is gated
+where that happens. The accept decision is made **once** per request, before the recipient's
+record is ensured or anything is written, so a refusal leaves the offer pending and the project
+untouched, and a conflict retry cannot reverse a transfer already half applied. A failure to read
+the principal is a scrubbed 500, never a refusal and never a pass.
+
+**The database refuses what the API cannot see.** `securityFor` writes a third custom key,
+`_security.owners`, beside `writers`; `infra/couchdb/design-docs/access.js` refuses **every
+write, deletions included**, from a name in `owners` whose roles carry neither `member` nor
+`pro` (the access token carries the plan as a role). The rule sits before the `_deleted` branch
+so a downgraded owner cannot keep using the database by trimming it. It is deliberately narrow:
+
+- **Invited writers are unaffected.** The owner's plan covers them and their own plan is
+  irrelevant.
+- **Reads are not gated.** `_security.members` is an OR of names and roles, so a downgraded owner
+  keeps reading their data; only writes stop. A grace period is #211.
+- A `_security` without `owners` leaves the rule inert. `securityFor` is the only builder, so a
+  membership change or transfer moves `owners` in the same write as `members` and `writers`.
+- Server admins bypass it, as they bypass the whole validator.
+
+**Two races remain by design.** Two requests racing at the limit can both pass (each counts
+before the gate and nothing serialises them), and the API's check is by design weaker than the
+validator's: the validator is the part that cannot be bypassed.
+
+**Settings refusals by role are named too.** `PATCH /projects/:id` by somebody who is not an
+owner or manager answers 403 with `reason: 'not-a-manager'`, sharing a status with the plan
+refusals and fixed differently.
 
 ## User records and tokens
 
