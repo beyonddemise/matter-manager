@@ -15,6 +15,7 @@
 
 import { msg, str } from '@lit/localize'
 import { html, nothing, type TemplateResult } from 'lit'
+import { isLocalOnlyDatabase } from '../../data/index.js'
 import type { Row } from '../projects-model.js'
 import { actionText, type MenuAction, reasonText } from './projects-text.js'
 
@@ -106,6 +107,11 @@ export interface ConfirmDialogOptions {
   readonly onCancel: () => void
 }
 
+/** Whether a row is a local-only database whose promotion stopped half way. */
+function promoting(row: Row): boolean {
+  return row.projectId !== undefined && isLocalOnlyDatabase(row.dbName)
+}
+
 /** The title, the explanation and the confirm button's words for each confirmation. */
 function wording({ action, row }: Confirmation): {
   title: string
@@ -131,12 +137,30 @@ function wording({ action, row }: Confirmation): {
         body: html`
           <p>${msg(str`“${row.name}” and everything in it is deleted from this device. This cannot be undone.`)}</p>
           ${
-            // An orphan: its server project is gone, so what never left this device goes now.
+            // An orphan or an archived project's copy: the server takes nothing more, so what
+            // never left this device goes now.
             row.actions.deleteLocal.warn === 'unpushed-may-be-lost'
               ? html`<wa-callout variant="warning" data-warn>
                   <wa-icon slot="icon" name="triangle-exclamation"></wa-icon>
-                  ${msg('This project is no longer on the server. Changes not yet uploaded will be lost.')}
+                  ${
+                    row.archived
+                      ? msg(
+                          'This project was removed from the server. Changes not yet uploaded will be lost.',
+                        )
+                      : msg(
+                          'This project is no longer on the server. Changes not yet uploaded will be lost.',
+                        )
+                  }
                 </wa-callout>`
+              : nothing
+          }
+          ${
+            // A promotion that stopped half way already made the server project. Deleting this
+            // database does not touch it; the page then lists it, where it can be removed.
+            promoting(row)
+              ? html`<p data-server-stays>
+                  ${msg('The project already created on the server for it stays there. You can remove it from the server afterwards.')}
+                </p>`
               : nothing
           }
         `,

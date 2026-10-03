@@ -734,6 +734,24 @@ describe('the actions menu', () => {
     expect(text(dialog(view))).toContain('Changes not yet uploaded will be lost')
   })
 
+  it('says the server project stays when deleting a half-done promotion', async () => {
+    const halfway = entry({ projectId: 'p1' })
+    const view = await member({ local: [halfway], server: [project()] })
+
+    await choose(view, 'project_local_a', 'deleteLocal')
+
+    expect(dialog(view).querySelector('[data-server-stays]')).not.toBeNull()
+    expect(dialog(view).querySelector('[data-warn]')).toBeNull()
+  })
+
+  it('warns that an archived project’s copy may hold changes that never left', async () => {
+    const view = await member({ local: [synced], server: [project({ archived: true })] })
+
+    await choose(view, 'project_p1', 'deleteLocal')
+
+    expect(text(dialog(view))).toContain('was removed from the server')
+  })
+
   it('confirms removing from the server, saying collaborators lose access', async () => {
     const view = await member({ local: [synced], server: [project()] })
 

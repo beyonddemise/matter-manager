@@ -433,6 +433,25 @@ describe('pushing once', () => {
     await expect(pushOnce(local as never, remote)).rejects.toThrow(/refused/)
   })
 
+  it('rejects when documents failed to write, even with no denial reported', async () => {
+    // PouchDB counts write failures on `complete` whether or not it emitted `denied` for them;
+    // every destroy that waits on this push rests on "nothing failed".
+    const handlers = new Map<string, (info: unknown) => void>()
+    const local = {
+      replicate: {
+        to: () => ({
+          on: (event: string, handler: (info: unknown) => void) => handlers.set(event, handler),
+          cancel: () => {},
+        }),
+      },
+    }
+
+    const pushed = pushOnce(local as never, {})
+    handlers.get('complete')?.({ docs_written: 1, doc_write_failures: 1 })
+
+    await expect(pushed).rejects.toThrow(/could not be written/)
+  })
+
   it('rejects when aborted before it starts', async () => {
     const local = database()
     const controller = new AbortController()

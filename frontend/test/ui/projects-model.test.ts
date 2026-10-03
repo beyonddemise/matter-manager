@@ -211,7 +211,8 @@ describe('the page for every plan × session × connection × server list × loc
                 promote: na,
                 download: na,
                 removeLocal: na,
-                deleteLocal: ok,
+                // Archiving pushed only as best it could: what did not get through goes now.
+                deleteLocal: { allowed: true, warn: 'unpushed-may-be-lost' },
                 removeServer: na,
               })
             })
@@ -403,7 +404,7 @@ describe('joining the local index with the server list', () => {
     const model = projectsModel(input({ serverStale: true, online: false }))
     const row = byKey(model, 'project_delta')
     expect(row).toMatchObject({ location: 'local', archived: true, editable: false })
-    expect(row.actions.deleteLocal).toEqual(ok)
+    expect(row.actions.deleteLocal).toEqual({ allowed: true, warn: 'unpushed-may-be-lost' })
   })
 
   it('with no server list, a copy takes the role its index entry recorded', () => {

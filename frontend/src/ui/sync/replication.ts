@@ -97,7 +97,10 @@ export interface Syncable {
       remote: unknown,
       options: { live: false; retry: false; checkpoint: false },
     ): {
-      on(event: 'complete', handler: (info: { docs_written: number }) => void): unknown
+      on(
+        event: 'complete',
+        handler: (info: { docs_written: number; doc_write_failures?: number }) => void,
+      ): unknown
       on(event: 'denied', handler: (reason: unknown) => void): unknown
       on(event: 'error', handler: (error: unknown) => void): unknown
       cancel(): void
@@ -242,7 +245,7 @@ export function replicateProject(
  * whole database is diffed against the server each time, so a refused document is refused (and
  * reported) again on every call.
  *
- * Rejects on any failure, **including a refused document**: PouchDB completes a push that was
+ * Rejects on any failure, **including a refused document** or any counted write failure: PouchDB completes a push that was
  * partly denied, and treating that as success would let the caller delete data the server never
  * accepted. `retry: false` makes an unreachable server an error here rather than a wait.
  */
@@ -269,6 +272,10 @@ export function pushOnce(
       done()
       if (denied !== undefined)
         reject(new Error('The server refused some changes', { cause: denied }))
+      // Counted on `complete` whether or not a `denied` was emitted for each: any failure means
+      // something is still only here.
+      else if ((info.doc_write_failures ?? 0) > 0)
+        reject(new Error(`${info.doc_write_failures} changes could not be written to the server`))
       else resolve({ pushed: info.docs_written })
     })
     push.on('error', (error) => {

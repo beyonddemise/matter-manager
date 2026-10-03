@@ -922,6 +922,14 @@
   <source>Remove from server</source>
   <target>Vom Server entfernen</target>
 </trans-unit>
+<trans-unit id="sa800af59002e0f02">
+  <source>This project was removed from the server. Changes not yet uploaded will be lost.</source>
+  <target>Dieses Projekt wurde vom Server entfernt. Noch nicht hochgeladene Änderungen gehen verloren.</target>
+</trans-unit>
+<trans-unit id="s3e041dc90de07a01">
+  <source>The project already created on the server for it stays there. You can remove it from the server afterwards.</source>
+  <target>Das dafür bereits auf dem Server angelegte Projekt bleibt dort erhalten. Sie können es anschließend vom Server entfernen.</target>
+</trans-unit>
 </body>
 </file>
 </xliff>

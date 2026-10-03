@@ -104,7 +104,7 @@ export interface Permission<R extends string = Refusal> {
   readonly reason?: R
   /**
    * Allowed, but the confirmation must say more. `unpushed-may-be-lost`: the copy's project is
-   * gone from the server's list, so changes made here and never pushed go with it.
+   * gone from the server's list, or archived, so changes made here and never pushed go with it.
    */
   readonly warn?: 'unpushed-may-be-lost'
 }
@@ -333,8 +333,10 @@ export function projectsModel(input: ProjectsInput): ProjectsModel {
         ]),
         // Online only: the push that proves nothing is pending needs the server (`pushNow`).
         removeLocal: gate<Refusal>([kind === 'synced', 'not-applicable'], ...needsServer),
+        // A remnant warns too: archiving pushes first, but only as best it can, and once the
+        // server refuses writes whatever did not get through can only be lost.
         deleteLocal:
-          kind === 'orphan'
+          kind === 'orphan' || kind === 'remnant'
             ? { allowed: true, warn: 'unpushed-may-be-lost' }
             : gate<Refusal>([removable, 'not-applicable']),
         removeServer: gate<Refusal>(

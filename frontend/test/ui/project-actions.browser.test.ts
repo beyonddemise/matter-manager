@@ -123,6 +123,11 @@ function world(options: { fault?: FaultAt } = {}) {
     current: PROJECT_DATABASE_NAME,
     createFails: undefined as ConstructorParameters<typeof ProjectCreationError>[0] | undefined,
     pushFails: false,
+    /**
+     * Runs while a push is in flight, before it settles: a write made by another tab or a
+     * background writer, which the push started too early to see.
+     */
+    duringPush: undefined as ((attempt: number) => Promise<void>) | undefined,
     refreshed: 0,
   }
 
@@ -162,6 +167,7 @@ function world(options: { fault?: FaultAt } = {}) {
       pushNow: async (projectId) => {
         log.push(`push ${projectId}`)
         pushes.push(projectId)
+        await state.duringPush?.(pushes.length)
         if (state.pushFails || fails('push')) throw new Error('a document was refused')
       },
       suspend: (projectId) => log.push(`suspend ${projectId}`),
@@ -275,10 +281,54 @@ describe('promoting a local-only project', () => {
     expect(w.switched).toEqual([{ dbName: project.dbName, id: project.projectId, editable: true }])
     expect(w.sets.at(-1)).toEqual([{ projectId: project.projectId, dbName: project.dbName }])
     expect(w.state.refreshed).toBe(1)
-    // The old database goes only after the push has proved the server has everything.
-    expect(w.log.indexOf(`destroy ${alpha.dbName}`)).toBeGreaterThan(
-      w.log.indexOf(`push ${project.projectId}`),
-    )
+    // The views move to the survivor before anything is copied, so this tab's writes land in
+    // it; the old database goes only after the push has proved the server has everything.
+    expect(w.log).toEqual([
+      'set',
+      `switch ${project.dbName}`,
+      `push ${project.projectId}`,
+      `destroy ${alpha.dbName}`,
+    ])
+  })
+
+  it('copies again what was written to the old database while it was being pushed', async () => {
+    const w = world()
+    const alpha = await w.localProject()
+    w.state.duringPush = async (attempt) => {
+      if (attempt === 1) await w.database(alpha.dbName).put(device('device:late'))
+    }
+    const { model, row } = await w.view(alpha.dbName)
+
+    await w.actions.promote(model, row)
+
+    const [project] = w.server as [Project]
+    expect(w.pushes).toEqual([project.projectId, project.projectId])
+    expect((await w.database(project.dbName).get('device:late'))._id).toBe('device:late')
+    expect(await documentCount(alpha.dbName)).toBe(0)
+  })
+
+  it('refuses, keeping the old database, when it is still being written to', async () => {
+    const w = world()
+    const alpha = await w.localProject()
+    w.state.current = alpha.dbName
+    w.state.duringPush = async (attempt) => {
+      await w.database(alpha.dbName).put(device(`device:busy-${attempt}`))
+    }
+    const { model, row } = await w.view(alpha.dbName)
+
+    expect(await refusal(w.actions.promote(model, row))).toBe('unpushed')
+
+    expect(await w.count(alpha.dbName)).toBe(5)
+    expect(w.state.current).toBe(alpha.dbName)
+    const recorded = await w.cache.readLocalProjects()
+    expect(recorded).toEqual([expect.objectContaining({ dbName: alpha.dbName })])
+    // Finishing it later still creates nothing new.
+    w.state.duringPush = undefined
+    const again = await w.view(alpha.dbName)
+    await w.actions.promote(again.model, again.row)
+    expect(w.created).toHaveLength(1)
+    const [project] = w.server as [Project]
+    expect((await w.database(project.dbName).allDocs()).rows).toHaveLength(4)
   })
 
   for (const fault of ['replicate', 'push', 'index', 'destroy'] as const) {
@@ -371,6 +421,21 @@ describe('downloading a server project', () => {
     expect(w.sets.at(-1)).toEqual([{ projectId: shared.projectId, dbName: shared.dbName }])
     expect(w.state.refreshed).toBe(1)
   })
+
+  it('archives even when that last push fails, and the copy then warns before deletion', async () => {
+    const w = world()
+    const bravo = await w.syncedProject()
+    w.state.pushFails = true
+    const { model, row } = await w.view(bravo.dbName)
+
+    await w.actions.removeFromServer(model, row)
+
+    expect(w.updated).toEqual([[bravo.projectId, { archived: true }]])
+    expect((await w.view(bravo.dbName)).row.actions.deleteLocal).toEqual({
+      allowed: true,
+      warn: 'unpushed-may-be-lost',
+    })
+  })
 })
 
 describe('removing the local copy of a synchronized project', () => {
@@ -397,12 +462,49 @@ describe('removing the local copy of a synchronized project', () => {
 
     expect(w.log).toEqual([
       `suspend ${bravo.projectId}`,
+      `switch ${PROJECT_DATABASE_NAME}`,
       `push ${bravo.projectId}`,
+      `switch ${bravo.dbName}`,
       `resume ${bravo.projectId}`,
     ])
     expect(await w.count(bravo.dbName)).toBe(1)
     expect(await w.cache.readLocalProjects()).toHaveLength(1)
     expect(w.state.current).toBe(bravo.dbName)
+  })
+
+  it('pushes again what was written to the copy during its push, then removes it', async () => {
+    const w = world()
+    const bravo = await w.syncedProject()
+    const seen: number[] = []
+    w.state.duringPush = async (attempt) => {
+      seen.push((await w.database(bravo.dbName).info()).doc_count)
+      if (attempt === 1) await w.database(bravo.dbName).put(device('device:late'))
+    }
+    const { model, row } = await w.view(bravo.dbName)
+
+    await w.actions.removeLocalCopy(model, row)
+
+    // The second push started with the late write already there to send.
+    expect(seen).toEqual([1, 2])
+    expect(await documentCount(bravo.dbName)).toBe(0)
+  })
+
+  it('refuses, keeping the copy, while it is still being written to', async () => {
+    const w = world()
+    const bravo = await w.syncedProject()
+    w.state.current = bravo.dbName
+    w.state.duringPush = async (attempt) => {
+      await w.database(bravo.dbName).put(device(`device:busy-${attempt}`))
+    }
+    const { model, row } = await w.view(bravo.dbName)
+
+    expect(await refusal(w.actions.removeLocalCopy(model, row))).toBe('unpushed')
+
+    expect(await w.count(bravo.dbName)).toBe(3)
+    expect(await w.cache.readLocalProjects()).toHaveLength(1)
+    expect(w.state.current).toBe(bravo.dbName)
+    expect(w.log.at(-1)).toBe(`resume ${bravo.projectId}`)
+    expect(w.log).not.toContain(`destroy ${bravo.dbName}`)
   })
 
   it('pushes, moves off it if it is open, destroys it and stops replicating it', async () => {
@@ -416,8 +518,8 @@ describe('removing the local copy of a synchronized project', () => {
 
     expect(w.log).toEqual([
       `suspend ${bravo.projectId}`,
-      `push ${bravo.projectId}`,
       `switch ${alpha.dbName}`,
+      `push ${bravo.projectId}`,
       `destroy ${bravo.dbName}`,
       'set',
       `resume ${bravo.projectId}`,
@@ -472,6 +574,20 @@ describe('deleting a local-only project', () => {
 
     expect(w.log).toEqual([`switch ${bravo.dbName}`, `destroy ${alpha.dbName}`])
   })
+
+  it('leaves the replication of a half-done promotion’s new copy alone', async () => {
+    const w = world({ fault: 'push' })
+    const alpha = await w.localProject('Alpha')
+    const first = await w.view(alpha.dbName)
+    await expect(w.actions.promote(first.model, first.row)).rejects.toThrow()
+    const { model, row } = await w.view(alpha.dbName)
+    w.log.length = 0
+
+    await w.actions.deleteLocalProject(model, row, 'Alpha')
+
+    expect(w.log).toEqual([`destroy ${alpha.dbName}`])
+    expect(await documentCount(alpha.dbName)).toBe(0)
+  })
 })
 
 describe('removing a project from the server', () => {
@@ -482,6 +598,8 @@ describe('removing a project from the server', () => {
 
     await w.actions.removeFromServer(model, row)
 
+    // Pushed first: once archived, the server takes nothing more.
+    expect(w.log.slice(0, 1)).toEqual([`push ${bravo.projectId}`])
     expect(w.updated).toEqual([[bravo.projectId, { archived: true }]])
     expect(w.sets.at(-1)).toEqual([])
     expect(await w.count(bravo.dbName)).toBe(1)
