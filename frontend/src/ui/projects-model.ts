@@ -168,6 +168,13 @@ export interface ProjectsModel {
   readonly createTarget: 'synced' | 'local'
   /** Which layout the plan sees. */
   readonly layout: (typeof LAYOUTS)[Plan]
+  /**
+   * The owned local-only project that has no name yet, if any: the first-run catalogue, adopted
+   * before the reader was asked what to call it. The page asks for the name before anything
+   * else, since until then there is nothing to "continue with". Never a server project — the
+   * service names those, and the page cannot.
+   */
+  readonly needsName: Row | undefined
 }
 
 /** What the model is computed from. */
@@ -347,6 +354,7 @@ export function projectsModel(input: ProjectsInput): ProjectsModel {
     ),
     createTarget,
     layout: LAYOUTS[plan],
+    needsName: owned.find((row) => row.projectId === undefined && row.name.trim() === ''),
   }
 }
 

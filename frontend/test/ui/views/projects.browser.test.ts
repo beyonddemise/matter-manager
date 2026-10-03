@@ -178,6 +178,10 @@ async function settled(view: ProjectsView): Promise<void> {
   await view.updateComplete
 }
 
+/** A field's current value. */
+const fieldOf = (container: Element, field: string): unknown =>
+  (find(container, `[data-field="${field}"]`) as HTMLElement & { value: unknown }).value
+
 const text = (element: Element | null): string => element?.textContent?.replace(/\s+/g, ' ') ?? ''
 
 describe('the free plan', () => {
@@ -336,6 +340,26 @@ describe('the member plan', () => {
     ])
     expect(recorded.localCreated).toEqual([])
     expect(recorded.refreshed).toBe(1)
+    // The slot is reused for the next render; it must not still hold the name just created.
+    expect(fieldOf(find(view, '[data-slot-empty]'), 'name')).toBe('')
+  })
+
+  it('says a refused sync plainly, and an archived project as read-only', async () => {
+    const view = await member({
+      local: [
+        entry({ dbName: 'project_p1', name: 'Beta', projectId: 'p1' }),
+        entry({ dbName: 'project_p2', name: 'Gamma', projectId: 'p2' }),
+      ],
+      server: [project(), project({ projectId: 'p2', dbName: 'project_p2', archived: true })],
+      syncStates: () => 'denied',
+    })
+
+    const denied = find(view, '[data-row="project_p1"] [data-sync]')
+    expect(text(denied)).toContain('No permission to sync')
+    expect(denied.getAttribute('variant')).toBe('warning')
+    expect(text(find(view, '[data-row="project_p2"] [data-sync]'))).toContain(
+      'Archived — read-only',
+    )
   })
 
   it('creates on this device when offline', async () => {
@@ -382,13 +406,34 @@ describe('the member plan', () => {
     expect(recorded.refreshed).toBe(1)
   })
 
+  it('does not save a rename the model refuses since the form opened', async () => {
+    const view = await member({
+      local: [entry({ dbName: 'project_p1', name: 'Beta', projectId: 'p1' })],
+      server: [project()],
+    })
+
+    await click(view, '[data-row="project_p1"] [data-rename]')
+    // The owner hands the project on while the form is open: the reader may now only write.
+    view.input = {
+      ...view.input,
+      server: [project({ role: 'write', owner: { ownerType: 'user', ownerId: 'them' } })],
+    }
+    await view.updateComplete
+    type(view, '[data-rename-form] [data-field="name"]', 'Gamma')
+    await click(view, '[data-rename-form] [data-save]')
+    await settled(view)
+
+    expect(recorded.updated).toEqual([])
+  })
+
   it('says over the limit why nothing can be created, and keeps everything listed', async () => {
     const view = await member({
       reportedLimit: 1,
       local: [entry(), entry({ dbName: 'project_local_b', name: 'Bravo' })],
     })
 
-    expect(view.querySelector('[data-over-limit]')).not.toBeNull()
+    // Two counts, never "allows 1 projects".
+    expect(text(find(view, '[data-over-limit]'))).toContain('Projects your plan allows: 1')
     expect(view.querySelectorAll('[data-row]')).toHaveLength(2)
     expect(view.querySelectorAll('[data-slot-empty]')).toHaveLength(0)
   })
@@ -437,6 +482,11 @@ describe('the pro plan', () => {
 
     expect(recorded.created).toEqual([{ name: 'Neu', client: 'Acme' }])
     expect(view.querySelector('[data-add-dialog][open]')).toBeNull()
+
+    // Opened again, it must not offer to create the same project a second time.
+    await click(view, '[data-add-project]')
+    expect(fieldOf(dialog, 'name')).toBe('')
+    expect(fieldOf(dialog, 'client')).toBe('')
   })
 
   it('edits name and client of a local project with the pen', async () => {
@@ -477,6 +527,16 @@ describe('every plan', () => {
     expect(text(find(view, '[data-shared]'))).toContain('Shared with me')
     expect(view.querySelector('[data-shared] [data-row="project_p2"]')).not.toBeNull()
     expect(view.querySelectorAll('[data-slot-empty]')).toHaveLength(5)
+  })
+
+  it('signed out on the free plan, says to sign in and disables the create card', async () => {
+    const view = await page({ session: 'signed-out', server: undefined })
+
+    expect(text(find(view, '[data-hint="signed-out"]'))).toContain('Sign in to sync')
+    const create = find(view, '[data-create-card] [data-create]') as HTMLElement & {
+      disabled: boolean
+    }
+    expect(create.disabled).toBe(true)
   })
 
   it('signed out, says to sign in and disables creation', async () => {

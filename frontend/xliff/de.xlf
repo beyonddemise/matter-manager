@@ -774,10 +774,6 @@
   <source>Offline: new projects stay on this device for now.</source>
   <target>Offline: Neue Projekte bleiben vorerst auf diesem Gerät.</target>
 </trans-unit>
-<trans-unit id="s6623f846eb3ae740">
-  <source>Your plan allows <x id="0" equiv-text="${model.limit}"/> projects and you have <x id="1" equiv-text="${model.ownedCount}"/>. Everything stays usable, but no new project can be created.</source>
-  <target>Ihr Tarif erlaubt <x id="0" equiv-text="${model.limit}"/> Projekte, und Sie haben <x id="1" equiv-text="${model.ownedCount}"/>. Alles bleibt nutzbar, aber neue Projekte können nicht angelegt werden.</target>
-</trans-unit>
 <trans-unit id="sba9cf1a192309c34">
   <source>Upgrade to keep your projects in sync across devices, and to have more than one.</source>
   <target>Mit einem Upgrade bleiben Ihre Projekte auf allen Geräten synchron, und Sie können mehr als eines haben.</target>
@@ -857,6 +853,10 @@
 <trans-unit id="scd63c970601a5baa">
   <source>Archived — read-only</source>
   <target>Archiviert — nur lesbar</target>
+</trans-unit>
+<trans-unit id="sc6f37e089e93f72d">
+  <source>Projects your plan allows: <x id="0" equiv-text="${limit}"/>. Projects you own: <x id="1" equiv-text="${owned}"/>. Everything stays usable, but no new project can be created.</source>
+  <target>Projekte, die Ihr Tarif erlaubt: <x id="0" equiv-text="${limit}"/>. Projekte, die Ihnen gehören: <x id="1" equiv-text="${owned}"/>. Alles bleibt nutzbar, aber neue Projekte können nicht angelegt werden.</target>
 </trans-unit>
 </body>
 </file>

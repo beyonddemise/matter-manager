@@ -65,13 +65,19 @@ export function isPlan(value: unknown): value is Plan {
 }
 
 /**
+ * The plan assumed when none is known: a device that never signed in, or a value this build does
+ * not recognise. The one that grants least, for the reason {@link planOf} gives.
+ */
+export const DEFAULT_PLAN: Plan = 'free'
+
+/**
  * A stored or received value as a plan, `free` when it is not one.
  *
  * Free because it is the plan that grants least: a cache written by a newer build, or a device
  * that never signed in, must not read as entitled to something the account may not have.
  */
 export function planOf(value: unknown): Plan {
-  return isPlan(value) ? value : 'free'
+  return isPlan(value) ? value : DEFAULT_PLAN
 }
 
 /** The limit the page enforces: what the server reported when known, else the plan's table entry. */

@@ -1,7 +1,7 @@
 import { msg, str, updateWhenLocaleChanges } from '@lit/localize'
 import { html, LitElement, nothing, type TemplateResult } from 'lit'
 import type { LocalProjectEntry } from '../../data/index.js'
-import { showsUpgrade } from '../../domain/plan.js'
+import { DEFAULT_PLAN, showsUpgrade } from '../../domain/plan.js'
 import { projects } from '../composition.js'
 import { writeCurrentProjectId } from '../current-project.js'
 import { useProjectDatabase } from '../db/project-database.js'
@@ -19,19 +19,17 @@ import {
   type ProjectPatch,
   type ProjectsApi,
   ProjectUpdateError,
-  type UpdateFailure,
   updateProject,
 } from '../projects.js'
 import {
-  type CreateRefusal,
-  type Location,
   type ProjectsInput,
   type ProjectsModel,
   projectsModel,
-  type Refusal,
   type Row,
 } from '../projects-model.js'
-import type { SyncableProject, SyncManager } from '../sync/manager.js'
+import type { SyncManager } from '../sync/manager.js'
+import { clearFields, fieldValue, replicated, type Sort, sortRows } from './projects-helpers.js'
+import { locationText, openRefusalText, overLimitText, reasonText } from './projects-text.js'
 
 /**
  * The projects page: what this device and the server hold, and the way into each project.
@@ -70,92 +68,14 @@ const LOCAL_PROJECTS: LocalProjects = {
   indexServerProject: (project) => indexServerProject(project),
 }
 
-/** Every reason the page may have to say why something is not possible. */
-export type Reason = Refusal | CreateRefusal | UpdateFailure
-
-/**
- * The sentence for a reason. The one place reasons become words.
- *
- * Kept short: these sit beside a disabled control or under a field, and what the reader needs
- * there is the next step, not the cause. Several reasons share a sentence where the next step
- * is the same — a plan that has no synchronized projects is the same news whether the page
- * predicted it (`plan`) or the server said so (`plan-no-sync`).
- */
-export function reasonText(reason: Reason): string {
-  switch (reason) {
-    case 'not-applicable':
-      return ''
-    case 'signed-out':
-    case 'not-signed-in':
-      return msg('Sign in to sync')
-    case 'offline':
-      return msg('Needs a connection')
-    case 'stale':
-    case 'offline-server':
-      return msg('Waiting for the project list')
-    case 'plan':
-    case 'plan-no-sync':
-    case 'not-entitled':
-      return msg('Your plan does not include synchronized projects')
-    case 'limit':
-    case 'project-limit-reached':
-      return msg('Your plan has no room for another project')
-    case 'role':
-    case 'not-a-manager':
-      return msg('Only the owner or a manager can change this')
-    case 'read-only':
-      return msg('Read-only')
-    case 'unreachable':
-      return msg('The server could not be reached')
-    case 'refused':
-      return msg('The server did not accept this')
-    case 'failed':
-      return msg('Something went wrong on the server')
-    case 'not-found':
-      return msg('This project is no longer on the server')
-  }
-}
-
-/**
- * Why a row cannot be opened. Offline gets its own words: the project is not on this device,
- * so "needs a connection" would read as a delay, when the truth is that there is nothing here.
- */
-function openRefusalText(reason: Refusal): string {
-  return reason === 'offline' ? msg('Not available offline') : reasonText(reason)
-}
-
-/** What each location is called on the page. */
-function locationText(location: Location): string {
-  switch (location) {
-    case 'local':
-      return msg('On this device')
-    case 'server':
-      return msg('On the server')
-    case 'synced':
-      return msg('Synchronized')
-  }
-}
-
-/** Which column the pro table is sorted by, and which way. */
-interface Sort {
-  readonly by: 'name' | 'client'
-  readonly ascending: boolean
-}
-
 /** What the page shows before its host has said anything: a signed-out device with nothing. */
 const NOTHING_YET: ProjectsInput = {
   local: [],
   server: undefined,
-  plan: 'free',
+  plan: DEFAULT_PLAN,
   session: 'signed-out',
   online: true,
   syncStates: () => undefined,
-}
-
-/** The value of a field inside `container`, trimmed; empty when there is no such field. */
-function fieldValue(container: Element | null, field: string): string {
-  const control = container?.querySelector(`[data-field="${field}"]`) as { value?: unknown } | null
-  return typeof control?.value === 'string' ? control.value.trim() : ''
 }
 
 /** The projects page. See the module comment. */
@@ -251,9 +171,14 @@ export class ProjectsView extends LitElement {
    * synchronized project, not only the new one, because `SyncManager.set` makes the running
    * set match its argument exactly — handing it one would stop all the others.
    *
+   * Reads the name (and, in the dialog, the client) from `form`, and empties it once the project
+   * exists, so the same form never offers to create it twice.
+   *
    * @returns whether it was created
    */
-  private async create(name: string, client: string): Promise<boolean> {
+  private async create(form: Element | null): Promise<boolean> {
+    const name = fieldValue(form, 'name')
+    const client = fieldValue(form, 'client')
     if (name === '') {
       this.error = msg('Give the project a name.')
       return false
@@ -275,6 +200,7 @@ export class ProjectsView extends LitElement {
         await this.locals().create(request)
       }
       created = true
+      clearFields(form)
       await this.refresh?.()
     })
     return created
@@ -288,6 +214,9 @@ export class ProjectsView extends LitElement {
    * brought up to date from the answer. An empty client clears it (`null` on the server).
    */
   private async save(row: Row, form: Element | null): Promise<void> {
+    // The pen is disabled when renaming is refused, but the inputs can change while the form is
+    // open (the connection drops), and the model is the authority, not the button.
+    if (!row.actions.rename.allowed) return
     const name = fieldValue(form, 'name')
     const hasClient = form?.querySelector('[data-field="client"]') != null
     const client = hasClient ? fieldValue(form, 'client') : undefined
@@ -408,9 +337,7 @@ export class ProjectsView extends LitElement {
         model.overLimit
           ? html`<wa-callout variant="neutral" data-over-limit>
               <wa-icon slot="icon" name="circle-info"></wa-icon>
-              ${msg(
-                str`Your plan allows ${model.limit} projects and you have ${model.ownedCount}. Everything stays usable, but no new project can be created.`,
-              )}
+              ${overLimitText(model.limit, model.ownedCount)}
             </wa-callout>`
           : nothing
       }
@@ -432,8 +359,7 @@ export class ProjectsView extends LitElement {
    * is nothing to "continue with"; with no project, the card creates one.
    */
   private renderFree(model: ProjectsModel): TemplateResult {
-    const unnamed = model.owned.find((row) => row.projectId === undefined && row.name.trim() === '')
-    if (unnamed !== undefined) return this.renderNameCard(unnamed)
+    if (model.needsName !== undefined) return this.renderNameCard(model.needsName)
     if (model.owned.length === 0) return this.renderCreateCard(model)
     return html`
       ${model.owned.map((row) => this.renderProjectCard(row))}
@@ -458,8 +384,7 @@ export class ProjectsView extends LitElement {
             data-create
             variant="brand"
             ?disabled=${!model.canCreate.allowed || this.busy}
-            @click=${(event: Event) =>
-              this.create(fieldValue(this.containerOf(event, '[data-create-card]'), 'name'), '')}
+            @click=${(event: Event) => this.create(this.containerOf(event, '[data-create-card]'))}
           >
             ${msg('Create')}
           </wa-button>
@@ -541,8 +466,7 @@ export class ProjectsView extends LitElement {
         <wa-button
           data-create
           ?disabled=${!model.canCreate.allowed || this.busy}
-          @click=${(event: Event) =>
-            this.create(fieldValue(this.containerOf(event, '[data-slot-empty]'), 'name'), '')}
+          @click=${(event: Event) => this.create(this.containerOf(event, '[data-slot-empty]'))}
         >
           ${msg('Create')}
         </wa-button>
@@ -681,7 +605,7 @@ export class ProjectsView extends LitElement {
           ?disabled=${!model.canCreate.allowed || this.busy}
           @click=${async (event: Event) => {
             const dialog = this.containerOf(event, '[data-add-dialog]')
-            const done = await this.create(fieldValue(dialog, 'name'), fieldValue(dialog, 'client'))
+            const done = await this.create(dialog)
             if (done) this.adding = false
           }}
         >
@@ -805,32 +729,6 @@ export class ProjectsView extends LitElement {
   private containerOf(event: Event, selector: string): Element | null {
     return (event.currentTarget as Element | null)?.closest(selector) ?? null
   }
-}
-
-/**
- * Every project replication should cover once `created` exists: the synchronized rows the page
- * already knows of, and the new one.
- */
-function replicated(model: ProjectsModel, created: Project): SyncableProject[] {
-  const known = [...model.owned, ...model.shared].flatMap((row) =>
-    row.location === 'synced' && row.projectId !== undefined
-      ? [{ projectId: row.projectId, dbName: row.dbName }]
-      : [],
-  )
-  return known.some((project) => project.projectId === created.projectId)
-    ? known
-    : [...known, { projectId: created.projectId, dbName: created.dbName }]
-}
-
-/** Rows sorted by a column, ties broken by name and then by key so the order is stable. */
-function sortRows(rows: readonly Row[], sort: Sort): Row[] {
-  const direction = sort.ascending ? 1 : -1
-  return [...rows].sort(
-    (a, b) =>
-      direction * (a[sort.by] ?? '').localeCompare(b[sort.by] ?? '') ||
-      a.name.localeCompare(b.name) ||
-      a.key.localeCompare(b.key),
-  )
 }
 
 customElements.define('projects-view', ProjectsView)

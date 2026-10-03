@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   canOwnAnother,
+  DEFAULT_PLAN,
   exceedsLimit,
   isPlan,
   LAYOUTS,
@@ -44,6 +45,11 @@ describe('the plan tables', () => {
     expect(planOf('pro')).toBe('pro')
     expect(planOf('platinum')).toBe('free')
     expect(planOf(undefined)).toBe('free')
+  })
+
+  it('assumes the plan that grants least when nothing is known', () => {
+    expect(DEFAULT_PLAN).toBe('free')
+    expect(planOf(undefined)).toBe(DEFAULT_PLAN)
   })
 
   it('asks the plan which layout, upgrade offer and sync it has', () => {

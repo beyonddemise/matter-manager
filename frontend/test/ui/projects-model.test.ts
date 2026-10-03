@@ -478,3 +478,26 @@ describe('joining the local index with the server list', () => {
     )
   })
 })
+
+describe('the first-run name', () => {
+  it('asks for one when an owned local-only project has none', () => {
+    const model = projectsModel(
+      input({ local: [local({ dbName: 'project_local', name: '  ' })], server: [] }),
+    )
+    expect(model.needsName?.dbName).toBe('project_local')
+  })
+
+  it('does not ask when every project is named', () => {
+    expect(projectsModel(input()).needsName).toBeUndefined()
+  })
+
+  it('does not ask about a server project, whose name the service owns', () => {
+    const model = projectsModel(
+      input({
+        local: [local({ dbName: 'project_bravo', name: '', projectId: 'bravo' })],
+        server: undefined,
+      }),
+    )
+    expect(model.needsName).toBeUndefined()
+  })
+})
