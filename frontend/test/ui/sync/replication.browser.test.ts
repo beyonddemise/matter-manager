@@ -1,6 +1,7 @@
 import PouchDB from 'pouchdb-browser'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
+  pushOnce,
   replicateProject,
   type SyncHandle,
   type SyncState,
@@ -297,5 +298,123 @@ describe('a server that cannot be reached', () => {
     await local.put(device('device:written-offline'))
 
     expect(await has(local, 'device:written-offline')()).toBe(true)
+  })
+})
+
+/**
+ * A database that refuses what it is sent, the way CouchDB does when `validate_doc_update`
+ * throws `{forbidden}`.
+ *
+ * **Why a wrapper rather than a `_design` document.** Verified: `pouchdb-browser` stores a
+ * `validate_doc_update` function but never runs it - validation is CouchDB's, and the local
+ * adapters ignore it - so a design document would refuse nothing. What replication sees from
+ * CouchDB is a per-document `{error: true, name: 'forbidden', status: 403}` entry in the
+ * `bulkDocs` answer, so that is exactly what this returns, while everything else stays a real
+ * database.
+ */
+function refusingDatabase(): { remote: PouchDB.Database; gate: { refusing: boolean } } {
+  const remote = database()
+  const gate = { refusing: true }
+  const accept = remote.bulkDocs.bind(remote) as (...args: unknown[]) => Promise<unknown>
+  ;(remote as unknown as { bulkDocs: unknown }).bulkDocs = async (
+    request: { docs: { _id: string; _rev?: string }[] },
+    ...rest: unknown[]
+  ) =>
+    gate.refusing
+      ? request.docs.map((doc) => ({
+          id: doc._id,
+          rev: doc._rev,
+          error: true,
+          name: 'forbidden',
+          status: 403,
+          message: 'Archived projects are read-only',
+        }))
+      : accept(request, ...rest)
+  return { remote, gate }
+}
+
+describe('a server that refuses what it is sent', () => {
+  it('says denied, and does not fall back to idle when the sync pauses', async () => {
+    // PouchDB reports a refusal per document and carries on, so `paused` follows and the probe
+    // finds the server reachable. If either overwrote `denied`, a project whose edits are not
+    // arriving would read "caught up".
+    const local = database()
+    const { remote } = refusingDatabase()
+    await local.put(device('device:refused'))
+
+    const handle = start(local as never, remote)
+    await until(() => handle.state() === 'denied', 'the refusal to be reported')
+    await new Promise((resolve) => setTimeout(resolve, 300))
+
+    expect(handle.state()).toBe('denied')
+  })
+
+  it('clears denied when a later push gets through', async () => {
+    const local = database()
+    const { remote, gate } = refusingDatabase()
+    await local.put(device('device:refused'))
+
+    const handle = start(local as never, remote)
+    await until(() => handle.state() === 'denied', 'the refusal to be reported')
+
+    gate.refusing = false
+    await local.put(device('device:accepted'))
+
+    await until(has(remote, 'device:accepted'), 'the accepted document to arrive')
+    await until(() => handle.state() === 'idle', 'denied to clear')
+  })
+
+  it('stops being denied when stopped', async () => {
+    const local = database()
+    const { remote } = refusingDatabase()
+    await local.put(device('device:refused'))
+    const handle = start(local as never, remote)
+    await until(() => handle.state() === 'denied', 'the refusal to be reported')
+
+    handle.cancel()
+
+    expect(handle.state()).toBe('stopped')
+  })
+})
+
+describe('pushing once', () => {
+  it('resolves with the count once the documents have landed', async () => {
+    const local = database()
+    const remote = database()
+    await local.put(device('device:one'))
+    await local.put(device('device:two'))
+
+    const result = await pushOnce(local as never, remote)
+
+    expect(result.pushed).toBe(2)
+    expect(await has(remote, 'device:two')()).toBe(true)
+  })
+
+  it('rejects against a server that cannot be reached', async () => {
+    const local = database()
+    await local.put(device('device:one'))
+    const unreachable = new PouchDB('http://127.0.0.1:1/nowhere', { skip_setup: true })
+
+    await expect(pushOnce(local as never, unreachable)).rejects.toThrow()
+  })
+
+  it('rejects when the server refuses a document, since something is still pending', async () => {
+    // PouchDB completes a partly denied push; resolving would let a caller delete local data the
+    // server never accepted.
+    const local = database()
+    const { remote } = refusingDatabase()
+    await local.put(device('device:refused'))
+
+    await expect(pushOnce(local as never, remote)).rejects.toThrow(/refused/)
+  })
+
+  it('rejects when aborted before it starts', async () => {
+    const local = database()
+    const controller = new AbortController()
+    controller.abort()
+
+    await expect(
+      pushOnce(local as never, database(), { signal: controller.signal }),
+    ).rejects.toThrow(/cancelled/)
   })
 })

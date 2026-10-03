@@ -31,6 +31,16 @@ export type SyncState =
   | 'offline'
   /** Cancelled. Terminal: a stopped sync does not restart itself. */
   | 'stopped'
+  /**
+   * The server refused documents this browser sent: a CouchDB validator said no, as it does for
+   * an archived project or an owner whose plan has lapsed.
+   *
+   * **Sticky, and not an error the sync dies of.** PouchDB reports a refusal per document and
+   * carries on, so the sync goes on to say `paused` and the probe says the server is reachable.
+   * Letting that overwrite this state would show "caught up" about a project whose edits are
+   * not arriving. Only a push that gets through again (or stopping) clears it.
+   */
+  | 'denied'
 
 /** A running replication. */
 export interface SyncHandle {
@@ -67,12 +77,31 @@ export interface Syncable {
     remote: unknown,
     options: { live: boolean; retry: boolean },
   ): {
-    on(event: 'change', handler: (info: { direction: string }) => void): unknown
+    on(event: 'change', handler: (info: SyncChange) => void): unknown
+    on(event: 'denied', handler: (reason: unknown) => void): unknown
     on(event: 'paused', handler: (error?: unknown) => void): unknown
     on(event: 'active', handler: () => void): unknown
     on(event: 'error', handler: (error: unknown) => void): unknown
     cancel(): void
   }
+  /** One-shot replication, for {@link pushOnce}. */
+  replicate: {
+    to(
+      remote: unknown,
+      options: { live: false; retry: false },
+    ): {
+      on(event: 'complete', handler: (info: { docs_written: number }) => void): unknown
+      on(event: 'denied', handler: (reason: unknown) => void): unknown
+      on(event: 'error', handler: (error: unknown) => void): unknown
+      cancel(): void
+    }
+  }
+}
+
+/** What a sync `change` event says, narrowed to what this module reads. */
+export interface SyncChange {
+  readonly direction: string
+  readonly change?: { readonly docs_written?: number }
 }
 
 /**
@@ -95,20 +124,38 @@ export function replicateProject(
   let state: SyncState = 'active'
   let cancelled = false
   let probing = false
+  let pushWritten = 0
 
-  const report = (next: SyncState): void => {
+  const report = (next: SyncState, clearDenied = false): void => {
     // A stopped sync stays stopped. PouchDB emits a `paused` after `cancel()`, and letting that
     // through would leave the interface saying "waiting for a connection" about a replication
     // nobody is running.
     if (cancelled || state === next) return
+    // `denied` yields only to `stopped` (set in `cancel`) and to a successful push below.
+    if (state === 'denied' && !clearDenied) return
     state = next
     options.onState?.(next)
   }
 
   const sync = local.sync(remote, { live: true, retry: true })
 
+  sync.on('denied', () => report('denied', true))
+
   sync.on('change', (info) => {
-    report('active')
+    // A push that lands something new is the proof the server accepts us again. Only
+    // `docs_written` is read: PouchDB's counters are cumulative over the whole replication and
+    // `errors` keeps a refused document for as long as the sync lives, so "no errors" would
+    // never come true. A refusal arrives as `denied` *before* the `change` of its own batch and
+    // a denial-only batch emits no `change` at all, so the two cannot be told apart from a batch
+    // that was partly refused; validators here refuse a whole project at once (archived, lapsed
+    // plan), so that case is accepted as unreachable rather than modelled.
+    let pushed = false
+    if (info.direction === 'push') {
+      const written = info.change?.docs_written ?? 0
+      pushed = written > pushWritten
+      pushWritten = written
+    }
+    report('active', pushed)
     // Only the inbound direction. A view re-reading because *this* browser wrote something
     // would be re-reading in response to its own write, which it already knows about.
     if (info.direction === 'pull') options.onIncoming?.()
@@ -169,4 +216,49 @@ export function replicateProject(
     },
     state: () => state,
   }
+}
+
+/**
+ * Sends everything pending to the server once, and says whether it all arrived.
+ *
+ * **Why a second mechanism beside the live sync.** "Nothing is pending" is a claim the live
+ * sync cannot make: it is always, by design, about to do something. Removing the local copy of a
+ * synchronized project is only safe after that claim, so this runs a non-live, non-retrying
+ * push that completes exactly when the checkpoint has caught up. It may run alongside the live
+ * sync; both write the same checkpoint and PouchDB tolerates it.
+ *
+ * Rejects on any failure, **including a refused document**: PouchDB completes a push that was
+ * partly denied, and treating that as success would let the caller delete data the server never
+ * accepted. `retry: false` makes an unreachable server an error here rather than a wait.
+ */
+export function pushOnce(
+  local: Syncable,
+  remote: unknown,
+  options: { signal?: AbortSignal } = {},
+): Promise<{ pushed: number }> {
+  return new Promise((resolve, reject) => {
+    const push = local.replicate.to(remote, { live: false, retry: false })
+    let denied: unknown
+    const onAbort = (): void => {
+      push.cancel()
+      reject(new Error('The push was cancelled'))
+    }
+    options.signal?.addEventListener('abort', onAbort, { once: true })
+    const done = (): void => options.signal?.removeEventListener('abort', onAbort)
+    if (options.signal?.aborted) return onAbort()
+
+    push.on('denied', (reason) => {
+      denied = reason
+    })
+    push.on('complete', (info) => {
+      done()
+      if (denied !== undefined)
+        reject(new Error('The server refused some changes', { cause: denied }))
+      else resolve({ pushed: info.docs_written })
+    })
+    push.on('error', (error) => {
+      done()
+      reject(error instanceof Error ? error : new Error('The push failed', { cause: error }))
+    })
+  })
 }

@@ -464,9 +464,19 @@ export class AppShell extends LitElement {
     if (this.syncing === undefined || this.syncing === 'idle') return ''
 
     return html`
-      <wa-tag data-syncing variant="neutral" size="s">
+      <wa-tag
+        data-syncing
+        variant=${this.syncing === 'denied' ? 'warning' : 'neutral'}
+        size="s"
+      >
         <wa-icon slot="start" name="arrows-rotate"></wa-icon>
-        ${this.syncing === 'offline' ? msg('Waiting to sync') : msg('Syncing')}
+        ${
+          this.syncing === 'denied'
+            ? msg('No permission to sync')
+            : this.syncing === 'offline'
+              ? msg('Waiting to sync')
+              : msg('Syncing')
+        }
       </wa-tag>
     `
   }
@@ -750,8 +760,9 @@ customElements.define('app-shell', AppShell)
  * Worst wins. A summary saying `idle` while one project cannot reach the server would be
  * reassuring and wrong, and the reader's question is "is everything through?" rather than "is
  * anything through?".
+ * `denied` outranks `offline`: offline heals itself, a refusal does not.
  */
 function worstOf(states: readonly SyncState[]): SyncState | undefined {
-  const order: readonly SyncState[] = ['offline', 'stopped', 'active', 'idle']
+  const order: readonly SyncState[] = ['denied', 'offline', 'stopped', 'active', 'idle']
   return order.find((state) => states.includes(state))
 }

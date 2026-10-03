@@ -28,6 +28,8 @@ const shell = async (projects: readonly unknown[]) => {
         set: () => {},
         running: () => [],
         stateOf: () => undefined,
+        stop: () => {},
+        pushNow: async () => {},
         stopAll: () => {},
       })}
       .signOutOf=${async () => []}

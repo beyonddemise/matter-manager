@@ -694,6 +694,10 @@
   <source>Dismiss</source>
   <target>Schließen</target>
 </trans-unit>
+<trans-unit id="s8046acaa9bfd4751">
+  <source>No permission to sync</source>
+  <target>Keine Berechtigung zum Synchronisieren</target>
+</trans-unit>
 </body>
 </file>
 </xliff>

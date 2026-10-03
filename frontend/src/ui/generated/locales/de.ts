@@ -90,6 +90,7 @@
 's7d09afc329d9995b': str`Seite ${0} von ${1}`,
 's7ded9f88edfb9be9': `Zum hellen Erscheinungsbild wechseln`,
 's7ecf9c10b781225c': `Dieser Code widerspricht sich darin, wie das Gerät gefunden werden kann.`,
+'s8046acaa9bfd4751': `Keine Berechtigung zum Synchronisieren`,
 's83af31f4d5a98f78': `Eine neue Version von Matter Manager steht bereit.`,
 's85702ada2511b9fa': `Der MT:-Code vom QR-Etikett oder der Zahlencode darunter.`,
 's870f7b2f8c27e219': `Änderungen speichern`,

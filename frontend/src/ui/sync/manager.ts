@@ -10,7 +10,7 @@
  * @module
  */
 
-import { replicateProject, type SyncHandle, type SyncState } from './replication.js'
+import { pushOnce, replicateProject, type SyncHandle, type SyncState } from './replication.js'
 
 /** The projects to replicate, as `GET /projects` describes them. */
 export interface SyncableProject {
@@ -44,6 +44,15 @@ export interface SyncManager {
   running(): readonly string[]
   /** What one project's replication is doing, or `undefined` if it is not running. */
   stateOf(projectId: string): SyncState | undefined
+  /** Stops one project's replication, if it is running. The others are untouched. */
+  stop(projectId: string): void
+  /**
+   * Pushes one project's pending changes once and resolves when nothing is pending.
+   *
+   * Rejects when the server is unreachable, when it refuses a document, or when the project is
+   * not one this manager was given - never resolves on a guess.
+   */
+  pushNow(projectId: string): Promise<void>
   /** Stops everything. For signing out, and for a page being torn down. */
   stopAll(): void
 }
@@ -52,6 +61,8 @@ export interface SyncManager {
 export function syncManager(deps: ManagerDependencies): SyncManager {
   const handles = new Map<string, SyncHandle>()
   const states = new Map<string, SyncState>()
+  // Remembered past `stop`: a project whose live sync was stopped can still be pushed once.
+  const known = new Map<string, SyncableProject>()
 
   const startOne = (project: SyncableProject): void => {
     const handle = replicateProject(deps.local(project.dbName), deps.remote(project.dbName), {
@@ -62,6 +73,7 @@ export function syncManager(deps: ManagerDependencies): SyncManager {
       onIncoming: () => deps.onIncoming?.(project.projectId),
     })
     handles.set(project.projectId, handle)
+    known.set(project.projectId, project)
   }
 
   const stopOne = (projectId: string): void => {
@@ -80,6 +92,9 @@ export function syncManager(deps: ManagerDependencies): SyncManager {
       for (const projectId of [...handles.keys()]) {
         if (!wanted.has(projectId)) stopOne(projectId)
       }
+      for (const projectId of [...known.keys()]) {
+        if (!wanted.has(projectId)) known.delete(projectId)
+      }
 
       for (const [projectId, project] of wanted) {
         // Already running: left alone, rather than restarted. Restarting would discard the
@@ -94,8 +109,17 @@ export function syncManager(deps: ManagerDependencies): SyncManager {
 
     stateOf: (projectId) => states.get(projectId),
 
+    stop: stopOne,
+
+    async pushNow(projectId: string): Promise<void> {
+      const project = known.get(projectId)
+      if (project === undefined) throw new Error(`Project ${projectId} is not being synchronized`)
+      await pushOnce(deps.local(project.dbName), deps.remote(project.dbName))
+    },
+
     stopAll(): void {
       for (const projectId of [...handles.keys()]) stopOne(projectId)
+      known.clear()
     },
   }
 }

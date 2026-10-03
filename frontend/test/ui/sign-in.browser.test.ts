@@ -133,6 +133,8 @@ describe('what happens once there is a session', () => {
     },
     running: () => [],
     stateOf: () => undefined,
+    stop: () => {},
+    pushNow: async () => {},
     stopAll: () => {
       if (record) record.stopped = true
     },
@@ -266,6 +268,8 @@ describe('a session that ends while startup is still in flight', () => {
     },
     running: () => [],
     stateOf: () => undefined,
+    stop: () => {},
+    pushNow: async () => {},
     stopAll: () => {
       if (record) record.stopped = true
     },
