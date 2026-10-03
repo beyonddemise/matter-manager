@@ -1,37 +1,43 @@
 /**
  * `PUT /customer` — setting somebody else's plan.
  *
- * Separate from `PATCH /profile` because that route takes its subject from the session and never
+ * Separate from `PATCH /profile` because that route takes its subject from the token and never
  * from the body; its own comment calls the alternative "an account-takeover primitive". So it can
  * only ever reach the caller, which upgrades an operator and nobody else. This route exists to
- * name a subject, and keeping it separate is what lets `/profile` keep its rule intact rather
- * than smuggling a subject into a body whose comment forbids it.
+ * name a target, and keeping it separate is what lets `/profile` keep its rule intact.
  *
- * **It is therefore the only cookie-authenticated route in this service whose blast radius is
- * somebody else's account.** Everywhere else, a mistake in the gate is a user granting
- * themselves something; here it is one user rewriting another user's entitlements. That is why
- * the order of the checks below is commented as a requirement rather than left to read as
- * style, and why the role list is imported from `routes.ts` rather than written again.
+ * **The target is named by email address**, because that is what a user record is keyed by and
+ * what an operator knows about a customer. There is **no 404**: a plan has nowhere else to live,
+ * and the person it is for may have signed in only once, so the operation creates the record when
+ * there is none (their `sub` is filled in at their next sign-in).
+ *
+ * **It is the only route in this service whose blast radius is somebody else's account.**
+ * Everywhere else, a mistake in the gate is a user granting themselves something; here it is one
+ * user rewriting another user's entitlements. That is why the order of the checks below is
+ * commented as a requirement rather than left to read as style, and why the role list is passed
+ * in from `routes.ts` rather than written again.
  *
  * @module
  */
 
-import type { FastifyInstance, FastifyRequest } from 'fastify'
+import type { FastifyInstance } from 'fastify'
 import { problem } from '../problem.js'
-import { isPlan, type ProfileStore, UnknownSubjectError } from './store.js'
+import { isPlan, profileOf, type UserRecords } from '../users/records.js'
+import type { callerClaims } from './routes.js'
 
+/** What `PUT /customer` needs: the records, who is asking, and which roles may act. */
 export interface CustomerDependencies {
-  readonly store: ProfileStore
+  readonly records: UserRecords
   /**
-   * Resolves the caller from the bearer access token. The same function `PATCH /profile` uses —
-   * `sessionSubject` in `routes.ts`, passed in rather than rebuilt so there is one answer to
-   * "who is asking" rather than two that can disagree.
+   * Resolves the caller from the bearer access token. `callerClaims` in `routes.ts`, the same
+   * function `/profile` uses, passed in rather than rebuilt so there is one answer to "who is
+   * asking" rather than two that can disagree.
    */
-  readonly subjectOf: (request: FastifyRequest) => string | undefined
+  readonly callerOf: ReturnType<typeof callerClaims>
   /**
-   * The roles that may do this. Injected rather than imported here so that the value is
-   * `OPERATOR_ROLES` from `routes.ts` at the one wiring point, and so a test can hold the gate
-   * shut without editing the exported list every other route shares.
+   * The roles that may do this. Injected so the value is `OPERATOR_ROLES` from `routes.ts` at the
+   * one wiring point, and so a test can hold the gate shut without editing the exported list
+   * every other route shares.
    */
   readonly operatorRoles: readonly string[]
 }
@@ -39,31 +45,26 @@ export interface CustomerDependencies {
 /**
  * Registers `PUT /customer`.
  *
- * @param deps - The profile store, how to identify the caller, and which roles may act.
+ * @param deps - The user records, how to identify the caller, and which roles may act.
  */
 export function registerCustomerRoutes(app: FastifyInstance, deps: CustomerDependencies): void {
   app.put('/customer', async (request, reply) => {
-    const caller = deps.subjectOf(request)
+    const caller = deps.callerOf(request)
     if (caller === undefined) {
       return problem(reply, { title: 'Not signed in', status: 401 })
     }
 
-    // The gate, before the body is looked at and before the subject is loaded. Both orderings
-    // matter and both are information leaks if reversed:
+    // The gate, before the body is looked at and before the target is loaded. Both orderings
+    // matter and both are information leaks if reversed: answering 400 first would let a caller
+    // who cannot hold a role learn what the route accepts, and any answer that depends on the
+    // target would make this an oracle for which accounts exist. For a non-operator every
+    // request is the same 403, byte for byte.
     //
-    //   - answering 404 first would make this route an oracle. Any signed-in user could send a
-    //     name and learn from the status code whether that account exists, which is the user
-    //     base enumerable one guess at a time. An operator needs to tell "no such account" from
-    //     "you may not"; nobody else may tell them apart at all, so for a non-operator both are
-    //     403 and byte-for-byte identical.
-    //   - answering 400 first is the same leak one step earlier: a caller who cannot hold a role
-    //     would still learn, from 400 against 404, which of two names is real.
-    //
-    // Exact membership, by `includes` on the role rather than by any test over its text — the
-    // same rule `PATCH /profile` states. A substring match would make `customerservices`,
-    // somebody else's role, into this one, and a case fold would make `Customerservice` into
-    // it. On this route that is not a self-grant: it is a stranger rewriting an account.
-    const roles = await deps.store.rolesOf(caller)
+    // Exact membership, by `includes` on the role rather than any test over its text: a
+    // substring match would make `customerservices`, somebody else's role, into this one, and a
+    // case fold would make `Customerservice` into it. On this route that is not a self-grant:
+    // it is a stranger rewriting an account.
+    const roles = (await deps.records.read(caller.email))?.roles ?? []
     if (!roles.some((role) => deps.operatorRoles.includes(role))) {
       return problem(reply, {
         title: 'Changing a plan is not something this account may do.',
@@ -72,41 +73,29 @@ export function registerCustomerRoutes(app: FastifyInstance, deps: CustomerDepen
       })
     }
 
-    const body = request.body as { sub?: unknown; plan?: unknown } | undefined
-    if (typeof body?.sub !== 'string' || body.sub === '') {
-      return problem(reply, { title: 'sub must name an account.', status: 400 })
+    const body = request.body as { email?: unknown; plan?: unknown } | undefined
+    if (typeof body?.email !== 'string' || !body.email.includes('@')) {
+      return problem(reply, { title: 'email must name an account.', status: 400 })
     }
     // `isPlan` rather than a comparison against a tier. ADR 0009: what a plan permits is the
     // policy table's business, and this route's only interest is whether the string is a plan
-    // this build knows. An unknown one must not be stored — `toProfile` would read it back as
-    // `free`, so it would look like a refusal that had in fact written something.
+    // this build knows. An unknown one must not be stored: it would read back as `free`, so it
+    // would look like a refusal that had in fact written something.
     if (!isPlan(body.plan)) {
       return problem(reply, { title: 'plan must be one of free, member, pro', status: 400 })
     }
 
-    try {
-      // `body.sub`, never `caller`. Taking the subject from the token here would compile, pass
-      // any test whose operator and subject are the same account, and quietly upgrade the
-      // operator instead of the customer on every real request.
-      //
-      // `setPlan` rather than `update`, and only `plan` reaches it: `setPlan` spreads the
-      // stored document, so `name`, `roles` and `type` cannot come from this body. An operator
-      // who could set `roles` could mint more operators, and then the gate above means nothing.
-      const profile = await deps.store.setPlan(body.sub, body.plan)
-      // Somebody else's record, in an answer to an operator. A shared cache holding it is a
-      // cache that can hand a customer's name and address to the next request.
-      reply.header('cache-control', 'private, no-store')
-      return profile
-    } catch (error) {
-      // Rethrown unless it is *the* error, so a genuine CouchDB failure stays a 500 rather than
-      // being reported to an operator as "no such account" — which would send them looking for
-      // a user who is in fact there.
-      if (!(error instanceof UnknownSubjectError)) throw error
-      // Distinct from the 403 above. "You may not" and "there is no such account" send an
-      // operator to different places, which is the whole reason `setPlan` throws something
-      // nameable rather than the bare Error `update` throws for the same condition. Reached
-      // only after the gate, so it tells this to an operator and to nobody else.
-      return problem(reply, { title: 'No such account.', status: 404 })
-    }
+    // `body.email`, never `caller.email`: taking the target from the token would compile, pass
+    // any test whose operator and target are the same account, and quietly upgrade the operator
+    // instead of the customer on every real request.
+    //
+    // Only `plan` reaches `setPlan`, which spreads the stored record, so `roles` and `type`
+    // cannot come from this body. An operator who could set `roles` could mint more operators,
+    // and then the gate above means nothing.
+    const record = await deps.records.setPlan(body.email, body.plan)
+    // Somebody else's record, in an answer to an operator. A shared cache holding it is a cache
+    // that can hand a customer's name and address to the next request.
+    reply.header('cache-control', 'private, no-store')
+    return profileOf(record, { sub: record.sub ?? '', email: record.email })
   })
 }

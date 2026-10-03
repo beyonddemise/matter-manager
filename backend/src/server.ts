@@ -25,7 +25,6 @@ import {
   type ProfileDependencies,
   registerProfileRoutes,
 } from './profile/routes.js'
-import type { ProfileStore } from './profile/store.js'
 import { type ProjectDependencies, registerProjectRoutes } from './projects/routes.js'
 import { registerSecurity, type SecurityOptions } from './security/register.js'
 
@@ -61,15 +60,6 @@ export interface ServerOptions {
    * is being brought up.
    */
   readonly profile?: ProfileDependencies
-  /**
-   * The old `_users` store, which only `PUT /customer` still reads.
-   *
-   * **Transitional.** `customer.ts` moves onto the user record in the next task, and this field
-   * goes with it. `PUT /customer` is registered only when this is given alongside `profile`, so
-   * its caller is identified by the same bearer path as `/profile` while its data is still in
-   * `_users`.
-   */
-  readonly customerStore?: ProfileStore
   /**
    * Project provisioning and listing.
    *
@@ -194,14 +184,11 @@ export function buildServer(options: ServerOptions = {}): Server {
     // would be free to drift, and the way they drift is the dangerous way round — a role
     // removed from one and left in the other is a gate that is still open in one place, and
     // the place it stays open is the route that can reach an account other than the caller's.
-    if (options.customerStore !== undefined) {
-      const callerOf = callerClaims(options.profile)
-      registerCustomerRoutes(app, {
-        store: options.customerStore,
-        subjectOf: (request) => callerOf(request)?.sub,
-        operatorRoles: OPERATOR_ROLES,
-      })
-    }
+    registerCustomerRoutes(app, {
+      records: options.profile.records,
+      callerOf: callerClaims(options.profile),
+      operatorRoles: OPERATOR_ROLES,
+    })
   }
   if (options.projects !== undefined) registerProjectRoutes(app, options.projects)
 

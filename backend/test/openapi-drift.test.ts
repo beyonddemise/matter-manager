@@ -108,9 +108,6 @@ const server = (): Server => {
       key,
       deny,
     },
-    // The **real** store over the fake CouchDB, and deliberately not a hand-written stub: a cast
-    // would stop the compiler checking the one thing it can. Transitional, for `PUT /customer`.
-    customerStore: store,
     projects: {
       couch,
       key,

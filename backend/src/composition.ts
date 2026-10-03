@@ -203,8 +203,6 @@ export function serverOptions(env: Environment = process.env): ServerOptions {
       ? {}
       : {
           profile: { records, ensureRecord: recordEnsurer(records, refresh), key, deny },
-          // Transitional: `PUT /customer` still reads `_users` until it moves onto the record.
-          customerStore: store,
         }),
     ...(auth === undefined ? {} : { auth }),
   }

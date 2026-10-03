@@ -354,21 +354,25 @@ export interface paths {
         /**
          * Set another account's plan
          * @description The operator counterpart to `PATCH /profile`. That operation takes its subject from the
-         *     session and never from the body - a profile endpoint accepting an arbitrary `sub` would
+         *     token and never from the body - a profile endpoint accepting an arbitrary identity would
          *     be an account-takeover primitive - so it can only ever reach the caller, and an operator
          *     who can upgrade themselves and nobody else is not an operator tool. This operation names
-         *     a subject, and being a separate operation is what lets `/profile` keep that rule.
+         *     an account, and being a separate operation is what lets `/profile` keep that rule.
          *
-         *     Reached only by an account holding the `customerservice` role — and deliberately not
-         *     CouchDB's `_admin`, for the reason the `admin` tag gives. **The role is checked
-         *     before the body is validated and before the subject is looked up**, so the answer to a
-         *     caller without the role is 403 whether or not the named account exists, and is identical
-         *     in both cases: answering 404 or 400 first would make this an oracle telling any
-         *     signed-in user which accounts exist.
+         *     **The account is named by email address**, which is what a user record is keyed by. If it
+         *     has no record yet - somebody who has only ever signed in, or never has - the record is
+         *     created with this plan, and their `sub` is filled in at their next sign-in. That is why
+         *     there is no 404.
          *
-         *     Only `plan` is applied. `name`, `roles` and `type` are CouchDB's own and are written
-         *     back unchanged - an operator who could set `roles` could mint more operators, and the
-         *     role check above would then mean nothing.
+         *     Reached only by an account whose record holds the `customerservice` role - and
+         *     deliberately not CouchDB's `_admin`, for the reason the `admin` tag gives. **The role is
+         *     checked before the body is validated**, so the answer to a caller without the role is 403
+         *     whatever the body says and whether or not the named account exists, and is identical in
+         *     every case: answering 400 first would make this an oracle telling any signed-in user what
+         *     the operation accepts and which accounts exist.
+         *
+         *     Only `plan` is applied. `roles` and `type` in the body are ignored - an operator who could
+         *     set `roles` could mint more operators, and the role check above would then mean nothing.
          *
          *     What a plan then permits is decided by the policy table, never by a comparison against a
          *     tier (ADR 0009).
@@ -384,10 +388,11 @@ export interface paths {
                 content: {
                     "application/json": {
                         /**
-                         * @description The account to change; also the CouchDB username. Not the caller - that is
-                         *     the whole point of this operation.
+                         * Format: email
+                         * @description The account to change, by address. Not the caller - that is the whole point
+                         *     of this operation. Matched without regard to case or surrounding space.
                          */
-                        sub: string;
+                        email: string;
                         /** @enum {string} */
                         plan: "free" | "member" | "pro";
                     };
@@ -418,20 +423,6 @@ export interface paths {
                     };
                     content: {
                         "application/problem+json": components["schemas"]["NotAnOperator"];
-                    };
-                };
-                /**
-                 * @description No `_users` document for that subject - an account that has never signed in. Distinct
-                 *     from 403 because "you may not" and "there is no such account" send an operator to
-                 *     different places, and reached only *after* the role check, so it says that to an
-                 *     operator and to nobody else.
-                 */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/problem+json": components["schemas"]["Problem"];
                     };
                 };
             };
