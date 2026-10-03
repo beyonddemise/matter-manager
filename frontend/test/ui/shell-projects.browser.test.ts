@@ -238,7 +238,10 @@ describe('what the projects page is given', () => {
 
   it('the shell’s replication, for the actions that push and hold', async () => {
     const { element, sync } = await mount()
-    await waitUntil(() => projectsView(element)?.sync === sync.manager, 'no replication given')
+    await waitUntil(() => projectsView(element)?.sync !== undefined, 'no replication given')
+    const handed = projectsView(element)?.sync
+    handed?.set([{ projectId: 'p9', dbName: 'project_p9' }])
+    expect(sync.sets.at(-1)).toEqual([{ projectId: 'p9', dbName: 'project_p9' }])
   })
 
   it('a refresh that fetches the list again', async () => {
@@ -310,9 +313,8 @@ describe('a project the server refuses', () => {
     expect(element.querySelector('[data-syncing]')).toBeNull()
   })
 
-  it('stops replicating it, and keeps saying why on its row', async () => {
-    // Spec: a `denied` state stops replication for that project. Cancelling a replication
-    // reports `stopped`, which must not overwrite the reason the page shows.
+  /** The shell with one synchronized copy, and the replication's reporting line. */
+  async function deniedShell(pushNow: () => Promise<void> = async () => {}) {
     const stopped: string[] = []
     let report: (projectId: string, state: string) => void = () => {}
     const store = isolatedProjectStore()
@@ -328,6 +330,7 @@ describe('a project the server refuses', () => {
           report = onState
           return {
             ...recordingSync().manager,
+            pushNow,
             stop: (projectId: string) => {
               stopped.push(projectId)
               onState(projectId, 'stopped')
@@ -338,11 +341,47 @@ describe('a project the server refuses', () => {
       ></app-shell>
     `)) as AppShell
     await inputSettles(element, (i) => i.server !== undefined, 'no list arrived')
+    return { element, stopped, report: (state: string) => report('p1', state) }
+  }
 
-    report('p1', 'denied')
+  it('keeps replicating it, and keeps saying why whatever it reports next', async () => {
+    // Ruling C-R12: pulls are still valid, so live sync keeps running; but a refusal is not
+    // healed by the next `active` or `idle`, and the page must not say it is.
+    const { element, stopped, report } = await deniedShell()
+
+    report('denied')
+    report('active')
+    report('idle')
+    await projectsView(element)?.refresh?.()
     await element.updateComplete
 
-    expect(stopped).toEqual(['p1'])
+    expect(stopped).toEqual([])
+    expect(projectsView(element)?.input.syncStates('p1')).toBe('denied')
+    expect(text(element.querySelector('[data-syncing]'))).toBe('No permission to sync')
+  })
+
+  it('stops saying it once a push of it succeeds', async () => {
+    const { element, report } = await deniedShell()
+    report('denied')
+    report('idle')
+    await element.updateComplete
+
+    await projectsView(element)?.sync?.pushNow('p1')
+    await element.updateComplete
+
+    expect(projectsView(element)?.input.syncStates('p1')).toBe('idle')
+    expect(element.querySelector('[data-syncing]')).toBeNull()
+  })
+
+  it('keeps saying it when a push of it fails', async () => {
+    const { element, report } = await deniedShell(async () => {
+      throw new Error('refused')
+    })
+    report('denied')
+
+    await expect(projectsView(element)?.sync?.pushNow('p1')).rejects.toThrow('refused')
+    await element.updateComplete
+
     expect(projectsView(element)?.input.syncStates('p1')).toBe('denied')
   })
 })
@@ -426,6 +465,80 @@ describe('while a project action runs', () => {
       'index not re-read',
     )
     expect(currentProjectDatabaseName()).toBe('project_p1')
+  })
+})
+
+describe('a read that spans a project action', () => {
+  /**
+   * Starts a read that holds the index with the copy in it and waits on the profile, runs an
+   * action around it that removes the copy, and lets the read finish only after the action has
+   * let go. Returns every list replication was handed after the removal.
+   */
+  async function spanningRead(readStarts: 'before the action' | 'during the action') {
+    const base = isolatedProjectStore()
+    let hold: Promise<void> | undefined
+    const store: LocalProjectDependencies = {
+      ...base,
+      cache: () => ({
+        ...base.cache(),
+        readProfile: async () => {
+          const profile = await base.cache().readProfile()
+          await hold
+          return profile
+        },
+      }),
+    }
+    const { element, sync } = await mount({
+      store,
+      local: [copy],
+      cachedProfile: profile(),
+      list: async () => [project()],
+    })
+    await waitUntil(
+      () =>
+        JSON.stringify(sync.sets.at(-1)) ===
+        JSON.stringify([{ projectId: 'p1', dbName: 'project_p1' }]),
+      'never replicated',
+    )
+
+    let release = () => {}
+    hold = new Promise((resolve) => {
+      release = resolve
+    })
+    const startRead = async () => {
+      const read = projectsView(element)?.refresh?.()
+      // The read has the index (with the copy) and is waiting on the profile.
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      // Wrapped: an async function returning the promise itself would wait for it.
+      return { read }
+    }
+
+    const before = readStarts === 'before the action' ? await startRead() : undefined
+    const end = beginProjectAction()
+    const during = readStarts === 'during the action' ? await startRead() : undefined
+    await store.cache().removeLocalProject(copy.dbName)
+    sync.manager.set([])
+    const removedAt = sync.sets.length
+    end()
+    hold = undefined
+    release()
+    await (before ?? during)?.read
+
+    await inputSettles(element, (i) => i.local.length === 0, 'the idle refresh never read')
+    await element.updateComplete
+    return sync.sets.slice(removedAt)
+  }
+
+  it('begun before the action, is not applied, so it cannot resurrect a removed copy', async () => {
+    // Finishing after the action let go, it would hand replication the copy just removed —
+    // downloading it again. The idle refresh after the action applies fresh facts instead.
+    const handed = await spanningRead('before the action')
+    expect(handed.some((set) => set.length > 0)).toBe(false)
+  })
+
+  it('begun during the action and finished after it, is not applied either', async () => {
+    const handed = await spanningRead('during the action')
+    expect(handed.some((set) => set.length > 0)).toBe(false)
   })
 })
 

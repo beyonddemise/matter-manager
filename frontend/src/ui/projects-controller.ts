@@ -10,8 +10,9 @@
  *
  * While a project action runs (`project-busy.ts`) the facts are still read but nothing is
  * applied: the action has switched the project and handed replication a list of its own, and an
- * apply in the middle would undo both. When the last one finishes, everything is read and applied
- * again.
+ * apply in the middle would undo both. A read that began before an action and ends after it is
+ * dropped whole, since it may hold the facts the action changed. When the last action finishes,
+ * everything is read and applied again.
  *
  * @module
  */
@@ -30,7 +31,7 @@ import {
   type LocalProjectDependencies,
   localProjectDefaults,
 } from './local-projects.js'
-import { onProjectActionsIdle, projectActionRunning } from './project-busy.js'
+import { onProjectActionsIdle, projectActionEpoch, projectActionRunning } from './project-busy.js'
 import { fetchProjectList, type ProjectFacts, readProjectFacts } from './project-inputs.js'
 import type { Project } from './projects.js'
 import { type ProjectsInput, projectsModel, synchronizedProjects } from './projects-model.js'
@@ -80,6 +81,16 @@ export class ProjectsController implements ReactiveController {
 
   /** Each project's last reported state, for the page's rows and the summary. */
   private readonly states = new Map<string, SyncState>()
+
+  /**
+   * Projects the server has refused, shown as `denied` whatever they report next (ruling C-R12).
+   *
+   * Live sync keeps running after a refusal — pulls are still valid — so the next `active` or
+   * `idle` would otherwise replace the refusal on the page while the server still refuses every
+   * write: the display would lie. Only a successful push (the server took everything) or the
+   * project leaving the replicated set clears it.
+   */
+  private readonly denied = new Set<string>()
 
   /** This session's `GET /projects`, if it answered. Dropped whenever the session ends. */
   private fresh: readonly Project[] | undefined
@@ -137,21 +148,43 @@ export class ProjectsController implements ReactiveController {
    */
   start(): void {
     const generation = this.sessionGeneration
-    this.sync = (this.host.makeSync ?? ((onState) => projectSync(onState)))((projectId, state) => {
-      if (generation !== this.sessionGeneration) return
-      // A refusal stops that project's replication (spec): retrying a write the server refuses
-      // only refuses it again. Cancelling reports `stopped`, which must not overwrite the reason
-      // the page shows on the row. The next list handed over (a refresh, a reconnection) starts
-      // it again, which is when a changed permission or plan would let it through.
-      if (state === 'stopped' && this.states.get(projectId) === 'denied') return
-      this.states.set(projectId, state)
-      if (state === 'denied') this.sync?.stop(projectId)
-      this.syncing = worstOf([...this.states.values()])
-      // The page shows each row's state, and the summary changing is not the only change worth
-      // a render: one project going from `active` to `idle` leaves it unchanged.
-      this.host.requestUpdate()
-    })
+    const manager = (this.host.makeSync ?? ((onState) => projectSync(onState)))(
+      (projectId, state) => {
+        if (generation !== this.sessionGeneration) return
+        this.states.set(projectId, state)
+        if (state === 'denied') this.denied.add(projectId)
+        this.stateChanged()
+      },
+    )
+    this.sync = {
+      ...manager,
+      // The one proof that a refusal is over: the server took everything this copy had.
+      pushNow: async (projectId, options) => {
+        await manager.pushNow(projectId, options)
+        if (generation !== this.sessionGeneration || !this.denied.delete(projectId)) return
+        this.stateChanged()
+      },
+    }
     void this.refresh(true)
+  }
+
+  /** What the page shows for one project: a refusal outranks whatever it reported since. */
+  private shownState(projectId: string): SyncState | undefined {
+    return this.denied.has(projectId) ? 'denied' : this.states.get(projectId)
+  }
+
+  /**
+   * Recomputes the summary and asks for a render. Every state change asks: the page shows each
+   * row's state, and one project going from `active` to `idle` leaves the summary unchanged.
+   */
+  private stateChanged(): void {
+    this.syncing = worstOf(
+      [...new Set([...this.states.keys(), ...this.denied])].flatMap((projectId) => {
+        const state = this.shownState(projectId)
+        return state === undefined ? [] : [state]
+      }),
+    )
+    this.host.requestUpdate()
   }
 
   /**
@@ -166,6 +199,7 @@ export class ProjectsController implements ReactiveController {
     this.sync?.stopAll()
     this.sync = undefined
     this.states.clear()
+    this.denied.clear()
     this.syncing = undefined
     this.fresh = undefined
     this.host.requestUpdate()
@@ -189,7 +223,7 @@ export class ProjectsController implements ReactiveController {
       ...(facts.reportedLimit === undefined ? {} : { reportedLimit: facts.reportedLimit }),
       session,
       online: this.host.online,
-      syncStates: (projectId) => this.states.get(projectId),
+      syncStates: (projectId) => this.shownState(projectId),
     }
   }
 
@@ -223,6 +257,10 @@ export class ProjectsController implements ReactiveController {
   /** One queued read: adopt on a first run, read the facts, apply them. */
   private async read(): Promise<void> {
     const generation = this.sessionGeneration
+    // Captured before anything is read: an action that begins or ends while this read runs may
+    // have changed what it read, and the idle refresh queued behind it brings the facts that
+    // count.
+    const epoch = projectActionEpoch()
     const store = this.store()
     // Ruling C-R7: a device that has never known a project adopts its catalogue, even empty, so
     // it has one project to name and open. A no-op anywhere else. A failure leaves the page
@@ -233,6 +271,10 @@ export class ProjectsController implements ReactiveController {
       this.host.session === 'signed-in' ? this.fresh : undefined,
     )
     if (generation !== this.sessionGeneration) return
+    // Read across an action: possibly from before it, so neither shown nor applied. Applying it
+    // after the action let go would undo the action — resurrect a removed copy's replication,
+    // reopen a database it left.
+    if (epoch !== projectActionEpoch()) return
     this.facts = facts
     this.host.requestUpdate()
     this.apply()
@@ -245,8 +287,8 @@ export class ProjectsController implements ReactiveController {
    * Replication gets **only the copies on this device** (`synchronizedProjects`), never every
    * server project: one listed but not downloaded would be downloaded, a copy just removed
    * downloaded again. A project an action holds (`SyncManager.suspend`) stays held whatever this
-   * list says. States of projects no longer handed over are forgotten, so a dropped project
-   * cannot hold the summary at its last word.
+   * list says. States and refusals of projects no longer handed over are forgotten, so a
+   * dropped project cannot hold the summary at its last word.
    *
    * Skipped entirely while a project action runs; see the module comment.
    */
@@ -266,8 +308,12 @@ export class ProjectsController implements ReactiveController {
     for (const projectId of [...this.states.keys()]) {
       if (!kept.has(projectId)) this.states.delete(projectId)
     }
-    this.syncing = worstOf([...this.states.values()])
-    this.host.requestUpdate()
+    // A refusal is forgotten with the project, so a copy removed while refused cannot hold the
+    // summary at "No permission to sync".
+    for (const projectId of [...this.denied]) {
+      if (!kept.has(projectId)) this.denied.delete(projectId)
+    }
+    this.stateChanged()
   }
 
   /** The local index and databases, the injected ones or the application's. */

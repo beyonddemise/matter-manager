@@ -529,7 +529,15 @@ it('shows "No permission to sync" when any project is denied, ranking it worse t
   report('p2', 'denied')
   await waitUntil(() => tag().includes('No permission to sync'), 'denied was not shown')
 
-  // Denied clears (the project syncs again): the worse of what is left is offline.
+  // A later `idle` does not clear it (ruling C-R12): the server may still refuse every write.
   report('p2', 'idle')
+  await element.updateComplete
+  expect(tag()).toContain('No permission to sync')
+
+  // A push the server took does: the worse of what is left is offline.
+  const page = element.querySelector('projects-view') as {
+    sync?: { pushNow(id: string): Promise<void> }
+  }
+  await page.sync?.pushNow('p2')
   await waitUntil(() => tag().includes('Waiting to sync'), 'offline was not shown')
 })
