@@ -200,7 +200,8 @@ own credentials.
 verified the address — otherwise somebody could sign in as whoever they typed and inherit that
 person's plan. A plain sign-in creates **no** record and writes one log line
 (`auth/sign-in-log.ts`; the sink is #212). A record comes into existence only through
-`ensureRecord` (a redeemable invitation at sign-in, or `PATCH /profile`) or `PUT /customer`,
+`ensureRecord` (a redeemable invitation at sign-in, accepting a transfer, or `PATCH /profile`)
+or `PUT /customer`,
 which sets a plan by address even before its owner has ever signed in. Such a record has no
 `sub`, which is why the `by_sub` view skips records without one — and why the caller's own
 record is always read by the verified address on their access token, never by subject. The

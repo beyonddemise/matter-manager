@@ -105,6 +105,7 @@ the first time one of these needs it, and never otherwise:
 | --- | --- |
 | Signing in with pending invitations for the address | Accepting them names the user on project databases; the record is where their plan and tokens then live |
 | Accepting an invitation later | Same |
+| Accepting a transfer (`POST /transfers/:projectId`) | The recipient becomes an owner, and an owner must be resolvable to an address; also fills in `sub` on an operator-created record |
 | `PATCH /profile` | The user asked the server to keep a display name or locale |
 | `PUT /customer` | An operator set a plan, which has nowhere else to live; `sub` is filled in at the user's next sign-in |
 

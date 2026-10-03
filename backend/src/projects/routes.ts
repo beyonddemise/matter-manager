@@ -28,6 +28,7 @@ import {
 } from '../domain/index.js'
 import { type Gate, NotEntitledError, gate as realGate } from '../entitlements/gate.js'
 import { problem } from '../problem.js'
+import type { EnsureRecord } from '../users/ensure.js'
 import { planOf, type UserRecords } from '../users/records.js'
 import { accessValidator } from './design-docs.js'
 import { type InvitationSender, storeInvitation } from './invitations.js'
@@ -70,6 +71,14 @@ export interface ProjectDependencies {
    * test. A missing wire is a compile error instead.
    */
   readonly records: UserRecords
+  /**
+   * Creates or completes a user's record, moving their in-memory refresh entries onto it.
+   *
+   * Called when somebody accepts a transfer: an owner has to be resolvable, and the recipient may
+   * have no record, or one without a `sub`. **Required**, and the same instance the profile and
+   * sign-in paths use, so the refresh entries it drains are the ones the auth routes wrote.
+   */
+  readonly ensureRecord: EnsureRecord
   /**
    * Access tokens signed out before they expired. Optional because a deployment without sign-in
    * has no sign-out and so nothing to deny; where there is sign-in, composition passes the one
@@ -161,7 +170,7 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDepende
    */
   const callerOf = (
     request: Parameters<typeof bearerClaims>[0],
-  ): { readonly sub: string; readonly email?: string } | undefined =>
+  ): { readonly sub: string; readonly email?: string; readonly name?: string } | undefined =>
     bearerClaims(request, deps.key, now, deps.deny)
 
   /**
@@ -567,10 +576,21 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDepende
     if (caller.email === undefined) {
       return problem(reply, { title: 'No such transfer.', status: 404 })
     }
-    const identity = { sub: caller.sub, email: caller.email, emailVerified: true }
+    const identity = {
+      sub: caller.sub,
+      email: caller.email,
+      emailVerified: true,
+      // Seeds the record acceptance creates, as sign-in would have.
+      ...(caller.name === undefined ? {} : { name: caller.name }),
+    }
 
     try {
-      await acceptTransfer(membership, projectId, identity, millis)
+      await acceptTransfer(
+        { couch: deps.couch, ensureRecord: deps.ensureRecord },
+        projectId,
+        identity,
+        millis,
+      )
     } catch (error) {
       if (error instanceof MembershipRefused) {
         return problem(reply, { title: error.message, status: error.status })

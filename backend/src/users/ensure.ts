@@ -2,9 +2,11 @@
  * The one way a user record comes into existence.
  *
  * Records are created on demand (the spec, "Records are created on demand"): accepting an
- * invitation, `PATCH /profile`, `PUT /customer`. Each of those calls this, so moving the
+ * invitation, accepting a transfer, `PATCH /profile`. Each of those calls this, so moving the
  * in-memory refresh entries onto the new record cannot be forgotten by one of them. If it were,
- * that path would sign its user out at their next refresh.
+ * that path would sign its user out at their next refresh. (`PUT /customer` creates a record by
+ * address through `setPlan` and does not drain; `isLive` consults memory too, so that signs
+ * nobody out.)
  *
  * @module
  */

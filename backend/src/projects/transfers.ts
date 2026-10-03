@@ -19,6 +19,7 @@ import {
   securityFor,
   TransferError,
 } from '../domain/index.js'
+import type { EnsureRecord } from '../users/ensure.js'
 import { MembershipRefused } from './members.js'
 import { type ProjectPointer, pointerId, REGISTRY_DATABASE } from './registry.js'
 
@@ -132,11 +133,20 @@ export async function removeTransfer(
  * outgoing owner loses write, and often loses everything. The rule is the same one
  * `members.ts` follows and for the same reason.
  *
+ * **The recipient's record is ensured before anything is written**, once the offer is known to
+ * be theirs. An owner must be resolvable — member listings read every participant's address from
+ * their record — and a person who has only signed in has none, while one an operator created by
+ * address has no `sub` yet. `ensureRecord` creates the first and fills in the second, as accepting
+ * an invitation at sign-in does. Ensured first so a failure leaves the project untouched, and
+ * only after the offer is checked so nobody gets a record by asking for one.
+ *
+ * @param deps - CouchDB, and how the recipient's record is created or completed
+ * @param identity - The recipient, from their verified access token
  * @throws {MembershipRefused} when the offer is not this person's to accept, has expired, or the
  *   person who made it no longer owns the project
  */
 export async function acceptTransfer(
-  deps: { readonly couch: CouchClient },
+  deps: { readonly couch: CouchClient; readonly ensureRecord: EnsureRecord },
   projectId: string,
   identity: Identity,
   now: () => number,
@@ -145,6 +155,7 @@ export async function acceptTransfer(
   // only signed in has no user record, and requiring one turned "a house was offered to you"
   // into a 404 for exactly the person the offer was for. `acceptable` below still decides on
   // the verified address, so a subject alone accepts nothing.
+  let ensured = false
 
   for (let attempt = 0; attempt < CONFLICT_ATTEMPTS; attempt += 1) {
     const offer = await deps.couch.getDoc<TransferDocument>(
@@ -165,6 +176,16 @@ export async function acceptTransfer(
       // named by the offer, so these can be reported plainly — they are facts about the offer
       // they were sent rather than about a project they cannot see.
       throw new MembershipRefused(400, `That transfer cannot be accepted: ${problem}.`)
+    }
+    // `acceptable` has matched the verified address to the offer, so it is present. Once, not
+    // per conflict retry: the record does not change between attempts.
+    if (!ensured && identity.email !== undefined) {
+      await deps.ensureRecord({
+        email: identity.email,
+        sub: identity.sub,
+        ...(identity.name === undefined ? {} : { name: identity.name }),
+      })
+      ensured = true
     }
 
     let participants: readonly ProjectPointer['participants'][number][]

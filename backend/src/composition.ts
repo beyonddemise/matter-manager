@@ -199,7 +199,7 @@ export function serverOptions(env: Environment = process.env): ServerOptions {
     security,
     // The same records the profile routes use, and the same deny list the auth routes write: a
     // plan an operator sets is the plan the gate sees, and a signed-out token is refused here too.
-    projects: { couch, key, records, deny },
+    projects: { couch, key, records, ensureRecord, deny },
     // Verifies the **access** token, so it takes the key CouchDB validates and needs no session
     // key: the profile is served whenever CouchDB and that key are present.
     profile: { records, ensureRecord, key, deny },

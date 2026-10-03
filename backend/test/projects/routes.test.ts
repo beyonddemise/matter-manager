@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { DenyList } from '../../src/auth/deny-list.js'
 import { denyList } from '../../src/auth/deny-list.js'
 import { mintToken, type SigningKey, verifyToken } from '../../src/auth/jwt.js'
+import { refreshStore } from '../../src/auth/refresh-store.js'
 import { type CouchClient, CouchError } from '../../src/couch/client.js'
 import type { Action, Plan, Principal } from '../../src/domain/index.js'
 import { NotEntitledError, gate as realGate } from '../../src/entitlements/gate.js'
@@ -10,6 +11,7 @@ import { PROBLEM_JSON } from '../../src/problem.js'
 import { forgetRegistry, REGISTRY_DATABASE } from '../../src/projects/registry.js'
 import { buildServer, type Server } from '../../src/server.js'
 import { forgetUsersDatabase, USERS_DB } from '../../src/users/database.js'
+import { recordEnsurer } from '../../src/users/ensure.js'
 import { userDocId } from '../../src/users/key.js'
 import { userRecords } from '../../src/users/records.js'
 import { loadContract, operationsOf, validate } from '../support/contract.js'
@@ -123,6 +125,7 @@ function server(
   const client =
     options.registryConflicts === true ? conflictingRegistry(couch.couch, refused) : couch.couch
   const gateCalls: Array<{ principal: Principal; action: Action }> = []
+  const records = userRecords(client)
 
   app = buildServer({
     logger: false,
@@ -133,7 +136,13 @@ function server(
       // The real records against the fake CouchDB, so a test states a plan by seeding the
       // record an operator would have edited - rather than by stubbing the read and proving
       // only that a stub returns what it was given.
-      records: userRecords(client),
+      records,
+      // The real ensurer over the same records, as composition wires it, so a test sees the
+      // record acceptance creates rather than a stub's account of it.
+      ensureRecord: recordEnsurer(
+        records,
+        refreshStore(records, () => Math.floor(Date.now() / 1000)),
+      ),
       newId: () => PROJECT_ID,
       clock: () => '2026-08-27T09:00:00.000Z',
       // A spy *over* the real gate, not a stand-in for it. A recording gate that always
@@ -1239,6 +1248,16 @@ describe('handing a project to somebody else', () => {
       expect((await accept(built)).statusCode).toBe(204)
     })
 
+    it('fills in the subject on a record an operator created by address', async () => {
+      const built = withGraceRecord(seedProject(server({ realLookups: true })))
+      await transfer(built.app, { toEmail: 'grace@example.test' })
+      await accept(built)
+
+      expect((await userRecords(built.couch.couch).read('grace@example.test'))?.sub).toBe(
+        'google|grace',
+      )
+    })
+
     it('accepts for a record an operator created by address, before it has a subject', async () => {
       // `PUT /customer` creates a record with no `sub`. The recipient is identified by the
       // verified address on their token, so what the record lacks does not matter: the offer
@@ -1313,6 +1332,55 @@ describe('handing a project to somebody else', () => {
         (built.couch.documents.get(`projects/project:${PROJECT_ID}`) as { participants: unknown[] })
           .participants,
       ).toEqual([{ role: 'owner', userid: 'google|grace' }])
+    })
+
+    /** The members of the project as the new owner sees them. */
+    const membersAsGrace = (built: Awaited<ReturnType<typeof offered>>) => {
+      // What CouchDB's `by_sub` view emits for a record carrying Grace's subject (the map itself
+      // is executed in `users/database.test.ts`). The fake does not compute views, and the
+      // document it points at exists only if acceptance created it.
+      built.couch.rowsByDesign.by_sub = [
+        { id: userDocId('grace@example.test'), key: 'google|grace', value: null },
+      ]
+      return built.app.inject({
+        method: 'GET',
+        url: `/projects/${PROJECT_ID}/members`,
+        headers: { authorization: grace() },
+      })
+    }
+
+    it('creates their record on acceptance, so the new owner has an address', async () => {
+      // An owner nobody can resolve is listed with an empty address. Acceptance is the moment
+      // this person starts to own something, so it is the moment the server keeps a record,
+      // exactly as accepting an invitation at sign-in does.
+      const built = await offered()
+      await built.app.inject({
+        method: 'POST',
+        url: `/transfers/${PROJECT_ID}`,
+        headers: { authorization: grace() },
+      })
+
+      expect(await userRecords(built.couch.couch).read('grace@example.test')).toMatchObject({
+        sub: 'google|grace',
+        email: 'grace@example.test',
+      })
+      expect((await membersAsGrace(built)).json()).toEqual([
+        { sub: 'google|grace', email: 'grace@example.test', role: 'owner' },
+      ])
+    })
+
+    it('creates no record when the acceptance is refused', async () => {
+      // Somebody the offer was not made to must not get a record by asking.
+      const built = await offered()
+      await built.app.inject({
+        method: 'POST',
+        url: `/transfers/${PROJECT_ID}`,
+        headers: {
+          authorization: `Bearer ${accessTokenFor(KEY, { sub: 'google|eve', email: 'eve@example.test' })}`,
+        },
+      })
+
+      expect(await userRecords(built.couch.couch).read('eve@example.test')).toBeUndefined()
     })
 
     it('declines it', async () => {

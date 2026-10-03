@@ -134,7 +134,8 @@ export function acceptable(
  * none — and `grantRole` refuses to demote the last owner precisely so that no such moment can
  * be reached by accident.
  *
- * @param toSub the recipient, who by now has an account
+ * @param toSub the recipient's subject, from their verified access token; acceptance ensures
+ *   their user record before this result is written
  * @throws {TransferError} when the list does not describe a transferable project
  */
 export function applyTransfer(

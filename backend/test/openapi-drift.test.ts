@@ -125,6 +125,7 @@ const server = (): Server => {
       couch,
       key,
       records,
+      ensureRecord: recordEnsurer(records, refresh),
       validator: () => 'function (doc) { return doc }',
     },
   })

@@ -1,11 +1,13 @@
 import { generateKeyPairSync } from 'node:crypto'
 import { afterEach, describe, expect, it } from 'vitest'
 import { mintToken, type SigningKey } from '../../src/auth/jwt.js'
+import { refreshStore } from '../../src/auth/refresh-store.js'
 import { ACTIONS, type Action, PROJECT_LIMITS, type Principal } from '../../src/domain/index.js'
 import { ENFORCEMENT, gate, gatedRoutes, NotEntitledError } from '../../src/entitlements/gate.js'
 import { forgetRegistry } from '../../src/projects/registry.js'
 import { buildServer, type Server } from '../../src/server.js'
 import { forgetUsersDatabase } from '../../src/users/database.js'
+import { recordEnsurer } from '../../src/users/ensure.js'
 import { userRecords } from '../../src/users/records.js'
 import { fakeCouch } from '../support/couch.js'
 
@@ -125,12 +127,17 @@ function serverWithGatedRoutes() {
   // to `free`, and the test would pass or fail for a reason unrelated to what it asserted. One
   // instance means the server behaves like a deployment, where there is one database.
   const couch = fakeCouch().couch
+  const records = userRecords(couch)
   app = buildServer({
     logger: false,
     projects: {
       couch,
       key,
-      records: userRecords(couch),
+      records,
+      ensureRecord: recordEnsurer(
+        records,
+        refreshStore(records, () => Math.floor(Date.now() / 1000)),
+      ),
       validator: () => 'function (doc) { return doc }',
       gate: (_principal, action) => {
         calls.push(action)
