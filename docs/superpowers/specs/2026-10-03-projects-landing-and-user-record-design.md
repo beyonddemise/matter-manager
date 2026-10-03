@@ -68,8 +68,11 @@ stops touching it entirely.
   `_admin`. It holds refresh-token hashes and plans, so no user token may ever read it.
 - **Lookups are by address, with one view by subject.** Both tokens carry `email`, and
   `PUT /customer` names its target by address. Project participants, however, are stored by
-  subject, and member listings and the project-creation gate resolve a subject back to a record,
-  so a `by_sub` view (emitting only records whose `sub` is set) answers those.
+  subject, and member listings resolve *another* participant's subject back to a record, so a
+  `by_sub` view (emitting only records whose `sub` is set) answers those. **The caller's own
+  record is always read by the address on their access token**, never through the view: a record
+  an operator created by address has no `sub` until its owner signs in again, and a person who
+  has only signed in has no record at all.
 - **`plan`** is narrowed exactly as `toProfile` narrows it today: unknown values are reported and
   read as `free`.
 - **`roles`** is set by hand by an operator in Fauxton. `customerservice` is the only role read.
@@ -183,8 +186,10 @@ Phase A is implemented. Where the code differs from the text above, the code is 
 - The handoff cookie is `mm_handoff` with `purpose: 'handoff'` (not `flow`, which names the PKCE
   carrier), 120 seconds, single use; its `jti` goes on the deny list.
 - Sign-in requires a verified email (`emailVerified === true`); the record is keyed by it.
-- The `by_sub` view (`_design/by_sub`) resolves participants by subject and skips records with
-  no `sub`.
+- The `by_sub` view (`_design/by_sub`) resolves *other* participants by subject and skips
+  records with no `sub`. The caller is never resolved through it: `principalFor` and the
+  transfer routes (`GET /transfers`, `POST` and `DELETE /transfers/:projectId`) take the caller's
+  subject and verified address from the access token and read the record, if any, by address.
 - `isLive` is true if the **record or memory** holds the hash (ruling R8), so a record created
   without draining memory (an operator setting a plan) never signs anybody out.
 - `POST /auth/signout` answers 500, not 204, when revoking the refresh token fails.

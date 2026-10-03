@@ -202,7 +202,10 @@ person's plan. A plain sign-in creates **no** record and writes one log line
 (`auth/sign-in-log.ts`; the sink is #212). A record comes into existence only through
 `ensureRecord` (a redeemable invitation at sign-in, or `PATCH /profile`) or `PUT /customer`,
 which sets a plan by address even before its owner has ever signed in. Such a record has no
-`sub`, which is why the `by_sub` view skips records without one.
+`sub`, which is why the `by_sub` view skips records without one — and why the caller's own
+record is always read by the verified address on their access token, never by subject. The
+token's address is trustworthy for that because `/auth/token` mints only for an address the
+provider verified, and the token is signed by this service.
 
 **Tokens.**
 

@@ -126,11 +126,6 @@ const server = (): Server => {
       key,
       records,
       validator: () => 'function (doc) { return doc }',
-      identityOf: async (sub: string) => ({
-        sub,
-        email: 'drift@example.test',
-        emailVerified: true,
-      }),
     },
   })
   return app

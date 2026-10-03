@@ -19,7 +19,7 @@ import {
   securityFor,
   TransferError,
 } from '../domain/index.js'
-import { type MembershipDependencies, MembershipRefused } from './members.js'
+import { MembershipRefused } from './members.js'
 import { type ProjectPointer, pointerId, REGISTRY_DATABASE } from './registry.js'
 
 /** The design document indexing offers by the address they were sent to. */
@@ -136,17 +136,15 @@ export async function removeTransfer(
  *   person who made it no longer owns the project
  */
 export async function acceptTransfer(
-  deps: MembershipDependencies & { readonly couch: CouchClient },
+  deps: { readonly couch: CouchClient },
   projectId: string,
   identity: Identity,
   now: () => number,
 ): Promise<void> {
-  const recipient = identity.email === undefined ? undefined : await deps.findUser(identity.email)
-  if (recipient === undefined) {
-    // They have just signed in, so an account exists — unless the address on the token is not
-    // the address on the account, which is a state this service does not create.
-    throw new MembershipRefused(404, 'No such transfer.')
-  }
+  // The recipient is the identity itself, not an account looked up from it. Somebody who has
+  // only signed in has no user record, and requiring one turned "a house was offered to you"
+  // into a 404 for exactly the person the offer was for. `acceptable` below still decides on
+  // the verified address, so a subject alone accepts nothing.
 
   for (let attempt = 0; attempt < CONFLICT_ATTEMPTS; attempt += 1) {
     const offer = await deps.couch.getDoc<TransferDocument>(
@@ -171,7 +169,7 @@ export async function acceptTransfer(
 
     let participants: readonly ProjectPointer['participants'][number][]
     try {
-      participants = applyTransfer(pointer.participants, offer, recipient.sub)
+      participants = applyTransfer(pointer.participants, offer, identity.sub)
     } catch (error) {
       if (error instanceof TransferError) throw new MembershipRefused(400, error.message)
       throw error

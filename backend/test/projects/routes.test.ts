@@ -14,6 +14,7 @@ import { userDocId } from '../../src/users/key.js'
 import { userRecords } from '../../src/users/records.js'
 import { loadContract, operationsOf, validate } from '../support/contract.js'
 import { type CouchFailures, type FakeCouch, fakeCouch } from '../support/couch.js'
+import { accessTokenFor } from '../support/tokens.js'
 
 const OWNER = 'google|1234'
 /** The caller in the capacity tests. Distinct from {@link OWNER}, which owns nothing here. */
@@ -29,9 +30,20 @@ function signingKey(): SigningKey {
 
 const KEY = signingKey()
 
-/** A valid access token for `sub`. */
+/** The address each subject in this file signed in with, so a token carries it as production's do. */
+const EMAILS: Readonly<Record<string, string>> = {
+  [OWNER]: 'ada@example.test',
+  [SUBJECT]: SUBJECT_EMAIL,
+  'google|grace': 'grace@example.test',
+}
+
+/**
+ * A valid access token for `sub`, with the claims `/auth/token` mints — the address included,
+ * because the routes read the caller's own record and offers by it. A subject not listed above
+ * gets an address of its own, so it can never be mistaken for somebody else's.
+ */
 const tokenFor = (sub: string) =>
-  mintToken(KEY, { purpose: 'access', sub, exp: Math.floor(Date.now() / 1000) + 3600 })
+  accessTokenFor(KEY, { sub, email: EMAILS[sub] ?? `${sub.replace(/\W/g, '-')}@example.test` })
 
 /** The whole header value, for the requests that are written out rather than built by `create`. */
 const bearer = (sub: string) => `Bearer ${tokenFor(sub)}`
@@ -101,8 +113,8 @@ function server(
     registryConflicts?: boolean
     /** Signed-out access tokens, as the auth routes would write them. */
     deny?: DenyList
-    /** Leave `identityOf` to its default, the user record, instead of the stub below. */
-    recordIdentity?: boolean
+    /** Leave `findUser` to its default, the real user records, instead of the stub below. */
+    realLookups?: boolean
   } = {},
 ) {
   forgetUsersDatabase()
@@ -132,21 +144,17 @@ function server(
         if (options.gateRefuses === true) throw new NotEntitledError(action)
         realGate(principal, action, project)
       },
-      findUser: async (value: string) =>
-        value.includes('grace')
-          ? { sub: 'google|grace', email: 'grace@example.test' }
-          : value === OWNER
-            ? { sub: OWNER, email: 'ada@example.test' }
-            : undefined,
-      ...(options.deny === undefined ? {} : { deny: options.deny }),
-      ...(options.recordIdentity === true
+      ...(options.realLookups === true
         ? {}
         : {
-            identityOf: async (sub: string) =>
-              sub === 'google|grace'
-                ? { sub, email: 'grace@example.test', emailVerified: true }
-                : { sub, email: 'ada@example.test', emailVerified: true },
+            findUser: async (value: string) =>
+              value.includes('grace')
+                ? { sub: 'google|grace', email: 'grace@example.test' }
+                : value === OWNER
+                  ? { sub: OWNER, email: 'ada@example.test' }
+                  : undefined,
           }),
+      ...(options.deny === undefined ? {} : { deny: options.deny }),
       millis: () => Date.parse('2026-08-27T09:00:00.000Z'),
     },
   })
@@ -1205,7 +1213,7 @@ describe('handing a project to somebody else', () => {
     ])
   })
 
-  describe('with the identity read from the user record', () => {
+  describe("whatever the recipient's record says", () => {
     /** Grace's record, with or without the subject sign-in would have written. */
     const withGraceRecord = (built: ReturnType<typeof server>, sub?: string) => {
       built.couch.documents.set(`${USERS_DB}/${userDocId('grace@example.test')}`, {
@@ -1214,9 +1222,6 @@ describe('handing a project to somebody else', () => {
         email: 'grace@example.test',
         ...(sub === undefined ? {} : { sub }),
       })
-      built.couch.rowsByDesign.by_sub = [
-        { id: userDocId('grace@example.test'), key: 'google|grace', value: null },
-      ]
       return built
     }
 
@@ -1228,25 +1233,110 @@ describe('handing a project to somebody else', () => {
       })
 
     it('accepts for a record that carries a subject', async () => {
-      const built = withGraceRecord(seedProject(server({ recordIdentity: true })), 'google|grace')
+      const built = withGraceRecord(seedProject(server({ realLookups: true })), 'google|grace')
       await transfer(built.app, { toEmail: 'grace@example.test' })
 
       expect((await accept(built)).statusCode).toBe(204)
     })
 
-    it('answers as for no offer when the record has no subject yet', async () => {
-      // A record an operator created by address has no `sub` until the person signs in, so it
-      // cannot say whose verified address this is, and acceptance is decided by that address.
-      const built = withGraceRecord(seedProject(server({ recordIdentity: true })))
+    it('accepts for a record an operator created by address, before it has a subject', async () => {
+      // `PUT /customer` creates a record with no `sub`. The recipient is identified by the
+      // verified address on their token, so what the record lacks does not matter: the offer
+      // was made to that address, and the token proves they hold it.
+      const built = withGraceRecord(seedProject(server({ realLookups: true })))
       await transfer(built.app, { toEmail: 'grace@example.test' })
 
-      const response = await accept(built)
-
-      expect(response.statusCode).toBe(404)
+      expect((await accept(built)).statusCode).toBe(204)
       expect(
         (built.couch.documents.get(`projects/project:${PROJECT_ID}`) as { participants: unknown[] })
           .participants,
-      ).toEqual([{ role: 'owner', userid: OWNER }])
+      ).toEqual([{ role: 'owner', userid: 'google|grace' }])
+    })
+  })
+
+  describe('for somebody who has only signed in', () => {
+    // No record, and no stubbed lookups: the recipient exists only as the verified address and
+    // subject on their access token, which is what signing in alone leaves behind. Under
+    // `_users` such a person had a document; under user records they have none, so the caller's
+    // identity has to come from the token or they cannot see an offer made to them at all.
+    const grace = () =>
+      `Bearer ${accessTokenFor(KEY, { sub: 'google|grace', email: 'grace@example.test' })}`
+
+    const offered = async () => {
+      const built = seedProject(server({ realLookups: true }))
+      await transfer(built.app, { toEmail: 'grace@example.test' })
+      built.couch.rows = [
+        {
+          value: {
+            _id: `transfer:${PROJECT_ID}`,
+            type: 'transfer',
+            projectId: PROJECT_ID,
+            toEmail: 'grace@example.test',
+            fromSub: OWNER,
+            retainAccess: 'none',
+            createdAt: '2026-08-27T09:00:00.000Z',
+            expiresAt: '2026-09-10T09:00:00.000Z',
+          },
+        },
+      ]
+      return built
+    }
+
+    it('lists the offer', async () => {
+      const built = await offered()
+      const response = await built.app.inject({
+        method: 'GET',
+        url: '/transfers',
+        headers: { authorization: grace() },
+      })
+
+      expect(response.json()).toEqual([
+        {
+          projectId: PROJECT_ID,
+          projectName: 'Musterstraße 12',
+          retainAccess: 'none',
+          expiresAt: '2026-09-10T09:00:00.000Z',
+        },
+      ])
+    })
+
+    it('accepts it', async () => {
+      const built = await offered()
+      const response = await built.app.inject({
+        method: 'POST',
+        url: `/transfers/${PROJECT_ID}`,
+        headers: { authorization: grace() },
+      })
+
+      expect(response.statusCode).toBe(204)
+      expect(
+        (built.couch.documents.get(`projects/project:${PROJECT_ID}`) as { participants: unknown[] })
+          .participants,
+      ).toEqual([{ role: 'owner', userid: 'google|grace' }])
+    })
+
+    it('declines it', async () => {
+      const built = await offered()
+      const response = await built.app.inject({
+        method: 'DELETE',
+        url: `/transfers/${PROJECT_ID}`,
+        headers: { authorization: grace() },
+      })
+
+      expect(response.statusCode).toBe(204)
+    })
+
+    it('still refuses somebody the offer was not made to', async () => {
+      const built = await offered()
+      const response = await built.app.inject({
+        method: 'POST',
+        url: `/transfers/${PROJECT_ID}`,
+        headers: {
+          authorization: `Bearer ${accessTokenFor(KEY, { sub: OWNER, email: 'ada@example.test' })}`,
+        },
+      })
+
+      expect(response.statusCode).toBe(404)
     })
   })
 
@@ -1376,8 +1466,8 @@ function serverWithProjects(options: {
 }): Server {
   const built = server()
 
-  // The record, and the `by_sub` row that finds it by subject. The fake answers each view from
-  // its own rows, so the registry rows below do not stand in for this one.
+  // The record, keyed by the address the caller's token carries — which is how the route finds
+  // it. The `by_sub` row is there as it would be in CouchDB, and the route must not need it.
   built.couch.documents.set(`${USERS_DB}/${userDocId(SUBJECT_EMAIL)}`, {
     _id: userDocId(SUBJECT_EMAIL),
     type: 'user',
@@ -1410,6 +1500,40 @@ function serverWithProjects(options: {
 
   return built.app
 }
+
+describe("the caller's own record, found by the address on their token", () => {
+  it('reads a plan an operator set by address before the caller signed in again', async () => {
+    // `PUT /customer` creates a record by address alone, with no `sub`, so the `by_sub` view
+    // cannot find it. `/auth/token` and `/profile` read by address and already say `member`;
+    // this route must agree rather than answer `free` until the next sign-in.
+    const { app: built, couch: fake } = server()
+    await userRecords(fake.couch).setPlan(SUBJECT_EMAIL, 'member')
+    fake.rows = [
+      {
+        value: {
+          projectId: 'owned-0',
+          dbName: 'project_owned_0',
+          projectName: 'Project 0',
+          address: null,
+          role: 'owner',
+          archived: false,
+          ownerId: SUBJECT,
+        },
+      },
+    ]
+
+    const response = await built.inject({
+      method: 'POST',
+      url: '/projects',
+      headers: {
+        authorization: `Bearer ${accessTokenFor(KEY, { sub: SUBJECT, email: SUBJECT_EMAIL })}`,
+      },
+      payload: { name: 'Second' },
+    })
+
+    expect(response.statusCode).toBe(201)
+  })
+})
 
 describe('creating a project against the plan', () => {
   it('creates the first project on a free plan', async () => {
@@ -1538,9 +1662,11 @@ describe('creating a project against the plan', () => {
     expect(response.statusCode).toBe(201)
   })
 
-  it('finds the record by subject through the by_sub view', async () => {
-    // The token carries a subject and the record is keyed by address, so the only way to the
-    // plan is the view. A pro record the view does not point at must not lift the limit.
+  it('finds the record by the address on the token, not through the by_sub view', async () => {
+    // The record is keyed by address and the token carries the verified one, so the plan is one
+    // keyed read. The view is for *other* participants: a record an operator created by address
+    // has no `sub` and is invisible to it, which kept an upgraded user `free` here until their
+    // next sign-in. With the view emptied, the pro record must still lift the limit.
     const built = serverWithProjects({ plan: 'pro', owned: 1 })
     couch.rowsByDesign.by_sub = []
     const response = await built.inject({
@@ -1549,13 +1675,13 @@ describe('creating a project against the plan', () => {
       headers: { authorization: bearer(SUBJECT) },
       payload: { name: 'Second' },
     })
-    expect(response.statusCode).toBe(403)
+    expect(response.statusCode).toBe(201)
     expect(
       couch.calls.some(
         (call) =>
           call.operation === 'view' &&
           (call.detail as { design?: string } | undefined)?.design === 'by_sub',
       ),
-    ).toBe(true)
+    ).toBe(false)
   })
 })
