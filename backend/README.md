@@ -119,13 +119,37 @@ Authorization code with PKCE. Three modules:
 |---|---|
 | `auth/oidc.ts` | The flow, provider-agnostic. PKCE, state, the code exchange. |
 | `auth/google.ts` | Google's endpoints, and ID-token verification against its JWKS. |
-| `auth/routes.ts` | The three operations the contract declares. |
+| `auth/routes.ts` | The sign-in, callback, token and sign-out operations the contract declares. |
 
-**Tokens never touch `localStorage`.** The PKCE carrier and the session are **httpOnly** cookies
-the page cannot read. The CouchDB access token is returned by `POST /auth/token` in a response
-body, because PouchDB has to put it in an `Authorization` header — so it is held in memory,
-where it dies with the tab, rather than in storage, where it survives and is readable by any
-script that ever runs on the origin.
+**The access token never touches `localStorage`.** The PKCE carrier and the `mm_handoff` cookie
+are **httpOnly** cookies the page cannot read. The handoff is 120 seconds long, single use, and
+authorises only the first `POST /auth/token`, which returns `{ accessToken, expiresIn,
+refreshToken }` in a response body. The 5-minute access token (`_couchdb.roles: [plan]`) is held
+in memory, because PouchDB has to put it in an `Authorization` header. The 30-day refresh token
+is kept by the page in `mm-local` by explicit decision and sent in the body of later
+`POST /auth/token` calls; it is not rotated. Sign-in requires a verified email. Everything else
+here takes `Authorization: Bearer <access token>`. The reasoning is in
+[docs/SECURITY-MODEL.md](../docs/SECURITY-MODEL.md), *User records and tokens*.
+
+## User records
+
+`src/users/` keeps one record per person in the admin-only `matter_manager` database, keyed by
+verified address (`users/key.ts`). Signing in creates **no** record; records come from
+`ensureRecord` (a redeemable invitation, or `PATCH /profile`) or `PUT /customer`. Refresh-token
+hashes (`sha256(jti)`) live on the record, or in memory while there is none (`auth/refresh-store.ts`).
+CouchDB's `_users` is not used.
+
+### Setting a plan: `PUT /customer`
+
+Callers holding the `customerservice` role (set on their record by hand in Fauxton) may set the
+plan of any account by address, creating its record if it has none:
+
+```bash
+curl -X PUT "$API/customer" -H "authorization: Bearer $ACCESS" -H 'content-type: application/json' \
+  -d '{"email":"someone@example.com","plan":"member"}'
+```
+
+`plan` is `free`, `member` or `pro`. A non-operator gets a 403 whatever the body says.
 
 **The routes are absent when no provider is configured**, rather than present and answering with
 a misconfiguration error at the moment a user presses the button.
@@ -145,7 +169,7 @@ only when it is present — so a deployment missing any one of the first four an
 | `GOOGLE_REDIRECT_URI` | Must match what is registered **exactly**, e.g. `https://api.matter-manager.example/auth/google/callback` |
 | `APP_ORIGIN` | Where the browser is returned, e.g. `https://matter-manager.pages.dev` |
 | `JWT_PRIVATE_KEY` | EC P-256 private key, PEM. `openssl ecparam -name prime256v1 -genkey -noout`. **Its public half goes into CouchDB**, so anything signed with it is a database credential |
-| `JWT_SESSION_PRIVATE_KEY` | A **second**, different EC P-256 key, for session cookies and PKCE carriers. Never given to CouchDB |
+| `JWT_SESSION_PRIVATE_KEY` | A **second**, different EC P-256 key, for refresh tokens, the handoff cookie and PKCE carriers. Never given to CouchDB |
 | `JWT_KEY_ID` | Names the key in tokens and in CouchDB's `[jwt_keys]`, e.g. `ec-2026-08` |
 
 None of these are in the repository and none should be. The public half of `JWT_PRIVATE_KEY` is

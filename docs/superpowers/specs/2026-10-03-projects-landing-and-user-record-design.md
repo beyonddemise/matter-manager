@@ -176,6 +176,24 @@ one access-token lifetime: **five minutes**, with no sign-in required. The backe
 the token's role for its own decisions; `POST /projects` reads the record, as phase 1's
 `principalFor` does.
 
+### Phase A — as built
+
+Phase A is implemented. Where the code differs from the text above, the code is right:
+
+- The handoff cookie is `mm_handoff` with `purpose: 'handoff'` (not `flow`, which names the PKCE
+  carrier), 120 seconds, single use; its `jti` goes on the deny list.
+- Sign-in requires a verified email (`emailVerified === true`); the record is keyed by it.
+- The `by_sub` view (`_design/by_sub`) resolves participants by subject and skips records with
+  no `sub`.
+- `isLive` is true if the **record or memory** holds the hash (ruling R8), so a record created
+  without draining memory (an operator setting a plan) never signs anybody out.
+- `POST /auth/signout` answers 500, not 204, when revoking the refresh token fails.
+- The client refreshes at `expiresIn − 2×margin` (not one) and when the page becomes visible.
+- Frontend browser tests run Lit in production mode.
+- `chunkSizeWarningLimit` in `frontend/vite.config.ts` is 700.
+- Follow-ups filed: #208 (90-day hard delete), #209 (refresh-token hardening and rotation), #210
+  (shared deny list and record-less store), #211 (downgrade grace period), #212 (sign-in log sink).
+
 ## Phase B — The plan, enforced
 
 ### Limits and policies
