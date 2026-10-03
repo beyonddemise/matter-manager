@@ -1,11 +1,11 @@
 /**
  * The signed-in user's settings, and the locale that comes from them.
  *
- * **Read through `GET /profile`, never from CouchDB.** A JWT-authenticated browser cannot read
- * `_users` at all — not even its own document; it gets a 403, verified against CouchDB 3.5.2.
- * That is why this goes through the API, and why the value has to be cached: without the cache
- * the preference is simply unavailable offline, which is unacceptable in an application whose
- * whole point is working in a basement.
+ * **Read through `GET /profile`, never from CouchDB.** The profile lives on the user's record in
+ * `matter_manager`, which is admin-only: it also holds refresh-token hashes and plans, so no user
+ * token may read it. That is why this goes through the API, and why the value has to be cached:
+ * without the cache the preference is simply unavailable offline, which is unacceptable in an
+ * application whose whole point is working in a basement.
  *
  * ## The order things are tried, and why
  *

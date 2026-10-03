@@ -26,7 +26,7 @@ export interface Limits {
    */
   readonly auth: Limit
   /**
-   * Exchanging the session cookie for an access token.
+   * Exchanging the handoff cookie or a refresh token for an access token.
    *
    * Used at a completely different rate: a page refreshes this for as long as it stays open.
    * A single counter shared with sign-in would either throttle an ordinary session or fail to

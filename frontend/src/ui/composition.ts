@@ -248,8 +248,8 @@ export async function endSession(
 /**
  * The projects this account has, from the API.
  *
- * The access token goes in an `Authorization` header rather than as a cookie, which is what the
- * contract declares — see `projects.ts` for why the session cookie would not be sent here at all.
+ * The access token goes in an `Authorization` header, which is what the contract declares — see
+ * `projects.ts` for why no cookie authenticates these routes.
  */
 export function projects(fetchImpl: typeof fetch = fetch): ReturnType<typeof projectsApi> {
   return projectsApi(API_BASE, accessToken, fetchImpl)

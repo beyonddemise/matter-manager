@@ -127,8 +127,14 @@ authorises only the first `POST /auth/token`, which returns `{ accessToken, expi
 refreshToken }` in a response body. The 5-minute access token (`_couchdb.roles: [plan]`) is held
 in memory, because PouchDB has to put it in an `Authorization` header. The 30-day refresh token
 is kept by the page in `mm-local` by explicit decision and sent in the body of later
-`POST /auth/token` calls; it is not rotated. Sign-in requires a verified email. Everything else
-here takes `Authorization: Bearer <access token>`. The reasoning is in
+`POST /auth/token` calls; it is not rotated. When both arrive, a handoff cookie that verifies
+wins over the body token. Sign-in requires a verified email.
+
+The `/auth/*` routes require no bearer: `GET /auth/google` and its callback are the sign-in
+redirects, `POST /auth/token` takes the handoff cookie or a refresh token in the body, and
+`POST /auth/signout` takes an optional bearer (denied until its expiry) and an optional
+`refreshToken` in the body (revoked). Every other route here takes
+`Authorization: Bearer <access token>`. The reasoning is in
 [docs/SECURITY-MODEL.md](../docs/SECURITY-MODEL.md), *User records and tokens*.
 
 ## User records

@@ -20,10 +20,20 @@
 #
 #   Usage:  bash scripts/probe-replication.sh
 #
-#   Expects /tmp/mm-session.jwt to hold a session token minted on the droplet. The mint command
-#   is in `docs/replication.md`, and it sets `umask 077` first — a plain redirect would create a
-#   live credential with whatever the caller's umask allows, which on a default 022 is
-#   world-readable.
+#   Expects /tmp/mm-handoff.jwt (or $HANDOFF_FILE) to hold a handoff token minted on the
+#   droplet — the credential the sign-in callback would have set as the `mm_handoff` cookie. The
+#   mint command is in `docs/replication.md`, and it sets `umask 077` first — a plain redirect
+#   would create a live credential with whatever the caller's umask allows, which on a default
+#   022 is world-readable.
+#
+#   The flow is phase A's: the handoff goes to `POST /api/auth/token` as a cookie, exactly as
+#   the browser sends it after sign-in, and the answer carries an access token and a refresh
+#   token in its body. The access token is used for everything after; the refresh token is kept
+#   only so the cleanup can sign out with it, which revokes it on the server. A handoff is single
+#   use, so each run needs a freshly minted one.
+#
+#   Not yet run against production since phase A replaced the session cookie: the steps below
+#   are written to the new flow and checked by `bash -n`, not by a live run.
 #
 # It creates a project and archives it again. That is a real write to production, which is why
 # the name says what it is and the cleanup runs from a trap rather than from the happy path.
@@ -41,7 +51,7 @@ set -uo pipefail
 umask 077
 
 ORIGIN=${ORIGIN:-https://app.matter-manager.io}
-SESSION_FILE=${SESSION_FILE:-/tmp/mm-session.jwt}
+HANDOFF_FILE=${HANDOFF_FILE:-/tmp/mm-handoff.jwt}
 WORK=$(mktemp -d)
 PROJECT_ID=''
 FAILURES=0
@@ -50,7 +60,7 @@ FAILURES=0
 # that breaks after provisioning leaves one in production and the next run diagnoses its own
 # litter — which is exactly what the first run of this script did.
 cleanup() {
-  local archived
+  local archived signed_out
   if [ -n "${PROJECT_ID}" ]; then
     # Archived, not deleted. There is no DELETE route — projects carry an `archived` flag and
     # `GET /projects` returns them either way, which is a deliberate choice about a catalogue
@@ -69,6 +79,18 @@ cleanup() {
         echo "  By hand: PATCH ${ORIGIN}/api/projects/${PROJECT_ID} {\"archived\":true}" >&2
         ;;
     esac
+  fi
+  # Signed out last, because archiving needs the access token this denies. The refresh token is
+  # a thirty-day credential; leaving it live because the probe had finished would be a probe
+  # that leaks one per run. The body comes from a file node wrote, never from an argument.
+  if [ -s "${WORK}/signout.json" ]; then
+    printf '%-52s' 'cleanup: signing out (revokes the refresh token)'
+    signed_out=$(curl -sS -o /dev/null -w '%{http_code}' -m 20 -X POST \
+      -K "${WORK}/auth.conf" -H 'Content-Type: application/json' \
+      --data-binary "@${WORK}/signout.json" "${ORIGIN}/api/auth/signout")
+    echo "${signed_out}"
+    [ "${signed_out}" = "204" ] ||
+      echo "  FAILED to sign out; the probe's refresh token may still be live until it expires." >&2
   fi
   rm -rf "${WORK}"
 }
@@ -95,23 +117,23 @@ fail() {
   echo "  $1" >&2
 }
 
-if [ ! -s "${SESSION_FILE}" ]; then
-  echo "No session token at ${SESSION_FILE}. See docs/replication.md." >&2
+if [ ! -s "${HANDOFF_FILE}" ]; then
+  echo "No handoff token at ${HANDOFF_FILE}. See docs/replication.md." >&2
   exit 1
 fi
 
 echo "Probing ${ORIGIN}"
 echo
 
-# The session cookie goes into the config file for the same reason the access token will. `tr`
+# The handoff cookie goes into the config file for the same reason the access token will. `tr`
 # reads the file rather than taking the token as an argument, and `printf` is a shell builtin,
 # so the value never becomes another process's argv.
-printf 'cookie = "mm_session=%s"\n' "$(tr -d '\n' < "${SESSION_FILE}")" > "${WORK}/auth.conf"
+printf 'cookie = "mm_handoff=%s"\n' "$(tr -d '\n' < "${HANDOFF_FILE}")" > "${WORK}/auth.conf"
 
-# 1. The session cookie has to cross the /api forwarder for this to work at all. A forwarder
+# 1. The handoff cookie has to cross the /api forwarder for this to work at all. A forwarder
 #    that dropped Cookie would answer 401 here, and the sign-in design would be broken in a way
 #    no unauthenticated probe can see — the redirect out to Google works either way.
-say 'POST /api/auth/token (cookie crosses /api)'
+say 'POST /api/auth/token (handoff cookie crosses /api)'
 status=$(call POST "${ORIGIN}/api/auth/token" "${WORK}/token")
 echo "${status}"
 [ "${status}" = "200" ] || {
@@ -119,13 +141,15 @@ echo "${status}"
   exit 1
 }
 
-# Written by node straight from the response body, replacing the cookie: the access token is
-# never a shell variable and never an argument.
+# Written by node straight from the response body, replacing the cookie: neither token is ever a
+# shell variable or an argument. The refresh token goes only into the sign-out body the cleanup
+# sends; nothing else in the probe refreshes.
 node -e "
 const fs = require('fs')
-const token = JSON.parse(fs.readFileSync(process.argv[1], 'utf8')).accessToken
-fs.writeFileSync(process.argv[2], 'header = \"Authorization: Bearer ' + token + '\"\n', { mode: 0o600 })
-" "${WORK}/token" "${WORK}/auth.conf"
+const body = JSON.parse(fs.readFileSync(process.argv[1], 'utf8'))
+fs.writeFileSync(process.argv[2], 'header = \"Authorization: Bearer ' + body.accessToken + '\"\n', { mode: 0o600 })
+fs.writeFileSync(process.argv[3], JSON.stringify({ refreshToken: body.refreshToken }), { mode: 0o600 })
+" "${WORK}/token" "${WORK}/auth.conf" "${WORK}/signout.json"
 
 say '  token purpose / subject'
 field "${WORK}/token" "(()=>{const p=JSON.parse(Buffer.from(r.accessToken.split('.')[1],'base64url'));return p.purpose+' / '+p.sub})()"

@@ -227,6 +227,11 @@ from the access token's claims and `PATCH /profile` seeds a new record from them
 - **Record-less refresh entries live in memory and a restart loses them.** Those users get a 401
   at their next refresh and sign in again, keeping their local data. The cost falls only on
   people who have used nothing that needed the server. A store shared across instances is #210.
+- **The handoff's single use is per process.** A used handoff's `jti` goes on the in-memory
+  deny list until the handoff's own expiry, so a backend restart within those 120 seconds
+  forgets it, and that handoff can be exchanged **once more**. The window is two minutes, the
+  cookie is httpOnly and cleared on first use, and a replay yields tokens for the same verified
+  person who just signed in; a shared deny list is #210.
 - **A fresh handoff wins.** When `POST /auth/token` receives both a handoff cookie that verifies
   and a body refresh token, it honours the handoff: a sign-in just finished, and a stale stored
   token must not end the session it began. The page then replaces its stored refresh token. A

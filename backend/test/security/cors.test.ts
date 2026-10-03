@@ -20,7 +20,7 @@ const preflight = (origin: string | undefined) => corsHeaders(origin, true, POLI
 describe('an origin on the list', () => {
   it('is echoed back exactly', () => {
     // Echoed rather than `*`, because `*` and credentials are mutually exclusive — and the
-    // session cookie is the entire reason the browser is asking.
+    // handoff cookie on `POST /auth/token` is the reason the browser sends credentials at all.
     expect(simple('https://matter.example')['access-control-allow-origin']).toBe(
       'https://matter.example',
     )
@@ -139,7 +139,7 @@ describe('the configured list itself', () => {
   })
 
   it('refuses a wildcard outright', () => {
-    // Not "supported and discouraged". An API that carries a session cookie has no correct use
+    // Not "supported and discouraged". An API that accepts a credentialed cookie has no correct use
     // for one, and a deployment that sets `*` believing it works would carry that belief into
     // production.
     expect(() => corsPolicy(['*'])).toThrow(/wildcard/i)

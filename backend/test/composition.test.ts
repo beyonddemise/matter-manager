@@ -146,7 +146,7 @@ describe('a deployment that is part-way through being set up', () => {
 
   it('serves no sign-in routes without a session key', () => {
     // **No fallback to JWT_PRIVATE_KEY.** That key is installed in CouchDB's `[jwt_keys]`, so
-    // signing sessions with it would make a thirty-day session cookie a thirty-day database
+    // signing refresh tokens with it would make a thirty-day refresh token a thirty-day database
     // credential — the exact thing the second key exists to remove. A deployment that forgot
     // should serve no sign-in rather than quietly reinstate it.
     const { JWT_SESSION_PRIVATE_KEY: _session, ...withoutSession } = COMPLETE
