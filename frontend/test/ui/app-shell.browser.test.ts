@@ -11,6 +11,7 @@ import type { TokenOutcome } from '../../src/ui/composition.js'
 import '../../src/ui/app-shell.js'
 import { NAV_ROUTES } from '../../src/ui/router/routes.js'
 import { applyScheme, SCHEME_STORAGE_KEY } from '../../src/ui/scheme.js'
+import { accessToken, rememberAccessToken } from '../../src/ui/tokens.js'
 
 /** A minimal shape for the reactive-update contract both `app-shell` and `wa-page` share. */
 interface Updatable {
@@ -404,6 +405,28 @@ it('stops replicating once the session has ended', async () => {
   await play({ kind: 'ended' })
   await element.updateComplete
   expect(stopAll).toHaveBeenCalled()
+})
+
+it('treats signed-out after signed-in as a sign-out of this tab, keeping local data', async () => {
+  // Another tab signed out and removed the stored refresh token, so this tab's next exchange had
+  // nothing to send and was answered 401. Leaving replication running here would keep pushing
+  // with an access token nobody can renew, and keeping that token in memory would let this tab
+  // go on presenting a session the user ended.
+  const { element, play, stopAll, makeSync, signOutOf } = await driven()
+  await play({ kind: 'refreshed', expiresIn: 300 })
+  await waitUntil(() => makeSync.mock.calls.length > 0, 'replication never started')
+  rememberAccessToken({ accessToken: 'a', expiresIn: 300 })
+
+  await play({ kind: 'signed-out' })
+  await element.updateComplete
+
+  expect(stopAll).toHaveBeenCalled()
+  expect(accessToken()).toBeUndefined()
+  // Not the "session ended" notice: nothing was refused, the user signed out elsewhere.
+  expect(element.querySelector('[data-session-ended]')).toBeNull()
+  expect(element.querySelector('[data-sign-in]')).not.toBeNull()
+  // Local data is not this tab's to remove; the sign-out that happened elsewhere decided that.
+  expect(signOutOf).not.toHaveBeenCalled()
 })
 
 it('starts replication once however many times the token is refreshed', async () => {

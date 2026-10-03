@@ -291,24 +291,43 @@ export class AppShell extends LitElement {
         return
       }
       case 'signed-out':
+        // Arriving after `signed-in`, this is a sign-out of this tab: another tab signed out and
+        // removed the stored refresh token, so this tab's exchange had nothing to send. Treated
+        // as the expired path without its notice — nothing was refused, the user signed out
+        // elsewhere — so replication stops and the in-memory token goes, and local data stays,
+        // because removing it was the other tab's decision to make. On a first answer there is
+        // nothing running, and this only records the state.
+        if (this.session === 'signed-in') {
+          this.endReplication()
+          forgetTokens()
+        }
         this.session = 'signed-out'
         return
       case 'ended':
         // Local data stays: `sessionExpired` forgets the in-memory access token and nothing
         // else. Replication is stopped because its token is now dead, and a manager retrying
-        // with it would only produce 401s. The generation moves first, as in `onSignOut`, so a
-        // startup still in flight cannot finish into the session that has just ended.
-        this.sessionGeneration += 1
-        this.sync?.stopAll()
-        this.sync = undefined
-        this.states.clear()
-        this.syncing = undefined
+        // with it would only produce 401s.
+        this.endReplication()
         this.session = sessionExpired({ forgetTokens })
         this.sessionEndedNotice = true
         return
       case 'unreachable':
         return
     }
+  }
+
+  /**
+   * Stops replication for a session that has ended without the user signing out here.
+   *
+   * The generation moves first, as in `onSignOut`, so a startup still in flight cannot finish
+   * into the session that has just ended.
+   */
+  private endReplication(): void {
+    this.sessionGeneration += 1
+    this.sync?.stopAll()
+    this.sync = undefined
+    this.states.clear()
+    this.syncing = undefined
   }
 
   override disconnectedCallback(): void {
