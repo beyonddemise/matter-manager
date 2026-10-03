@@ -170,6 +170,9 @@ export async function acceptTransfer(
   // into a 404 for exactly the person the offer was for. `acceptable` below still decides on
   // the verified address, so a subject alone accepts nothing.
   let ensured = false
+  // The plan decision is made once. A retry follows a `_security` write, and a second answer
+  // (the recipient's count may have moved) must not refuse a transfer already half applied.
+  let authorised = false
 
   for (let attempt = 0; attempt < CONFLICT_ATTEMPTS; attempt += 1) {
     const offer = await deps.couch.getDoc<TransferDocument>(
@@ -193,7 +196,8 @@ export async function acceptTransfer(
     }
     // The recipient's plan, for a project that is active. Before `ensureRecord`, which writes:
     // an account that is refused must not leave a record behind for having asked.
-    if (pointer.archived !== true) await deps.authoriseAccept(identity)
+    if (!authorised && pointer.archived !== true) await deps.authoriseAccept(identity)
+    authorised = true
     // `acceptable` has matched the verified address to the offer, so it is present. Once, not
     // per conflict retry: the record does not change between attempts.
     if (!ensured && identity.email !== undefined) {

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import type { Identity } from '../../src/auth/oidc.js'
+import { CouchError } from '../../src/couch/client.js'
 import type { Participant } from '../../src/domain/index.js'
 import { MembershipRefused } from '../../src/projects/members.js'
 import { forgetRegistry, pointerId, REGISTRY_DATABASE } from '../../src/projects/registry.js'
@@ -381,6 +382,41 @@ describe("accepting an active project is the recipient's plan to authorise", () 
       clock(),
     )
 
+    expect(participantsIn(fake)).toEqual([{ role: 'owner', userid: HOMEOWNER }])
+  })
+
+  it('decides once, so a retry cannot refuse after _security was already written', async () => {
+    // The first attempt is authorised and writes `_security`, then its registry write
+    // conflicts. A second attempt that asked again could answer differently (the recipient's
+    // count moved in between) and refuse a transfer whose access change is already in CouchDB.
+    const fake = registry(undefined, offer())
+    let asked = 0
+    let conflicts = 1
+    const couch = {
+      ...fake.couch,
+      putDoc: async (database: string, document: { _id: string }) => {
+        if (document._id === pointerId(PROJECT_ID) && conflicts > 0) {
+          conflicts -= 1
+          throw new CouchError(409, 'conflict', 'Document update conflict')
+        }
+        return fake.couch.putDoc(database, document)
+      },
+    } as FakeCouch['couch']
+
+    await acceptTransfer(
+      {
+        ...deps(fake, async () => {
+          asked += 1
+          if (asked > 1) throw new Error('refused on retry')
+        }),
+        couch,
+      },
+      PROJECT_ID,
+      homeowner,
+      clock(),
+    )
+
+    expect(asked).toBe(1)
     expect(participantsIn(fake)).toEqual([{ role: 'owner', userid: HOMEOWNER }])
   })
 

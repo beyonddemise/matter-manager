@@ -1075,8 +1075,9 @@ export interface components {
         };
         /**
          * @description Creating a project, unarchiving one or accepting a transfer of one was refused: this
-         *     plan does not include synchronized projects (ADR 0009). The free plan keeps its projects on the device, so there is no server
-         *     project to count - upgrading is the fix, not archiving.
+         *     plan does not include synchronized projects (ADR 0009). The free plan keeps its projects
+         *     on the device, so there is no server project to count - upgrading is the fix, not
+         *     archiving.
          */
         PlanHasNoSync: {
             /** Format: uri */
@@ -1092,9 +1093,8 @@ export interface components {
         };
         /**
          * @description Creating a project, unarchiving one or accepting a transfer of one was refused: this
-         *     plan has no room for another one (ADR 0009). The
-         *     count is of projects that are not archived; an archived project keeps its database but
-         *     no longer takes a slot.
+         *     plan has no room for another one (ADR 0009). The count is of projects that are not
+         *     archived; an archived project keeps its database but no longer takes a slot.
          */
         ProjectLimitReached: {
             /** Format: uri */

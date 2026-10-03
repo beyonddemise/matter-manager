@@ -1889,6 +1889,21 @@ describe("accepting a transfer against the recipient's plan", () => {
   const offerIsPending = (built: ReturnType<typeof server>) =>
     (built.couch.documents.get(OFFER) as { _deleted?: boolean })._deleted !== true
 
+  /**
+   * The projects `GET /transfers` offers Grace, which is what the client sees. The fake's offer
+   * view returns what it is given, so it is pointed at the stored offer unless that is deleted.
+   */
+  const offerListedFor = async (built: ReturnType<typeof server>): Promise<string[]> => {
+    const stored = built.couch.documents.get(OFFER) as { _deleted?: boolean }
+    built.couch.rowsByDesign.by_recipient = stored._deleted === true ? [] : [{ value: stored }]
+    const response = await built.inject({
+      method: 'GET',
+      url: '/transfers',
+      headers: { authorization: bearer(GRACE) },
+    })
+    return (response.json() as Array<{ projectId: string }>).map((entry) => entry.projectId)
+  }
+
   it('refuses a free recipient, naming plan-no-sync, and leaves ownership and the offer alone', async () => {
     const built = scenario({ gracePlan: 'free', active: 0 })
 
@@ -1902,6 +1917,7 @@ describe("accepting a transfer against the recipient's plan", () => {
     expect(ownersAfter(built)).toEqual([{ role: 'owner', userid: OWNER }])
     expect(offerIsPending(built)).toBe(true)
     expect(built.couch.security.has(DATABASE)).toBe(false)
+    expect(await offerListedFor(built)).toEqual([PROJECT_ID])
   })
 
   it('creates no record for a recipient it refuses', async () => {
@@ -1955,6 +1971,23 @@ describe("accepting a transfer against the recipient's plan", () => {
   })
 
   describe('when CouchDB cannot say what the recipient already has', () => {
+    it('answers a problem+json 500 when the registry view cannot be read, and changes nothing', async () => {
+      // `ownedActive` reads the registry's view; the users database answers fine.
+      const built = scenario({ gracePlan: 'member', active: 0, fails: { view: REGISTRY_DATABASE } })
+
+      const response = await accept(built)
+
+      expect(response.statusCode).toBe(500)
+      expect(response.headers['content-type']).toMatch(/application\/problem\+json/)
+      expect(response.json()).toEqual({
+        title: 'That transfer could not be accepted.',
+        status: 500,
+      })
+      expect(response.body).not.toMatch(/internal server error|couch|_design/i)
+      expect(ownersAfter(built)).toEqual([{ role: 'owner', userid: OWNER }])
+      expect(offerIsPending(built)).toBe(true)
+    })
+
     it('answers a problem+json 500 that says nothing about CouchDB, and changes nothing', async () => {
       const built = scenario({ gracePlan: 'member', active: 0, fails: { getDoc: USERS_DB } })
 

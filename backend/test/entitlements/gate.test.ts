@@ -290,8 +290,8 @@ describe('the enumeration that makes the seam real', () => {
       .map((entry) => `${entry.method} ${entry.path}`)
       .filter((route) => registered.has(route))
 
-    // `POST /projects`, `PATCH /projects/:projectId` and `POST /transfers/:projectId` each twice: they ask `project.sync` and
-    // then `project.create`.
+    // `POST /projects`, `PATCH /projects/:projectId` and `POST /transfers/:projectId` each
+    // twice: they ask `project.sync` and then `project.create`.
     expect(implemented).toEqual([
       'POST /projects',
       'PATCH /projects/:projectId',
