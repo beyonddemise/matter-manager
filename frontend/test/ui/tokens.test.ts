@@ -3,6 +3,7 @@ import {
   accessToken,
   EXPIRY_MARGIN_SECONDS,
   forgetTokens,
+  pouchRefreshTokenStore,
   rememberAccessToken,
 } from '../../src/ui/tokens.js'
 
@@ -161,5 +162,57 @@ describe('where the token is not kept', () => {
     globalThis.localStorage.setItem('proof', 'the spy is wired up')
 
     expect(storage.written).toEqual(['proof'])
+  })
+})
+
+describe('the refresh token store', () => {
+  /** The slice of PouchDB the store uses, backed by a map. */
+  function fakeDb() {
+    const docs = new Map<string, { _id: string; _rev: string; token?: string | undefined }>()
+    const db = {
+      get: async (id: string) => {
+        const doc = docs.get(id)
+        if (doc === undefined) throw new Error('missing')
+        return doc
+      },
+      put: async (doc: { _id: string; _rev?: string; token?: string }) => {
+        const current = docs.get(doc._id)
+        if (current !== undefined && current._rev !== doc._rev) throw new Error('conflict')
+        docs.set(doc._id, {
+          _id: doc._id,
+          _rev: `${Number(current?._rev ?? 0) + 1}`,
+          token: doc.token,
+        })
+      },
+      remove: async (doc: { _id: string }) => {
+        docs.delete(doc._id)
+      },
+    }
+    return { db: db as unknown as PouchDB.Database, docs }
+  }
+
+  it('reads nothing before a first write', async () => {
+    expect(await pouchRefreshTokenStore(fakeDb().db).read()).toBeUndefined()
+  })
+
+  it('keeps the token in a _local document, so it is never replicated', async () => {
+    const { db, docs } = fakeDb()
+    await pouchRefreshTokenStore(db).write('r1')
+    expect([...docs.keys()]).toEqual(['_local/refresh-token'])
+  })
+
+  it('replaces the token on rotation', async () => {
+    const store = pouchRefreshTokenStore(fakeDb().db)
+    await store.write('r1')
+    await store.write('r2')
+    expect(await store.read()).toBe('r2')
+  })
+
+  it('clears the token, and clearing nothing is not an error', async () => {
+    const store = pouchRefreshTokenStore(fakeDb().db)
+    await store.write('r1')
+    await store.clear()
+    expect(await store.read()).toBeUndefined()
+    await expect(store.clear()).resolves.toBeUndefined()
   })
 })

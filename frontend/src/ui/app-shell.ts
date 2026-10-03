@@ -6,7 +6,7 @@ import {
   followProfileLocale,
   projectSync,
   projects,
-  readSessionState,
+  requestTokens,
 } from './composition.js'
 import { browserConnectivity, type ConnectivitySource, watchConnectivity } from './connectivity.js'
 import {
@@ -18,7 +18,7 @@ import {
   switchableProjects,
   writeCurrentProjectId,
 } from './current-project.js'
-import { useProjectDatabase } from './db/project-database.js'
+import { localDatabase, useProjectDatabase } from './db/project-database.js'
 import { negotiateLocale } from './i18n/locale.js'
 import { activateLocale } from './i18n/localization.js'
 import { matchRoute } from './router/match.js'
@@ -33,6 +33,7 @@ import {
 import type { SessionState } from './session.js'
 import type { SyncManager } from './sync/manager.js'
 import type { SyncState } from './sync/replication.js'
+import { pouchRefreshTokenStore } from './tokens.js'
 import { applyUpdate } from './updates.js'
 import './views/add-device.js'
 import './views/rooms.js'
@@ -72,6 +73,19 @@ export const VIEWS: Readonly<Record<string, (params: ViewParams) => TemplateResu
   'edit-device': (params) => html`<edit-device-view uuid=${params.id ?? ''}></edit-device-view>`,
   rooms: () => html`<rooms-view></rooms-view>`,
   settings: () => html`<settings-view></settings-view>`,
+}
+
+/**
+ * Reads the session through the token exchange, as the shell's old three-state answer.
+ *
+ * Transitional: the shell still thinks in `SessionState`, so `refreshed` is `signed-in`, `ended`
+ * (a stored refresh token was refused) is `expired`, and everything else is `signed-out`. A
+ * refresher that keeps the token fresh and tells the two apart properly replaces this.
+ */
+async function readSessionState(): Promise<SessionState> {
+  const outcome = await requestTokens(pouchRefreshTokenStore(localDatabase()))
+  if (outcome.kind === 'refreshed') return 'signed-in'
+  return outcome.kind === 'ended' ? 'expired' : 'signed-out'
 }
 
 /**

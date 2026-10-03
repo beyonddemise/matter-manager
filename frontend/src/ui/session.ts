@@ -17,6 +17,8 @@
  * @module
  */
 
+import { accessToken, type RefreshTokenStore } from './tokens.js'
+
 /** What the application believes about the current session. */
 export type SessionState =
   /** No account, or the user signed out. Everything local to this browser is gone. */
@@ -42,6 +44,13 @@ export interface SessionDependencies {
   readonly removeLocalData: () => Promise<void>
   /** Forgets the in-memory access token. */
   readonly forgetTokens: () => void
+  /**
+   * Removes the stored refresh token from this device.
+   *
+   * Separate from `removeLocalData` because that step can fail, and a refresh token left behind
+   * by a failed database removal is a live credential on a shared machine.
+   */
+  readonly forgetRefreshToken: () => Promise<void>
 }
 
 /**
@@ -65,6 +74,14 @@ export async function signOut(deps: SessionDependencies): Promise<readonly strin
   // First, and unconditionally. The token in memory is the one thing that can be discarded with
   // no possibility of failure, so it is discarded before anything that can fail.
   deps.forgetTokens()
+
+  // Next, for the same reason: the refresh token is the credential that outlives the tab, so it
+  // goes before anything that can fail. Its own try keeps a store error from skipping the rest.
+  try {
+    await deps.forgetRefreshToken()
+  } catch {
+    problems.push('local')
+  }
 
   try {
     await deps.endServerSession()
@@ -116,25 +133,39 @@ export function isSessionEnded(status: number): boolean {
  * Node. The `removeLocalData` half comes from `db/project-database.ts`, and the two are put
  * together at the point where a sign-out button exists.
  *
- * `credentials: 'include'` because the session is an httpOnly cookie: the page cannot read it,
- * so it cannot send it any other way, and a request without it would clear nothing while
- * reporting success.
+ * The body carries the refresh token and the bearer carries the access token, because that is
+ * what the contract asks the server to revoke and to deny. The cookies are cleared by the server
+ * on the same response, so `credentials: 'include'` stays for that.
+ *
+ * @param store where the refresh token is read from
+ * @param bearer the access token to present; injected because `signOut` forgets the in-memory one
+ *   before this runs, so the caller has to take it beforehand
  */
 export function endServerSessionVia(
   baseUrl: string,
   fetchImpl: typeof fetch = fetch,
+  store: RefreshTokenStore,
+  bearer: () => string | undefined = accessToken,
 ): () => Promise<void> {
   const base = baseUrl.replace(/\/+$/, '')
 
   return async () => {
+    const refreshToken = await store.read()
+    const token = bearer()
     const response = await fetchImpl(`${base}/auth/signout`, {
       method: 'POST',
       credentials: 'include',
+      headers: {
+        'content-type': 'application/json',
+        ...(token === undefined ? {} : { authorization: `Bearer ${token}` }),
+      },
+      body: JSON.stringify(refreshToken === undefined ? {} : { refreshToken }),
     })
 
     // 401 is not a failure. Being told "you were not signed in" is the state this was asking
     // for, and reporting it as a problem would tell the user something went wrong when the only
-    // thing that happened is that they were already out.
+    // thing that happened is that they were already out. A 500 is: the refresh token could not
+    // be revoked and is still valid.
     if (!response.ok && response.status !== 401) {
       throw new Error(`The session could not be ended (${response.status}).`)
     }

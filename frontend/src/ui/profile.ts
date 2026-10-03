@@ -21,6 +21,7 @@
  */
 
 import type { CachedProfile, LocalCache } from '../data/index.js'
+import { accessToken } from './tokens.js'
 
 /** What a user may choose, matching the contract's enum. */
 export type Locale = 'auto' | 'en' | 'de'
@@ -47,18 +48,19 @@ export interface ProfileApi {
 /**
  * The API client.
  *
- * `credentials: 'include'` because the session is an httpOnly cookie — the page cannot read it
- * and therefore cannot send it any other way. Without this the request goes out unauthenticated
- * and answers 401, which reads as "signed out" on a page that is signed in.
+ * The access token goes in an `Authorization` header, which is what the contract declares. With
+ * no token held — signed out, or between a token's expiry and its refresh — `read` answers
+ * `undefined` without a request, the same "not signed in" an unauthenticated call would earn.
  */
 export function profileApi(baseUrl: string, fetchImpl: typeof fetch = fetch): ProfileApi {
   const base = baseUrl.replace(/\/+$/, '')
 
   return {
     async read(): Promise<Profile | undefined> {
+      const token = accessToken()
+      if (token === undefined) return undefined
       const response = await fetchImpl(`${base}/profile`, {
-        credentials: 'include',
-        headers: { accept: 'application/json' },
+        headers: { accept: 'application/json', authorization: `Bearer ${token}` },
       })
       // 401 is "not signed in", which is an ordinary state rather than a failure — most of this
       // application works without an account.
@@ -70,8 +72,11 @@ export function profileApi(baseUrl: string, fetchImpl: typeof fetch = fetch): Pr
     async update(update: { locale: Locale }): Promise<Profile> {
       const response = await fetchImpl(`${base}/profile`, {
         method: 'PATCH',
-        credentials: 'include',
-        headers: { 'content-type': 'application/json', accept: 'application/json' },
+        headers: {
+          'content-type': 'application/json',
+          accept: 'application/json',
+          authorization: `Bearer ${accessToken() ?? ''}`,
+        },
         body: JSON.stringify(update),
       })
       if (!response.ok) throw new Error(`The change could not be saved (${response.status}).`)
