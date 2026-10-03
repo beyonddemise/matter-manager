@@ -66,8 +66,10 @@ stops touching it entirely.
 - **`matter_manager` is admin-only.** It is created on first use, the way `ensureRegistry` creates
   `projects`, and its `_security` is written immediately with `admins` and `members` restricted to
   `_admin`. It holds refresh-token hashes and plans, so no user token may ever read it.
-- **Every lookup is by address.** Both tokens carry `email`, and `PUT /customer` names its
-  target by address, so no view by subject is needed.
+- **Lookups are by address, with one view by subject.** Both tokens carry `email`, and
+  `PUT /customer` names its target by address. Project participants, however, are stored by
+  subject, and member listings and the project-creation gate resolve a subject back to a record,
+  so a `by_sub` view (emitting only records whose `sub` is set) answers those.
 - **`plan`** is narrowed exactly as `toProfile` narrows it today: unknown values are reported and
   read as `free`.
 - **`roles`** is set by hand by an operator in Fauxton. `customerservice` is the only role read.
@@ -125,7 +127,11 @@ policy.
 
 - **Login.** The OIDC callback logs the sign-in, accepts pending invitations (creating the
   record only if there are any), and sets a short-lived (minutes),
-  single-use `purpose:'flow'` cookie, a purpose `jwt.ts` already defines, then redirects. Tokens
+  single-use `purpose:'handoff'` cookie, then redirects. A new purpose rather than `flow`:
+  `flow` already names the PKCE carrier, and two credentials sharing a purpose are substitutable
+  for each other, which is what `purpose` exists to prevent. Sign-in also **requires a verified
+  address** (`emailVerified === true`): the record is keyed by it, so an unverified address
+  would let somebody claim another person's plan. Tokens
   never travel in the redirect URL, where they would leak into history and referrers.
 - **`POST /auth/token` returns both tokens**, `{ accessToken, expiresIn, refreshToken }`, in
   `cache-control: no-store`. It accepts either credential:
