@@ -5,6 +5,7 @@ import { fixture, html, waitUntil } from '@open-wc/testing-helpers'
 import { describe, expect, it, vi } from 'vitest'
 import type { SessionState } from '../../src/ui/session.js'
 import '../../src/ui/app-shell.js'
+import { refresherNeverAnswering, refresherReporting } from './refresher-stub.js'
 
 /**
  * #120's last acceptance line: signing in and out is reachable from the interface.
@@ -46,7 +47,7 @@ async function signOut(
 const shell = async (session: SessionState, overrides: Record<string, unknown> = {}) => {
   const element = (await fixture(html`
     <app-shell
-      .readSession=${async () => session}
+      .refresher=${refresherReporting(session)}
       .signIn=${overrides.signIn ?? (() => {})}
       .signOutOf=${overrides.signOutOf ?? (async () => [])}
       .connectivity=${{ addEventListener: () => {}, removeEventListener: () => {}, onLine: true }}
@@ -82,7 +83,7 @@ describe('the sign-in control', () => {
     // worse than offering nothing for that moment.
     const element = (await fixture(html`
       <app-shell
-        .readSession=${() => new Promise<SessionState>(() => {})}
+        .refresher=${refresherNeverAnswering}
         .connectivity=${{ addEventListener: () => {}, removeEventListener: () => {}, onLine: true }}
       ></app-shell>
     `)) as HTMLElement
@@ -115,7 +116,7 @@ describe('what happens once there is a session', () => {
   const wired = async (overrides: Record<string, unknown>) => {
     const element = (await fixture(html`
       <app-shell
-        .readSession=${async () => 'signed-in' as const}
+        .refresher=${refresherReporting('signed-in')}
         .connectivity=${{ addEventListener: () => {}, removeEventListener: () => {}, onLine: true }}
         .followLocale=${overrides.followLocale ?? (async () => undefined)}
         .listProjects=${overrides.listProjects ?? (async () => [])}
@@ -171,7 +172,7 @@ describe('what happens once there is a session', () => {
     let made = false
     const element = (await fixture(html`
       <app-shell
-        .readSession=${async () => 'signed-in' as const}
+        .refresher=${refresherReporting('signed-in')}
         .connectivity=${{ addEventListener: () => {}, removeEventListener: () => {}, onLine: true }}
         .followLocale=${async () => undefined}
         .listProjects=${() => projects}
@@ -242,7 +243,7 @@ describe('what happens once there is a session', () => {
     let stoppedBeforeSignOut = false
     const element = (await fixture(html`
       <app-shell
-        .readSession=${async () => 'signed-in' as const}
+        .refresher=${refresherReporting('signed-in')}
         .connectivity=${{ addEventListener: () => {}, removeEventListener: () => {}, onLine: true }}
         .followLocale=${async () => undefined}
         .listProjects=${async () => [{ projectId: 'p1', dbName: 'a' }]}
@@ -280,7 +281,7 @@ describe('a session that ends while startup is still in flight', () => {
 
     const element = (await fixture(html`
       <app-shell
-        .readSession=${async () => 'signed-in' as const}
+        .refresher=${refresherReporting('signed-in')}
         .connectivity=${{ addEventListener: () => {}, removeEventListener: () => {}, onLine: true }}
         .followLocale=${async () => undefined}
         .listProjects=${() =>
@@ -309,7 +310,7 @@ describe('a session that ends while startup is still in flight', () => {
 
     const element = (await fixture(html`
       <app-shell
-        .readSession=${async () => 'signed-in' as const}
+        .refresher=${refresherReporting('signed-in')}
         .connectivity=${{ addEventListener: () => {}, removeEventListener: () => {}, onLine: true }}
         .followLocale=${async (onChange: (locale: string) => void) => {
           applyLocale = (locale) => {
