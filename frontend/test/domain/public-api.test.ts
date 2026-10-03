@@ -40,6 +40,8 @@ const EXPECTED: ReadonlyArray<
   ['DELETION_MEMORY_DAYS', 'number'],
   ['remarksNewestFirst', 'function'],
   ['browseDevices', 'function'],
+  ['PROJECT_DOCUMENT_ID', 'string'],
+  ['isProjectDocument', 'function'],
   // base38
   ['BASE38_ALPHABET', 'string'],
   ['Base38Error', 'function'],

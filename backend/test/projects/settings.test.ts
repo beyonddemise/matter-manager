@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest'
+import { CouchError } from '../../src/couch/client.js'
 import type { Participant } from '../../src/domain/index.js'
 import { forgetRegistry, pointerId, REGISTRY_DATABASE } from '../../src/projects/registry.js'
 import { SettingsRefused, updateProjectSettings } from '../../src/projects/settings.js'
@@ -35,6 +36,7 @@ function project(
     readonly authoriseUnarchive: (owner: string) => Promise<void>
   }
   readonly pointerNow: () => Record<string, unknown>
+  readonly fake: ReturnType<typeof fakeCouch>
 } {
   const fake = fakeCouch({
     seed: {
@@ -60,6 +62,7 @@ function project(
       authoriseUnarchive: async () => {},
     },
     pointerNow: () => fake.documents.get(POINTER) as Record<string, unknown>,
+    fake,
   }
 }
 
@@ -572,5 +575,103 @@ describe("unarchiving asks the owner's entitlement first", () => {
     ).rejects.toThrow(SettingsRefused)
 
     expect(asked).toEqual([])
+  })
+})
+
+describe('the project document follows the pointer', () => {
+  const DOCUMENT = `${DATABASE}/project`
+  const SEEDED = {
+    _id: 'project',
+    _rev: '1-a',
+    type: 'project',
+    name: 'Musterstraße 12',
+    client: 'Old',
+    serverDb: DATABASE,
+  }
+
+  it('takes the new name and client and leaves serverDb alone', async () => {
+    const { deps, fake } = project()
+    fake.documents.set(DOCUMENT, { ...SEEDED })
+
+    await updateProjectSettings(deps, PROJECT_ID, ADA, { name: 'Altbau', client: 'Acme' })
+
+    expect(fake.documents.get(DOCUMENT)).toMatchObject({
+      _id: 'project',
+      type: 'project',
+      name: 'Altbau',
+      client: 'Acme',
+      serverDb: DATABASE,
+    })
+  })
+
+  it('drops the client when it is cleared', async () => {
+    const { deps, fake } = project(OWNER_ONLY, undefined, { client: 'Old' })
+    fake.documents.set(DOCUMENT, { ...SEEDED })
+
+    await updateProjectSettings(deps, PROJECT_ID, ADA, { client: null })
+
+    expect(fake.documents.get(DOCUMENT)).not.toHaveProperty('client')
+  })
+
+  it('is not touched by a change that is neither name nor client', async () => {
+    const { deps, fake } = project()
+    fake.documents.set(DOCUMENT, { ...SEEDED })
+
+    await updateProjectSettings(deps, PROJECT_ID, ADA, { archived: true })
+
+    expect(fake.documents.get(DOCUMENT)).toMatchObject({ _rev: '1-a' })
+    expect(
+      fake.calls.some((call) => call.database === DATABASE && call.operation === 'putDoc'),
+    ).toBe(false)
+  })
+
+  it('is created when it is missing', async () => {
+    const { deps, fake } = project()
+
+    await updateProjectSettings(deps, PROJECT_ID, ADA, { name: 'Altbau', client: 'Acme' })
+
+    expect(fake.documents.get(DOCUMENT)).toMatchObject({
+      _id: 'project',
+      type: 'project',
+      name: 'Altbau',
+      client: 'Acme',
+      serverDb: DATABASE,
+    })
+  })
+
+  it('retries a conflicting write', async () => {
+    const { deps, fake } = project()
+    fake.documents.set(DOCUMENT, { ...SEEDED })
+    let conflicts = 1
+    const couch = {
+      ...fake.couch,
+      putDoc: async (database: string, document: { _id: string }) => {
+        if (document._id === 'project' && conflicts > 0) {
+          conflicts -= 1
+          throw new CouchError(409, 'conflict', 'Document update conflict')
+        }
+        return fake.couch.putDoc(database, document)
+      },
+    } as typeof fake.couch
+
+    await updateProjectSettings({ ...deps, couch }, PROJECT_ID, ADA, { name: 'Altbau' })
+
+    expect(fake.documents.get(DOCUMENT)).toMatchObject({ name: 'Altbau' })
+  })
+
+  it('surfaces a failure after the pointer, which is the source of truth, was written', async () => {
+    const { deps, fake, pointerNow } = project()
+    const couch = {
+      ...fake.couch,
+      putDoc: async (database: string, document: { _id: string }) => {
+        if (document._id === 'project') throw new CouchError(500, 'boom', 'boom')
+        return fake.couch.putDoc(database, document)
+      },
+    } as typeof fake.couch
+
+    await expect(
+      updateProjectSettings({ ...deps, couch }, PROJECT_ID, ADA, { name: 'Altbau' }),
+    ).rejects.toThrow(CouchError)
+    expect(pointerNow().projectName).toBe('Altbau')
   })
 })

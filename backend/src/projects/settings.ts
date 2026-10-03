@@ -15,9 +15,9 @@
  * @module
  */
 
-import type { CouchClient } from '../couch/client.js'
+import { type CouchClient, CouchError } from '../couch/client.js'
 import { canManageMembers, type Owner, roleOf } from '../domain/index.js'
-import { MAX_ADDRESS, MAX_NAME, type ProjectSummary } from './provision.js'
+import { MAX_ADDRESS, MAX_NAME, PROJECT_DOCUMENT_ID, type ProjectSummary } from './provision.js'
 import { type ProjectPointer, pointerId, REGISTRY_DATABASE, writePointer } from './registry.js'
 
 /** What a caller asked to change. Both optional and independent; at least one is required. */
@@ -143,6 +143,45 @@ function readClient(value: string | null): string | undefined {
   return client === '' ? undefined : client
 }
 
+/** How many times the `project` document write is retried on a conflict. As `transfers.ts`. */
+const DOCUMENT_ATTEMPTS = 3
+
+/**
+ * Keeps the `project` document in the project's own database in step with the pointer.
+ *
+ * A get-modify-put, so `serverDb` and any field a later phase adds survive. A missing document
+ * is created, which makes this total for a database provisioned before the document existed.
+ * Written as the server admin, which bypasses the validator.
+ *
+ * @throws {CouchError} when the write fails, or keeps conflicting
+ */
+async function syncProjectDocument(
+  couch: CouchClient,
+  dbName: string,
+  name: string,
+  client: string | undefined,
+): Promise<void> {
+  for (let attempt = 1; ; attempt += 1) {
+    const existing = await couch.getDoc<{ _id: string; _rev?: string }>(dbName, PROJECT_DOCUMENT_ID)
+    const { client: _client, name: _name, ...rest } = (existing ?? {}) as Record<string, unknown>
+    try {
+      await couch.putDoc(dbName, {
+        ...rest,
+        _id: PROJECT_DOCUMENT_ID,
+        type: 'project',
+        name,
+        ...(client === undefined ? {} : { client }),
+        serverDb: dbName,
+      } as unknown as { _id: string })
+      return
+    } catch (error) {
+      if (!(error instanceof CouchError && error.status === 409 && attempt < DOCUMENT_ATTEMPTS)) {
+        throw error
+      }
+    }
+  }
+}
+
 /** The project's owner, as `ProjectSummary` requires it. */
 function ownerOf(pointer: ProjectPointer): Owner {
   const owner = pointer.participants.find((participant) => participant.role === 'owner')
@@ -244,6 +283,14 @@ export async function updateProjectSettings(
     ...(client === undefined ? {} : { client }),
     ...(archivedAt === undefined ? {} : { archivedAt }),
   })
+
+  // After the pointer, deliberately: the pointer is the source of truth for listing, so a
+  // failure here leaves the list right and the replicated copy stale. It is not swallowed — it
+  // propagates as a 500 so the client knows the rename is half done and can repeat it, which is
+  // safe because both writes are idempotent.
+  if (name !== pointer.projectName || client !== pointer.client) {
+    await syncProjectDocument(deps.couch, pointer.dbName, name, client)
+  }
 
   return {
     projectId: pointer.projectId,

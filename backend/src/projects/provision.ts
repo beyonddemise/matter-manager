@@ -14,7 +14,11 @@
  * 3. **`_security`, immediately.** The window between 2 and 3 is the one dangerous moment and
  *    nothing may widen it — not the design document, and certainly not a round trip.
  * 4. **`_design/access`**, which turns "may write" into a rule CouchDB enforces.
- * 5. **The pointer, last.** A pointer to a half-made database is a project that appears in the
+ * 5. **The `project` document**, which lets a replica say what it is without the registry. It
+ *    follows the design document because the validator should already be in force, and it
+ *    precedes the pointer for the same reason everything does: nothing is announced until
+ *    everything behind it works.
+ * 6. **The pointer, last.** A pointer to a half-made database is a project that appears in the
  *    list and does not work. An unpointed database is invisible, and step 2's rollback removes
  *    it.
  *
@@ -25,6 +29,12 @@ import type { CouchClient } from '../couch/client.js'
 import { type Owner, type Participant, securityFor } from '../domain/index.js'
 import { projectDatabaseName } from './names.js'
 import { ensureRegistry, pointerId, writePointer } from './registry.js'
+
+/**
+ * The id of the document each project database keeps about itself. Fixed, so a replica can
+ * `get` it without a query. Mirrors `PROJECT_DOCUMENT_ID` in the frontend's domain.
+ */
+export const PROJECT_DOCUMENT_ID = 'project'
 
 /** The longest name the contract allows. Shared with `settings.ts`, which enforces the same one. */
 export const MAX_NAME = 200
@@ -187,6 +197,17 @@ export async function provisionProject(
       _id: '_design/access',
       validate_doc_update: deps.validator(),
       language: 'javascript',
+    } as unknown as { _id: string })
+
+    // Replicated to every device with the data, so a replica can name and locate itself without
+    // asking the registry. Written as the server admin, which is why it can be written at all
+    // after the validator is installed.
+    await deps.couch.putDoc(dbName, {
+      _id: PROJECT_DOCUMENT_ID,
+      type: 'project',
+      name,
+      ...(client === undefined ? {} : { client }),
+      serverDb: dbName,
     } as unknown as { _id: string })
 
     await writePointer(deps.couch, {
