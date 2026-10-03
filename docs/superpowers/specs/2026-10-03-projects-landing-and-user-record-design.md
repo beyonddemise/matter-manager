@@ -448,6 +448,57 @@ Deviations from the phase B text above. Everything not listed was built as speci
   can all pass, overshooting by up to the number of concurrent requests; no grace period (#211);
   no hard delete yet (#208).
 
+## Phase C — as built
+
+Deviations from the phase C text above. Everything not listed was built as specified.
+
+- **The synced database name is the server's `dbName`** (`project_<id>`). Promote copies
+  `project_local_<uuid>` into it, pushes, then destroys the source, so replication keeps pairing
+  local and server by name. The destroy is guarded by the source's `update_seq`: unchanged since
+  the transfer, or the transfer repeats once and is then refused.
+- **The frontend plan tables mirror the backend's `can.ts`** (no shared package). The limit
+  prefers the server-reported `projectLimit`.
+- **Sign-out keeps today's semantics.** Server copies (indexed with a `projectId`) and `mm-local`
+  are always destroyed; local-only projects, `project_local` included, only with "remove local
+  data". Kept local-only entries are re-written into the fresh `mm-local`.
+- **`LocalProjectEntry` gained an optional `role`**, written on download and promote, so an
+  offline device can tell a shared copy from an owned one. Missing on an entry with a `projectId`
+  reads as owner.
+- **The last-known server list is used when the server cannot be asked**, read from the existing
+  `cache:project:*` documents and flagged stale. Counts, roles and archived state use it; every
+  act that needs the server still requires a fresh, online answer. The `checking` session (before
+  the first token exchange answers) is treated the same way rather than as signed out.
+- **Orphan copies** (indexed with a `projectId`, absent from a *fresh* list) keep "delete local
+  copy" with a stronger warning that changes not yet uploaded will be lost, and the typed name is
+  required for every delete.
+- **First run adopts `project_local` only on a device that never knew a project:** nothing
+  indexed and no server list ever remembered. Rename of a local-only project is always allowed.
+- **A busy registry** (`project-busy.ts`) is held by promote, remove, delete and sign-out. While
+  held, the shell reads facts but neither switches the project nor rewrites the replication set,
+  and applies what it skipped when the last action ends.
+- **`pushOnce` runs with `checkpoint: false`.** Sharing the live sync's checkpoint let a push
+  resolve with refused documents unpushed, the one path to destroying the only copy.
+- **A `denied` replication state** is reported once per refusal and stays until a push succeeds
+  or sync stops; the page shows it as access removed.
+- **A promotion that stopped half way** (`POST /projects` answered, data not yet moved) reads
+  `local`, stays editable, offers promote again and delete, and is matched to its server project
+  by id so it is counted once. `isLocalOnlyDatabase` (the name) decides whether data is elsewhere,
+  not the entry's `projectId`.
+- **Routes:** `/` is the projects page and `/devices` the current project's list. The header
+  switcher and the settings project controls are gone; email, network, sign-out and upgrade
+  moved into the header menu.
+
+Known limits:
+
+- **Tabs are not coordinated (#220).** A write in a second tab during the last round trip of a
+  promote or removal can be lost. Web Locks around destructive actions would close it.
+- **A refused promote may leave an unindexed, partial `project_<id>`**, and deleting a
+  half-promotion can strand one. The source is never touched in that case; the survivor is
+  invisible, not lost data.
+- **The stale list can be up to a session old.** It is trusted for facts, never for acts.
+- A transient list omission right after `POST /projects` can mint a duplicate server project (no
+  data loss).
+
 ## Out of scope
 
 Billing and self-service plan changes; a client entity (client is free text); deleting a
