@@ -428,8 +428,25 @@ Deviations from the phase B text above. Everything not listed was built as speci
   `ProjectSummary`.
 - **Reads stay ungated, as specified,** and the validator's owner rule also covers deletions
   (placed before the `_deleted` branch), which the spec's snippet left implicit.
-- **Known limits, unchanged:** concurrent creations at the limit can both pass; no grace period
-  (#211); no hard delete yet (#208).
+- **Archived projects are read-only in CouchDB.** The spec archived in the registry only, which
+  left a still-syncing device free to keep writing. `_security` now carries `archived: true` while
+  the pointer is archived, and `_design/access` refuses every non-admin write (deletions included)
+  with `This project is archived.`; reads are unaffected. `securityFor(participants, { archived })`
+  takes the state as a required argument, so provisioning, membership changes and transfers carry
+  it through (a transfer or membership change of an archived project stays archived). A PATCH that
+  names `archived` writes `_security`: before the pointer when archiving, after it when
+  unarchiving (the `narrowsAccess` rule), and on every such PATCH so a repeat heals a failed write.
+- **Only the service may write the `project` document.** The validator refuses any non-admin
+  create, update or deletion of `_id: 'project'`, and the self-heal also repairs a wrong or
+  missing `type`.
+- **Creating a project completes the creator's record.** `POST /projects` calls `ensureRecord`
+  after the gate and before provisioning, so a record an operator created by address gets its
+  `sub` and the owner is resolvable by subject (unarchive reads the owner's plan through
+  `readBySub`); without it a paying owner was refused their own unarchive as `plan-no-sync`. A
+  failure is a scrubbed 500 with nothing provisioned.
+- **Known limits, unchanged:** concurrent activations at the limit (create, unarchive, accept)
+  can all pass, overshooting by up to the number of concurrent requests; no grace period (#211);
+  no hard delete yet (#208).
 
 ## Out of scope
 

@@ -204,7 +204,10 @@ pointer, so a half-made project is rolled back whole. **It is kept in step with 
 every `PATCH /projects/:id`**, after the pointer is written: the document is compared with
 itself, not with the pointer, so a repeated PATCH heals one whose earlier write failed, and a
 database provisioned before the document existed gets one. A failed sync is a 500 rather than
-swallowed, and the pointer stays the source of truth for listing.
+swallowed, and the pointer stays the source of truth for listing. A document with the right
+name but a wrong or missing `type` counts as stale and is rewritten too. **Only the service may
+write it:** `_design/access` refuses any non-admin create, update or deletion of `_id: "project"`,
+so a participant cannot rename the project on every replica behind the registry's back.
 
 ### `_security` — who the database lets in
 
@@ -214,12 +217,19 @@ participants:
 ```jsonc
 { "members": { "names": ["<everybody>"], "roles": [] },
   "writers": { "names": ["<owner, manage, write>"] },
-  "owners":  { "names": ["<owner>"] } }
+  "owners":  { "names": ["<owner>"] },
+  "archived": true }                // only while the pointer says archived; absent otherwise
 ```
 
-`writers` and `owners` are custom keys CouchDB preserves and `_design/access` reads. `owners`
-lets the validator refuse writes from an owner whose plan has neither the `member` nor the `pro`
-role (see SECURITY-MODEL.md); it moves with every membership change and transfer in the same write.
+`writers`, `owners` and `archived` are custom keys CouchDB preserves and `_design/access` reads.
+`owners` lets the validator refuse writes from an owner whose plan has neither the `member` nor
+the `pro` role (see SECURITY-MODEL.md); it moves with every membership change and transfer in the
+same write. `archived` makes an archived project read-only for everybody but the server admin.
+`securityFor(participants, { archived })` takes the pointer's archived state as a required
+argument, so every writer (provisioning, membership changes, accepting a transfer, archiving and
+unarchiving) carries it through: a membership change or transfer of an archived project keeps it
+archived. A `PATCH` that names `archived` writes `_security` — before the pointer when archiving,
+after it when unarchiving (the `narrowsAccess` rule) — and a repeated PATCH heals a failed write.
 
 ### `meta:project`
 

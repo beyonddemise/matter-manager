@@ -215,7 +215,7 @@ Sync is asked first, so a free account is told to upgrade rather than to archive
 
 **Archived projects do not count** toward the limit. This reverses the rule #55 introduced, which
 counted them so an account could not accumulate databases by archiving; the 90-day hard delete
-(#208) now bounds that accumulation. The server's count is necessarily looser than the page's,
+(#208, not built yet) will bound that accumulation. The server's count is necessarily looser than the page's,
 because only the page sees local-only projects.
 
 **Three routes make a project active, so three routes are gated**, each judged by the plan of
@@ -250,6 +250,21 @@ so a downgraded owner cannot keep using the database by trimming it. It is delib
 - **The role is only as fresh as the access token** (at most 5 minutes). A downgraded owner keeps
   writing until their next refresh carries the new plan.
 
+**An archived project is read-only, and the database enforces it.** While the registry pointer
+says a project is archived, `_security` carries a fourth custom key, `archived: true`, and
+`_design/access` refuses every write, deletions included, from anybody but the server admin, with
+`This project is archived.` Reads are untouched, so everybody keeps what they had to read.
+`securityFor` takes the archived state as a required argument, so a membership change or a
+transfer of an archived project keeps the flag; `PATCH /projects/:id` writes it when archiving
+(before the pointer: the gap is a locked project still listed as active) and clears it when
+unarchiving (after the pointer: the gap is an active-listed project still locked), the same
+"which half-applied state is safe" rule `narrowsAccess` applies to membership. The check runs
+right after the admin bypass, before the writer and plan checks.
+
+**The `project` document is the service's alone.** The validator refuses any non-admin write
+whose new or old `_id` is `project`, so the name and client a replica shows come only from the
+API, which keeps them in step with the registry.
+
 **The count limit has one enforcer and a known race.** The validator backs only the sync rule
 (`project.sync`, through the plan role). The count limit (`project.create`) is enforced by the API
 alone, with nothing behind it in CouchDB. Each request counts before it asks the gate and nothing
@@ -274,7 +289,8 @@ own credentials.
 verified the address — otherwise somebody could sign in as whoever they typed and inherit that
 person's plan. A plain sign-in creates **no** record and writes one log line
 (`auth/sign-in-log.ts`; the sink is #212). A record comes into existence only through
-`ensureRecord` (a redeemable invitation at sign-in, accepting a transfer, or `PATCH /profile`)
+`ensureRecord` (a redeemable invitation at sign-in, accepting a transfer, `PATCH /profile`, or
+creating a project, which in practice only fills in the `sub` of a record that already exists)
 or `PUT /customer`,
 which sets a plan by address even before its owner has ever signed in. Such a record has no
 `sub`, which is why the `by_sub` view skips records without one — and why the caller's own
