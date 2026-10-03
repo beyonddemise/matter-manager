@@ -81,7 +81,7 @@ export function registerCustomerRoutes(app: FastifyInstance, deps: CustomerDepen
     // this build knows. An unknown one must not be stored — `toProfile` would read it back as
     // `free`, so it would look like a refusal that had in fact written something.
     if (!isPlan(body.plan)) {
-      return problem(reply, { title: 'plan must be one of free, user, pro', status: 400 })
+      return problem(reply, { title: 'plan must be one of free, member, pro', status: 400 })
     }
 
     try {

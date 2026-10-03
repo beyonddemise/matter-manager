@@ -51,7 +51,7 @@ export type Action = (typeof ACTIONS)[number]
  * `free` was the only one until capacity became real. The others are named for what they are
  * to a person rather than for what they cost, so a price change is not a type change.
  */
-export type Plan = 'free' | 'user' | 'pro'
+export type Plan = 'free' | 'member' | 'pro'
 
 /**
  * How many projects each plan may own.
@@ -62,7 +62,7 @@ export type Plan = 'free' | 'user' | 'pro'
  */
 export const PROJECT_LIMITS: Readonly<Record<Plan, number>> = Object.freeze({
   free: 1,
-  user: 5,
+  member: 5,
   /**
    * Unlimited, as a sentinel rather than as `Infinity` or an absence.
    *

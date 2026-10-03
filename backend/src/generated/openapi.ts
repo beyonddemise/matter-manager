@@ -271,7 +271,7 @@ export interface paths {
                         locale?: "auto" | "en" | "de";
                         displayName?: string;
                         /** @enum {string} */
-                        plan?: "free" | "user" | "pro";
+                        plan?: "free" | "member" | "pro";
                     };
                 };
             };
@@ -353,7 +353,7 @@ export interface paths {
                          */
                         sub: string;
                         /** @enum {string} */
-                        plan: "free" | "user" | "pro";
+                        plan: "free" | "member" | "pro";
                     };
                 };
             };
@@ -879,7 +879,7 @@ export interface components {
              *     a client will actually receive and not merely what CouchDB may hold.
              * @enum {string}
              */
-            plan: "free" | "user" | "pro";
+            plan: "free" | "member" | "pro";
             /**
              * @description How many projects this plan may own. **`-1` means unlimited** and must be tested before it is compared - `owned >= limit` is true for every count when the limit is `-1`, so a client that compares directly refuses every project on the one plan that has no limit.
              *     A number rather than a null or an absence, so one fact arrives in one shape. Reported at all so a page can say "3 of 5 used" without a second copy of the policy table, which is the duplication ADR 0009 exists to prevent.

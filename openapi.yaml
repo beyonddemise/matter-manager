@@ -174,7 +174,7 @@ paths:
                 displayName: { type: string }
                 plan:
                   type: string
-                  enum: [free, user, pro]
+                  enum: [free, member, pro]
       responses:
         '200':
           description: The updated profile
@@ -238,7 +238,7 @@ paths:
                     the whole point of this operation.
                 plan:
                   type: string
-                  enum: [free, user, pro]
+                  enum: [free, member, pro]
       responses:
         '200':
           description: The named account's profile, as stored
@@ -612,7 +612,7 @@ components:
           description: '`auto` follows the browser; anything else overrides it.'
         plan:
           type: string
-          enum: [free, user, pro]
+          enum: [free, member, pro]
           description: |
             Set by an operator through `PUT /customer`, or by an operator's own
             `PATCH /profile`; never by the account itself.

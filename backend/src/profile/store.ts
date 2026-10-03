@@ -133,7 +133,7 @@ export function isLocale(value: unknown): value is Locale {
 
 /** Whether a value is a plan this build knows. */
 export function isPlan(value: unknown): value is Plan {
-  return value === 'free' || value === 'user' || value === 'pro'
+  return value === 'free' || value === 'member' || value === 'pro'
 }
 
 /** Raised when a subject has no `_users` document. The route turns this into a 404. */

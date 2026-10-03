@@ -162,7 +162,7 @@ export function registerProfileRoutes(app: FastifyInstance, deps: ProfileDepende
 
     if (body?.plan !== undefined) {
       if (!isPlan(body.plan)) {
-        return problem(reply, { title: 'plan must be one of free, user, pro', status: 400 })
+        return problem(reply, { title: 'plan must be one of free, member, pro', status: 400 })
       }
 
       // Exact membership, by `includes` on the role rather than by any test over its text. A

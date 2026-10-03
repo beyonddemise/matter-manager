@@ -276,12 +276,12 @@ describe('the profile endpoints', () => {
     // arrives with the profile. The alternative is a copy of PROJECT_LIMITS in the browser -
     // the duplication ADR 0009 exists to prevent - and the copy is the one that would be wrong
     // the first time a tier changed.
-    const { app: server, cookie } = serve(storedAda({ locale: 'de', plan: 'user' }))
+    const { app: server, cookie } = serve(storedAda({ locale: 'de', plan: 'member' }))
     const body = (
       await server.inject({ method: 'GET', url: '/profile', headers: { cookie } })
     ).json() as Profile
 
-    expect(body.plan).toBe('user')
+    expect(body.plan).toBe('member')
     expect(body.projectLimit).toBe(5)
   })
 
@@ -592,7 +592,7 @@ describe('the plan a PATCH may carry', () => {
     // deployment. So the entry admitted nobody who needed it and, if it ever did fire, only an
     // account that could already write any document belonging to anybody.
     const { app: server, cookie, storedPlan } = serveWithRoles(['_admin'])
-    const response = await patch(server, cookie, { plan: 'user' })
+    const response = await patch(server, cookie, { plan: 'member' })
 
     expect(response.statusCode).toBe(403)
     expect(JSON.stringify(response.json())).toContain('not-an-operator')
@@ -753,8 +753,8 @@ describe('the plan on a user document', () => {
 
   it('sets a plan through the path meant for it', async () => {
     const store = storeWith({ name: 'user-1', roles: [], type: 'user' })
-    expect((await store.setPlan('user-1', 'user')).plan).toBe('user')
-    expect((await store.read('user-1'))?.plan).toBe('user')
+    expect((await store.setPlan('user-1', 'member')).plan).toBe('member')
+    expect((await store.read('user-1'))?.plan).toBe('member')
   })
 
   it('names the failure when the subject has no document at all', async () => {

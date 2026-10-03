@@ -1433,7 +1433,7 @@ describe('creating a project against the plan', () => {
   it('reads the plan from the account rather than assuming one', async () => {
     // The positive control for the refusal above: a handler that ignored `_users` entirely and
     // hard-coded `free` would pass every test in this block but this one.
-    const built = serverWithProjects({ plan: 'user', owned: 1 })
+    const built = serverWithProjects({ plan: 'member', owned: 1 })
     const response = await built.inject({
       method: 'POST',
       url: '/projects',

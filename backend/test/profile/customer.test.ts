@@ -124,14 +124,14 @@ describe('PUT /customer', () => {
       callerRoles: ['customerservice'],
       subjects: ['other'],
     })
-    const response = await put(server, { sub: 'other', plan: 'user' }, cookie)
+    const response = await put(server, { sub: 'other', plan: 'member' }, cookie)
 
     expect(response.statusCode).toBe(200)
-    expect(await storedPlan('other')).toBe('user')
+    expect(await storedPlan('other')).toBe('member')
     // The body has to agree with the store, and it has to describe the *named* account rather
     // than the caller — which is the whole difference between this route and PATCH /profile.
     expect((response.json() as Profile).sub).toBe('other')
-    expect((response.json() as Profile).plan).toBe('user')
+    expect((response.json() as Profile).plan).toBe('member')
   })
 
   it("leaves the caller's own plan alone", async () => {
@@ -235,7 +235,7 @@ describe('PUT /customer', () => {
       callerRoles: ['customerservice'],
       subjects: [],
     })
-    const response = await put(server, { sub: 'ghost', plan: 'user' }, cookie)
+    const response = await put(server, { sub: 'ghost', plan: 'member' }, cookie)
 
     expect(response.statusCode).toBe(404)
     // The body, not only the code. Fastify answers an *unregistered* route 404 as well, so a
@@ -405,7 +405,7 @@ describe('what the contract says about PUT /customer', () => {
       callerRoles: ['customerservice'],
       subjects: ['other'],
     })
-    const response = await put(server, { sub: 'other', plan: 'user' }, cookie)
+    const response = await put(server, { sub: 'other', plan: 'member' }, cookie)
 
     const schema = declared?.responses[String(response.statusCode)]
     expect(

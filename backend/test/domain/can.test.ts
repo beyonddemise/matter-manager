@@ -330,7 +330,7 @@ describe('the policy table is complete at compile time', () => {
 describe('the project limit table', () => {
   it('gives each plan the capacity the product sells', () => {
     expect(PROJECT_LIMITS.free).toBe(1)
-    expect(PROJECT_LIMITS.user).toBe(5)
+    expect(PROJECT_LIMITS.member).toBe(5)
   })
 
   it('says unlimited with -1 rather than with Infinity or an absence', () => {
@@ -375,9 +375,9 @@ describe('creating a project against a plan', () => {
     expect(can(principal('free', 1), 'project.create')).toBe(false)
   })
 
-  it('lets a user account up to five', () => {
-    expect(can(principal('user', 4), 'project.create')).toBe(true)
-    expect(can(principal('user', 5), 'project.create')).toBe(false)
+  it('lets a member account up to five', () => {
+    expect(can(principal('member', 4), 'project.create')).toBe(true)
+    expect(can(principal('member', 5), 'project.create')).toBe(false)
   })
 
   it('never refuses a pro account', () => {
