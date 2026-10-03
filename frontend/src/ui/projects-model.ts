@@ -38,7 +38,9 @@
  *   only here. It matches its server project by id, so it is counted once and lists no second
  *   row. It offers promote again, to finish the job (no slot needed: the project exists), and
  *   delete; rename waits, since the name now lives on the server too. It is never an orphan:
- *   its data has never been anywhere else, whatever the list says.
+ *   its data has never been anywhere else, whatever the list says. Once the server-named copy is
+  listed too (only the source's destroy failed), the copy alone is the project and the source
+  is not shown.
  * - **A copy with no server project to compare with** (stale list not naming it, or unheard)
  *   reads `synced`, its last known state, so removing it still demands the push only `synced`
  *   asks for. Its role is the one the index recorded, and **owner** when none was: counting a
@@ -423,7 +425,7 @@ function join(
   fresh: boolean,
 ): Source[] {
   const matched = new Set<ListedProject>()
-  const sources: Source[] = local.map((entry) => {
+  const sources: Source[] = finished(local).map((entry) => {
     const project = server?.find(
       (candidate) =>
         candidate.dbName === entry.dbName ||
@@ -448,6 +450,29 @@ function join(
     }
   }
   return sources
+}
+
+/**
+ * The local index without the sources of promotions that finished but for their destroy.
+ *
+ * A promotion lists the server-named copy, then destroys the source; a destroy that fails leaves
+ * both entries carrying the same id. The data is on the server and in the copy, so only the copy
+ * is a project here: listing the source too would show the project twice and count it twice.
+ * The copy is told apart by its name — a server-named database is never local-only, which is
+ * what the server's `dbName` always is — so this holds with or without a server list.
+ */
+function finished(local: readonly LocalProjectEntry[]): readonly LocalProjectEntry[] {
+  const copied = new Set(
+    local.flatMap((entry) =>
+      entry.projectId !== undefined && !isLocalOnlyDatabase(entry.dbName) ? [entry.projectId] : [],
+    ),
+  )
+  return local.filter(
+    (entry) =>
+      entry.projectId === undefined ||
+      !isLocalOnlyDatabase(entry.dbName) ||
+      !copied.has(entry.projectId),
+  )
 }
 
 /**

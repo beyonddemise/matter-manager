@@ -292,6 +292,14 @@ export function projectActions(deps: ProjectActionDependencies): ProjectActions 
           // leave no entry for a copy that is not finished. It writes `mm-local`, not the source.
           await indexServerProject(project, local)
         } catch (error) {
+          // Ruling C-R11. The views have been writing into the survivor since `leave`, and a
+          // refusal leaves it unlisted: copied back before the views return, so nothing this tab
+          // wrote during the transfer is stranded where no entry names it. Without the `project`
+          // document, which the source keeps as its own. A copy that fails here does not hide
+          // the refusal: the survivor still holds those writes, and a retry copies into it again.
+          await survivor.replicate
+            .to(source, { filter: (doc: { _id: string }) => doc._id !== PROJECT_DOCUMENT_ID })
+            .catch(() => undefined)
           back()
           throw error
         }

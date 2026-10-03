@@ -363,7 +363,48 @@ describe('promoting a local-only project', () => {
     expect((await w.database(project.dbName).allDocs()).rows).toHaveLength(4)
   })
 
-  for (const fault of ['replicate', 'push', 'index', 'destroy'] as const) {
+  it('brings back what was written to the new copy when the push is refused', async () => {
+    // Ruling C-R11. The views moved to the survivor before the copy, so this tab's writes during
+    // the transfer land there. A refusal moves the views back to the source and leaves the
+    // survivor unlisted: without copying back, those writes would be stranded where nothing
+    // names them.
+    const w = world({ fault: 'push' })
+    const alpha = await w.localProject()
+    w.state.current = alpha.dbName
+    w.state.duringPush = async () => {
+      const [project] = w.server as [Project]
+      await w.database(project.dbName).put(device('device:during'))
+    }
+    const { model, row } = await w.view(alpha.dbName)
+
+    expect(await refusal(w.actions.promote(model, row))).toBe('unpushed')
+
+    expect(w.state.current).toBe(alpha.dbName)
+    expect((await w.database(alpha.dbName).get('device:during'))._id).toBe('device:during')
+    // The source keeps its own project document, never one from the survivor.
+    expect(await w.database(alpha.dbName).get(PROJECT_DOCUMENT_ID)).toMatchObject({ name: 'Alpha' })
+  })
+
+  it('shows the project once when only the old database would not go', async () => {
+    // Everything moved and the copy is listed; only the source's destroy failed. The model
+    // shows the copy alone, so the project is neither listed nor counted twice.
+    const w = world({ fault: 'destroy' })
+    const alpha = await w.localProject()
+    const first = await w.view(alpha.dbName)
+
+    await expect(w.actions.promote(first.model, first.row)).rejects.toThrow()
+
+    const [project] = w.server as [Project]
+    expect((await w.cache.readLocalProjects()).map((e) => e.dbName).sort()).toEqual(
+      [alpha.dbName, project.dbName].sort(),
+    )
+    const { model, row } = await w.view(project.dbName)
+    expect([...model.owned, ...model.shared]).toEqual([row])
+    expect(row).toMatchObject({ location: 'synced', projectId: project.projectId })
+    expect(model.ownedCount).toBe(1)
+  })
+
+  for (const fault of ['replicate', 'push', 'index'] as const) {
     it(`finishes on a retry after failing at "${fault}", without a second project`, async () => {
       const w = world({ fault })
       const alpha = await w.localProject()
@@ -375,7 +416,7 @@ describe('promoting a local-only project', () => {
       // Nothing is lost while it is half done: the data is still where it was, and the id is
       // remembered so the retry does not mint another project.
       const [project] = w.server as [Project]
-      if (fault !== 'destroy') expect(await w.count(alpha.dbName)).toBe(3)
+      expect(await w.count(alpha.dbName)).toBe(3)
       const recorded = (await w.cache.readLocalProjects()).find((e) => e.dbName === alpha.dbName)
       expect(recorded?.projectId).toBe(project.projectId)
 

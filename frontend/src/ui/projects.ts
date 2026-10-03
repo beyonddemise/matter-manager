@@ -55,8 +55,11 @@ export interface Project {
    * not bring it back.
    */
   readonly archived: boolean
-  /** When it was put away, as the API spells it (an ISO date-time). Absent while active. */
-  readonly archivedAt?: string
+  /**
+   * When it was put away, in seconds since the epoch, as the contract declares. Absent while
+   * active.
+   */
+  readonly archivedAt?: number
 }
 
 /** Why creating a project did not work. The view turns each of these into a sentence. */

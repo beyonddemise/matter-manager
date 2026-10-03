@@ -47,7 +47,7 @@ const LOCAL: readonly LocalProjectEntry[] = [
 const SERVER: readonly Project[] = [
   server('bravo', { name: 'Bravo' }),
   server('charlie', { name: 'Charlie' }),
-  server('delta', { name: 'Delta', archived: true, archivedAt: '2026-10-02T00:00:00.000Z' }),
+  server('delta', { name: 'Delta', archived: true, archivedAt: 1_790_000_000 }),
   server('echo', { name: 'Echo', role: 'write', owner: { ownerType: 'user', ownerId: 'them' } }),
   server('foxtrot', {
     name: 'Foxtrot',
@@ -549,6 +549,22 @@ describe('a promotion that stopped half way', () => {
         'project_local_hotel',
       ).actions.promote,
     ).toEqual(no('plan'))
+  })
+
+  it('is not listed beside the copy it finished into when only the source destroy failed', () => {
+    // The survivor is indexed, the source's destroy failed: both entries carry the id. The data
+    // is on the server and in the survivor, so the page shows the survivor once and counts once.
+    const survivor = local({ dbName: 'project_hotel', name: 'Hotel', projectId: 'hotel' })
+    for (const server of [list, undefined]) {
+      for (const order of [
+        [halfway, survivor],
+        [survivor, halfway],
+      ]) {
+        const model = projectsModel(input({ local: order, server }))
+        expect(rows(model).map((row) => row.dbName)).toEqual(['project_hotel'])
+        expect(model.ownedCount).toBe(1)
+      }
+    }
   })
 
   it('is never an orphan, even when a fresh list does not name it', () => {

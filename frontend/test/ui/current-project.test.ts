@@ -113,9 +113,18 @@ describe('which project the views open', () => {
   })
 
   it('prefers the database named over a project id that happens to match it', () => {
+    // Mid-promotion: only the source is indexed, and it records the new id.
+    const source = entry({ projectId: 'p1' })
+    const current = resolveCurrentProject('project_local_a', model({ local: [source] }))
+    expect(current.dbName).toBe('project_local_a')
+  })
+
+  it('opens the copy, not the leftover source, of a promotion whose last destroy failed', () => {
+    // Both are indexed under one id; the model shows only the copy, so the source is no
+    // candidate even when the choice still names it.
     const source = entry({ projectId: 'p1' })
     const current = resolveCurrentProject('project_local_a', model({ local: [source, synced] }))
-    expect(current.dbName).toBe('project_local_a')
+    expect(current.dbName).toBe('project_p1')
   })
 
   it('reads the legacy "local" choice as the first-run catalogue', () => {
