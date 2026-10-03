@@ -76,7 +76,7 @@ export interface ProjectDependencies {
    *
    * Called when somebody accepts a transfer: an owner has to be resolvable, and the recipient may
    * have no record, or one without a `sub`. **Required**, and the same instance the profile and
-   * sign-in paths use, so the refresh entries it drains are the ones the auth routes wrote.
+   * sign-in paths use, so the refresh entries it moves are the ones the auth routes wrote.
    */
   readonly ensureRecord: EnsureRecord
   /**

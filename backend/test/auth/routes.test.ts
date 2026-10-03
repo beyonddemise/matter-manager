@@ -446,10 +446,13 @@ describe('POST /auth/token', () => {
   it('refuses a refresh token whose hash an admin deleted from the record', async () => {
     const server = signInServer()
     const first = await tokensFor(server)
-    await server.records.ensure(
-      { email: 'ada@example.com', sub: 'google|1234' },
-      server.refresh.drain('ada@example.com'),
-    )
+    await recordEnsurer(
+      server.records,
+      server.refresh,
+    )({
+      email: 'ada@example.com',
+      sub: 'google|1234',
+    })
     const { jti } = verifyToken(first.refreshToken, server.sessionKey.publicKey, 'refresh', at)
     await server.records.removeRefresh('ada@example.com', hashJti(String(jti)))
     const again = await server.app.inject({
@@ -802,14 +805,17 @@ describe('POST /auth/signout', () => {
   })
 
   it('revokes a refresh token whose hash is held on the record, not only in memory', async () => {
-    // A record holds the hashes of somebody who has one, and memory is drained into it. A
+    // A record holds the hashes of somebody who has one, and memory is released into it. A
     // sign-out that cleared only memory would leave this thirty-day credential live.
     const server = signInServer()
     const tokens = await tokensFor(server)
-    await server.records.ensure(
-      { email: 'ada@example.com', sub: 'google|1234' },
-      server.refresh.drain('ada@example.com'),
-    )
+    await recordEnsurer(
+      server.records,
+      server.refresh,
+    )({
+      email: 'ada@example.com',
+      sub: 'google|1234',
+    })
     expect((await server.records.read('ada@example.com'))?.refreshTokens).toHaveLength(1)
 
     const out = await server.app.inject({
@@ -833,10 +839,13 @@ describe('POST /auth/signout', () => {
     // here would tell the one party who could retry that there is nothing left to do.
     const server = signInServer()
     const tokens = await tokensFor(server)
-    await server.records.ensure(
-      { email: 'ada@example.com', sub: 'google|1234' },
-      server.refresh.drain('ada@example.com'),
-    )
+    await recordEnsurer(
+      server.records,
+      server.refresh,
+    )({
+      email: 'ada@example.com',
+      sub: 'google|1234',
+    })
     server.fails.putDoc = 'matter_manager'
 
     const out = await server.app.inject({

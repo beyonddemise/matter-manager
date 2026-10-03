@@ -27,8 +27,10 @@ export interface RefreshStore {
   isLive(email: string, hash: string): Promise<boolean>
   /** Removes the entry from the record and from memory, whichever holds it. */
   revoke(email: string, hash: string): Promise<void>
-  /** Removes and returns this address's unexpired memory entries, for a record being created. */
-  drain(email: string): RefreshEntry[]
+  /** This address's unexpired memory entries, left in place, for a record being created. */
+  pending(email: string): RefreshEntry[]
+  /** Removes these hashes from memory, once the record that now holds them is written. */
+  release(email: string, hashes: readonly string[]): void
 }
 
 /** Creates a store over `records`, with an empty memory. */
@@ -47,9 +49,9 @@ export function refreshStore(records: UserRecords, now: () => number): RefreshSt
     async isLive(email, hash) {
       if ((await records.hasRefresh(email, hash, now())) === true) return true
       // Memory is consulted even when a record exists. A record can be created by a path that
-      // does not drain this store (an operator setting a plan), and the spec's promise is that
+      // does not move this store's entries (an operator setting a plan), and the spec's promise is that
       // creating a record never signs anybody out. Revocation is unaffected: `revoke` clears
-      // both, and `drain` empties memory whenever entries move onto a record.
+      // both, and `release` empties memory whenever entries move onto a record.
       return live(memory.get(userKey(email)) ?? []).some((e) => e.hash === hash)
     },
 
@@ -62,11 +64,18 @@ export function refreshStore(records: UserRecords, now: () => number): RefreshSt
       await records.removeRefresh(email, hash)
     },
 
-    drain(email) {
+    // Read without removing, and removed only by `release` after the record write succeeded.
+    // The earlier drain-then-restore left a window in which `isLive` saw neither copy, and its
+    // restore wrote to CouchDB, which is exactly what is down when the restore is needed.
+    pending(email) {
+      return live(memory.get(userKey(email)) ?? [])
+    },
+
+    release(email, hashes) {
       const key = userKey(email)
-      const entries = live(memory.get(key) ?? [])
-      memory.delete(key)
-      return entries
+      const kept = (memory.get(key) ?? []).filter((e) => !hashes.includes(e.hash))
+      if (kept.length === 0) memory.delete(key)
+      else memory.set(key, kept)
     },
   }
 }

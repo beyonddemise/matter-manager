@@ -59,7 +59,7 @@ describe('refreshStore', () => {
     expect(await store.isLive(ADA.email, 'rec')).toBe(false)
   })
 
-  it('still honours a memory entry after a record is created without draining', async () => {
+  it('still honours a memory entry after a record is created without moving its entries', async () => {
     // An operator setting a plan creates the record through `setPlan`, which knows nothing of
     // this store. Creating a record must never sign anybody out.
     const { couch } = fakeCouch()
@@ -70,13 +70,27 @@ describe('refreshStore', () => {
     expect(await store.isLive(ADA.email, 'mem')).toBe(true)
   })
 
-  it('drains the memory entries for one address', async () => {
+  it('lists the live memory entries for one address without removing them', async () => {
+    let t = 0
+    const { couch } = fakeCouch()
+    const store = refreshStore(userRecords(couch), () => t)
+    await store.remember(ADA.email, entry('a'))
+    await store.remember(ADA.email, entry('old', 5))
+    await store.remember('bob@example.com', entry('b'))
+    t = 5
+    expect(store.pending(' ADA@example.com').map((e) => e.hash)).toEqual(['a'])
+    expect(await store.isLive(ADA.email, 'a')).toBe(true)
+  })
+
+  it('releases only the named hashes from memory', async () => {
     const { couch } = fakeCouch()
     const store = refreshStore(userRecords(couch), () => 0)
     await store.remember(ADA.email, entry('a'))
+    await store.remember(ADA.email, entry('c'))
     await store.remember('bob@example.com', entry('b'))
-    expect(store.drain(' ADA@example.com').map((e) => e.hash)).toEqual(['a'])
+    store.release(' ADA@example.com', ['a'])
     expect(await store.isLive(ADA.email, 'a')).toBe(false)
+    expect(await store.isLive(ADA.email, 'c')).toBe(true)
     expect(await store.isLive('bob@example.com', 'b')).toBe(true)
   })
 })
