@@ -408,6 +408,31 @@ describe('pushing once', () => {
     await expect(pushOnce(local as never, remote)).rejects.toThrow(/refused/)
   })
 
+  it('rejects every time while a document stays refused, not just the first', async () => {
+    // PouchDB writes the checkpoint after a batch even when documents were denied, so with the
+    // shared default checkpoint the second push would find nothing new and resolve - and a
+    // caller gating a delete on it would lose the refused document.
+    const local = database()
+    const { remote } = refusingDatabase()
+    await local.put(device('device:refused'))
+
+    await expect(pushOnce(local as never, remote)).rejects.toThrow(/refused/)
+    await expect(pushOnce(local as never, remote)).rejects.toThrow(/refused/)
+  })
+
+  it('still rejects after the live sync was refused the same document', async () => {
+    // The live sync's checkpoint has moved past the refused document; the one-shot push must
+    // not trust it.
+    const local = database()
+    const { remote } = refusingDatabase()
+    await local.put(device('device:refused'))
+    const handle = start(local as never, remote)
+    await until(() => handle.state() === 'denied', 'the refusal to be reported')
+    handle.cancel()
+
+    await expect(pushOnce(local as never, remote)).rejects.toThrow(/refused/)
+  })
+
   it('rejects when aborted before it starts', async () => {
     const local = database()
     const controller = new AbortController()

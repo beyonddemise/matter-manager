@@ -112,6 +112,15 @@ describe('stopping one project', () => {
     await expect(remote('project_p1').get('device:ignored')).rejects.toThrow()
   })
 
+  it('resumes a stopped project when set() lists it again', () => {
+    const { manager } = realManager()
+    manager.set([ONE])
+    manager.stop('p1')
+    manager.set([ONE])
+
+    expect(manager.running()).toEqual(['p1'])
+  })
+
   it('is harmless for a project that is not running', () => {
     const { manager } = realManager()
 

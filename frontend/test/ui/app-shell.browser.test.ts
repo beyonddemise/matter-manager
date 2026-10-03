@@ -478,3 +478,19 @@ it('stops the refresher when the shell is removed', async () => {
   element.remove()
   expect(stop).toHaveBeenCalledOnce()
 })
+
+it('shows "No permission to sync" when any project is denied, ranking it worse than offline', async () => {
+  const { element, play, makeSync } = await driven()
+  await play({ kind: 'refreshed', expiresIn: 300 })
+  await waitUntil(() => makeSync.mock.calls.length > 0, 'replication never started')
+  const report = (makeSync.mock.calls[0] as unknown as [(id: string, state: string) => void])[0]
+  const tag = () => element.querySelector('[data-syncing]')?.textContent?.trim() ?? ''
+
+  report('p1', 'offline')
+  report('p2', 'denied')
+  await waitUntil(() => tag().includes('No permission to sync'), 'denied was not shown')
+
+  // Denied clears (the project syncs again): the worse of what is left is offline.
+  report('p2', 'idle')
+  await waitUntil(() => tag().includes('Waiting to sync'), 'offline was not shown')
+})

@@ -50,9 +50,9 @@ export interface SyncManager {
    * Pushes one project's pending changes once and resolves when nothing is pending.
    *
    * Rejects when the server is unreachable, when it refuses a document, or when the project is
-   * not one this manager was given - never resolves on a guess.
+   * not one this manager was given - never resolves on a guess. The optional signal cancels it.
    */
-  pushNow(projectId: string): Promise<void>
+  pushNow(projectId: string, options?: { signal?: AbortSignal }): Promise<void>
   /** Stops everything. For signing out, and for a page being torn down. */
   stopAll(): void
 }
@@ -111,10 +111,12 @@ export function syncManager(deps: ManagerDependencies): SyncManager {
 
     stop: stopOne,
 
-    async pushNow(projectId: string): Promise<void> {
+    async pushNow(projectId: string, options?: { signal?: AbortSignal }): Promise<void> {
       const project = known.get(projectId)
       if (project === undefined) throw new Error(`Project ${projectId} is not being synchronized`)
-      await pushOnce(deps.local(project.dbName), deps.remote(project.dbName))
+      // The same factories the live sync uses: the local handle is the shared memoised one, and
+      // the remote is a lightweight HTTP client with nothing to close.
+      await pushOnce(deps.local(project.dbName), deps.remote(project.dbName), options)
     },
 
     stopAll(): void {

@@ -8,6 +8,9 @@
  * up from the last checkpoint. Nothing here implements that; what is here makes sure it is
  * switched on and that the interface can say what is happening.
  *
+ * A refusal (`denied`) is the one thing the live sync cannot be trusted to report twice: see
+ * {@link SyncState} and {@link pushOnce}.
+ *
  * Lives in `src/ui` rather than `src/data` for the reason `db/project-database.ts`
  * gives: this is *wiring*, and `src/data` deliberately imports no PouchDB implementation.
  * It is also why the tests run in a real browser against two real databases — a replication
@@ -39,6 +42,10 @@ export type SyncState =
    * carries on, so the sync goes on to say `paused` and the probe says the server is reachable.
    * Letting that overwrite this state would show "caught up" about a project whose edits are
    * not arriving. Only a push that gets through again (or stopping) clears it.
+   *
+   * **In memory only, and not retried.** The state is lost on reload or stop-then-start, and the
+   * live sync does *not* resend a refused document - its checkpoint has moved past it. The
+   * reliable check for "did everything arrive" is {@link pushOnce}, which ignores checkpoints.
    */
   | 'denied'
 
@@ -88,7 +95,7 @@ export interface Syncable {
   replicate: {
     to(
       remote: unknown,
-      options: { live: false; retry: false },
+      options: { live: false; retry: false; checkpoint: false },
     ): {
       on(event: 'complete', handler: (info: { docs_written: number }) => void): unknown
       on(event: 'denied', handler: (reason: unknown) => void): unknown
@@ -227,6 +234,14 @@ export function replicateProject(
  * push that completes exactly when the checkpoint has caught up. It may run alongside the live
  * sync; both write the same checkpoint and PouchDB tolerates it.
  *
+ * **`checkpoint: false` is what makes "nothing pending" true.** `live` and `retry` do not enter
+ * PouchDB's replication id, so without it this push shares the live sync's checkpoint - and
+ * PouchDB advances that checkpoint after every batch *even when documents were denied*. A
+ * document the live sync was refused would then never be offered again: the push would find
+ * nothing new and resolve, and the caller would delete the only copy. Without a checkpoint the
+ * whole database is diffed against the server each time, so a refused document is refused (and
+ * reported) again on every call.
+ *
  * Rejects on any failure, **including a refused document**: PouchDB completes a push that was
  * partly denied, and treating that as success would let the caller delete data the server never
  * accepted. `retry: false` makes an unreachable server an error here rather than a wait.
@@ -237,7 +252,7 @@ export function pushOnce(
   options: { signal?: AbortSignal } = {},
 ): Promise<{ pushed: number }> {
   return new Promise((resolve, reject) => {
-    const push = local.replicate.to(remote, { live: false, retry: false })
+    const push = local.replicate.to(remote, { live: false, retry: false, checkpoint: false })
     let denied: unknown
     const onAbort = (): void => {
       push.cancel()
