@@ -98,3 +98,15 @@ export function showsUpgrade(plan: Plan): boolean {
 export function canOwnAnother(plan: Plan, owned: number, reported?: number): boolean {
   return withinLimit(owned, limitFor(plan, reported))
 }
+
+/**
+ * Whether an account owns more projects than its limit — the state a downgrade leaves behind.
+ *
+ * Not the same as being at the limit: at it, the page simply has no room left; over it, the
+ * page says why nothing can be created even though everything stays listed and usable.
+ * Unlimited is tested first for the same reason as in {@link withinLimit}: `owned > -1` is
+ * always true.
+ */
+export function exceedsLimit(owned: number, limit: number): boolean {
+  return limit >= 0 && owned > limit
+}

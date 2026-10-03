@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   canOwnAnother,
+  exceedsLimit,
   isPlan,
   LAYOUTS,
   limitFor,
@@ -85,5 +86,20 @@ describe('whether another project may be owned', () => {
     expect(canOwnAnother('free', 1, 2)).toBe(true)
     expect(canOwnAnother('pro', 3, 3)).toBe(false)
     expect(canOwnAnother('member', 50, -1)).toBe(true)
+  })
+})
+
+describe('whether an account owns more than its limit', () => {
+  it.each([
+    [1, 1, false],
+    [2, 1, true],
+    [6, 5, true],
+    [5, 5, false],
+    [0, 0, false],
+    [1, 0, true],
+    // Unlimited is never exceeded: `1000 > -1` would put every pro account over its limit.
+    [1000, -1, false],
+  ])('exceedsLimit(%i owned, limit %i) is %s', (owned, limit, expected) => {
+    expect(exceedsLimit(owned, limit)).toBe(expected)
   })
 })

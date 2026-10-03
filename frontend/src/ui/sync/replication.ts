@@ -231,8 +231,8 @@ export function replicateProject(
  * **Why a second mechanism beside the live sync.** "Nothing is pending" is a claim the live
  * sync cannot make: it is always, by design, about to do something. Removing the local copy of a
  * synchronized project is only safe after that claim, so this runs a non-live, non-retrying
- * push that completes exactly when the checkpoint has caught up. It may run alongside the live
- * sync; both write the same checkpoint and PouchDB tolerates it.
+ * push that completes exactly when every local document has been offered to the server. It runs
+ * alongside the live sync without touching its checkpoint.
  *
  * **`checkpoint: false` is what makes "nothing pending" true.** `live` and `retry` do not enter
  * PouchDB's replication id, so without it this push shares the live sync's checkpoint - and

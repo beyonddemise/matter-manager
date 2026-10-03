@@ -37,6 +37,8 @@ export {
   renameLocalProject,
   setLocalClient,
 } from './local-projects.js'
+// Transitional, as above: the projects view (Task 6) renders this model.
+export { projectsModel } from './projects-model.js'
 
 import { type Locale, profileApi, resolveProfileLocale } from './profile.js'
 import { type Project, projectsApi } from './projects.js'
