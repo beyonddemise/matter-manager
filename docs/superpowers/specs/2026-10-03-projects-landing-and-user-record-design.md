@@ -31,7 +31,7 @@ stops touching it entirely.
 | Shared projects | The owner's plan pays; invited writers are governed by `writers.names` alone |
 | Totals | free 1, member 5, pro unlimited: **local and server together**, shared projects not counted |
 | Creating (member/pro) | Synchronized when signed in and online, otherwise local-only and promotable later |
-| Tokens | Login issues an access token (**5 min**) and a refresh token (30 days, stored hashed on the user record) |
+| Tokens | `POST /auth/token` returns both: an access token (**5 min**) and a refresh token (30 days, not rotated, stored hashed on the user record; deleting the hash revokes it) |
 | Logout | Refresh token removed from the record; the access token's `jti` is denied in memory until it expires |
 | Remove from server | Archive; hidden from the list; frees its slot unless a local copy exists; hard-deleted after 90 days by a job tracked as an issue |
 | Remove a synced local copy | Only online, only after a completed push; refused otherwise |
@@ -86,32 +86,42 @@ stops touching it entirely.
 | `customerservice` read from `_users` roles | Read from the record's `roles` |
 | `PUT /customer` writes `_users.plan` | Writes the record's `plan` (subject resolved via `by_sub`) |
 
-A one-off script, `backend/scripts/migrate-users.mjs`, copies every `_users` user document
-(sub, email, displayName, locale, plan with `user` → `member`, roles) to a record. It is
-idempotent and does not delete anything from `_users`; removing those documents is a manual
-operator step after verification, recorded in the runbook. **It must run before the deploy that
-installs phase B's validator**, or every paying owner is read as `free` and loses write access.
+**No migration.** There is no live data yet, so existing `_users` documents and project
+databases are not carried over; environments are reset when this ships. Records are created by
+the first sign-in, and every project database provisioned afterwards has the `owners` key and
+the new validator from birth.
 
 ### Tokens
 
 | Token | Transport | Lifetime | Claims |
 | --- | --- | --- | --- |
-| Refresh | `HttpOnly; Secure; SameSite` cookie (replaces today's session cookie) | 30 days | `purpose:'refresh'`, `sub`, `email`, `jti`, `exp`, `iat`; signed with the session key CouchDB never sees |
+| Refresh | Response body; the page keeps it in `mm-local` and sends it in the body of the next `POST /auth/token` | 30 days, not rotated | `purpose:'refresh'`, `sub`, `email`, `jti`, `exp`, `iat`; signed with the session key CouchDB never sees |
 | Access | Response body | **5 minutes** (`ACCESS_TOKEN_TTL = 300`) | `purpose:'access'`, `sub`, `email`, `jti`, `exp`, `iat`, `_couchdb.roles: [plan]` |
 
-- **Login.** The OIDC callback upserts the record, mints a refresh token, stores
-  `sha256(jti)` with its `exp` in `refreshTokens`, and sets the cookie. The callback is a
-  redirect, so it cannot hand the page a body; the access token is minted by the page's
-  immediate `POST /auth/token`, which reads the plan at that moment. Putting an access token in
-  the redirect URL would leak it into history and referrers, so this is the one place "issue
-  both at login" is two requests rather than one.
-- **Refresh: `POST /auth/token`.** Verifies the cookie, loads the record by `userKey(email)`,
-  requires `sha256(jti)` to be present and unexpired in `refreshTokens`, reads `plan`, and mints
-  an access token. A refresh token that verifies cryptographically but is no longer stored
-  answers the same 401 as an absent one.
-- **Logout: `POST /auth/signout`.** Removes the presented refresh token's hash from the record,
-  adds the presented access token's `jti` to the deny list until its `exp`, and clears the
-  cookie.
+- **Login.** The OIDC callback upserts the record and sets a short-lived (minutes),
+  single-use `purpose:'flow'` cookie, a purpose `jwt.ts` already defines, then redirects. Tokens
+  never travel in the redirect URL, where they would leak into history and referrers.
+- **`POST /auth/token` returns both tokens**, `{ accessToken, expiresIn, refreshToken }`, in
+  `cache-control: no-store`. It accepts either credential:
+  - the **flow cookie** (first call after login): mints a refresh token, stores `sha256(jti)`
+    with its `exp` and `createdAt` in `refreshTokens`, clears the cookie;
+  - a **refresh token** in the body (every later call): verifies it, loads the record by
+    `userKey(email)`, and requires `sha256(jti)` to be present and unexpired in
+    `refreshTokens`. The same refresh token is returned; it is **not rotated**.
+
+  Either way it reads `plan` and mints the access token. A refresh token that verifies
+  cryptographically but is no longer stored answers the same 401 as an absent one.
+- **Revocation is deletion.** Because a refresh must find its hash on the record, removing an
+  entry from `refreshTokens` (by sign-out, or by a database admin in Fauxton) invalidates that
+  token at its next use; the access token it last minted lives out its five minutes.
+- **Logout: `POST /auth/signout`.** Removes the presented refresh token's hash from the record and
+  adds the presented access token's `jti` to the deny list until its `exp`. The page deletes the
+  refresh token from `mm-local` on **every** sign-out, whether or not local data is removed.
+- **The trade-off of a body token.** A refresh token that script can read is one an XSS could
+  steal, and without rotation it would work until expiry or revocation. Accepted: the
+  application already ships a strict Content-Security-Policy (`frontend/public/_headers`), revocation is one deletion,
+  and rotation is tracked as an issue. A body token also removes the CSRF exposure a cookie
+  credential on `POST /auth/token` would carry.
 - **The deny list** is an in-memory `Map<jti, exp>` checked in `auth/bearer.ts`, pruned on
   insert. It protects the **backend API** only: CouchDB verifies access tokens itself and cannot
   consult it. The 5-minute TTL is what bounds that exposure: a token captured before logout
@@ -167,10 +177,7 @@ if (owners.indexOf(userCtx.name) !== -1 &&
 - **Why owners only:** an invited writer's plan is irrelevant; the owner's plan pays.
 - **Transfer** (`POST /projects/:id/transfer`) rewrites `owners.names` with `members` and
   `writers`, in the same `_security` write.
-- **Existing databases** need the `owners` key and the new validator.
-  `backend/scripts/migrate-security.mjs` walks the registry and writes both, idempotently. The
-  implementation plan confirms whether the existing design-doc reinstall path (see
-  `design-doc-restart.test.ts`) already covers the validator, and uses it if so.
+- **No existing databases are updated** (no live data; see phase A). Provisioning installs both.
 - **Reads are not gated.** CouchDB's `_security.members` is an OR of names and roles; a
   downgraded owner keeps reading their server data. Only writes are refused.
 
@@ -203,7 +210,8 @@ sections, and its "Operator accounts and plans" section is rewritten for the rec
   downloads a project knows its name signed out and offline.
 - **`mm-local`** (never replicated) gains an index of local project databases and the **last known
   plan and limit**, written on every successful `GET /profile`. A device that has never signed in
-  reads `free`. Sign-out with "remove local data" clears both.
+  reads `free`. Sign-out with "remove local data" clears both. The refresh token is kept here
+  too, and removed on every sign-out.
 
 ### Location and status
 
@@ -277,11 +285,10 @@ The page decides from `can()` and the reported `projectLimit`, never from a tier
 
 | Failure | Why it would go unnoticed | What answers it |
 | --- | --- | --- |
-| Validator deployed before the user migration | Every paying owner silently becomes read-only | Phase B's deploy is gated on the migration; the runbook orders them and the script reports counts |
 | Two key derivations disagree | One address, two records, plan "randomly" free | `userKey` is the only derivation; a test pins `Foo@Example.com ` and `foo@example.com` to one key |
 | `matter_manager` readable by users | Refresh hashes and plans exposed | `_security` written on creation; a test asserts a user token gets 403 |
 | A user writes their own plan or roles | `PATCH /profile` looks successful | Named fields only; tests send `plan`, `roles`, `refreshTokens` and assert the stored document is unchanged |
-| A revoked refresh token still mints | It still verifies cryptographically | Refresh requires the stored hash; a test signs out and asserts the next refresh is 401 |
+| A revoked refresh token still mints | It still verifies cryptographically | Refresh requires the stored hash; tests sign out, and separately delete the hash directly in the database, and assert the next refresh is 401 |
 | A denied access token still reaches the API | The signature is valid | `bearer.ts` checks the deny list; a test signs out and reuses the token |
 | Removing a synced local copy loses edits | Pending changes vanish with the database | Online-only, after a completed push; a test with pending changes and a failing push asserts refusal and an intact database |
 | A network blip signs the user out | Looks like a session bug | Network failures retry; only a 401 signs out; tests cover both |
@@ -307,12 +314,14 @@ The page decides from `can()` and the reported `projectLimit`, never from a tier
 ## Follow-up issues to file
 
 1. Scheduled hard delete of projects archived more than 90 days ago.
-2. Server-side refresh-token hardening: rotation on use, pruning expired `refreshTokens`
+2. Server-side refresh-token hardening: optional rotation on use, pruning expired `refreshTokens`
    entries, a cap per account.
 3. A deny list shared across backend instances, needed once there is more than one.
+4. A read-only grace period for downgraded owners: after a downgrade their server projects stay
+   readable for a set period, then are archived and, 90 days later, deleted by the job in (1).
 
 ## Out of scope
 
 Billing and self-service plan changes; a client entity (client is free text); deleting a
-server project outright (archive plus the scheduled job covers it); deleting `_users` documents
-(a manual step after migration).
+server project outright (archive plus the scheduled job covers it); migrating existing users
+or project databases (there is no live data).
