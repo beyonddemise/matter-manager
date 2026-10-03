@@ -45,7 +45,9 @@ function signInServer(
   forgetUsersDatabase()
   let t = T0
   const now = () => t
-  const fake = fakeCouch()
+  // Mutable and held by reference, so a test can make CouchDB fail after the record exists.
+  const fails: { putDoc?: string } = {}
+  const fake = fakeCouch({ fails })
   const records = userRecords(fake.couch)
   const refresh = refreshStore(records, now)
   const deny = denyList(now)
@@ -96,6 +98,7 @@ function signInServer(
     refresh,
     deny,
     fake,
+    fails,
     logged,
     signedIn,
     advance: (s: number) => {
@@ -513,6 +516,29 @@ describe('POST /auth/token', () => {
     expect(again.statusCode).toBe(401)
   })
 
+  it('refuses a refreshToken that is not a token, rather than falling back to the handoff', async () => {
+    // A caller that sent *something* meant to refresh. Answering for the handoff cookie instead
+    // would make which credential was honoured depend on what else the browser held.
+    const server = signInServer()
+    const cookie = await completeSignIn(server)
+    for (const refreshToken of [123, '', null, { token: 'x' }]) {
+      const reply = await server.app.inject({
+        method: 'POST',
+        url: '/auth/token',
+        headers: { cookie },
+        payload: { refreshToken },
+      })
+      expect(reply.statusCode, JSON.stringify(refreshToken)).toBe(401)
+    }
+    // The handoff was never consulted, so it is still good for the call that means it.
+    const real = await server.app.inject({
+      method: 'POST',
+      url: '/auth/token',
+      headers: { cookie },
+    })
+    expect(real.statusCode).toBe(200)
+  })
+
   it('refuses with neither a handoff nor a refresh token', async () => {
     const { app: server } = signInServer()
 
@@ -584,6 +610,40 @@ describe('POST /auth/signout', () => {
     expect(again.statusCode).toBe(401)
     const { jti } = verifyToken(tokens.accessToken, server.key.publicKey, 'access', at)
     expect(server.deny.denied(String(jti))).toBe(true)
+  })
+
+  it('does not claim success when the refresh token could not be revoked', async () => {
+    // The hash is still stored, so the refresh token is a live thirty-day credential. A 204
+    // here would tell the one party who could retry that there is nothing left to do.
+    const server = signInServer()
+    const tokens = await tokensFor(server)
+    await server.records.ensure(
+      { email: 'ada@example.com', sub: 'google|1234' },
+      server.refresh.drain('ada@example.com'),
+    )
+    server.fails.putDoc = 'matter_manager'
+
+    const out = await server.app.inject({
+      method: 'POST',
+      url: '/auth/signout',
+      headers: { authorization: `Bearer ${tokens.accessToken}` },
+      payload: { refreshToken: tokens.refreshToken },
+    })
+
+    expect(out.statusCode).not.toBe(204)
+    expect(out.statusCode).toBe(500)
+    expect(out.headers['content-type']).toMatch(/^application\/problem\+json/)
+    expect(out.body).not.toContain('matter_manager')
+    // What could be ended was: the access token is refused on this API regardless.
+    const { jti } = verifyToken(tokens.accessToken, server.key.publicKey, 'access', at)
+    expect(server.deny.denied(String(jti))).toBe(true)
+    // And the refresh token is, honestly, still live.
+    const again = await server.app.inject({
+      method: 'POST',
+      url: '/auth/token',
+      payload: { refreshToken: tokens.refreshToken },
+    })
+    expect(again.statusCode).toBe(200)
   })
 
   it('answers 204 with nothing to sign out of', async () => {

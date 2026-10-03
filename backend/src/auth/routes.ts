@@ -239,7 +239,11 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthDependencies)
 
     let claims: Claims & { readonly email: string }
     let refreshToken: string
-    if (typeof body?.refreshToken === 'string' && body.refreshToken !== '') {
+    if (body?.refreshToken !== undefined) {
+      // Present but not a token is a refusal, never a fall-through to the handoff cookie: a
+      // caller that sent *something* meant to refresh, and quietly answering for a different
+      // credential would make which one was honoured depend on what else the browser held.
+      if (typeof body.refreshToken !== 'string' || body.refreshToken === '') return unauthorized()
       let presented: Claims
       try {
         presented = verifyToken(body.refreshToken, deps.sessionKey.publicKey, 'refresh', now)
@@ -310,17 +314,11 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthDependencies)
     // No credential is required. Signing out when signed out is not an error, and answering 401
     // would leave a user who is confused about their state unable to reach one they are certain
     // about. Each credential presented is ended as far as this service can end it.
-    const body = request.body as { refreshToken?: unknown } | null | undefined
-    if (typeof body?.refreshToken === 'string') {
-      try {
-        const claims = verifyToken(body.refreshToken, deps.sessionKey.publicKey, 'refresh', now)
-        if (claims.email !== undefined && claims.jti !== undefined) {
-          await deps.refresh.revoke(claims.email, hashJti(claims.jti))
-        }
-      } catch {
-        // A token that does not verify has nothing to revoke.
-      }
-    }
+    //
+    // The access token is denied and the cookies cleared *first*, because both are in memory or
+    // on this reply and cannot fail: if revoking the refresh token then fails, the caller is
+    // still as signed out as this service could make them, and only the one step that did not
+    // happen is reported.
     const access = bearerToken(request.headers.authorization)
     if (access !== undefined) {
       try {
@@ -332,6 +330,27 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthDependencies)
       }
     }
     clearCookies(reply, secure)
+
+    const body = request.body as { refreshToken?: unknown } | null | undefined
+    if (typeof body?.refreshToken === 'string') {
+      let claims: Claims | undefined
+      try {
+        claims = verifyToken(body.refreshToken, deps.sessionKey.publicKey, 'refresh', now)
+      } catch {
+        // A token that does not verify has nothing to revoke.
+      }
+      if (claims?.email !== undefined && claims.jti !== undefined) {
+        try {
+          await deps.refresh.revoke(claims.email, hashJti(claims.jti))
+        } catch (error) {
+          // Never a 204. The hash is still stored, so the refresh token is a live thirty-day
+          // credential, and answering "signed out" would hide that from the one party who could
+          // retry. The detail goes to the log; the body says nothing about CouchDB.
+          request.log.error({ err: error }, 'could not revoke a refresh token at sign-out')
+          return problem(reply, { title: 'Sign-out could not be completed.', status: 500 })
+        }
+      }
+    }
     return reply.code(204).send()
   })
 }

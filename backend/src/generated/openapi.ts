@@ -226,6 +226,15 @@ export interface paths {
                     };
                     content?: never;
                 };
+                /** @description The refresh token could not be revoked; it remains valid */
+                500: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
             };
         };
         delete?: never;

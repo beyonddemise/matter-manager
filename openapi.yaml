@@ -157,6 +157,14 @@ paths:
       responses:
         '204':
           description: Signed out. Also the answer when there was nothing to sign out of.
+        # A presented refresh token whose stored hash could not be removed is still a live
+        # credential, so this is never reported as a 204. The access token is denied and the
+        # cookies cleared regardless; the body says nothing about CouchDB.
+        '500':
+          description: The refresh token could not be revoked; it remains valid
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
 
   /profile:
     get:

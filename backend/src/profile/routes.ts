@@ -91,9 +91,9 @@ export function registerProfileRoutes(app: FastifyInstance, deps: ProfileDepende
 
     const profile = await deps.store.read(sub)
     if (profile === undefined) {
-      // A signed-in user always has a profile — `rememberUser` writes one during sign-in. If
-      // there is none, the session outlived the account, and the honest answer is that this
-      // credential no longer identifies anybody.
+      // A signed-in user always has a profile — sign-in writes one through `store.remember`
+      // (the transitional `signIn` in `composition.ts`). If there is none, the token outlived
+      // the account, and the honest answer is that this credential no longer identifies anybody.
       return problem(reply, { title: 'Not signed in', status: 401 })
     }
 
