@@ -191,7 +191,10 @@ export async function provisionProject(
   try {
     // Immediately, and before anything else. Until this lands the database is readable by
     // every account in the deployment.
-    await deps.couch.putSecurity(dbName, securityFor([{ role: 'owner', userid: owner }]))
+    await deps.couch.putSecurity(
+      dbName,
+      securityFor([{ role: 'owner', userid: owner }], { archived: false }),
+    )
 
     await deps.couch.putDoc(dbName, {
       _id: '_design/access',

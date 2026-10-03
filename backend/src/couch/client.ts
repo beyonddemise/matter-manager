@@ -79,6 +79,11 @@ export interface Security {
    * `securityFor()` alone, so provisioning, membership changes and transfers cannot disagree.
    */
   readonly owners?: { readonly names?: readonly string[] }
+  /**
+   * `true` while the project is archived, and absent otherwise. A third custom key, read by
+   * `_design/access` to refuse every write to an archived project. Built by `securityFor()`.
+   */
+  readonly archived?: boolean
 }
 
 /** The operations this service needs. Deliberately not "a CouchDB client" in general. */

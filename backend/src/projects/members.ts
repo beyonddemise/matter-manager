@@ -202,7 +202,8 @@ async function apply(
   pointer: ProjectPointer,
   participants: readonly Participant[],
 ): Promise<void> {
-  const security = securityFor(participants)
+  // The pointer's archived state carried through: a membership change must not unlock it.
+  const security = securityFor(participants, { archived: pointer.archived === true })
   const next: ProjectPointer = { ...pointer, participants }
 
   if (narrowsAccess(pointer.participants, participants)) {

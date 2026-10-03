@@ -16,7 +16,7 @@
  */
 
 import { type CouchClient, CouchError } from '../couch/client.js'
-import { canManageMembers, type Owner, roleOf } from '../domain/index.js'
+import { canManageMembers, type Owner, roleOf, securityFor } from '../domain/index.js'
 import { MAX_ADDRESS, MAX_NAME, PROJECT_DOCUMENT_ID, type ProjectSummary } from './provision.js'
 import { type ProjectPointer, pointerId, REGISTRY_DATABASE, writePointer } from './registry.js'
 
@@ -289,6 +289,22 @@ export async function updateProjectSettings(
         ? undefined
         : pointer.archivedAt
 
+  // `_security.archived` is what makes an archived project read-only in CouchDB, so a change
+  // that names `archived` writes it, rebuilt from the pointer's participants by `securityFor`
+  // like every other writer of `_security`. On every such change, not only on a transition: a
+  // repeated PATCH then heals a `_security` write that failed after the pointer was written,
+  // the way the project document below is healed. A change that does not name `archived`
+  // leaves `_security` alone.
+  //
+  // The order is `narrowsAccess`'s rule. Archiving takes write access away, so `_security`
+  // goes first and the moment between the writes is one where the project is already locked
+  // and still listed as active. Unarchiving gives it back, so the pointer goes first and the
+  // moment between is one where a project listed as active is still locked.
+  const writeSecurity = async (): Promise<void> => {
+    await deps.couch.putSecurity(pointer.dbName, securityFor(pointer.participants, { archived }))
+  }
+  if (change.archived === true) await writeSecurity()
+
   // Spread from the pointer that was read, never rebuilt from arguments. `participants` is in
   // this document, and a rename that reconstructed it would drop every member of the project
   // with nothing to show for it.
@@ -303,6 +319,8 @@ export async function updateProjectSettings(
     ...(client === undefined ? {} : { client }),
     ...(archivedAt === undefined ? {} : { archivedAt }),
   })
+
+  if (change.archived === false) await writeSecurity()
 
   // After the pointer, deliberately: the pointer is the source of truth for listing, so a
   // failure here leaves the list right and the replicated copy stale. It is not swallowed — it

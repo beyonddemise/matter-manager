@@ -18,7 +18,10 @@ const ACCOUNTS: Record<string, { sub: string; email: string }> = {
 }
 
 /** A registry holding one project with the given participants. */
-function project(participants: readonly Participant[] = [{ role: 'owner', userid: ADA }]) {
+function project(
+  participants: readonly Participant[] = [{ role: 'owner', userid: ADA }],
+  extra: Record<string, unknown> = {},
+) {
   const fake = fakeCouch({
     seed: {
       [`${REGISTRY_DATABASE}/${pointerId(PROJECT_ID)}`]: {
@@ -30,6 +33,7 @@ function project(participants: readonly Participant[] = [{ role: 'owner', userid
         projectName: 'Musterstraße 12',
         participants: [...participants],
         addedAt: '2026-08-27T09:00:00.000Z',
+        ...extra,
       },
     },
   })
@@ -458,5 +462,42 @@ describe('inviting somebody who has no account', () => {
       changeMembership(deps, PROJECT_ID, ADA, 'stranger@example.test', undefined),
     ).rejects.toThrow(/has an account yet/i)
     expect(invitations).toEqual([])
+  })
+})
+
+describe('changing access to an archived project', () => {
+  // Every writer of `_security` carries the archived state through. A membership change that
+  // rebuilt `_security` from the participants alone would quietly unlock the project.
+  it('keeps it archived in CouchDB when somebody is added', async () => {
+    const { fake, deps } = project(undefined, { archived: true })
+    await changeMembership(deps, PROJECT_ID, ADA, 'grace@example.test', 'write')
+
+    expect(fake.security.get(DATABASE)).toMatchObject({
+      writers: { names: [ADA, GRACE] },
+      archived: true,
+    })
+  })
+
+  it('keeps it archived in CouchDB when somebody is removed', async () => {
+    const { fake, deps } = project(
+      [
+        { role: 'owner', userid: ADA },
+        { role: 'write', userid: GRACE },
+      ],
+      { archived: true },
+    )
+    await changeMembership(deps, PROJECT_ID, ADA, 'grace@example.test', undefined)
+
+    expect(fake.security.get(DATABASE)).toMatchObject({
+      members: { names: [ADA], roles: [] },
+      archived: true,
+    })
+  })
+
+  it('leaves an active project without the flag', async () => {
+    const { fake, deps } = project()
+    await changeMembership(deps, PROJECT_ID, ADA, 'grace@example.test', 'write')
+
+    expect(fake.security.get(DATABASE)).not.toHaveProperty('archived')
   })
 })

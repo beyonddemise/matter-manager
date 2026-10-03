@@ -7,8 +7,8 @@
 # Project sharing rests on two CouchDB behaviours that are not prominently documented
 # and are not covered by any test we own:
 #
-#   1. `_security` preserves keys CouchDB does not itself interpret (we add `writers`
-#      and `owners`).
+#   1. `_security` preserves keys CouchDB does not itself interpret (we add `writers`,
+#      `owners` and, while a project is archived, `archived`).
 #   2. `validate_doc_update` receives the whole `_security` object as its 4th argument.
 #
 # If either stops being true after a CouchDB upgrade, read-only project access silently
@@ -166,6 +166,25 @@ assert "a writer cannot write the project document" \
 
 assert "a non-member cannot read at all" \
   "$(curl -s -u "vam-outsider:$PW" "$URL/$DB/device:1")" 'not allowed to access'
+
+# Archiving: the service adds `archived: true` to `_security` while the registry says the
+# project is archived. Last, because it turns every write after it into a refusal.
+curl -s -u "$ADMIN" -X PUT "$URL/$DB/_security" -H 'Content-Type: application/json' \
+  -d '{"members":{"names":["vam-writer","vam-reader","vam-owner-free","vam-owner-member"],"roles":[]},"writers":{"names":["vam-writer","vam-owner-free","vam-owner-member"]},"owners":{"names":["vam-owner-free","vam-owner-member"]},"archived":true}' >/dev/null
+
+assert "_security preserves the non-standard 'archived' key" \
+  "$(curl -s -u "$ADMIN" "$URL/$DB/_security")" '"archived":true'
+
+assert "a writer cannot write to an archived project" \
+  "$(curl -s -u "vam-writer:$PW" -X PUT "$URL/$DB/archived:1" -H 'Content-Type: application/json' -d '{"type":"device","name":"Attic"}')" \
+  'This project is archived'
+
+assert "an owner with the member plan cannot write to an archived project" \
+  "$(curl -s -u "vam-owner-member:$PW" -X PUT "$URL/$DB/archived:2" -H 'Content-Type: application/json' -d '{"type":"device","name":"Cellar"}')" \
+  'This project is archived'
+
+assert "a writer CAN still read an archived project" \
+  "$(curl -s -u "vam-writer:$PW" "$URL/$DB/device:1")" '"name":"Kitchen light"'
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

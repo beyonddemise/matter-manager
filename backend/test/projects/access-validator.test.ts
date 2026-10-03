@@ -116,3 +116,30 @@ describe('the access validator and the project document', () => {
     expect(attempt({ _id: 'matter:1', type: 'matter' }, 'olga', ['member'])).toBeUndefined()
   })
 })
+
+describe('the access validator and an archived project', () => {
+  const ARCHIVED = 'This project is archived.'
+  const archived = { ...secObj, archived: true }
+
+  it.each([
+    ['an owner with a paying plan', 'olga', ['member']],
+    ['an invited writer', 'wanda', []],
+  ])('refuses a write by %s', (_label, name, roles) => {
+    expect(attempt(doc, name, roles, archived)).toEqual({ forbidden: ARCHIVED })
+  })
+
+  it('refuses a deletion by an owner with a paying plan', () => {
+    expect(attempt(deletion, 'olga', ['member'], archived)).toEqual({ forbidden: ARCHIVED })
+  })
+
+  it('lets the server admin write', () => {
+    expect(attempt(doc, 'olga', ['_admin'], archived)).toBeUndefined()
+  })
+
+  it('treats anything but true as not archived', () => {
+    // Strictly `true`: a stray string or a `false` left behind by an unarchive must not lock
+    // the project, and the service only ever writes the boolean.
+    expect(attempt(doc, 'olga', ['member'], { ...secObj, archived: false })).toBeUndefined()
+    expect(attempt(doc, 'olga', ['member'], { ...secObj, archived: 'yes' })).toBeUndefined()
+  })
+})

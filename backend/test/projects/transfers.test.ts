@@ -385,6 +385,31 @@ describe("accepting an active project is the recipient's plan to authorise", () 
     expect(participantsIn(fake)).toEqual([{ role: 'owner', userid: HOMEOWNER }])
   })
 
+  it('keeps an archived project archived in CouchDB under its new owner', async () => {
+    // `_security` is rebuilt from the new participants. Rebuilt without the archived state, a
+    // transfer would hand over a project that the registry lists as archived and the database
+    // lets everybody write.
+    const fake = registry(undefined, offer())
+    archive(fake, true)
+
+    await acceptTransfer(deps(fake), PROJECT_ID, homeowner, clock())
+
+    expect(fake.security.get(DATABASE)).toEqual({
+      members: { names: [HOMEOWNER], roles: [] },
+      writers: { names: [HOMEOWNER] },
+      owners: { names: [HOMEOWNER] },
+      archived: true,
+    })
+  })
+
+  it('leaves an active project without the flag', async () => {
+    const fake = registry(undefined, offer())
+
+    await acceptTransfer(deps(fake), PROJECT_ID, homeowner, clock())
+
+    expect(fake.security.get(DATABASE)).not.toHaveProperty('archived')
+  })
+
   it('decides once, so a retry cannot refuse after _security was already written', async () => {
     // The first attempt is authorised and writes `_security`, then its registry write
     // conflicts. A second attempt that asked again could answer differently (the recipient's

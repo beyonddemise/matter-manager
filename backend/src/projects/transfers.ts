@@ -220,7 +220,11 @@ export async function acceptTransfer(
     }
 
     try {
-      await deps.couch.putSecurity(pointer.dbName, securityFor(participants))
+      // An archived project stays archived under its new owner, so the state goes with it.
+      await deps.couch.putSecurity(
+        pointer.dbName,
+        securityFor(participants, { archived: pointer.archived === true }),
+      )
       await deps.couch.putDoc(REGISTRY_DATABASE, { ...pointer, participants })
       await removeTransfer(deps.couch, offer)
       return

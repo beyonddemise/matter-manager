@@ -40,8 +40,9 @@
  *
  * SERVICE-OWNED STATE
  * -------------------
- * One rule comes before every other, right after the admin bypass: the `project` document is
- * written by the service alone. It is something the registry decides and the database mirrors.
+ * Two rules come before every other, right after the admin bypass: the `project` document is
+ * written by the service alone, and a `_security` carrying `archived: true` refuses every
+ * write, deletions included. Both are things the registry decides and the database mirrors.
  *
  * @param {object}  newDoc  the document being written
  * @param {object=} oldDoc  the current revision, absent on create
@@ -62,6 +63,14 @@ function (newDoc, oldDoc, userCtx, secObj) {
   // ids are checked so the rule does not depend on what a deletion happens to carry.
   if (newDoc._id === 'project' || (oldDoc && oldDoc._id === 'project')) {
     throw { forbidden: 'Only the service may change the project document.' }
+  }
+
+  // An archived project is put away, not deleted: everybody keeps reading it and nobody
+  // writes it until it is brought back. The service sets `archived` in `_security` (another
+  // custom key, like `writers`) while the registry says the project is archived, so a replica
+  // that keeps syncing cannot go on changing it. Strictly `true`, so nothing else locks it.
+  if (secObj && secObj.archived === true) {
+    throw { forbidden: 'This project is archived.' }
   }
 
   var writers = (secObj && secObj.writers && secObj.writers.names) || []

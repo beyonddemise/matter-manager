@@ -734,3 +734,100 @@ describe('the project document follows the pointer', () => {
     expect(pointerNow().projectName).toBe('Altbau')
   })
 })
+
+describe('archiving reaches CouchDB', () => {
+  // The registry decides that a project is archived; `_security.archived` is what makes the
+  // database itself refuse writes, so a device that keeps syncing cannot go on changing it.
+  const TEAM: readonly Participant[] = [
+    { role: 'owner', userid: ADA },
+    { role: 'write', userid: GRACE },
+  ]
+
+  it('marks _security archived, keeping every participant', async () => {
+    const { deps, fake } = project(TEAM)
+
+    await updateProjectSettings(deps, PROJECT_ID, ADA, { archived: true })
+
+    expect(fake.security.get(DATABASE)).toEqual({
+      members: { names: [ADA, GRACE], roles: [] },
+      writers: { names: [ADA, GRACE] },
+      owners: { names: [ADA] },
+      archived: true,
+    })
+  })
+
+  it('writes _security before the pointer, because archiving narrows access', async () => {
+    const { deps, fake } = project(TEAM)
+
+    await updateProjectSettings(deps, PROJECT_ID, ADA, { archived: true })
+
+    const security = fake.calls.findIndex((call) => call.operation === 'putSecurity')
+    const pointer = fake.calls.findIndex(
+      (call) => call.operation === 'putDoc' && call.database === REGISTRY_DATABASE,
+    )
+    expect(security).toBeGreaterThanOrEqual(0)
+    expect(security).toBeLessThan(pointer)
+  })
+
+  it('clears the flag on unarchive, after the pointer, because unarchiving widens access', async () => {
+    const { deps, fake } = project(TEAM, undefined, { archived: true, archivedAt: 1_600_000_000 })
+
+    await updateProjectSettings(deps, PROJECT_ID, ADA, { archived: false })
+
+    expect(fake.security.get(DATABASE)).toEqual({
+      members: { names: [ADA, GRACE], roles: [] },
+      writers: { names: [ADA, GRACE] },
+      owners: { names: [ADA] },
+    })
+    const security = fake.calls.findIndex((call) => call.operation === 'putSecurity')
+    const pointer = fake.calls.findIndex(
+      (call) => call.operation === 'putDoc' && call.database === REGISTRY_DATABASE,
+    )
+    expect(pointer).toBeGreaterThanOrEqual(0)
+    expect(security).toBeGreaterThan(pointer)
+  })
+
+  it('leaves the pointer active when the _security write fails on archive', async () => {
+    // `_security` first: a failure leaves a project that is listed as active and still
+    // writable, which is where it started, rather than one listed archived that is not.
+    const { deps, fake, pointerNow } = project(TEAM)
+    const failing = {
+      ...deps,
+      couch: {
+        ...fake.couch,
+        putSecurity: async () => {
+          throw new CouchError(500, 'internal', 'down')
+        },
+      },
+    }
+
+    await expect(
+      updateProjectSettings(failing, PROJECT_ID, ADA, { archived: true }),
+    ).rejects.toBeInstanceOf(CouchError)
+    expect(pointerNow().archived).toBeUndefined()
+  })
+
+  it('heals _security when the same unarchive is repeated after a failed write', async () => {
+    // The pointer is already active by then, so the transition is not what triggers the
+    // write: every PATCH that names `archived` writes `_security` from the pointer.
+    const { deps, fake } = project(TEAM)
+    fake.security.set(DATABASE, {
+      members: { names: [ADA, GRACE], roles: [] },
+      writers: { names: [ADA, GRACE] },
+      owners: { names: [ADA] },
+      archived: true,
+    })
+
+    await updateProjectSettings(deps, PROJECT_ID, ADA, { archived: false })
+
+    expect(fake.security.get(DATABASE)).not.toHaveProperty('archived')
+  })
+
+  it('does not touch _security for a change that does not mention archiving', async () => {
+    const { deps, fake } = project(TEAM, undefined, { archived: true })
+
+    await updateProjectSettings(deps, PROJECT_ID, ADA, { name: 'Lindenstraße 4' })
+
+    expect(fake.calls.some((call) => call.operation === 'putSecurity')).toBe(false)
+  })
+})

@@ -27,6 +27,22 @@ export interface ProjectSecurity {
   readonly writers: { readonly names: readonly string[] }
   /** The participants whose role is `owner`; what the validator checks against their plan. */
   readonly owners: { readonly names: readonly string[] }
+  /**
+   * Present, and `true`, while the project is archived; absent otherwise. A custom key the
+   * validator reads to refuse every write, so an archived project is read-only in the database
+   * itself and not only in the interface.
+   */
+  readonly archived?: true
+}
+
+/**
+ * The project state `_security` mirrors besides its participants. Taken by {@link securityFor}
+ * as a required argument, so a writer of `_security` cannot forget it: one that did would
+ * quietly unlock an archived project.
+ */
+export interface ProjectState {
+  /** Whether the registry pointer says the project is archived. */
+  readonly archived: boolean
 }
 
 /** Whether somebody with this role may change who else has access. Enforced by the API alone. */
@@ -113,11 +129,18 @@ function ownerCount(participants: readonly Participant[]): number {
  * validator reads to refuse an owner whose plan cannot sync. Because this is the only function
  * that builds `_security`, a transfer or a membership change moves it in the same write.
  *
+ * **`archived` is the registry's archived state**, and only when it is `true`. Every writer of
+ * `_security` passes the pointer's state, so a membership change or a transfer of an archived
+ * project keeps it read-only, and archiving and unarchiving move it.
+ *
  * `members.roles` is empty and stays empty. A role there would grant access to everybody
  * holding it, and this application's access is per person: a `roles` entry is the one way to
  * accidentally share every project with every account at once.
  */
-export function securityFor(participants: readonly Participant[]): ProjectSecurity {
+export function securityFor(
+  participants: readonly Participant[],
+  state: ProjectState,
+): ProjectSecurity {
   const names = participants.map((participant) => participant.userid)
   const writers = participants
     .filter((participant) => canWrite(participant.role))
@@ -127,7 +150,14 @@ export function securityFor(participants: readonly Participant[]): ProjectSecuri
     .filter((participant) => participant.role === 'owner')
     .map((participant) => participant.userid)
 
-  return { members: { names, roles: [] }, writers: { names: writers }, owners: { names: owners } }
+  return {
+    members: { names, roles: [] },
+    writers: { names: writers },
+    owners: { names: owners },
+    // Absent rather than `false`: the shape an active project has always had, and the validator
+    // acts on `true` alone.
+    ...(state.archived ? { archived: true as const } : {}),
+  }
 }
 
 /**
@@ -146,8 +176,9 @@ export function narrowsAccess(
   before: readonly Participant[],
   after: readonly Participant[],
 ): boolean {
-  const previous = securityFor(before)
-  const next = securityFor(after)
+  // The archived state is the same on both sides of a participant change, so it plays no part.
+  const previous = securityFor(before, { archived: false })
+  const next = securityFor(after, { archived: false })
 
   const lostRead = previous.members.names.some((name) => !next.members.names.includes(name))
   const lostWrite = previous.writers.names.some((name) => !next.writers.names.includes(name))

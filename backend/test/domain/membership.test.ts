@@ -16,6 +16,9 @@ const GRACE = 'google|grace'
 
 const owned: readonly Participant[] = [{ role: 'owner', userid: ADA }]
 
+/** A project nobody has archived, which is what every test below that does not say so is about. */
+const ACTIVE = { archived: false } as const
+
 describe('what each role permits', () => {
   it('lets an owner and a manager change who else has access', () => {
     expect(canManageMembers('owner')).toBe(true)
@@ -46,10 +49,13 @@ describe('what each role permits', () => {
 
 describe('what CouchDB is told', () => {
   it('makes everybody a member', () => {
-    const security = securityFor([
-      { role: 'owner', userid: ADA },
-      { role: 'read', userid: GRACE },
-    ])
+    const security = securityFor(
+      [
+        { role: 'owner', userid: ADA },
+        { role: 'read', userid: GRACE },
+      ],
+      ACTIVE,
+    )
 
     expect(security.members.names).toEqual([ADA, GRACE])
   })
@@ -58,10 +64,13 @@ describe('what CouchDB is told', () => {
     // **The mapping that is the security model.** A reader in `writers.names` is a reader who
     // can edit somebody else's home, and the interface hiding the edit button would look
     // exactly the same.
-    const security = securityFor([
-      { role: 'owner', userid: ADA },
-      { role: 'read', userid: GRACE },
-    ])
+    const security = securityFor(
+      [
+        { role: 'owner', userid: ADA },
+        { role: 'read', userid: GRACE },
+      ],
+      ACTIVE,
+    )
 
     expect(security.writers.names).toEqual([ADA])
   })
@@ -69,12 +78,15 @@ describe('what CouchDB is told', () => {
   it('names only the owners as owners', () => {
     // `owners` is what the validator reads to refuse a plan that cannot sync. Managers and
     // writers can write, but they do not own the project, so they must not be named here.
-    const security = securityFor([
-      { role: 'owner', userid: ADA },
-      { role: 'manage', userid: GRACE },
-      { role: 'write', userid: 'google|3' },
-      { role: 'read', userid: 'google|4' },
-    ])
+    const security = securityFor(
+      [
+        { role: 'owner', userid: ADA },
+        { role: 'manage', userid: GRACE },
+        { role: 'write', userid: 'google|3' },
+        { role: 'read', userid: 'google|4' },
+      ],
+      ACTIVE,
+    )
 
     expect(security.owners.names).toEqual([ADA])
   })
@@ -82,29 +94,46 @@ describe('what CouchDB is told', () => {
   it('treats a manager as a writer', () => {
     // CouchDB has no way to express "may change who else has access", so from the database's
     // point of view a manager is simply somebody who may write.
-    expect(securityFor([{ role: 'manage', userid: GRACE }]).writers.names).toEqual([GRACE])
+    expect(securityFor([{ role: 'manage', userid: GRACE }], ACTIVE).writers.names).toEqual([GRACE])
   })
 
   it('grants nothing by role', () => {
     // A `roles` entry grants access to everybody holding it. This application's access is per
     // person, and a role here is the one way to share every project with every account at once.
-    expect(securityFor(owned).members.roles).toEqual([])
+    expect(securityFor(owned, ACTIVE).members.roles).toEqual([])
   })
 
   it('says nothing about admins', () => {
     // `_security.admins` would let somebody rewrite `_security` itself, which is the API's job
     // and nobody else's — a project admin could grant themselves anything.
-    expect(securityFor(owned)).not.toHaveProperty('admins')
+    expect(securityFor(owned, ACTIVE)).not.toHaveProperty('admins')
   })
 
   it('gives an empty project an empty membership rather than an absent one', () => {
     // `{}` and `{members: {names: []}}` are different to CouchDB: an absent `members` means
     // *any authenticated user may read*, which is the default a fresh database has.
-    expect(securityFor([])).toEqual({
+    expect(securityFor([], ACTIVE)).toEqual({
       members: { names: [], roles: [] },
       writers: { names: [] },
       owners: { names: [] },
     })
+  })
+})
+
+describe('what CouchDB is told about an archived project', () => {
+  it('says so, so the validator refuses every write', () => {
+    expect(securityFor(owned, { archived: true })).toMatchObject({ archived: true })
+  })
+
+  it('leaves the key out of an active project rather than writing false', () => {
+    // Absent is the shape every project had before archiving was enforced, and the validator
+    // only acts on `true`; writing `false` would put a second spelling of "active" into CouchDB.
+    expect(securityFor(owned, { archived: false })).not.toHaveProperty('archived')
+  })
+
+  it('keeps the participants exactly as an active project has them', () => {
+    const { archived: _archived, ...rest } = securityFor(owned, { archived: true })
+    expect(rest).toEqual(securityFor(owned, { archived: false }))
   })
 })
 
