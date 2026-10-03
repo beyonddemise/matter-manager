@@ -149,21 +149,21 @@ function incoming(url: string, headers: Record<string, string> = {}, method = 'G
 }
 
 describe('the headers sent upstream', () => {
-  it('forwards the session cookie to the API', () => {
+  it('forwards the handoff cookie to the API', () => {
     const headers = upstreamHeaders(
-      incoming('https://app.matter-manager.io/api/projects', { cookie: 'mm_session=abc' }),
+      incoming('https://app.matter-manager.io/api/projects', { cookie: 'mm_handoff=abc' }),
       'api',
     )
-    expect(headers.get('cookie')).toBe('mm_session=abc')
+    expect(headers.get('cookie')).toBe('mm_handoff=abc')
   })
 
   it('strips the cookie on the way to CouchDB', () => {
-    // The session cookie is Path=/, so the browser attaches it to every /db/* request without
+    // The handoff cookie is Path=/, so the browser attaches it to every /db/* request without
     // being asked. CouchDB has no use for it - replication authenticates with the bearer JWT -
-    // so forwarding it ships a thirty-day credential to a different service, and into its
-    // logs, on every replication request. Nothing about that failure is visible: it works.
+    // so forwarding it ships a sign-in credential to a different service, and into its logs,
+    // on every replication request. Nothing about that failure is visible: it works.
     const headers = upstreamHeaders(
-      incoming('https://app.matter-manager.io/db/project_local', { cookie: 'mm_session=abc' }),
+      incoming('https://app.matter-manager.io/db/project_local', { cookie: 'mm_handoff=abc' }),
       'db',
     )
     expect(headers.get('cookie')).toBeNull()
@@ -287,10 +287,10 @@ describe('the response handed back to the browser', () => {
     // object keeps the last and loses the first, leaving a cookie the user believed they had
     // cleared - which is why this is `new Response(body, upstream)` and not a hand-copied map.
     const upstream = new Response(null, { status: 204 })
-    upstream.headers.append('set-cookie', 'mm_session=; Max-Age=0; Path=/')
+    upstream.headers.append('set-cookie', 'mm_handoff=; Max-Age=0; Path=/')
     upstream.headers.append('set-cookie', 'mm_flow=; Max-Age=0; Path=/')
     expect(toResponse(upstream).headers.getSetCookie()).toEqual([
-      'mm_session=; Max-Age=0; Path=/',
+      'mm_handoff=; Max-Age=0; Path=/',
       'mm_flow=; Max-Age=0; Path=/',
     ])
   })
@@ -383,8 +383,8 @@ describe('forwarding a request', () => {
   })
 
   it('strips the cookie on the real /db path, not just in the upstreamHeaders helper', async () => {
-    // The spec's failure-modes table calls this the one row with no natural symptom: "session
-    // cookie forwarded to CouchDB — silent credential leak, no symptom at all." The unit test on
+    // The spec's failure-modes table calls this the one row with no natural symptom: a cookie
+    // forwarded to CouchDB is a silent credential leak with no symptom at all. The unit test on
     // `upstreamHeaders` above calls it directly with a literal `'db'` and proves the stripping
     // rule is right; it says nothing about the wiring that decides which literal `forward`
     // actually passes. This is the guard for that wiring — swap `kind` for a hardcoded `'api'`
@@ -393,7 +393,7 @@ describe('forwarding a request', () => {
     await forward(
       {
         request: incoming('https://app.matter-manager.io/db/project_local', {
-          cookie: 'mm_session=abc',
+          cookie: 'mm_handoff=abc',
         }),
         env: LIVE,
       },
@@ -411,14 +411,14 @@ describe('forwarding a request', () => {
     await forward(
       {
         request: incoming('https://app.matter-manager.io/api/projects', {
-          cookie: 'mm_session=abc',
+          cookie: 'mm_handoff=abc',
         }),
         env: LIVE,
       },
       'api',
       impl,
     )
-    expect((calls[0]?.init.headers as Headers | undefined)?.get('cookie')).toBe('mm_session=abc')
+    expect((calls[0]?.init.headers as Headers | undefined)?.get('cookie')).toBe('mm_handoff=abc')
   })
 
   it('hands the request body straight to the upstream, unbuffered', async () => {

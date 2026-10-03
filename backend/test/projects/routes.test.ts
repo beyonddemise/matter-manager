@@ -1,19 +1,27 @@
 import { generateKeyPairSync } from 'node:crypto'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { mintToken, type SigningKey } from '../../src/auth/jwt.js'
+import type { DenyList } from '../../src/auth/deny-list.js'
+import { denyList } from '../../src/auth/deny-list.js'
+import { mintToken, type SigningKey, verifyToken } from '../../src/auth/jwt.js'
+import { refreshStore } from '../../src/auth/refresh-store.js'
 import { type CouchClient, CouchError } from '../../src/couch/client.js'
 import type { Action, Plan, Principal } from '../../src/domain/index.js'
 import { NotEntitledError, gate as realGate } from '../../src/entitlements/gate.js'
 import { PROBLEM_JSON } from '../../src/problem.js'
-import { profileStore, userDocumentId } from '../../src/profile/store.js'
 import { forgetRegistry, REGISTRY_DATABASE } from '../../src/projects/registry.js'
 import { buildServer, type Server } from '../../src/server.js'
+import { forgetUsersDatabase, USERS_DB } from '../../src/users/database.js'
+import { recordEnsurer } from '../../src/users/ensure.js'
+import { userDocId } from '../../src/users/key.js'
+import { userRecords } from '../../src/users/records.js'
 import { loadContract, operationsOf, validate } from '../support/contract.js'
 import { type CouchFailures, type FakeCouch, fakeCouch } from '../support/couch.js'
+import { accessTokenFor } from '../support/tokens.js'
 
 const OWNER = 'google|1234'
 /** The caller in the capacity tests. Distinct from {@link OWNER}, which owns nothing here. */
 const SUBJECT = 'user-1'
+const SUBJECT_EMAIL = 'user1@example.test'
 const PROJECT_ID = '8f14e45f-ceea-467a-9c0e-1b2c3d4e5f60'
 const DATABASE = `project_${PROJECT_ID}`
 
@@ -24,9 +32,20 @@ function signingKey(): SigningKey {
 
 const KEY = signingKey()
 
-/** A valid access token for `sub`. */
+/** The address each subject in this file signed in with, so a token carries it as production's do. */
+const EMAILS: Readonly<Record<string, string>> = {
+  [OWNER]: 'ada@example.test',
+  [SUBJECT]: SUBJECT_EMAIL,
+  'google|grace': 'grace@example.test',
+}
+
+/**
+ * A valid access token for `sub`, with the claims `/auth/token` mints — the address included,
+ * because the routes read the caller's own record and offers by it. A subject not listed above
+ * gets an address of its own, so it can never be mistaken for somebody else's.
+ */
 const tokenFor = (sub: string) =>
-  mintToken(KEY, { purpose: 'access', sub, exp: Math.floor(Date.now() / 1000) + 3600 })
+  accessTokenFor(KEY, { sub, email: EMAILS[sub] ?? `${sub.replace(/\W/g, '-')}@example.test` })
 
 /** The whole header value, for the requests that are written out rather than built by `create`. */
 const bearer = (sub: string) => `Bearer ${tokenFor(sub)}`
@@ -90,13 +109,23 @@ let couch: FakeCouch
 
 /** A server with the project routes wired to a fake CouchDB and a watchable gate. */
 function server(
-  options: { fails?: CouchFailures; gateRefuses?: boolean; registryConflicts?: boolean } = {},
+  options: {
+    fails?: CouchFailures
+    gateRefuses?: boolean
+    registryConflicts?: boolean
+    /** Signed-out access tokens, as the auth routes would write them. */
+    deny?: DenyList
+    /** Leave `findUser` to its default, the real user records, instead of the stub below. */
+    realLookups?: boolean
+  } = {},
 ) {
+  forgetUsersDatabase()
   couch = fakeCouch(options.fails === undefined ? {} : { fails: options.fails })
   const refused: string[] = []
   const client =
     options.registryConflicts === true ? conflictingRegistry(couch.couch, refused) : couch.couch
   const gateCalls: Array<{ principal: Principal; action: Action }> = []
+  const records = userRecords(client)
 
   app = buildServer({
     logger: false,
@@ -104,10 +133,16 @@ function server(
       couch: client,
       key: KEY,
       validator: () => 'function (newDoc) { return newDoc }',
-      // The real store against the fake CouchDB, so a test states a plan by seeding the
-      // `_users` document an operator would have edited - rather than by stubbing the read
-      // and proving only that a stub returns what it was given.
-      profiles: profileStore(client),
+      // The real records against the fake CouchDB, so a test states a plan by seeding the
+      // record an operator would have edited - rather than by stubbing the read and proving
+      // only that a stub returns what it was given.
+      records,
+      // The real ensurer over the same records, as composition wires it, so a test sees the
+      // record acceptance creates rather than a stub's account of it.
+      ensureRecord: recordEnsurer(
+        records,
+        refreshStore(records, () => Math.floor(Date.now() / 1000)),
+      ),
       newId: () => PROJECT_ID,
       clock: () => '2026-08-27T09:00:00.000Z',
       // A spy *over* the real gate, not a stand-in for it. A recording gate that always
@@ -118,16 +153,17 @@ function server(
         if (options.gateRefuses === true) throw new NotEntitledError(action)
         realGate(principal, action, project)
       },
-      findUser: async (value: string) =>
-        value.includes('grace')
-          ? { sub: 'google|grace', email: 'grace@example.test' }
-          : value === OWNER
-            ? { sub: OWNER, email: 'ada@example.test' }
-            : undefined,
-      identityOf: async (sub: string) =>
-        sub === 'google|grace'
-          ? { sub, email: 'grace@example.test', emailVerified: true }
-          : { sub, email: 'ada@example.test', emailVerified: true },
+      ...(options.realLookups === true
+        ? {}
+        : {
+            findUser: async (value: string) =>
+              value.includes('grace')
+                ? { sub: 'google|grace', email: 'grace@example.test' }
+                : value === OWNER
+                  ? { sub: OWNER, email: 'ada@example.test' }
+                  : undefined,
+          }),
+      ...(options.deny === undefined ? {} : { deny: options.deny }),
       millis: () => Date.parse('2026-08-27T09:00:00.000Z'),
     },
   })
@@ -335,7 +371,7 @@ describe('a request that will not do', () => {
 
 describe('when CouchDB cannot say what the caller already has', () => {
   // `principalFor` does three pieces of I/O before the gate is asked — `ensureRegistry`, the
-  // owned-projects view, and the profile read — and any of them can raise `CouchError`. The
+  // owned-projects view, and the user-record read — and any of them can raise `CouchError`. The
   // call sat outside every try in the handler, so a CouchDB failure there escaped as a raw
   // Fastify 500 carrying CouchDB's own message, on the one route that has a test named "says
   // nothing about CouchDB". The failure walked past it because it happened before the code that
@@ -417,6 +453,34 @@ describe('when provisioning fails', () => {
     const response = await create(built, { name: 'Musterstraße 12' })
 
     expect(response.body).not.toContain(DATABASE)
+  })
+})
+
+describe('a signed-out access token', () => {
+  it('is refused by the project routes with 401', async () => {
+    // The deny list protects this API, not CouchDB. A route that forgot to hand it to
+    // `bearerSubject` would go on honouring a token the user had signed out.
+    const deny = denyList(() => Math.floor(Date.now() / 1000))
+    const { app: built } = server({ deny })
+    const token = mintToken(KEY, {
+      purpose: 'access',
+      sub: OWNER,
+      jti: 'signed-out-jti',
+      exp: Math.floor(Date.now() / 1000) + 3600,
+    })
+    const request = () =>
+      built.inject({
+        method: 'GET',
+        url: '/projects',
+        headers: { authorization: `Bearer ${token}` },
+      })
+
+    expect((await request()).statusCode).toBe(200)
+
+    const { exp } = verifyToken(token, KEY.publicKey, 'access')
+    deny.deny('signed-out-jti', exp)
+
+    expect((await request()).statusCode).toBe(401)
   })
 })
 
@@ -964,7 +1028,7 @@ describe('sharing a project', () => {
   describe('when CouchDB cannot say what the caller already has', () => {
     // `principalFor` is the same function `POST /projects` wraps, shared rather than
     // duplicated — and until this fix, this route called it outside every `try`. `ensureRegistry`,
-    // the owned-projects view and the profile read can each raise `CouchError`, and unwrapped
+    // the owned-projects view and the user-record read can each raise `CouchError`, and unwrapped
     // that escaped as a raw Fastify 500 carrying CouchDB's own message, on a route whose every
     // other failure is deliberately mapped and scrubbed.
 
@@ -1158,6 +1222,192 @@ describe('handing a project to somebody else', () => {
     ])
   })
 
+  describe("whatever the recipient's record says", () => {
+    /** Grace's record, with or without the subject sign-in would have written. */
+    const withGraceRecord = (built: ReturnType<typeof server>, sub?: string) => {
+      built.couch.documents.set(`${USERS_DB}/${userDocId('grace@example.test')}`, {
+        _id: userDocId('grace@example.test'),
+        type: 'user',
+        email: 'grace@example.test',
+        ...(sub === undefined ? {} : { sub }),
+      })
+      return built
+    }
+
+    const accept = (built: ReturnType<typeof server>) =>
+      built.app.inject({
+        method: 'POST',
+        url: `/transfers/${PROJECT_ID}`,
+        headers: { authorization: `Bearer ${tokenFor('google|grace')}` },
+      })
+
+    it('accepts for a record that carries a subject', async () => {
+      const built = withGraceRecord(seedProject(server({ realLookups: true })), 'google|grace')
+      await transfer(built.app, { toEmail: 'grace@example.test' })
+
+      expect((await accept(built)).statusCode).toBe(204)
+    })
+
+    it('fills in the subject on a record an operator created by address', async () => {
+      const built = withGraceRecord(seedProject(server({ realLookups: true })))
+      await transfer(built.app, { toEmail: 'grace@example.test' })
+      await accept(built)
+
+      expect((await userRecords(built.couch.couch).read('grace@example.test'))?.sub).toBe(
+        'google|grace',
+      )
+    })
+
+    it('accepts for a record an operator created by address, before it has a subject', async () => {
+      // `PUT /customer` creates a record with no `sub`. The recipient is identified by the
+      // verified address on their token, so what the record lacks does not matter: the offer
+      // was made to that address, and the token proves they hold it.
+      const built = withGraceRecord(seedProject(server({ realLookups: true })))
+      await transfer(built.app, { toEmail: 'grace@example.test' })
+
+      expect((await accept(built)).statusCode).toBe(204)
+      expect(
+        (built.couch.documents.get(`projects/project:${PROJECT_ID}`) as { participants: unknown[] })
+          .participants,
+      ).toEqual([{ role: 'owner', userid: 'google|grace' }])
+    })
+  })
+
+  describe('for somebody who has only signed in', () => {
+    // No record, and no stubbed lookups: the recipient exists only as the verified address and
+    // subject on their access token, which is what signing in alone leaves behind. Under
+    // `_users` such a person had a document; under user records they have none, so the caller's
+    // identity has to come from the token or they cannot see an offer made to them at all.
+    const grace = () =>
+      `Bearer ${accessTokenFor(KEY, { sub: 'google|grace', email: 'grace@example.test' })}`
+
+    const offered = async () => {
+      const built = seedProject(server({ realLookups: true }))
+      await transfer(built.app, { toEmail: 'grace@example.test' })
+      built.couch.rows = [
+        {
+          value: {
+            _id: `transfer:${PROJECT_ID}`,
+            type: 'transfer',
+            projectId: PROJECT_ID,
+            toEmail: 'grace@example.test',
+            fromSub: OWNER,
+            retainAccess: 'none',
+            createdAt: '2026-08-27T09:00:00.000Z',
+            expiresAt: '2026-09-10T09:00:00.000Z',
+          },
+        },
+      ]
+      return built
+    }
+
+    it('lists the offer', async () => {
+      const built = await offered()
+      const response = await built.app.inject({
+        method: 'GET',
+        url: '/transfers',
+        headers: { authorization: grace() },
+      })
+
+      expect(response.json()).toEqual([
+        {
+          projectId: PROJECT_ID,
+          projectName: 'Musterstraße 12',
+          retainAccess: 'none',
+          expiresAt: '2026-09-10T09:00:00.000Z',
+        },
+      ])
+    })
+
+    it('accepts it', async () => {
+      const built = await offered()
+      const response = await built.app.inject({
+        method: 'POST',
+        url: `/transfers/${PROJECT_ID}`,
+        headers: { authorization: grace() },
+      })
+
+      expect(response.statusCode).toBe(204)
+      expect(
+        (built.couch.documents.get(`projects/project:${PROJECT_ID}`) as { participants: unknown[] })
+          .participants,
+      ).toEqual([{ role: 'owner', userid: 'google|grace' }])
+    })
+
+    /** The members of the project as the new owner sees them. */
+    const membersAsGrace = (built: Awaited<ReturnType<typeof offered>>) => {
+      // What CouchDB's `by_sub` view emits for a record carrying Grace's subject (the map itself
+      // is executed in `users/database.test.ts`). The fake does not compute views, and the
+      // document it points at exists only if acceptance created it.
+      built.couch.rowsByDesign.by_sub = [
+        { id: userDocId('grace@example.test'), key: 'google|grace', value: null },
+      ]
+      return built.app.inject({
+        method: 'GET',
+        url: `/projects/${PROJECT_ID}/members`,
+        headers: { authorization: grace() },
+      })
+    }
+
+    it('creates their record on acceptance, so the new owner has an address', async () => {
+      // An owner nobody can resolve is listed with an empty address. Acceptance is the moment
+      // this person starts to own something, so it is the moment the server keeps a record,
+      // exactly as accepting an invitation at sign-in does.
+      const built = await offered()
+      await built.app.inject({
+        method: 'POST',
+        url: `/transfers/${PROJECT_ID}`,
+        headers: { authorization: grace() },
+      })
+
+      expect(await userRecords(built.couch.couch).read('grace@example.test')).toMatchObject({
+        sub: 'google|grace',
+        email: 'grace@example.test',
+      })
+      expect((await membersAsGrace(built)).json()).toEqual([
+        { sub: 'google|grace', email: 'grace@example.test', role: 'owner' },
+      ])
+    })
+
+    it('creates no record when the acceptance is refused', async () => {
+      // Somebody the offer was not made to must not get a record by asking.
+      const built = await offered()
+      await built.app.inject({
+        method: 'POST',
+        url: `/transfers/${PROJECT_ID}`,
+        headers: {
+          authorization: `Bearer ${accessTokenFor(KEY, { sub: 'google|eve', email: 'eve@example.test' })}`,
+        },
+      })
+
+      expect(await userRecords(built.couch.couch).read('eve@example.test')).toBeUndefined()
+    })
+
+    it('declines it', async () => {
+      const built = await offered()
+      const response = await built.app.inject({
+        method: 'DELETE',
+        url: `/transfers/${PROJECT_ID}`,
+        headers: { authorization: grace() },
+      })
+
+      expect(response.statusCode).toBe(204)
+    })
+
+    it('still refuses somebody the offer was not made to', async () => {
+      const built = await offered()
+      const response = await built.app.inject({
+        method: 'POST',
+        url: `/transfers/${PROJECT_ID}`,
+        headers: {
+          authorization: `Bearer ${accessTokenFor(KEY, { sub: OWNER, email: 'ada@example.test' })}`,
+        },
+      })
+
+      expect(response.statusCode).toBe(404)
+    })
+  })
+
   it('is 404 when somebody else tries to accept', async () => {
     const built = seedProject(server())
     await transfer(built.app, { toEmail: 'grace@example.test' })
@@ -1264,14 +1514,14 @@ describe('handing a project to somebody else', () => {
 })
 
 /**
- * A server whose registry already holds what this caller owns, and whose `_users` document
+ * A server whose registry already holds what this caller owns, and whose user record
  * carries their plan.
  *
  * Separate from {@link server} because these tests are about a *precondition*: what matters is
  * how many projects exist before the request, and reaching that state by creating them would
  * mean driving the very route under test through the very limit under test.
  *
- * @param options.plan what the `_users` document holds, as an operator would have typed it
+ * @param options.plan what the user record holds, as an operator would have typed it
  * @param options.owned how many projects this subject owns
  * @param options.archived whether those owned projects are archived - they count either way (#55)
  * @param options.memberOf how many further projects this subject can see but does not own
@@ -1284,13 +1534,16 @@ function serverWithProjects(options: {
 }): Server {
   const built = server()
 
-  built.couch.documents.set(`_users/${userDocumentId(SUBJECT)}`, {
-    _id: userDocumentId(SUBJECT),
-    name: SUBJECT,
-    roles: [],
+  // The record, keyed by the address the caller's token carries — which is how the route finds
+  // it. The `by_sub` row is there as it would be in CouchDB, and the route must not need it.
+  built.couch.documents.set(`${USERS_DB}/${userDocId(SUBJECT_EMAIL)}`, {
+    _id: userDocId(SUBJECT_EMAIL),
     type: 'user',
+    sub: SUBJECT,
+    email: SUBJECT_EMAIL,
     plan: options.plan,
   })
+  built.couch.rowsByDesign.by_sub = [{ id: userDocId(SUBJECT_EMAIL), key: SUBJECT, value: null }]
 
   // One row per participation, which is what the view emits: a project somebody shared with
   // this subject is a row of theirs carrying somebody else's `ownerId`. `read` rather than the
@@ -1315,6 +1568,40 @@ function serverWithProjects(options: {
 
   return built.app
 }
+
+describe("the caller's own record, found by the address on their token", () => {
+  it('reads a plan an operator set by address before the caller signed in again', async () => {
+    // `PUT /customer` creates a record by address alone, with no `sub`, so the `by_sub` view
+    // cannot find it. `/auth/token` and `/profile` read by address and already say `member`;
+    // this route must agree rather than answer `free` until the next sign-in.
+    const { app: built, couch: fake } = server()
+    await userRecords(fake.couch).setPlan(SUBJECT_EMAIL, 'member')
+    fake.rows = [
+      {
+        value: {
+          projectId: 'owned-0',
+          dbName: 'project_owned_0',
+          projectName: 'Project 0',
+          address: null,
+          role: 'owner',
+          archived: false,
+          ownerId: SUBJECT,
+        },
+      },
+    ]
+
+    const response = await built.inject({
+      method: 'POST',
+      url: '/projects',
+      headers: {
+        authorization: `Bearer ${accessTokenFor(KEY, { sub: SUBJECT, email: SUBJECT_EMAIL })}`,
+      },
+      payload: { name: 'Second' },
+    })
+
+    expect(response.statusCode).toBe(201)
+  })
+})
 
 describe('creating a project against the plan', () => {
   it('creates the first project on a free plan', async () => {
@@ -1431,9 +1718,9 @@ describe('creating a project against the plan', () => {
   })
 
   it('reads the plan from the account rather than assuming one', async () => {
-    // The positive control for the refusal above: a handler that ignored `_users` entirely and
+    // The positive control for the refusal above: a handler that ignored the record entirely and
     // hard-coded `free` would pass every test in this block but this one.
-    const built = serverWithProjects({ plan: 'user', owned: 1 })
+    const built = serverWithProjects({ plan: 'member', owned: 1 })
     const response = await built.inject({
       method: 'POST',
       url: '/projects',
@@ -1441,5 +1728,28 @@ describe('creating a project against the plan', () => {
       payload: { name: 'Second' },
     })
     expect(response.statusCode).toBe(201)
+  })
+
+  it('finds the record by the address on the token, not through the by_sub view', async () => {
+    // The record is keyed by address and the token carries the verified one, so the plan is one
+    // keyed read. The view is for *other* participants: a record an operator created by address
+    // has no `sub` and is invisible to it, which kept an upgraded user `free` here until their
+    // next sign-in. With the view emptied, the pro record must still lift the limit.
+    const built = serverWithProjects({ plan: 'pro', owned: 1 })
+    couch.rowsByDesign.by_sub = []
+    const response = await built.inject({
+      method: 'POST',
+      url: '/projects',
+      headers: { authorization: bearer(SUBJECT) },
+      payload: { name: 'Second' },
+    })
+    expect(response.statusCode).toBe(201)
+    expect(
+      couch.calls.some(
+        (call) =>
+          call.operation === 'view' &&
+          (call.detail as { design?: string } | undefined)?.design === 'by_sub',
+      ),
+    ).toBe(false)
   })
 })

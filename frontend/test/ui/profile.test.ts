@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { CachedProfile, LocalCache } from '../../src/data/index.js'
 import {
   cachedLocale,
@@ -7,6 +7,7 @@ import {
   profileApi,
   resolveProfileLocale,
 } from '../../src/ui/profile.js'
+import { forgetTokens, rememberAccessToken } from '../../src/ui/tokens.js'
 
 const PROFILE: Profile = {
   sub: 'google|1234',
@@ -189,11 +190,15 @@ describe('resolving the locale to render with', () => {
 })
 
 describe('talking to the profile endpoint', () => {
+  beforeEach(() => rememberAccessToken({ accessToken: 'tok', expiresIn: 3600 }))
+  afterEach(() => forgetTokens())
+
   function recording(status: number, body: unknown) {
     const calls: Array<{
       url: string
       method: string
       credentials: string | undefined
+      authorization: string | undefined
       body: string | undefined
     }> = []
     const impl = (async (url: string | URL, init?: RequestInit) => {
@@ -201,6 +206,7 @@ describe('talking to the profile endpoint', () => {
         url: String(url),
         method: init?.method ?? 'GET',
         credentials: init?.credentials,
+        authorization: (init?.headers as Record<string, string> | undefined)?.authorization,
         body: typeof init?.body === 'string' ? init.body : undefined,
       })
       return { ok: status < 400, status, json: async () => body } as Response
@@ -208,14 +214,24 @@ describe('talking to the profile endpoint', () => {
     return { impl, calls }
   }
 
-  it('sends the session cookie', async () => {
-    // The session is httpOnly — the page cannot read it and therefore cannot send it any other
-    // way. Without `credentials: 'include'` the request goes out unauthenticated and answers
-    // 401, which reads as "signed out" on a page that is signed in.
+  it('sends the access token as a bearer, and no cookie', async () => {
+    // The contract declares a bearer on `/profile`; the session cookie is no longer accepted
+    // there, so sending it would be asking for a 401.
+    rememberAccessToken({ accessToken: 'tok', expiresIn: 3600 })
     const { impl, calls } = recording(200, PROFILE)
     await profileApi('https://api.test', impl).read()
+    await profileApi('https://api.test', impl).update({ locale: 'de' })
 
-    expect(calls[0]?.credentials).toBe('include')
+    expect(calls.map((call) => call.authorization)).toEqual(['Bearer tok', 'Bearer tok'])
+    expect(calls.map((call) => call.credentials)).toEqual([undefined, undefined])
+  })
+
+  it('reads nothing, without a request, when no token is held', async () => {
+    forgetTokens()
+    const { impl, calls } = recording(200, PROFILE)
+
+    expect(await profileApi('https://api.test', impl).read()).toBeUndefined()
+    expect(calls).toEqual([])
   })
 
   it('reads a 401 as "not signed in" rather than as a failure', async () => {

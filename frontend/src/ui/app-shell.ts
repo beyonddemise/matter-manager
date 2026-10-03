@@ -6,7 +6,8 @@ import {
   followProfileLocale,
   projectSync,
   projects,
-  readSessionState,
+  requestTokens,
+  type TokenOutcome,
 } from './composition.js'
 import { browserConnectivity, type ConnectivitySource, watchConnectivity } from './connectivity.js'
 import {
@@ -18,7 +19,7 @@ import {
   switchableProjects,
   writeCurrentProjectId,
 } from './current-project.js'
-import { useProjectDatabase } from './db/project-database.js'
+import { localDatabase, useProjectDatabase } from './db/project-database.js'
 import { negotiateLocale } from './i18n/locale.js'
 import { activateLocale } from './i18n/localization.js'
 import { matchRoute } from './router/match.js'
@@ -30,9 +31,11 @@ import {
   type SchemePreference,
   writePreference,
 } from './scheme.js'
-import type { SessionState } from './session.js'
+import { type SessionState, sessionExpired } from './session.js'
 import type { SyncManager } from './sync/manager.js'
 import type { SyncState } from './sync/replication.js'
+import { startRefresher } from './token-refresher.js'
+import { forgetTokens, pouchRefreshTokenStore } from './tokens.js'
 import { applyUpdate } from './updates.js'
 import './views/add-device.js'
 import './views/rooms.js'
@@ -72,6 +75,42 @@ export const VIEWS: Readonly<Record<string, (params: ViewParams) => TemplateResu
   'edit-device': (params) => html`<edit-device-view uuid=${params.id ?? ''}></edit-device-view>`,
   rooms: () => html`<rooms-view></rooms-view>`,
   settings: () => html`<settings-view></settings-view>`,
+}
+
+/**
+ * Starts the real token refresher: the token exchange, a timer, and the browser's own `online`.
+ *
+ * Only a *regained* network triggers a retry. `watchConnectivity` reports the current state
+ * immediately, which would be a second request on top of the one `startRefresher` makes by
+ * itself, and a retry on going offline would only fail.
+ */
+function startRealRefresher(onOutcome: (outcome: TokenOutcome) => void): { stop(): void } {
+  const store = pouchRefreshTokenStore(localDatabase())
+  return startRefresher({
+    request: (signal) => requestTokens(store, fetch, signal),
+    onOutcome,
+    schedule: (run, ms) => {
+      const timer = setTimeout(run, ms)
+      return () => clearTimeout(timer)
+    },
+    onVisible: (run) => {
+      const onChange = () => {
+        if (document.visibilityState === 'visible') run()
+      }
+      document.addEventListener('visibilitychange', onChange)
+      return () => document.removeEventListener('visibilitychange', onChange)
+    },
+    onOnline: (run) => {
+      let first = true
+      return watchConnectivity(browserConnectivity(), (online) => {
+        if (first) {
+          first = false
+          return
+        }
+        if (online) run()
+      })
+    },
+  })
 }
 
 /**
@@ -117,7 +156,8 @@ export class AppShell extends LitElement {
     offered: { state: true },
     currentProjectId: { state: true },
     signingOut: { state: true },
-    readSession: { attribute: false },
+    refresher: { attribute: false },
+    sessionEndedNotice: { state: true },
     listProjects: { attribute: false },
     makeSync: { attribute: false },
     followLocale: { attribute: false },
@@ -157,9 +197,11 @@ export class AppShell extends LitElement {
   declare currentProjectId: string
   /** Whether the sign-out confirmation is open. */
   declare signingOut: boolean
+  /** Whether the "session ended" notice is showing. Dismissed by the reader, never by timeout. */
+  declare sessionEndedNotice: boolean
 
   /** Injected by tests. Unset in the application, where these reach the real API. */
-  declare readSession?: () => Promise<SessionState>
+  declare refresher?: (onOutcome: (outcome: TokenOutcome) => void) => { stop(): void }
   declare listProjects?: () => Promise<readonly SwitchableProject[]>
   declare makeSync?: (onState: (id: string, state: SyncState) => void) => SyncManager
   declare followLocale?: (onChange: (locale: string) => void) => Promise<unknown>
@@ -201,6 +243,7 @@ export class AppShell extends LitElement {
     this.offered = []
     this.currentProjectId = readCurrentProjectId(() => localStorage)
     this.signingOut = false
+    this.sessionEndedNotice = false
     this.hash = window.location.hash
     // Read once at construction. The write side (`cycleScheme`) keeps this field and
     // storage in sync itself, so there is no need to re-read on every render.
@@ -224,16 +267,77 @@ export class AppShell extends LitElement {
     // Not awaited, and nothing waits for it. The application is local-first: every view works
     // without a session, so holding the shell back on a network request would delay the whole
     // interface to answer a question that changes one button.
-    void (this.readSession ?? readSessionState)().then((state) => {
-      this.session = state
-      if (state === 'signed-in') void this.startSyncing()
-    })
+    this.tokenRefresher = (this.refresher ?? startRealRefresher)((outcome) =>
+      this.onTokenOutcome(outcome),
+    )
+  }
+
+  private tokenRefresher: { stop(): void } | undefined
+
+  /**
+   * What the shell does with each answer from the refresher.
+   *
+   * `unreachable` changes nothing, deliberately: being offline is ordinary here, and the
+   * refresher is already retrying. Replication starts on the *transition* into `signed-in`,
+   * because `refreshed` arrives again before every expiry and a second manager built each time
+   * would leak the first.
+   */
+  private onTokenOutcome(outcome: TokenOutcome): void {
+    switch (outcome.kind) {
+      case 'refreshed': {
+        const wasSignedIn = this.session === 'signed-in'
+        this.session = 'signed-in'
+        if (!wasSignedIn) void this.startSyncing()
+        return
+      }
+      case 'signed-out':
+        // Arriving after `signed-in`, this is a sign-out of this tab. This tab's exchange had no
+        // refresh token to send, for one of two reasons: another tab signed out and removed the
+        // stored token, or the local store could not be read (`read` reports an unreadable store
+        // as no token). Either way this tab cannot renew its session. Treated as the expired path
+        // without its notice — nothing was refused by the server — so replication stops and the
+        // in-memory token goes. Local data stays: removing it is a sign-out's decision, not a
+        // refresher's. On a first answer there is nothing running, and this only records the
+        // state.
+        if (this.session === 'signed-in') {
+          this.endReplication()
+          forgetTokens()
+        }
+        this.session = 'signed-out'
+        return
+      case 'ended':
+        // Local data stays: `sessionExpired` forgets the in-memory access token and nothing
+        // else. Replication is stopped because its token is now dead, and a manager retrying
+        // with it would only produce 401s.
+        this.endReplication()
+        this.session = sessionExpired({ forgetTokens })
+        this.sessionEndedNotice = true
+        return
+      case 'unreachable':
+        return
+    }
+  }
+
+  /**
+   * Stops replication for a session that has ended without the user signing out here.
+   *
+   * The generation moves first, as in `onSignOut`, so a startup still in flight cannot finish
+   * into the session that has just ended.
+   */
+  private endReplication(): void {
+    this.sessionGeneration += 1
+    this.sync?.stopAll()
+    this.sync = undefined
+    this.states.clear()
+    this.syncing = undefined
   }
 
   override disconnectedCallback(): void {
     // The same guard, for a shell torn down rather than signed out of. A replication left
     // running against a detached component is a request nobody will read the answer to.
     this.sessionGeneration += 1
+    this.tokenRefresher?.stop()
+    this.tokenRefresher = undefined
     this.sync?.stopAll()
     this.sync = undefined
     window.removeEventListener('hashchange', this.onHashChange)
@@ -488,6 +592,10 @@ export class AppShell extends LitElement {
     `
   }
 
+  private onDismissSessionEnded = (): void => {
+    this.sessionEndedNotice = false
+  }
+
   private onAskSignOut = (): void => {
     this.signingOut = true
   }
@@ -517,6 +625,10 @@ export class AppShell extends LitElement {
     // session that is ending - stopping what is running says nothing about what is about to
     // start.
     this.sessionGeneration += 1
+    // Stopped before the sign-out runs, so a refresh in flight cannot re-store a token that the
+    // sign-out is about to forget.
+    this.tokenRefresher?.stop()
+    this.tokenRefresher = undefined
     this.sync?.stopAll()
     this.sync = undefined
     this.states.clear()
@@ -600,6 +712,19 @@ export class AppShell extends LitElement {
                     </div>
                   </wa-callout>
                 `
+          }
+          ${
+            this.sessionEndedNotice
+              ? html`<wa-callout variant="warning" data-session-ended>
+                  <wa-icon slot="icon" name="triangle-exclamation"></wa-icon>
+                  <div class="wa-split wa-gap-m">
+                    <span>${msg('Your session has ended. Please sign in again.')}</span>
+                    <wa-button size="s" appearance="plain" @click=${this.onDismissSessionEnded}>
+                      ${msg('Dismiss')}
+                    </wa-button>
+                  </div>
+                </wa-callout>`
+              : ''
           }
           ${view && match ? view(match.params) : html`<not-found-view></not-found-view>`}
         </main>

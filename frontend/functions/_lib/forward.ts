@@ -160,10 +160,12 @@ export function upstreamHeaders(request: Request, kind: Upstream): Headers {
   stripHopByHop(headers)
   headers.delete('host')
 
-  // The session cookie is `Path=/`, so the browser attaches it to `/db/*` as readily as to
-  // `/api/*`. CouchDB authenticates replication with the bearer JWT and has no use for it, so
-  // forwarding would hand a thirty-day credential to a different service and write it into
-  // that service's logs on every request — with nothing anywhere looking wrong.
+  // The API's cookies (`mm_handoff`, `mm_flow`) are `Path=/`, so the browser attaches them to
+  // `/db/*` as readily as to `/api/*`, where `POST /auth/token` needs the handoff. CouchDB
+  // authenticates replication with the bearer JWT and has no use for either, so forwarding would
+  // hand a sign-in credential to a different service and write it into that service's logs on
+  // every request — with nothing anywhere looking wrong. Every cookie goes, whatever its name,
+  // so a cookie added later is covered without anybody remembering this line.
   if (kind === 'db') headers.delete('cookie')
 
   // Overwritten, never appended. The API runs with TRUST_PROXY=true and Fastify reads the

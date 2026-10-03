@@ -132,6 +132,18 @@ export function projectIsEditable(): boolean {
 export const LOCAL_CACHE_DATABASE_NAME = 'mm-local'
 
 let cache: LocalCache | undefined
+let localDb: PouchDB.Database | undefined
+
+/**
+ * The raw `mm-local` database, opening it on first use.
+ *
+ * Exposed for the refresh-token store, which keeps a `_local/` document beside the cache's
+ * own. Shared with {@link localProfileCache} so there is a single handle on the store.
+ */
+export function localDatabase(): PouchDB.Database {
+  localDb ??= new PouchDB(LOCAL_CACHE_DATABASE_NAME)
+  return localDb
+}
 
 /**
  * The local cache, opening the database on first use.
@@ -140,7 +152,7 @@ let cache: LocalCache | undefined
  * second handle on the same store.
  */
 export function localProfileCache(): LocalCache {
-  cache ??= localCache(new PouchDB(LOCAL_CACHE_DATABASE_NAME))
+  cache ??= localCache(localDatabase())
   return cache
 }
 
@@ -153,6 +165,7 @@ export function localProfileCache(): LocalCache {
  */
 export function forgetLocalProfileCache(): void {
   cache = undefined
+  localDb = undefined
 }
 
 /**
@@ -226,7 +239,7 @@ export async function removeLocalDatabases(
   // a memoised one that outlived its database fails every later read; and if a destroy fails,
   // the handle may point at a database that is now half gone.
   opened.clear()
-  cache = undefined
+  forgetLocalProfileCache()
 
   const outcomes = await Promise.allSettled(names.map((name) => destroy(name)))
   const failures = outcomes.flatMap((outcome) =>

@@ -112,8 +112,8 @@ DEV_API_TARGET=http://localhost:${API_PORT}
 DEV_COUCHDB_TARGET=${COUCHDB}
 
 # ES256 on EC P-256, and two different keys. CouchDB is given the public half of the first, so
-# anything signed with it is a database credential - which is why the session cookie gets its
-# own. See .env.example for the full reasoning.
+# anything signed with it is a database credential - which is why the refresh token, the handoff
+# cookie and the PKCE carrier get their own. See .env.example for the full reasoning.
 JWT_KEY_ID=dev
 JWT_PRIVATE_KEY="${newKey()}"
 JWT_SESSION_PRIVATE_KEY="${newKey()}"

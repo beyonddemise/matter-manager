@@ -10,6 +10,7 @@ import {
   transferId,
   transfersFor,
 } from '../../src/projects/transfers.js'
+import type { Seed } from '../../src/users/records.js'
 import { type FakeCouch, fakeCouch, operations } from '../support/couch.js'
 
 const INSTALLER = 'google|installer'
@@ -58,15 +59,17 @@ function registry(
   })
 }
 
-/** Dependencies that know both people. */
+/** Every record acceptance asked for, by the most recent {@link deps}. */
+let ensured: Seed[] = []
+
+/** Dependencies whose record ensurer records what it was asked for. */
 function deps(fake: FakeCouch) {
+  ensured = []
   return {
     couch: fake.couch,
-    findUser: async (value: string) => {
-      const lower = value.toLowerCase()
-      if (lower.includes('homeowner')) return { sub: HOMEOWNER, email: 'homeowner@example.test' }
-      if (lower.includes('installer')) return { sub: INSTALLER, email: 'installer@example.test' }
-      return undefined
+    ensureRecord: async (seed: Seed) => {
+      ensured.push(seed)
+      return { _id: 'user:x', type: 'user' as const, ...seed }
     },
   }
 }
@@ -107,6 +110,33 @@ describe('offering a project', () => {
     const fake = registry()
     await storeTransfer(fake.couch, offer())
 
+    expect(participantsIn(fake)).toEqual([{ role: 'owner', userid: INSTALLER }])
+    expect(operations(fake)).not.toContain('putSecurity')
+    // Nobody gets a record by being refused.
+    expect(ensured).toEqual([])
+  })
+
+  it("ensures the recipient's record once, from their identity", async () => {
+    // An owner has to be resolvable, and the recipient may have no record yet.
+    const fake = registry(undefined, offer())
+    await acceptTransfer(deps(fake), PROJECT_ID, { ...homeowner, name: 'Hanna' }, clock())
+
+    expect(ensured).toEqual([{ email: 'homeowner@example.test', sub: HOMEOWNER, name: 'Hanna' }])
+  })
+
+  it('writes nothing when the record cannot be ensured', async () => {
+    // Ensured before the transfer is written, so a failure leaves the project as it was.
+    const fake = registry(undefined, offer())
+    const failing = {
+      ...deps(fake),
+      ensureRecord: async () => {
+        throw new Error('matter_manager is down')
+      },
+    }
+
+    await expect(acceptTransfer(failing, PROJECT_ID, homeowner, clock())).rejects.toThrow(
+      /matter_manager/,
+    )
     expect(participantsIn(fake)).toEqual([{ role: 'owner', userid: INSTALLER }])
     expect(operations(fake)).not.toContain('putSecurity')
   })

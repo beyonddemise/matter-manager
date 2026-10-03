@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { refreshStore } from '../../src/auth/refresh-store.js'
 import {
   acceptInvitationsOnSignIn,
   BY_INVITEE_DESIGN,
@@ -12,6 +13,9 @@ import {
   storeInvitation,
 } from '../../src/projects/invitations.js'
 import { forgetRegistry, pointerId, REGISTRY_DATABASE } from '../../src/projects/registry.js'
+import { forgetUsersDatabase } from '../../src/users/database.js'
+import { recordEnsurer } from '../../src/users/ensure.js'
+import { userRecords } from '../../src/users/records.js'
 import { type FakeCouch, fakeCouch } from '../support/couch.js'
 
 const ADA = 'google|ada'
@@ -54,6 +58,7 @@ function registry(): FakeCouch {
 }
 
 beforeEach(() => {
+  forgetUsersDatabase()
   forgetRegistry()
   forgetInvitationIndex()
 })
@@ -294,7 +299,23 @@ describe('redeeming on sign-in', () => {
 })
 
 describe('accepting invitations as part of signing in', () => {
-  const identity = { sub: 'google|grace', email: 'grace@example.test', emailVerified: true }
+  const identity = {
+    sub: 'google|grace',
+    email: 'grace@example.test',
+    emailVerified: true,
+  } as const
+
+  /** Real records over the fake, so "the record exists" is a document and not a stub's answer. */
+  function wiring(fake: FakeCouch) {
+    const records = userRecords(fake.couch)
+    const ensure = vi.fn(
+      recordEnsurer(
+        records,
+        refreshStore(records, () => 0),
+      ),
+    )
+    return { records, ensure }
+  }
 
   function deps(fake: FakeCouch) {
     return {
@@ -308,38 +329,49 @@ describe('accepting invitations as part of signing in', () => {
     }
   }
 
-  it('records the account before redeeming', async () => {
+  it('creates no record for a sign-in with nothing to redeem', async () => {
+    const fake = registry()
+    const { records, ensure } = wiring(fake)
+
+    const result = await acceptInvitationsOnSignIn(deps(fake), records, ensure, clock())(identity)
+
+    expect(result).toEqual({ hasRecord: false })
+    expect(ensure).not.toHaveBeenCalled()
+  })
+
+  it('creates the record before redeeming, so the invitee resolves to a subject', async () => {
     // **The order is the whole point.** Redemption resolves the invitee's address to a subject
-    // through `_users`; until `rememberUser` has written that account there is nobody to
-    // resolve, and the invitation is silently never applied on the one sign-in it waited for.
-    const order: string[] = []
+    // through `findUser`, which finds only records with a `sub`. Redeemed first, the invitation
+    // is silently never applied on the one sign-in it waited for.
     const fake = registry()
     fake.rows = [{ value: invited() }]
+    const { records, ensure } = wiring(fake)
+    const resolved: Array<string | undefined> = []
 
-    await acceptInvitationsOnSignIn(
+    const result = await acceptInvitationsOnSignIn(
       {
         ...deps(fake),
         findUser: async (value: string) => {
-          order.push('resolve')
-          return value.toLowerCase().includes('grace')
-            ? { sub: 'google|grace', email: 'grace@example.test' }
-            : { sub: ADA, email: 'ada@example.test' }
+          if (value.includes('@')) resolved.push((await records.read(value))?.sub)
+          return deps(fake).findUser(value)
         },
       },
-      async () => {
-        order.push('remember')
-      },
+      records,
+      ensure,
       clock(),
     )(identity)
 
-    expect(order[0]).toBe('remember')
+    expect(result).toEqual({ hasRecord: true })
+    expect(resolved[0]).toBe('google|grace')
+    expect((await records.read('grace@example.test'))?.sub).toBe('google|grace')
   })
 
   it('applies the invitation', async () => {
     const fake = registry()
     fake.rows = [{ value: invited() }]
+    const { records, ensure } = wiring(fake)
 
-    await acceptInvitationsOnSignIn(deps(fake), async () => undefined, clock())(identity)
+    await acceptInvitationsOnSignIn(deps(fake), records, ensure, clock())(identity)
 
     expect(
       (
@@ -350,27 +382,44 @@ describe('accepting invitations as part of signing in', () => {
     ).toContainEqual({ role: 'read', userid: 'google|grace' })
   })
 
-  it('does not sign somebody in when recording the account failed', async () => {
-    // The window `rememberUser` already occupies: a failed sign-in can simply be repeated,
-    // whereas somebody signed in without the access they were invited to cannot notice.
+  it('fills in the subject of an operator-created record at sign-in', async () => {
     const fake = registry()
+    const { records, ensure } = wiring(fake)
+    await records.setPlan('grace@example.test', 'pro')
+
+    const result = await acceptInvitationsOnSignIn(deps(fake), records, ensure, clock())(identity)
+
+    expect(result).toEqual({ hasRecord: true })
+    expect(await records.read('grace@example.test')).toMatchObject({
+      sub: 'google|grace',
+      plan: 'pro',
+    })
+  })
+
+  it('does not redeem when creating the record failed, so the sign-in can be repeated', async () => {
+    // Nothing was applied and nothing was removed: the invitation is still there for the retry,
+    // where redeeming first would have spent it on an invitee no record resolves.
+    const fake = registry()
+    fake.rows = [{ value: invited() }]
+    const { records } = wiring(fake)
 
     await expect(
       acceptInvitationsOnSignIn(
         deps(fake),
+        records,
         async () => {
           throw new Error('storage refused')
         },
         clock(),
       )(identity),
     ).rejects.toThrow()
-  })
 
-  it('signs in normally when there is nothing waiting', async () => {
-    const fake = registry()
-
-    await expect(
-      acceptInvitationsOnSignIn(deps(fake), async () => undefined, clock())(identity),
-    ).resolves.toBeUndefined()
+    expect(
+      (
+        fake.documents.get(`${REGISTRY_DATABASE}/${pointerId(PROJECT_ID)}`) as {
+          participants: unknown[]
+        }
+      ).participants,
+    ).toEqual([{ role: 'owner', userid: ADA }])
   })
 })

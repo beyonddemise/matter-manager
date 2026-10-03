@@ -69,14 +69,15 @@ describe('a fully configured deployment', () => {
   })
 
   it('serves the profile routes', () => {
-    // Sign-in writes a `_users` document through the same store `GET /profile` reads. Wiring
-    // one without the other gives a user who can sign in and then cannot be shown their name.
+    // Sign-in and `GET /profile` share one set of user records. Wiring one without the other
+    // gives a user who can sign in and then cannot be shown their name.
     expect(routesFor(COMPLETE)).toEqual(expect.arrayContaining(['GET /profile', 'PATCH /profile']))
   })
 
   it('sends the browser back to the application, not to the API', () => {
     // `appOrigin` is where the callback redirects to when sign-in succeeds. Defaulting it to
-    // the API's own host would land the user on a JSON endpoint holding a session cookie.
+    // the API's own host would land the user on a JSON endpoint holding the handoff cookie,
+    // with no page there to exchange it.
     expect(serverOptions(COMPLETE).auth?.appOrigin).toBe('https://matter.example')
   })
 
@@ -146,7 +147,7 @@ describe('a deployment that is part-way through being set up', () => {
 
   it('serves no sign-in routes without a session key', () => {
     // **No fallback to JWT_PRIVATE_KEY.** That key is installed in CouchDB's `[jwt_keys]`, so
-    // signing sessions with it would make a thirty-day session cookie a thirty-day database
+    // signing refresh tokens with it would make a thirty-day refresh token a thirty-day database
     // credential — the exact thing the second key exists to remove. A deployment that forgot
     // should serve no sign-in rather than quietly reinstate it.
     const { JWT_SESSION_PRIVATE_KEY: _session, ...withoutSession } = COMPLETE
@@ -154,12 +155,12 @@ describe('a deployment that is part-way through being set up', () => {
     expect(routesFor(withoutSession)).not.toContain('GET /auth/google')
   })
 
-  it('serves no profile routes without a session key', () => {
-    // The profile authenticates by the session cookie, so without a key to verify one it is a
-    // route that can never admit anybody.
+  it('serves the profile routes without a session key', () => {
+    // The profile authenticates by bearer access token, which the CouchDB key verifies, so it
+    // no longer depends on the session key: whenever CouchDB and that key exist, it is served.
     const { JWT_SESSION_PRIVATE_KEY: _session, ...withoutSession } = COMPLETE
 
-    expect(routesFor(withoutSession)).not.toContain('GET /profile')
+    expect(routesFor(withoutSession)).toContain('GET /profile')
   })
 
   it('serves no sign-in routes when both keys are the same key', () => {
@@ -174,10 +175,12 @@ describe('a deployment that is part-way through being set up', () => {
     expect(routesFor(reused)).not.toContain('GET /auth/google')
   })
 
-  it('serves no profile routes when both keys are the same key', () => {
+  it('still serves the profile routes when both keys are the same key', () => {
+    // Only sign-in is refused for a reused key; the profile verifies access tokens with the
+    // CouchDB key alone.
     const reused = { ...COMPLETE, JWT_SESSION_PRIVATE_KEY: PEM }
 
-    expect(routesFor(reused)).not.toContain('GET /profile')
+    expect(routesFor(reused)).toContain('GET /profile')
   })
 
   it('notices reuse through a differently encoded copy of the same key', () => {

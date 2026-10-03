@@ -1,17 +1,23 @@
 import { generateKeyPairSync } from 'node:crypto'
 import { afterEach, describe, expect, it } from 'vitest'
-import { mintToken, signingKeyFromPem } from '../../src/auth/jwt.js'
-import type { CouchClient, Revision } from '../../src/couch/client.js'
-import { type Profile, profileStore, userDocumentId } from '../../src/profile/store.js'
+import { denyList } from '../../src/auth/deny-list.js'
+import { signingKeyFromPem, verifyToken } from '../../src/auth/jwt.js'
+import { refreshStore } from '../../src/auth/refresh-store.js'
 import { buildServer, type Server } from '../../src/server.js'
+import { forgetUsersDatabase, USERS_DB } from '../../src/users/database.js'
+import { recordEnsurer } from '../../src/users/ensure.js'
+import { userDocId } from '../../src/users/key.js'
+import { userRecords } from '../../src/users/records.js'
 import { loadContract, operationsOf, validate } from '../support/contract.js'
+import { fakeCouch } from '../support/couch.js'
+import { accessTokenFor } from '../support/tokens.js'
 
 /**
  * `PUT /customer` — the only route that can reach an account other than the caller's.
  *
- * Everything else authenticated by the session cookie takes its subject from that cookie, so the
+ * Everything else authenticated by the access token takes its subject from that token, so the
  * worst a broken check can do is let somebody change their own record. This route takes the
- * subject from the request body, which means a hole in the gate is one user rewriting another
+ * target from the request body, which means a hole in the gate is one user rewriting another
  * user's entitlements. Hence a test per refusal, and hence every test asserting what reached the
  * store rather than only the status code: a handler that answers 403 *after* writing is a
  * handler that reads as correct from the outside.
@@ -29,143 +35,97 @@ function newKey(kid = 'ec-test') {
   return signingKeyFromPem(kid, privateKey.export({ type: 'pkcs8', format: 'pem' }).toString())
 }
 
-/** A CouchDB holding documents in a Map. Enough for `_users`, which is one document per user. */
-function fakeCouch(seed: Record<string, Record<string, unknown>> = {}) {
-  const documents = new Map<string, Record<string, unknown>>(Object.entries(seed))
-  const writes: Array<Record<string, unknown>> = []
-
-  const couch = {
-    async getDoc<T extends Revision>(database: string, id: string) {
-      return documents.get(`${database}/${id}`) as T | undefined
-    },
-    async putDoc<T extends Revision>(database: string, document: T) {
-      writes.push(document as unknown as Record<string, unknown>)
-      documents.set(`${database}/${document._id}`, {
-        ...(document as unknown as Record<string, unknown>),
-        _rev: '2-b',
-      })
-      return { id: document._id, rev: '2-b' }
-    },
-  } as unknown as CouchClient
-
-  return { couch, documents, writes }
-}
-
-/** One `_users` document, at the id CouchDB itself would use. */
-const userDoc = (sub: string, roles: readonly string[] = []) => ({
-  [`_users/${userDocumentId(sub)}`]: {
-    _id: userDocumentId(sub),
-    _rev: '1-a',
-    name: sub,
-    roles,
-    type: 'user',
-    email: `${sub}@example.test`,
-    displayName: sub,
-    locale: 'de',
-  },
-})
-
-/** The caller. Named rather than reused from the subjects, so "not myself" stays visible. */
-const CALLER = 'operator'
+/** The operator, holding the role in their record. */
+const OPERATOR = { sub: 'op|1', email: 'operator@example.test', name: 'Op' }
+/** An ordinary signed-in user whose record carries no role. */
+const ADA = { sub: 'google|1234', email: 'ada@example.com', name: 'Ada' }
 
 /**
- * A server whose caller holds exactly `callerRoles`, plus a `_users` document for each name in
- * `subjects` — and none for any other name, which is how the 404 case is arranged.
+ * A server with only the profile routes wired (which is what registers `/customer`), over a
+ * fake CouchDB holding `matter_manager`. `callerRoles` is written into the operator's record
+ * directly in `fake.documents`, which is the Fauxton equivalent: roles are granted by editing a
+ * document, never through the API.
  */
 function customerServer({
-  callerRoles,
-  subjects,
+  callerRoles = ['customerservice'],
 }: {
-  callerRoles: readonly string[]
-  subjects: readonly string[]
-}) {
-  const key = newKey()
-  const { couch, writes } = fakeCouch(
-    Object.assign({}, userDoc(CALLER, callerRoles), ...subjects.map((subject) => userDoc(subject))),
-  )
-  const store = profileStore(couch)
-  app = buildServer({ logger: false, profile: { store, sessionKey: key } })
-
-  const token = mintToken(key, {
-    purpose: 'session',
-    sub: CALLER,
-    exp: Math.floor(Date.now() / 1000) + 3600,
+  callerRoles?: readonly string[]
+} = {}) {
+  forgetUsersDatabase()
+  const now = () => Math.floor(Date.now() / 1000)
+  const fake = fakeCouch()
+  fake.documents.set(`${USERS_DB}/${userDocId(OPERATOR.email)}`, {
+    _id: userDocId(OPERATOR.email),
+    _rev: '1-a',
+    type: 'user',
+    sub: OPERATOR.sub,
+    email: OPERATOR.email,
+    roles: callerRoles,
   })
-
+  const records = userRecords(fake.couch)
+  const refresh = refreshStore(records, now)
+  const deny = denyList(now)
+  const key = newKey()
+  app = buildServer({
+    logger: false,
+    profile: { records, ensureRecord: recordEnsurer(records, refresh), key, deny },
+  })
   return {
     app,
-    cookie: `mm_session=${encodeURIComponent(token)}`,
-    // Read back through the store rather than out of the raw document, so a document with no
-    // `plan` at all reads as `free` here the same way it reads as `free` everywhere else.
-    storedPlan: async (sub: string) => (await store.read(sub))?.plan,
-    /** Every document handed to CouchDB. A refused request must add nothing to this. */
-    writes,
+    key,
+    records,
+    deny,
+    fake,
+    /** Every document handed to CouchDB for writing. A refused request must add none. */
+    writes: () =>
+      fake.calls.filter(
+        (call) =>
+          call.operation === 'putDoc' &&
+          String((call.detail as { _id?: string } | undefined)?._id).startsWith('user:'),
+      ),
+    asOperator: { authorization: `Bearer ${accessTokenFor(key, OPERATOR)}` },
+    asAda: { authorization: `Bearer ${accessTokenFor(key, ADA)}` },
   }
 }
 
 /** One PUT, since every test below is the same request with a different body or credential. */
-const put = (server: Server, payload: Record<string, unknown>, cookie?: string) =>
-  server.inject({
-    method: 'PUT',
-    url: '/customer',
-    headers: cookie === undefined ? {} : { cookie, 'content-type': 'application/json' },
-    payload,
-  })
+const put = (
+  server: Server,
+  payload: Record<string, unknown>,
+  headers: Record<string, string> = {},
+) => server.inject({ method: 'PUT', url: '/customer', headers, payload })
 
 describe('PUT /customer', () => {
-  it("sets another account's plan for a role holder", async () => {
-    // The reason this route exists: PATCH /profile can only ever reach the caller, so without
-    // it an operator can upgrade themselves and nobody else.
-    const {
-      app: server,
-      cookie,
-      storedPlan,
-    } = customerServer({
-      callerRoles: ['customerservice'],
-      subjects: ['other'],
-    })
-    const response = await put(server, { sub: 'other', plan: 'user' }, cookie)
+  it('creates the record of somebody who has only ever signed in, and their next refresh carries the plan', async () => {
+    const { app: server, records, asOperator } = customerServer()
+    const res = await put(server, { email: 'New@Example.com', plan: 'member' }, asOperator)
 
-    expect(response.statusCode).toBe(200)
-    expect(await storedPlan('other')).toBe('user')
-    // The body has to agree with the store, and it has to describe the *named* account rather
-    // than the caller — which is the whole difference between this route and PATCH /profile.
-    expect((response.json() as Profile).sub).toBe('other')
-    expect((response.json() as Profile).plan).toBe('user')
+    expect(res.statusCode).toBe(200)
+    expect(res.json()).toMatchObject({ email: 'New@Example.com', plan: 'member', projectLimit: 5 })
+    expect((await records.read('new@example.com'))?.plan).toBe('member')
   })
 
-  it("leaves the caller's own plan alone", async () => {
-    // The mutation this pins: a handler that read `sub` from the session instead of the body
-    // would pass the test above only if the caller and the subject were the same account, and
-    // would otherwise upgrade the operator and nobody else — silently, with a 200.
-    const {
-      app: server,
-      cookie,
-      storedPlan,
-    } = customerServer({
-      callerRoles: ['customerservice'],
-      subjects: ['other'],
-    })
+  it("sets an existing account's plan and leaves the caller's own alone", async () => {
+    // The mutation this pins: a handler that read the target from the session instead of the
+    // body would upgrade the operator and nobody else, silently, with a 200.
+    const { app: server, records, asOperator } = customerServer()
+    await records.setPlan('other@example.test', 'free')
 
-    expect((await put(server, { sub: 'other', plan: 'pro' }, cookie)).statusCode).toBe(200)
-    expect(await storedPlan('other')).toBe('pro')
-    expect(await storedPlan(CALLER)).toBe('free')
+    expect(
+      (await put(server, { email: 'other@example.test', plan: 'pro' }, asOperator)).statusCode,
+    ).toBe(200)
+    expect((await records.read('other@example.test'))?.plan).toBe('pro')
+    expect((await records.read(OPERATOR.email))?.plan).toBeUndefined()
   })
 
-  it('refuses a caller without the role', async () => {
-    const {
-      app: server,
-      cookie,
-      storedPlan,
-    } = customerServer({
-      callerRoles: [],
-      subjects: ['other'],
-    })
-    const response = await put(server, { sub: 'other', plan: 'pro' }, cookie)
+  it('refuses a caller without the role, and writes nothing', async () => {
+    const { app: server, asAda, writes, records } = customerServer()
+    const res = await put(server, { email: 'other@example.test', plan: 'pro' }, asAda)
 
-    expect(response.statusCode).toBe(403)
-    expect(JSON.stringify(response.json())).toContain('not-an-operator')
-    expect(await storedPlan('other')).toBe('free')
+    expect(res.statusCode).toBe(403)
+    expect(JSON.stringify(res.json())).toContain('not-an-operator')
+    expect(writes()).toEqual([])
+    expect(await records.read('other@example.test')).toBeUndefined()
   })
 
   it.each([
@@ -174,212 +134,123 @@ describe('PUT /customer', () => {
     ['customer'],
     ['CUSTOMERSERVICE'],
     ['admin'],
+    ['_admin'],
   ])('refuses a caller whose only role is %s', async (role) => {
-    // `customerservices` is somebody else's role and `Customerservice` is a typo; `admin` is a
-    // role somebody may plausibly have granted themselves for an unrelated reason. A substring
-    // test lets the plural and the prefix through and a case fold lets the typo through, and on
-    // *this* route that is one account rewriting another's entitlements rather than a
-    // self-grant.
-    const {
-      app: server,
-      cookie,
-      storedPlan,
-    } = customerServer({
-      callerRoles: [role],
-      subjects: ['other'],
-    })
-    const response = await put(server, { sub: 'other', plan: 'pro' }, cookie)
+    // Exact membership only: a substring test lets the plural and the prefix through, a case
+    // fold lets the typo through, and `_admin` was deliberately removed from the operator
+    // roles (it already means "may write anything"). On this route that is a stranger
+    // rewriting an account, not a self-grant.
+    const { app: server, asOperator, writes, records } = customerServer({ callerRoles: [role] })
+    const res = await put(server, { email: 'other@example.test', plan: 'pro' }, asOperator)
 
-    expect(response.statusCode).toBe(403)
-    expect(await storedPlan('other')).toBe('free')
-  })
-
-  it('refuses a caller whose only role is CouchDB’s `_admin`', async () => {
-    // `_admin` was on OPERATOR_ROLES and has been deliberately removed. Asserting the refusal
-    // rather than deleting the test that asserted the opposite is what pins the decision: the
-    // next person to read "surely the administrator should be able to do this" finds the answer
-    // here instead of re-adding the entry.
-    //
-    // It never worked as it appeared to. `rolesOf` reads the caller's `_users` document and
-    // nothing else, while a CouchDB *server* admin lives in `local.ini [admins]` and has no
-    // such document — so the real administrator was answered 403 either way. The only account
-    // the entry could match is one with `roles: ["_admin"]` written into its document, and
-    // `infra/couchdb/design-docs/access.js` gives that role an unconditional bypass of
-    // `validate_doc_update` on every project database in the deployment. On *this* route, which
-    // rewrites somebody else's entitlements, admitting a role that already means "may write
-    // anything belonging to anyone" is the widest possible reading of "may change a plan".
-    const {
-      app: server,
-      cookie,
-      storedPlan,
-      writes,
-    } = customerServer({
-      callerRoles: ['_admin'],
-      subjects: ['other'],
-    })
-    const response = await put(server, { sub: 'other', plan: 'pro' }, cookie)
-
-    expect(response.statusCode).toBe(403)
-    expect(JSON.stringify(response.json())).toContain('not-an-operator')
-    // Nothing reached the store. A 403 answered after the write would look identical here
-    // without this line, and on this route the write is somebody else's account.
-    expect(await storedPlan('other')).toBe('free')
-    expect(writes).toEqual([])
-  })
-
-  it('answers 404 for a subject that has never signed in', async () => {
-    // Distinct from 403 on purpose: "you may not" and "there is no such account" send an
-    // operator to different places, and `store.setPlan` throws a nameable error for exactly
-    // this so the route does not have to guess from a bare Error.
-    const { app: server, cookie } = customerServer({
-      callerRoles: ['customerservice'],
-      subjects: [],
-    })
-    const response = await put(server, { sub: 'ghost', plan: 'user' }, cookie)
-
-    expect(response.statusCode).toBe(404)
-    // The body, not only the code. Fastify answers an *unregistered* route 404 as well, so a
-    // status-only assertion here passed before this route existed at all and would go on
-    // passing if somebody removed its registration - which is the one thing this test is for.
-    expect(response.json()).toMatchObject({ title: 'No such account.', status: 404 })
+    expect(res.statusCode).toBe(403)
+    expect(writes()).toEqual([])
+    expect(await records.read('other@example.test')).toBeUndefined()
   })
 
   it('refuses an unsigned caller before it looks at anything', async () => {
-    const {
-      app: server,
-      storedPlan,
-      writes,
-    } = customerServer({
-      callerRoles: ['customerservice'],
-      subjects: ['other'],
-    })
-    const response = await put(server, { sub: 'other', plan: 'pro' })
+    const { app: server, writes } = customerServer()
+    const res = await put(server, { email: 'other@example.test', plan: 'pro' })
 
-    expect(response.statusCode).toBe(401)
-    expect(await storedPlan('other')).toBe('free')
-    expect(writes).toEqual([])
+    expect(res.statusCode).toBe(401)
+    expect(writes()).toEqual([])
+  })
+
+  it('refuses a deny-listed access token', async () => {
+    // A signed-out operator's access token is still cryptographically valid until it expires;
+    // only the deny list says otherwise, and on this route honouring it matters most.
+    const { app: server, key, deny, writes } = customerServer()
+    const token = accessTokenFor(key, OPERATOR)
+    const { jti, exp } = verifyToken(token, key.publicKey, 'access')
+    deny.deny(String(jti), exp)
+
+    const res = await put(
+      server,
+      { email: 'other@example.test', plan: 'pro' },
+      { authorization: `Bearer ${token}` },
+    )
+
+    expect(res.statusCode).toBe(401)
+    expect(writes()).toEqual([])
   })
 })
 
 describe('the order the checks run in', () => {
-  // The order is load-bearing, not tidiness. Answering about the *subject* before deciding
-  // about the *caller* turns this route into an oracle: any signed-in user could ask about a
-  // name and learn from the status code whether that account exists.
+  // The order is load-bearing, not tidiness. Answering about the *body* before deciding about
+  // the *caller* turns this route into an oracle for signed-in users.
 
-  it('answers 403 rather than 404 when a non-operator names an account that does not exist', async () => {
-    const { app: server, cookie } = customerServer({ callerRoles: [], subjects: [] })
-    const response = await put(server, { sub: 'ghost', plan: 'pro' }, cookie)
+  it('answers 403 before validating the body, identically whether or not the account exists', async () => {
+    const { app: server, asAda } = customerServer()
+    const a = await put(server, { email: 'nobody@x.y', plan: 'pro' }, asAda)
+    const b = await put(server, {}, asAda)
 
-    expect(response.statusCode).toBe(403)
+    expect(a.statusCode).toBe(403)
+    expect(b.body).toBe(a.body)
   })
 
   it('tells a non-operator nothing by the difference between two names', async () => {
-    // The property stated directly: an account that exists and one that does not must be
-    // indistinguishable to a caller who may not do this. A 404 for the ghost and a 403 for the
-    // real account would let anyone enumerate the user base one name at a time.
-    const { app: server, cookie } = customerServer({ callerRoles: [], subjects: ['other'] })
-    const exists = await put(server, { sub: 'other', plan: 'pro' }, cookie)
-    const ghost = await put(server, { sub: 'ghost', plan: 'pro' }, cookie)
+    const { app: server, asAda, records } = customerServer()
+    await records.setPlan('other@example.test', 'free')
+    const exists = await put(server, { email: 'other@example.test', plan: 'pro' }, asAda)
+    const ghost = await put(server, { email: 'ghost@example.test', plan: 'pro' }, asAda)
 
-    // Which status they agree *on*, asserted first. "The two answers are equal" is true of two
-    // Fastify route-not-found 404s as well, so equality alone passed before this route existed.
     expect(exists.statusCode).toBe(403)
     expect(ghost.statusCode).toBe(exists.statusCode)
     expect(ghost.json()).toEqual(exists.json())
   })
-
-  it('answers 403 rather than 400 when a non-operator sends a body it cannot use', async () => {
-    // Same leak, one step earlier. Validating first would let an unauthorised caller tell 400
-    // from 404 and so enumerate accounts without ever holding a role.
-    const { app: server, cookie } = customerServer({ callerRoles: [], subjects: ['other'] })
-    const response = await put(server, { sub: 'other', plan: 'enterprise' }, cookie)
-
-    expect(response.statusCode).toBe(403)
-  })
 })
 
 describe('the body PUT /customer accepts', () => {
-  it('refuses a plan string it does not know', async () => {
-    const {
-      app: server,
-      cookie,
-      storedPlan,
-    } = customerServer({
-      callerRoles: ['customerservice'],
-      subjects: ['other'],
-    })
-    const response = await put(server, { sub: 'other', plan: 'enterprise' }, cookie)
+  it('rejects a missing address and an unknown plan with 400', async () => {
+    const { app: server, asOperator } = customerServer()
 
-    expect(response.statusCode).toBe(400)
-    expect(JSON.stringify(response.json())).toContain('plan')
-    expect(await storedPlan('other')).toBe('free')
+    expect((await put(server, { plan: 'pro' }, asOperator)).statusCode).toBe(400)
+    expect((await put(server, { email: 'a@b.c', plan: 'user' }, asOperator)).statusCode).toBe(400)
   })
 
-  it.each([[undefined], [''], [42], [null]])('refuses a sub of %s', async (sub) => {
-    const {
-      app: server,
-      cookie,
-      writes,
-    } = customerServer({
-      callerRoles: ['customerservice'],
-      subjects: ['other'],
-    })
-    const before = writes.length
-    const response = await put(server, { sub, plan: 'pro' }, cookie)
+  it.each([[undefined], [''], ['no-at-sign'], ['@'], ['a@b'], ['a b@c.d'], [42], [null]])(
+    'refuses an email of %s',
+    async (email) => {
+      const { app: server, asOperator, writes } = customerServer()
+      const res = await put(server, { email, plan: 'pro' }, asOperator)
 
-    expect(response.statusCode).toBe(400)
-    expect(JSON.stringify(response.json())).toContain('sub')
-    expect(writes.length).toBe(before)
-  })
+      expect(res.statusCode).toBe(400)
+      expect(JSON.stringify(res.json())).toContain('email')
+      expect(writes()).toEqual([])
+    },
+  )
 
   it('refuses a body that is not there at all', async () => {
-    const { app: server, cookie } = customerServer({
-      callerRoles: ['customerservice'],
-      subjects: ['other'],
-    })
-    const response = await server.inject({
-      method: 'PUT',
-      url: '/customer',
-      headers: { cookie },
-    })
+    const { app: server, asOperator } = customerServer()
+    const res = await server.inject({ method: 'PUT', url: '/customer', headers: asOperator })
 
     // 400 either way — Fastify's own body check or the handler's. What matters is that a
     // missing body is not a crash and not a write.
-    expect(response.statusCode).toBe(400)
+    expect(res.statusCode).toBe(400)
   })
 
-  it('takes only the plan from the body, never roles, type or a display name', async () => {
-    // Renamed to what it checks. It was called "never writes a plan for an account the request
-    // did not name" — a real property, and one this test never looked at; it is pinned by
-    // "leaves the caller's own plan alone" above. What this one actually asserts is that no
-    // other field of the `_users` document can be smuggled in beside `plan`, which nothing else
-    // covers and which the role gate depends on entirely.
-    //
-    // `setPlan` spreads the stored document, so `roles` and `type` cannot come from a body -
-    // and this asserts that the route does not hand them over either. An operator who could
-    // set `roles` could mint more operators, and then the role gate above means nothing.
-    const {
-      app: server,
-      cookie,
-      writes,
-    } = customerServer({
-      callerRoles: ['customerservice'],
-      subjects: ['other'],
-    })
-    const response = await put(
+  it('takes only the address and the plan, never roles, type or a display name', async () => {
+    // An operator who could set `roles` could mint more operators, and then the gate means
+    // nothing. `setPlan` spreads the stored document and names `plan`, so nothing else the body
+    // offers can land.
+    const { app: server, asOperator, fake } = customerServer()
+    const res = await put(
       server,
-      { sub: 'other', plan: 'pro', roles: ['_admin'], type: 'evil', displayName: 'pwned' },
-      cookie,
+      {
+        email: 'other@example.test',
+        plan: 'pro',
+        roles: ['customerservice'],
+        type: 'evil',
+        displayName: 'pwned',
+      },
+      asOperator,
     )
 
-    expect(response.statusCode).toBe(200)
-    // One write, to the named account, and the fields CouchDB owns are the stored ones rather
-    // than the ones the body offered. `roles: []` is the assertion that matters: the body sent
-    // `['_admin']`, and a route that passed it through would have minted an account with the
-    // total write bypass described in `OPERATOR_ROLES`.
-    expect(writes).toHaveLength(1)
-    expect(writes[0]).toMatchObject({ name: 'other', roles: [], type: 'user', plan: 'pro' })
-    expect(writes[0]?.displayName).toBe('other')
+    expect(res.statusCode).toBe(200)
+    const stored = fake.documents.get(`${USERS_DB}/${userDocId('other@example.test')}`)
+    expect(stored).toMatchObject({ type: 'user', plan: 'pro', email: 'other@example.test' })
+    expect(stored?.roles).toBeUndefined()
+    expect(stored?.displayName).toBeUndefined()
   })
 })
 
@@ -401,11 +272,8 @@ describe('what the contract says about PUT /customer', () => {
     )
     expect(declared, 'the contract describes no PUT /customer').toBeDefined()
 
-    const { app: server, cookie } = customerServer({
-      callerRoles: ['customerservice'],
-      subjects: ['other'],
-    })
-    const response = await put(server, { sub: 'other', plan: 'user' }, cookie)
+    const { app: server, asOperator } = customerServer()
+    const response = await put(server, { email: 'other@example.test', plan: 'member' }, asOperator)
 
     const schema = declared?.responses[String(response.statusCode)]
     expect(
@@ -426,28 +294,21 @@ describe('what the contract says about PUT /customer', () => {
 
   it('declares the refusal a non-operator gets, reason and all', async () => {
     // Checkable for the first time here. `operationsOf` collected only `application/json`, and
-    // every refusal in the contract is `application/problem+json` - so this operation's 403 and
-    // 404 were invisible to every contract assertion ever written, and a test that looked one
-    // up got `undefined`, which `validate` finds nothing wrong with.
-    const { app: server, cookie } = customerServer({ callerRoles: [], subjects: ['other'] })
-    const response = await put(server, { sub: 'other', plan: 'pro' }, cookie)
+    // every refusal in the contract is `application/problem+json` - so this operation's 403 was
+    // invisible to every contract assertion ever written, and a test that looked one up got
+    // `undefined`, which `validate` finds nothing wrong with.
+    const { app: server, asAda } = customerServer()
+    const response = await put(server, { email: 'other@example.test', plan: 'pro' }, asAda)
 
     expect(response.statusCode).toBe(403)
     expect(validate(response.json(), declaredFor(403))).toEqual([])
   })
 
-  it('declares the 404 an operator gets for an account that has never signed in', async () => {
-    // The status this operation exists to be able to give: an operator needs to tell "no such
-    // account" from "you may not", and nobody else may tell them apart at all. It was declared
-    // in the contract from the start and checked by nothing.
-    const { app: server, cookie } = customerServer({
-      callerRoles: ['customerservice'],
-      subjects: [],
-    })
-    const response = await put(server, { sub: 'ghost', plan: 'pro' }, cookie)
-
-    expect(response.statusCode).toBe(404)
-    expect(validate(response.json(), declaredFor(404))).toEqual([])
+  it('declares no 404, because the operation creates the record', () => {
+    const declared = operations.find(
+      (operation) => operation.method === 'PUT' && operation.path === '/customer',
+    )
+    expect(declared?.responses['404']).toBeUndefined()
   })
 
   it('would notice a refusal that stopped naming itself', async () => {
@@ -465,12 +326,5 @@ describe('what the contract says about PUT /customer', () => {
     expect(
       validate({ title: 'No', status: 403, reason: 'project-limit-reached' }, forbidden),
     ).toEqual([{ at: '$.reason', says: 'must be "not-an-operator", got "project-limit-reached"' }])
-
-    // And the 404, which carries no reason but must still be a problem document rather than
-    // anything at all - the state the contract was in for every refusal until this task.
-    expect(validate({}, declaredFor(404))).toEqual([
-      { at: '$.title', says: 'is required and missing' },
-      { at: '$.status', says: 'is required and missing' },
-    ])
   })
 })

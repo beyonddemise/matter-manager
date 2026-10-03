@@ -2,8 +2,8 @@
  * What a project's database is called.
  *
  * One function, because the name is assembled from a value that arrives over HTTP and is then
- * used to create and — on the rollback path — **delete** a database. `../_users` is a project id
- * somebody might send.
+ * used to create and — on the rollback path — **delete** a database. A path-traversal id aimed
+ * at the users database is something somebody might send.
  *
  * ADR 0003 and the OpenAPI contract both say `project_<uuid>`. `docs/DATA-MODEL.md` carried an
  * example with the hyphens replaced by underscores; CouchDB permits hyphens (this repository's

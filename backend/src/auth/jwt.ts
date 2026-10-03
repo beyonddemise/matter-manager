@@ -38,31 +38,35 @@ const encode = (value: string | object): string =>
 
 const decode = (value: string): unknown => JSON.parse(Buffer.from(value, 'base64url').toString())
 
-/** What CouchDB is told about the bearer. */
 /**
  * What a token is for.
  *
  * Every token this service signs carries one, and every verification states which it expects.
- * Without it the three credentials are the same bytes with different lifetimes and are
- * therefore **mutually substitutable**, which costs in both directions:
+ * Without it the credentials are the same bytes with different lifetimes and are therefore
+ * **mutually substitutable**, which costs in every direction:
  *
- * - the access token is handed to page scripts on purpose (PouchDB needs it in a header), so a
- *   script that exfiltrates one could present it as a session and mint fresh access tokens for
- *   as long as it liked — making the one-hour lifetime a limit on nothing;
- * - the session lasts thirty days, so a session presented as a bearer would be a thirty-day
- *   direct database credential.
+ * - `access` is handed to page scripts on purpose (PouchDB needs it in a header), so a script
+ *   that exfiltrates one could present it as a refresh token and mint fresh access tokens for as
+ *   long as it liked — making the five-minute lifetime a limit on nothing;
+ * - `refresh` replaces the old session cookie. It lasts thirty days, so one presented as a
+ *   bearer would be a thirty-day direct database credential;
+ * - `handoff` is the two-minute, single-use httpOnly cookie that bridges the sign-in redirect to
+ *   the first `POST /auth/token`. It is not `flow`, because two credentials sharing a purpose
+ *   are substitutable: a PKCE carrier lifted from a half-finished sign-in must not be
+ *   exchangeable for tokens;
+ * - `flow` remains the PKCE carrier.
  *
  * A claim is the cheapest way to say which is which, and checking it is one comparison.
  *
- * **It is not sufficient on its own, and the second case is why.** CouchDB validates these
+ * **It is not sufficient on its own, and the refresh case is why.** CouchDB validates these
  * tokens itself, checking a signature and an expiry and evaluating no claim it was not taught
  * about — so a `purpose` mismatch stops this service and says nothing to the database. What
- * closes that is a *second key*: sessions and flow carriers are signed with a key whose public
- * half is never installed in `[jwt_keys]`, so CouchDB cannot verify one at all. See
- * `AuthDependencies.sessionKey`. The claim still earns its place, because within this service
- * the three credentials are otherwise interchangeable.
+ * closes that is a *second key*: refresh tokens, handoffs and flow carriers are signed with a
+ * key whose public half is never installed in `[jwt_keys]`, so CouchDB cannot verify one at
+ * all. See `AuthDependencies.sessionKey`. The claim still earns its place, because those three
+ * share that key and are otherwise interchangeable within this service.
  */
-export type TokenPurpose = 'access' | 'session' | 'flow'
+export type TokenPurpose = 'access' | 'refresh' | 'handoff' | 'flow'
 
 export interface Claims {
   /** What this token may be presented as. See {@link TokenPurpose}. */
@@ -73,6 +77,12 @@ export interface Claims {
   readonly exp: number
   /** Seconds since the epoch; when the token becomes valid. */
   readonly iat?: number
+  /** The verified address. Records are keyed by it; see `users/key.ts`. */
+  readonly email?: string
+  /** The provider's display name, carried so a record-less profile has one. Not on the flow carrier. */
+  readonly name?: string
+  /** A unique id: the deny list's key for access tokens, the stored hash's input for refresh. */
+  readonly jti?: string
   /**
    * CouchDB roles, under the name CouchDB reads them from.
    *
@@ -184,7 +194,7 @@ export function kidOf(token: string): string | undefined {
  * bytes look fine.
  *
  * @param expected what this token must say it is for. Required rather than defaulted, so that
- *   every caller states which of the three credentials it is willing to accept.
+ *   every caller states which of the credentials it is willing to accept.
  * @param now injected so expiry is testable without waiting an hour
  * @throws {TokenError} naming the problem
  */

@@ -8,7 +8,7 @@ import {
 } from '../../src/ui/session.js'
 
 /** Records what each step was asked to do, and can be told to fail any of them. */
-function deps(failing: { server?: boolean; local?: boolean } = {}) {
+function deps(failing: { server?: boolean; local?: boolean; refresh?: boolean } = {}) {
   const done: string[] = []
   const dependencies: SessionDependencies = {
     endServerSession: async () => {
@@ -20,6 +20,10 @@ function deps(failing: { server?: boolean; local?: boolean } = {}) {
       done.push('local')
     },
     forgetTokens: () => done.push('tokens'),
+    forgetRefreshToken: async () => {
+      if (failing.refresh === true) throw new Error('store refused')
+      done.push('refresh')
+    },
   }
   return { dependencies, done }
 }
@@ -31,7 +35,7 @@ describe('signing out', () => {
     const { dependencies, done } = deps()
 
     expect(await signOut(dependencies)).toEqual([])
-    expect(done).toEqual(['tokens', 'server', 'local'])
+    expect(done).toEqual(['tokens', 'refresh', 'server', 'local'])
   })
 
   it('forgets the token before anything that can fail', async () => {
@@ -40,7 +44,23 @@ describe('signing out', () => {
     const { dependencies, done } = deps({ server: true, local: true })
     await signOut(dependencies)
 
-    expect(done).toEqual(['tokens'])
+    expect(done).toEqual(['tokens', 'refresh'])
+  })
+
+  it('forgets the stored refresh token even when the server and the database both fail', async () => {
+    // A refresh token left on a shared machine is a live credential, so it goes before anything
+    // that can fail and does not depend on any of it succeeding.
+    const { dependencies, done } = deps({ server: true, local: true })
+    await signOut(dependencies)
+
+    expect(done).toContain('refresh')
+  })
+
+  it('carries on, and reports it, when the refresh token cannot be removed', async () => {
+    const { dependencies, done } = deps({ refresh: true })
+
+    await expect(signOut(dependencies)).resolves.toEqual(['local'])
+    expect(done).toEqual(['tokens', 'server', 'local'])
   })
 
   it('ends the server session before removing local data', async () => {
@@ -106,6 +126,9 @@ describe('a session that simply ran out', () => {
 
 describe('ending the session on the server', () => {
   /** A `fetch` that records its call and answers with the given status. */
+  const noToken = { read: async () => undefined, write: async () => {}, clear: async () => {} }
+  const holding = (token: string) => ({ ...noToken, read: async () => token })
+
   function stubFetch(status: number) {
     const calls: Array<{ url: string; init: RequestInit | undefined }> = []
     const impl = (async (url: string, init?: RequestInit) => {
@@ -117,7 +140,7 @@ describe('ending the session on the server', () => {
 
   it('posts to the sign-out endpoint', async () => {
     const { calls, impl } = stubFetch(204)
-    await endServerSessionVia('https://api.example', impl)()
+    await endServerSessionVia('https://api.example', impl, noToken, () => undefined)()
 
     expect(calls[0]?.url).toBe('https://api.example/auth/signout')
     expect(calls[0]?.init?.method).toBe('POST')
@@ -127,14 +150,31 @@ describe('ending the session on the server', () => {
     // The session is httpOnly, so this is the only way it travels. Without it the request goes
     // out unauthenticated, clears nothing, and answers as though it had worked.
     const { calls, impl } = stubFetch(204)
-    await endServerSessionVia('https://api.example', impl)()
+    await endServerSessionVia('https://api.example', impl, noToken, () => undefined)()
 
     expect(calls[0]?.init?.credentials).toBe('include')
   })
 
+  it('sends the refresh token in the body and the access token as the bearer', async () => {
+    // The server revokes the one and denies the other; with neither it would end nothing.
+    const { calls, impl } = stubFetch(204)
+    await endServerSessionVia('https://api.example', impl, holding('r1'), () => 'access')()
+
+    expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({ refreshToken: 'r1' })
+    expect(calls[0]?.init?.headers).toMatchObject({ authorization: 'Bearer access' })
+  })
+
+  it('sends an empty body and no bearer when there is neither', async () => {
+    const { calls, impl } = stubFetch(204)
+    await endServerSessionVia('https://api.example', impl, noToken, () => undefined)()
+
+    expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({})
+    expect(calls[0]?.init?.headers).not.toHaveProperty('authorization')
+  })
+
   it('does not build a doubled slash from a base url that has one', async () => {
     const { calls, impl } = stubFetch(204)
-    await endServerSessionVia('https://api.example/', impl)()
+    await endServerSessionVia('https://api.example/', impl, noToken, () => undefined)()
 
     expect(calls[0]?.url).toBe('https://api.example/auth/signout')
   })
@@ -143,16 +183,16 @@ describe('ending the session on the server', () => {
     // Which is the state the caller was asking for. Reporting it as a problem would say
     // something went wrong when the only thing that happened is that they were already out.
     await expect(
-      endServerSessionVia('https://api.example', stubFetch(401).impl)(),
+      endServerSessionVia('https://api.example', stubFetch(401).impl, noToken)(),
     ).resolves.toBeUndefined()
   })
 
   it('reports a server failure', async () => {
     // So `signOut` can say "we could not remove everything" rather than claiming a sign-out the
     // server never performed.
-    await expect(endServerSessionVia('https://api.example', stubFetch(500).impl)()).rejects.toThrow(
-      /500/,
-    )
+    await expect(
+      endServerSessionVia('https://api.example', stubFetch(500).impl, noToken)(),
+    ).rejects.toThrow(/500/)
   })
 
   it('lets a network failure through, for `signOut` to catch', async () => {
@@ -160,7 +200,7 @@ describe('ending the session on the server', () => {
       throw new TypeError('Failed to fetch')
     }) as unknown as typeof fetch
 
-    await expect(endServerSessionVia('https://api.example', offline)()).rejects.toThrow()
+    await expect(endServerSessionVia('https://api.example', offline, noToken)()).rejects.toThrow()
   })
 })
 

@@ -1,5 +1,9 @@
 # M4 — Authentication and backend
 
+> **Historical.** The `_users` profile documents and session cookie described below were superseded
+> in phase A by `matter_manager` user records and access + refresh tokens; see
+> [SECURITY-MODEL.md](../SECURITY-MODEL.md).
+
 **Goal:** users have identities. Still no sync — that is M5. This milestone establishes who
 someone is and gives them somewhere to keep their preferences.
 

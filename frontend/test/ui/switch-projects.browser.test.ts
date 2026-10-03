@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { CURRENT_PROJECT_KEY, LOCAL_PROJECT_ID } from '../../src/ui/current-project.js'
 import { currentProjectDatabaseName, useProjectDatabase } from '../../src/ui/db/project-database.js'
 import '../../src/ui/app-shell.js'
+import { refresherReporting } from './refresher-stub.js'
 
 /**
  * #55, first two scenarios: moving between projects with the current one remembered, and a
@@ -19,7 +20,7 @@ const OFFLINE = { addEventListener: () => {}, removeEventListener: () => {}, onL
 const shell = async (projects: readonly unknown[]) => {
   const element = (await fixture(html`
     <app-shell
-      .readSession=${async () => 'signed-in' as const}
+      .refresher=${refresherReporting('signed-in')}
       .connectivity=${OFFLINE}
       .followLocale=${async () => undefined}
       .listProjects=${async () => projects}

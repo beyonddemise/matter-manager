@@ -27,21 +27,27 @@ Four things happen along it, and each is somebody's job:
 
 ## The credential, and why there are two
 
-The browser never holds CouchDB credentials. It holds an `mm_session` cookie, and exchanges it
-at `POST /api/auth/token` for a one-hour access token whose public half **is** installed in
-CouchDB's `[jwt_keys]`. The session cookie is signed with a different key that CouchDB cannot
-verify at all — so a stolen session is not a database credential, which is the whole point of
-`JWT_SESSION_PRIVATE_KEY` existing separately from `JWT_PRIVATE_KEY`.
+The browser holds two tokens. After sign-in an httpOnly `mm_handoff` cookie (120 seconds, single
+use) authorises the first `POST /api/auth/token`, which returns a **5-minute access token** and a
+**30-day refresh token**. The access token's public half **is** installed in CouchDB's
+`[jwt_keys]` and carries the plan as `_couchdb.roles`; the page refreshes it by sending the
+refresh token in the body of `POST /api/auth/token`. The refresh token and handoff are signed
+with a different key that CouchDB cannot verify at all — so a stolen refresh token is not a
+database credential, which is the whole point of `JWT_SESSION_PRIVATE_KEY` existing separately
+from `JWT_PRIVATE_KEY`.
 
-That is also why the `/db` forwarder strips `Cookie`. The session cookie is `Path=/`, so the
-browser attaches it to every `/db/*` request without being asked; CouchDB has no use for it, and
-forwarding it would put a thirty-day credential into a second service's logs on every
-replication request, with nothing anywhere looking wrong.
+That is also why the `/db` forwarder strips `Cookie`. The handoff cookie is `Path=/`, so the
+browser may attach it to `/db/*` requests without being asked; CouchDB has no use for it, and
+forwarding a credential into a second service's logs on every replication request, with nothing
+anywhere looking wrong, is what the stripping prevents. See
+[SECURITY-MODEL.md](SECURITY-MODEL.md), *User records and tokens*.
 
 ## What has been observed, and what has not
 
-Measured against `https://app.matter-manager.io` on 2026-09-29. Reproduce with
-`scripts/probe-replication.sh`.
+Measured against `https://app.matter-manager.io` on 2026-09-29, **before phase A** replaced the
+session cookie with the handoff and refresh tokens. Rows marked *expected after phase A* are
+what the new flow should answer and have **not yet been re-measured**; the measured values they
+replace are kept beside them. Reproduce with `scripts/probe-replication.sh`.
 
 ### Without any credential
 
@@ -68,7 +74,9 @@ emitted bare base64 DER instead of a PEM with `\n` escapes and the API crash-loo
 
 | Step | Result |
 | --- | --- |
-| `POST /api/auth/token` with the session cookie | `200`, `{accessToken, expiresIn: 3600}` |
+| `POST /api/auth/token` with the session cookie (measured 2026-09-29) | `200`, `{accessToken, expiresIn: 3600}` |
+| `POST /api/auth/token` with the handoff cookie (*expected after phase A, not yet re-measured*) | `200`, `{accessToken, expiresIn: 300, refreshToken}` |
+| `POST /api/auth/signout` with the bearer and the refresh token (*expected after phase A, not yet re-measured*) | `204` |
 | `GET /db/` with that token | `200` |
 | `GET /db/_session` | `200` |
 | `POST /api/projects` | `201`, database `project_<uuid>` |
@@ -76,8 +84,8 @@ emitted bare base64 DER instead of a PEM with `\n` escapes and the API crash-loo
 | `POST /db/<db>/_bulk_docs` | `201` |
 | `GET /db/_all_dbs`, `_utils/`, `_membership`, `_cluster_setup` | `404` |
 
-The first line is the one that cannot be checked any other way: **the `/api` forwarder carries
-`Cookie`.** If it dropped the header this would be a 401, and the sign-in design would be broken
+The token exchange is the one that cannot be checked any other way: **the `/api` forwarder
+carries `Cookie`.** If it dropped the header this would be a 401, and the sign-in design would be broken
 invisibly — the redirect *out* to Google works either way, so a manual test that stops at the
 consent screen proves nothing about it.
 
@@ -108,8 +116,11 @@ which is the distinction this whole file exists to keep.
 
 ## Running the probe
 
-It needs a session token, and the signing keys have never left the droplet. Mint one there,
-for a throwaway subject, with the API's own `mintToken`:
+It needs a handoff token — what the sign-in callback sets as the `mm_handoff` cookie — and the
+signing keys have never left the droplet. Mint one there with the API's own `mintToken`, for a
+throwaway subject that is **new on every run**: a handoff is single use, and the probe's
+subject has no record, so it is on the free plan, whose one project an earlier run's archived
+probe project would already use up (archived projects count, #55).
 
 ```bash
 # Before the redirect, not after. The shell creates the file, so its mode comes from the umask
@@ -118,18 +129,24 @@ for a throwaway subject, with the API's own `mintToken`:
 umask 077
 
 ssh wisselroot 'docker exec -i matter-manager-api node --input-type=module' \
-  > /tmp/mm-session.jwt <<'JS'
+  > /tmp/mm-handoff.jwt <<'JS'
+import { randomUUID } from 'node:crypto'
 import { signingKeyFromPem, mintToken } from '/app/dist/src/auth/jwt.js'
 const now = Math.floor(Date.now() / 1000)
 const key = signingKeyFromPem(process.env.JWT_KEY_ID + '-session', process.env.JWT_SESSION_PRIVATE_KEY)
-console.log(mintToken(key, { purpose: 'session', sub: 'replication-probe', exp: now + 1800, iat: now }))
+const sub = `replication-probe-${now}`
+console.log(mintToken(key, {
+  purpose: 'handoff', sub, email: `${sub}@probe.invalid`, jti: randomUUID(), exp: now + 120, iat: now,
+}))
 JS
 
 bash scripts/probe-replication.sh
-rm -f /tmp/mm-session.jwt
+rm -f /tmp/mm-handoff.jwt
 ```
 
-The token is a real thirty-minute credential for a synthetic user. Delete it afterwards; the
+The handoff is a real two-minute credential (the API refuses one minted to live longer) for a synthetic user, good for one exchange; the
+probe signs out at the end, which revokes the refresh token that exchange returned. Delete the
+file afterwards; the
 script never prints it, never puts it in a process argument, and neither should anything else —
 `ps` is readable by other local users on most systems, so a token in a `curl -H` is a token
 published to everyone logged in. The script writes it into a curl configuration file inside a

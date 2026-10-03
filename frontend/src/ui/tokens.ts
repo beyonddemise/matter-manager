@@ -1,15 +1,20 @@
 /**
- * The CouchDB access token, for as long as this tab lives.
+ * The CouchDB access token, for as long as this tab lives, and the refresh token that replaces it.
  *
- * **In memory, and nowhere else.** Of the three credentials in this application it is the only
- * one the page can read, because PouchDB has to put it in an `Authorization` header — the PKCE
- * carrier and the session are httpOnly cookies precisely because nothing here needs them. A
- * token in `localStorage` survives the tab, is readable by any script that ever runs on this
- * origin, and grants direct access to that user's database; a token in a variable dies with the
- * tab. See `docs/tasks/todo-41.md`.
+ * **The access token is in memory, and nowhere else.** It is the credential the page has to put
+ * in an `Authorization` header, so any script on this origin could read it; kept in a variable
+ * it dies with the tab, and its five-minute life bounds what a copy is worth. See
+ * `docs/tasks/todo-41.md`.
  *
- * The change that would break this is a reasonable-sounding one — "keep people signed in across
- * a reload" — so there is a test that watches web storage and fails if anything is written.
+ * **The refresh token is the exception, by explicit decision.** It lives in `mm-local` as a
+ * `_local/` document so a reload can get a new access token without signing in again. That makes
+ * it readable by any script on this origin, which is the trade-off the spec's "The trade-off of a
+ * body token" accepts and bounds: it is never replicated, it is **not** rotated (that is #209),
+ * and sign-out revokes it on the server and removes it here. The httpOnly cookies cannot do this job because
+ * the page must be able to present the token itself, in a request body.
+ *
+ * The test that watches web storage stays: `localStorage` and `sessionStorage` still receive
+ * nothing, and the only persistent copy is the one {@link pouchRefreshTokenStore} writes.
  *
  * @module
  */
@@ -28,6 +33,28 @@ export interface AccessTokenResponse {
   readonly accessToken: string
   /** Seconds until expiry, as the contract defines it. */
   readonly expiresIn: number
+}
+
+/** What `POST /auth/token` answers with: the access token and the refresh token that replaces it. */
+export interface TokenResponse extends AccessTokenResponse {
+  readonly refreshToken: string
+}
+
+/**
+ * Where the refresh token is kept between visits.
+ *
+ * An interface so the exchange in `composition.ts` can be tested without a database.
+ */
+export interface RefreshTokenStore {
+  /** The stored token, or `undefined` when none is held or the store cannot be read. */
+  read(): Promise<string | undefined>
+  /**
+   * Replaces the stored token. Called when an exchange returns a different one — after a fresh
+   * sign-in, since refresh tokens are not rotated (#209) and a refresh returns the same token.
+   */
+  write(token: string): Promise<void>
+  /** Removes the stored token; a no-op when there is none. */
+  clear(): Promise<void>
 }
 
 /** The system clock, in whole seconds — the unit JWTs and the contract both use. */
@@ -70,4 +97,46 @@ export function accessToken(now: () => number = systemClock): string | undefined
  */
 export function forgetTokens(): void {
   held = undefined
+}
+
+/**
+ * Keeps the refresh token in a `_local/` document of the given database.
+ *
+ * `_local/` documents are never replicated, so the token stays on this device even if `mm-local`
+ * were ever given a remote counterpart; sign-out removes it explicitly and also destroys the
+ * whole database.
+ *
+ * `clear` treats only a 404 as success. `read` swallows errors on purpose: an unreadable store is
+ * indistinguishable from a first visit for the caller, and the worst outcome is a sign-in prompt,
+ * never a wrongly kept session.
+ */
+export function pouchRefreshTokenStore(db: PouchDB.Database): RefreshTokenStore {
+  const id = '_local/refresh-token'
+  return {
+    async read() {
+      try {
+        return ((await db.get(id)) as unknown as { token?: string }).token
+      } catch {
+        return undefined
+      }
+    },
+    async write(token) {
+      let rev: string | undefined
+      try {
+        rev = (await db.get(id))._rev
+      } catch {
+        rev = undefined
+      }
+      await db.put({ _id: id, ...(rev === undefined ? {} : { _rev: rev }), token } as never)
+    },
+    async clear() {
+      try {
+        await db.remove(await db.get(id))
+      } catch (error) {
+        // Only "not there" means already gone. Anything else leaves a live credential on this
+        // device, so it is rethrown for `signOut` to report rather than swallowed.
+        if ((error as { status?: number }).status !== 404) throw error
+      }
+    },
+  }
 }
