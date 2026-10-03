@@ -8,7 +8,7 @@ import { type CouchClient, CouchError } from '../../src/couch/client.js'
 import type { Action, Plan, Principal } from '../../src/domain/index.js'
 import { NotEntitledError, gate as realGate } from '../../src/entitlements/gate.js'
 import { PROBLEM_JSON } from '../../src/problem.js'
-import { forgetRegistry, REGISTRY_DATABASE } from '../../src/projects/registry.js'
+import { forgetRegistry, pointerId, REGISTRY_DATABASE } from '../../src/projects/registry.js'
 import { buildServer, type Server } from '../../src/server.js'
 import { forgetUsersDatabase, USERS_DB } from '../../src/users/database.js'
 import { recordEnsurer } from '../../src/users/ensure.js'
@@ -123,6 +123,8 @@ function server(
      * `null` for a caller with no record at all, which is answered as `free`.
      */
     plan?: Plan | null
+    /** The seconds clock the routes use, for tests that pin what a route stamps. */
+    now?: () => number
   } = {},
 ) {
   forgetUsersDatabase()
@@ -183,6 +185,7 @@ function server(
           }),
       ...(options.deny === undefined ? {} : { deny: options.deny }),
       millis: () => Date.parse('2026-08-27T09:00:00.000Z'),
+      ...(options.now === undefined ? {} : { now: options.now }),
     },
   })
 
@@ -827,11 +830,13 @@ describe('changing a project settings', () => {
   })
 
   it('stamps archivedAt on archive and removes it on unarchive', async () => {
-    const { app: built } = server()
+    // The injected seconds clock, so the stamp is asserted rather than merely "a number".
+    const stamp = Math.floor(Date.now() / 1000)
+    const { app: built } = server({ now: () => stamp })
     await create(built, { name: 'Musterstraße 12' })
 
     const archived = await patch(built, { archived: true })
-    expect(archived.json().archivedAt).toEqual(expect.any(Number))
+    expect(archived.json().archivedAt).toBe(stamp)
 
     expect((await patch(built, { archived: false })).json()).not.toHaveProperty('archivedAt')
   })
@@ -900,6 +905,7 @@ describe('changing a project settings', () => {
     const response = await patch(built, { name: 'x' }, 'google|grace')
 
     expect(response.statusCode).toBe(403)
+    expect(response.json()).toMatchObject({ reason: 'not-a-manager' })
     expect(response.headers['content-type']).toMatch(PROBLEM_JSON)
     expect(
       validate(response.json(), contractSchema('PATCH', '/projects/{projectId}', '403')),
@@ -1595,6 +1601,191 @@ describe('handing a project to somebody else', () => {
     })
 
     expect(response.statusCode).toBe(404)
+  })
+})
+
+describe("unarchiving against the owner's plan", () => {
+  // Archived projects stop counting toward the limit, so without this an owner could archive N,
+  // create N more and unarchive the old ones. The plan that pays is the OWNER's, whoever asks.
+  const GRACE = 'google|grace'
+  const POINTER = `${REGISTRY_DATABASE}/${pointerId(PROJECT_ID)}`
+
+  const seedRecord = (built: ReturnType<typeof server>, sub: string, plan: Plan) => {
+    const email = EMAILS[sub] as string
+    built.couch.documents.set(`${USERS_DB}/${userDocId(email)}`, {
+      _id: userDocId(email),
+      type: 'user',
+      sub,
+      email,
+      plan,
+    })
+  }
+
+  /**
+   * A registry where {@link OWNER} owns `active` live projects plus the one under test, which is
+   * archived or not as stated, and {@link GRACE} manages it.
+   */
+  function scenario(options: {
+    ownerPlan: Plan | null
+    active: number
+    archived?: boolean
+    managerPlan?: Plan
+  }) {
+    const built = server({ plan: options.ownerPlan })
+    if (options.managerPlan !== undefined) seedRecord(built, GRACE, options.managerPlan)
+    built.couch.documents.set(POINTER, {
+      _id: pointerId(PROJECT_ID),
+      _rev: '1-a',
+      type: 'projectPointer',
+      projectId: PROJECT_ID,
+      dbName: DATABASE,
+      projectName: 'Musterstraße 12',
+      participants: [
+        { role: 'owner', userid: OWNER },
+        { role: 'manage', userid: GRACE },
+      ],
+      addedAt: '2026-08-27T09:00:00.000Z',
+      archived: options.archived ?? true,
+      archivedAt: 1_700_000_000,
+    })
+    built.couch.rowsByDesign.by_sub = [
+      { id: userDocId(EMAILS[OWNER] as string), key: OWNER, value: null },
+    ]
+    const row = (projectId: string, archived: boolean) => ({
+      value: {
+        projectId,
+        dbName: `project_${projectId}`,
+        projectName: projectId,
+        address: null,
+        role: 'owner',
+        archived,
+        ownerId: OWNER,
+      },
+    })
+    built.couch.rows = [
+      ...Array.from({ length: options.active }, (_unused, index) => row(`live-${index}`, false)),
+      row(PROJECT_ID, options.archived ?? true),
+    ]
+    return built
+  }
+
+  const unarchive = (built: ReturnType<typeof server>, sub: string = OWNER) =>
+    built.inject({
+      method: 'PATCH',
+      url: `/projects/${PROJECT_ID}`,
+      headers: { authorization: bearer(sub) },
+      payload: { archived: false },
+    })
+
+  const stored = (built: ReturnType<typeof server>) =>
+    built.couch.documents.get(POINTER) as { archived: boolean; _rev: string }
+
+  it('refuses a member owner at the limit, naming project-limit-reached, and writes nothing', async () => {
+    const built = scenario({ ownerPlan: 'member', active: 5 })
+
+    const response = await unarchive(built)
+
+    expect(response.statusCode).toBe(403)
+    expect(response.json()).toMatchObject({ reason: 'project-limit-reached' })
+    expect(
+      validate(response.json(), contractSchema('PATCH', '/projects/{projectId}', '403')),
+    ).toEqual([])
+    expect(stored(built)).toMatchObject({ archived: true, _rev: '1-a' })
+  })
+
+  it('lets a member owner with room unarchive', async () => {
+    const built = scenario({ ownerPlan: 'member', active: 4 })
+
+    const response = await unarchive(built)
+
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toMatchObject({ archived: false })
+    expect(stored(built).archived).toBe(false)
+  })
+
+  it('refuses an owner whose plan no longer syncs, naming plan-no-sync', async () => {
+    const built = scenario({ ownerPlan: 'free', active: 0 })
+
+    const response = await unarchive(built)
+
+    expect(response.statusCode).toBe(403)
+    expect(response.json()).toMatchObject({ reason: 'plan-no-sync' })
+    expect(
+      validate(response.json(), contractSchema('PATCH', '/projects/{projectId}', '403')),
+    ).toEqual([])
+    expect(stored(built).archived).toBe(true)
+  })
+
+  it('treats an owner with no record as free', async () => {
+    const built = scenario({ ownerPlan: null, active: 0 })
+    built.couch.rowsByDesign.by_sub = []
+
+    expect((await unarchive(built)).json()).toMatchObject({ reason: 'plan-no-sync' })
+  })
+
+  it("judges a manager's unarchive by the owner's plan, not the manager's", async () => {
+    const built = scenario({ ownerPlan: 'free', active: 0, managerPlan: 'pro' })
+
+    const response = await unarchive(built, GRACE)
+
+    expect(response.statusCode).toBe(403)
+    expect(response.json()).toMatchObject({ reason: 'plan-no-sync' })
+    expect(stored(built).archived).toBe(true)
+  })
+
+  it('lets a manager unarchive when the owner has room', async () => {
+    const built = scenario({ ownerPlan: 'member', active: 2, managerPlan: 'free' })
+
+    expect((await unarchive(built, GRACE)).statusCode).toBe(200)
+  })
+
+  it('asks sync before capacity, with the owner as the principal', async () => {
+    const built = scenario({ ownerPlan: 'member', active: 4 })
+    built.gateCalls.length = 0
+
+    await unarchive(built)
+
+    expect(built.gateCalls.map((call) => call.action)).toEqual(['project.sync', 'project.create'])
+    expect(built.gateCalls[0]?.principal).toMatchObject({
+      sub: OWNER,
+      plan: 'member',
+      ownedProjects: 4,
+    })
+  })
+
+  it('never refuses archiving, whatever the plan', async () => {
+    const built = scenario({ ownerPlan: 'free', active: 9, archived: false })
+
+    const response = await built.inject({
+      method: 'PATCH',
+      url: `/projects/${PROJECT_ID}`,
+      headers: { authorization: bearer(OWNER) },
+      payload: { archived: true },
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(built.gateCalls).toEqual([])
+  })
+
+  it('does not gate an edit that leaves an archived project archived', async () => {
+    const built = scenario({ ownerPlan: 'free', active: 0 })
+
+    const response = await built.inject({
+      method: 'PATCH',
+      url: `/projects/${PROJECT_ID}`,
+      headers: { authorization: bearer(OWNER) },
+      payload: { name: 'Renamed' },
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(built.gateCalls).toEqual([])
+  })
+
+  it('does not gate unarchiving a project that is not archived', async () => {
+    const built = scenario({ ownerPlan: 'free', active: 0, archived: false })
+
+    expect((await unarchive(built)).statusCode).toBe(200)
+    expect(built.gateCalls).toEqual([])
   })
 })
 

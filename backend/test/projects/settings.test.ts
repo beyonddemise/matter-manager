@@ -32,6 +32,7 @@ function project(
   readonly deps: {
     readonly couch: ReturnType<typeof fakeCouch>['couch']
     readonly now: () => number
+    readonly authoriseUnarchive: (owner: string) => Promise<void>
   }
   readonly pointerNow: () => Record<string, unknown>
 } {
@@ -53,7 +54,11 @@ function project(
   })
 
   return {
-    deps: { couch: fake.couch, now: () => clock },
+    deps: {
+      couch: fake.couch,
+      now: () => clock,
+      authoriseUnarchive: async () => {},
+    },
     pointerNow: () => fake.documents.get(POINTER) as Record<string, unknown>,
   }
 }
@@ -478,5 +483,94 @@ describe('when a project was archived', () => {
 
     expect(summary).not.toHaveProperty('archivedAt')
     expect(pointerNow()).not.toHaveProperty('archivedAt')
+  })
+})
+
+describe('the archive stamp', () => {
+  it('does not stamp a rename of an archived pointer that has no archivedAt', async () => {
+    // A pointer archived before the stamp existed. Only `archived: true` is the event the stamp
+    // records; a rename must not invent "archived just now" for a project put away long ago.
+    const { deps, pointerNow } = project(OWNER_ONLY, undefined, { archived: true })
+
+    const summary = await updateProjectSettings(deps, PROJECT_ID, ADA, { name: 'Renamed' })
+
+    expect(summary).not.toHaveProperty('archivedAt')
+    expect(pointerNow()).not.toHaveProperty('archivedAt')
+  })
+})
+
+describe("unarchiving asks the owner's entitlement first", () => {
+  const ARCHIVED = { archived: true, archivedAt: 42 }
+
+  it('asks with the owner, not the caller, and refuses before writing', async () => {
+    const { deps, pointerNow } = project(
+      [
+        { role: 'owner', userid: ADA },
+        { role: 'manage', userid: GRACE },
+      ],
+      undefined,
+      ARCHIVED,
+    )
+    const asked: string[] = []
+    const refusing = {
+      ...deps,
+      authoriseUnarchive: async (owner: string) => {
+        asked.push(owner)
+        throw new Error('not entitled')
+      },
+    }
+
+    await expect(
+      updateProjectSettings(refusing, PROJECT_ID, GRACE, { archived: false }),
+    ).rejects.toThrow('not entitled')
+
+    expect(asked).toEqual([ADA])
+    expect(pointerNow()).toMatchObject({ archived: true, archivedAt: 42 })
+  })
+
+  it('does not ask when archiving, renaming, or when the project is not archived', async () => {
+    const asked: string[] = []
+    const record = (extra: Record<string, unknown>) => {
+      const { deps } = project(OWNER_ONLY, undefined, extra)
+      return {
+        ...deps,
+        authoriseUnarchive: async (owner: string) => {
+          asked.push(owner)
+        },
+      }
+    }
+
+    await updateProjectSettings(record({}), PROJECT_ID, ADA, { archived: true })
+    await updateProjectSettings(record(ARCHIVED), PROJECT_ID, ADA, { name: 'Renamed' })
+    await updateProjectSettings(record({ archived: false }), PROJECT_ID, ADA, { archived: false })
+
+    expect(asked).toEqual([])
+  })
+
+  it('does not ask a caller who may not change settings, or who is a stranger', async () => {
+    const asked: string[] = []
+    const { deps } = project(
+      [
+        { role: 'owner', userid: ADA },
+        { role: 'read', userid: GRACE },
+      ],
+      undefined,
+      ARCHIVED,
+    )
+    const watching = {
+      ...deps,
+      authoriseUnarchive: async (owner: string) => {
+        asked.push(owner)
+      },
+    }
+
+    await expect(
+      updateProjectSettings(watching, PROJECT_ID, GRACE, { archived: false }),
+    ).rejects.toThrow(SettingsRefused)
+    await expect(
+      updateProjectSettings(watching, PROJECT_ID, STRANGER, { archived: false }),
+    ).rejects.toThrow(SettingsRefused)
+
+    expect(asked).toEqual([])
   })
 })

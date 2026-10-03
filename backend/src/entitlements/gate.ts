@@ -20,8 +20,16 @@ import { ACTIONS, type Action, can, type Principal, type ProjectRef } from '../d
 
 /** Where an action is enforced. */
 export type Enforcement =
-  /** An HTTP operation this service serves. The gate must be called before it acts. */
-  | { readonly kind: 'route'; readonly method: string; readonly path: string }
+  /**
+   * The HTTP operations this service serves that ask for the action. The gate must be called
+   * before each acts. A list, because one action can be reached by more than one route:
+   * unarchiving a project makes it active again, which is a creation as far as a plan's limit
+   * is concerned.
+   */
+  | {
+      readonly kind: 'route'
+      readonly routes: ReadonlyArray<{ readonly method: string; readonly path: string }>
+    }
   /**
    * Not an API action at all.
    *
@@ -40,11 +48,28 @@ export type Enforcement =
  * for the same reason.
  */
 export const ENFORCEMENT: Readonly<Record<Action, Enforcement>> = Object.freeze({
-  'project.create': { kind: 'route', method: 'POST', path: '/projects' },
-  // The same route as `project.create`, asked first: whether the plan has a server project at
+  'project.create': {
+    kind: 'route',
+    routes: [
+      { method: 'POST', path: '/projects' },
+      // Unarchiving, judged by the OWNER's plan: archived projects do not count toward the
+      // limit, so bringing one back is where the limit has to bite.
+      { method: 'PATCH', path: '/projects/:projectId' },
+    ],
+  },
+  // The same routes as `project.create`, asked first: whether the plan has a server project at
   // all is answered before whether it has room for another.
-  'project.sync': { kind: 'route', method: 'POST', path: '/projects' },
-  'project.invite': { kind: 'route', method: 'PUT', path: '/projects/:projectId/members' },
+  'project.sync': {
+    kind: 'route',
+    routes: [
+      { method: 'POST', path: '/projects' },
+      { method: 'PATCH', path: '/projects/:projectId' },
+    ],
+  },
+  'project.invite': {
+    kind: 'route',
+    routes: [{ method: 'PUT', path: '/projects/:projectId/members' }],
+  },
   'device.create': {
     kind: 'client',
     because: 'devices are written to a local PouchDB and replicated; the API never sees one',
@@ -67,7 +92,9 @@ export function gatedRoutes(): ReadonlyArray<{
 }> {
   return ACTIONS.flatMap((action) => {
     const where = ENFORCEMENT[action]
-    return where.kind === 'route' ? [{ action, method: where.method, path: where.path }] : []
+    return where.kind === 'route'
+      ? where.routes.map((route) => ({ action, method: route.method, path: route.path }))
+      : []
   })
 }
 

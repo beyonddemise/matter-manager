@@ -614,7 +614,23 @@ export interface paths {
                 };
                 400: components["responses"]["BadRequest"];
                 401: components["responses"]["Unauthorized"];
-                403: components["responses"]["Forbidden"];
+                /**
+                 * @description Refused, for one of three reasons a client branches on. `not-a-manager`: the caller
+                 *     is a participant without the role to change settings. `plan-no-sync` and
+                 *     `project-limit-reached`: the caller may change settings, but **unarchiving** a
+                 *     project makes it active again, and the OWNER's plan (not the caller's: the owner
+                 *     pays, a manager may unarchive) has no synchronized projects or no room left among
+                 *     its projects that are not archived. Without that check an owner could archive,
+                 *     create a replacement and unarchive, and walk past the limit. Nothing is written.
+                 */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["NotAManager"] | components["schemas"]["PlanHasNoSync"] | components["schemas"]["ProjectLimitReached"];
+                    };
+                };
                 404: components["responses"]["NotFound"];
             };
         };
@@ -1005,6 +1021,23 @@ export interface components {
              * @constant
              */
             reason: "not-an-operator";
+        };
+        /**
+         * @description Changing a project's settings was refused: the caller is a participant whose role may
+         *     not change them. Distinct from the plan refusals so a client can tell "ask the owner"
+         *     from "upgrade".
+         */
+        NotAManager: {
+            /** Format: uri */
+            type?: string;
+            title: string;
+            status: number;
+            detail?: string;
+            /**
+             * @description Pinned, so a handler that renamed it or stopped sending it fails the contract check rather than silently becoming a refusal no client recognises.
+             * @constant
+             */
+            reason: "not-a-manager";
         };
         /**
          * @description Creating a project was refused: this plan does not include synchronized projects

@@ -80,6 +80,19 @@ export interface SettingsDependencies {
   readonly couch: CouchClient
   /** The clock in seconds since the epoch, which is what `archivedAt` records. */
   readonly now: () => number
+  /**
+   * Whether the project's **owner** may have one more active project, asked only when an archived
+   * project is being brought back.
+   *
+   * Injected rather than decided here because the answer is a plan lookup and a gate, which
+   * belong to the route's entitlement seam (ADR 0009) and not to a module about names. It runs
+   * after the pointer has been read and the caller's role checked, and before anything is
+   * written, so a refusal leaves the stored project exactly as it was. Rejects (with the seam's
+   * own `NotEntitledError`) to refuse; the route maps that to its named 403.
+   *
+   * @param owner the OIDC subject of the project's owner, whose plan pays whoever is asking
+   */
+  readonly authoriseUnarchive: (owner: string) => Promise<void>
 }
 
 /** Trims, and refuses a name that says nothing or is longer than the contract allows. */
@@ -181,9 +194,26 @@ export async function updateProjectSettings(
     throw new SettingsRefused(400, 'Archiving a project is true or false.')
   }
   const archived = change.archived ?? pointer.archived ?? false
-  // Stamped once. A second `archived: true` is a client repeating itself, and moving the stamp
-  // would make "how long has this been put away" depend on how often somebody pressed the button.
-  const archivedAt = archived ? (pointer.archivedAt ?? deps.now()) : undefined
+
+  // Archived projects do not count toward the plan limit, so bringing one back is the moment it
+  // starts counting again: without this, archive-create-unarchive walks past the limit. The
+  // owner's plan is asked, not the caller's, because the owner pays — a manager may unarchive,
+  // and a manager on a better plan than the owner must not lend it. Only the archived-to-active
+  // transition is gated; archiving and every other edit never is.
+  if (change.archived === false && pointer.archived === true) {
+    await deps.authoriseUnarchive(ownerOf(pointer).ownerId)
+  }
+
+  // Stamped only by the `archived: true` event, and then once. A second `archived: true` is a
+  // client repeating itself, and moving the stamp would make "how long has this been put away"
+  // depend on how often somebody pressed the button. A rename of a pointer archived before the
+  // stamp existed must not invent one, so every other change carries the stored value through.
+  const archivedAt =
+    change.archived === true
+      ? (pointer.archivedAt ?? deps.now())
+      : change.archived === false
+        ? undefined
+        : pointer.archivedAt
 
   // Spread from the pointer that was read, never rebuilt from arguments. `participants` is in
   // this document, and a rename that reconstructed it would drop every member of the project

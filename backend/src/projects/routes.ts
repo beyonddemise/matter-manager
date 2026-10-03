@@ -11,7 +11,7 @@
  * @module
  */
 
-import type { FastifyInstance } from 'fastify'
+import type { FastifyInstance, FastifyReply } from 'fastify'
 import { bearerClaims, bearerSubject } from '../auth/bearer.js'
 import type { DenyList } from '../auth/deny-list.js'
 import type { SigningKey } from '../auth/jwt.js'
@@ -175,6 +175,14 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDepende
   ): { readonly sub: string; readonly email?: string; readonly name?: string } | undefined =>
     bearerClaims(request, deps.key, now, deps.deny)
 
+  /** What `sub` owns that is not archived, for the plan limit. See {@link principalFor}. */
+  const ownedActive = async (sub: string): Promise<number> => {
+    await ensureRegistry(deps.couch)
+    return (await projectsFor(deps.couch, sub)).filter(
+      (row) => row.role === 'owner' && !row.archived,
+    ).length
+  }
+
   /**
    * Who is asking, and what they already have.
    *
@@ -208,10 +216,7 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDepende
     readonly email?: string
   }): Promise<Principal> => {
     const { sub } = caller
-    await ensureRegistry(deps.couch)
-    const owned = (await projectsFor(deps.couch, sub)).filter(
-      (row) => row.role === 'owner' && !row.archived,
-    ).length
+    const owned = await ownedActive(sub)
     // By the address on the token, which is what the record is keyed by and what `/auth/token`
     // and `/profile` read — so all three agree on the plan. See `callerOf` for why not by `sub`.
     // Every token `/auth/token` mints carries an address; one without is answered as `free`.
@@ -220,6 +225,50 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDepende
     // because a subject with no record has no plan to read rather than a cheap one. `planOf`
     // owns that default, and the one for a plan this build does not know.
     return { sub, plan: planOf(record), ownedProjects: owned }
+  }
+
+  /**
+   * The principal for somebody who is **not** the caller: a project's owner, found by subject.
+   *
+   * Unlike {@link principalFor} there is no token to read an address off, so the record is found
+   * through `readBySub`; a subject with no record is `free`, which `planOf` answers.
+   */
+  const principalOfOwner = async (sub: string): Promise<Principal> => ({
+    sub,
+    plan: planOf(await deps.records.readBySub(sub)),
+    ownedProjects: await ownedActive(sub),
+  })
+
+  /**
+   * Turns the seam's refusal into the named 403 the page branches on.
+   *
+   * Shared by `POST /projects` and the unarchive path of `PATCH /projects/:projectId`, because
+   * both ask the same two questions of a plan and must not word the answers differently.
+   */
+  const refuseEntitlement = (reply: FastifyReply, error: NotEntitledError) => {
+    // Named, not empty. `reply.code(403).send()` told the page nothing, so it could not tell
+    // a capacity refusal from a permission one — and only one of those is fixed by upgrading.
+    if (error.action === SYNC) {
+      return problem(reply, {
+        title: 'This plan does not include synchronized projects.',
+        status: 403,
+        reason: 'plan-no-sync',
+      })
+    }
+    return problem(reply, {
+      title: 'This plan has no room for another project.',
+      status: 403,
+      reason: 'project-limit-reached',
+    })
+  }
+
+  /**
+   * The two questions a plan answers before a project becomes active, in the order the page
+   * hears them: sync before capacity, so a free account is told to upgrade rather than to archive.
+   */
+  const gateActivation = (principal: Principal): void => {
+    gate(principal, SYNC)
+    gate(principal, CREATE)
   }
 
   app.post('/projects', async (request, reply) => {
@@ -248,24 +297,10 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDepende
     try {
       // Sync before capacity: a free account has no server projects to run out of, so telling
       // it "no room" would send it to archive things when the fix is a plan that syncs.
-      gate(principal, SYNC)
-      gate(principal, CREATE)
+      gateActivation(principal)
     } catch (error) {
       if (!(error instanceof NotEntitledError)) throw error
-      // Named, not empty. `reply.code(403).send()` told the page nothing, so it could not tell
-      // a capacity refusal from a permission one — and only one of those is fixed by upgrading.
-      if (error.action === SYNC) {
-        return problem(reply, {
-          title: 'This plan does not include synchronized projects.',
-          status: 403,
-          reason: 'plan-no-sync',
-        })
-      }
-      return problem(reply, {
-        title: 'This plan has no room for another project.',
-        status: 403,
-        reason: 'project-limit-reached',
-      })
+      return refuseEntitlement(reply, error)
     }
 
     const body = (request.body ?? {}) as CreateBody
@@ -405,16 +440,33 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDepende
     }
 
     try {
-      const summary = await updateProjectSettings({ couch: deps.couch, now }, projectId, sub, {
-        ...(body.name === undefined ? {} : { name: body.name }),
-        ...(body.address === undefined ? {} : { address: body.address }),
-        ...(body.client === undefined ? {} : { client: body.client }),
-        ...(body.archived === undefined ? {} : { archived: body.archived }),
-      })
+      const summary = await updateProjectSettings(
+        {
+          couch: deps.couch,
+          now,
+          authoriseUnarchive: async (owner) => gateActivation(await principalOfOwner(owner)),
+        },
+        projectId,
+        sub,
+        {
+          ...(body.name === undefined ? {} : { name: body.name }),
+          ...(body.address === undefined ? {} : { address: body.address }),
+          ...(body.client === undefined ? {} : { client: body.client }),
+          ...(body.archived === undefined ? {} : { archived: body.archived }),
+        },
+      )
       return reply.code(200).send(summary)
     } catch (error) {
+      // The owner's plan refused an unarchive: answered exactly as `POST /projects` answers it.
+      if (error instanceof NotEntitledError) return refuseEntitlement(reply, error)
       if (error instanceof SettingsRefused) {
-        return problem(reply, { title: error.message, status: error.status })
+        // A role refusal is named so a client can tell it from the plan refusals above, which
+        // share its status and are fixed differently.
+        return problem(reply, {
+          title: error.message,
+          status: error.status,
+          ...(error.status === 403 ? { reason: 'not-a-manager' } : {}),
+        })
       }
       throw error
     }

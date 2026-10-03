@@ -4,7 +4,7 @@ import { mintToken, type SigningKey } from '../../src/auth/jwt.js'
 import { refreshStore } from '../../src/auth/refresh-store.js'
 import { ACTIONS, type Action, PROJECT_LIMITS, type Principal } from '../../src/domain/index.js'
 import { ENFORCEMENT, gate, gatedRoutes, NotEntitledError } from '../../src/entitlements/gate.js'
-import { forgetRegistry } from '../../src/projects/registry.js'
+import { forgetRegistry, pointerId, REGISTRY_DATABASE } from '../../src/projects/registry.js'
 import { buildServer, type Server } from '../../src/server.js'
 import { forgetUsersDatabase } from '../../src/users/database.js'
 import { recordEnsurer } from '../../src/users/ensure.js'
@@ -77,6 +77,9 @@ describe('the seam itself', () => {
   })
 })
 
+/** The project the PATCH driver unarchives; seeded by {@link serverWithGatedRoutes}. */
+const ARCHIVED_PROJECT = '3b241101-e2bb-4255-8caf-4136c566a962'
+
 /**
  * How to reach each gated route, so this file can watch the gate being called.
  *
@@ -98,6 +101,26 @@ const DRIVERS: Readonly<Record<string, (built: Server, key: SigningKey) => Promi
       },
       payload: { name: 'Musterstraße 12' },
     }),
+  // Archives, then unarchives, so the request that matters is an unarchive every time it is
+  // driven: the enumeration visits this route once per action it is gated by, and a second
+  // visit to an already-active project would never reach the gate. Archiving is not gated.
+  'PATCH /projects/:projectId': async (built, key) => {
+    const patch = (archived: boolean) =>
+      built.inject({
+        method: 'PATCH',
+        url: `/projects/${ARCHIVED_PROJECT}`,
+        headers: {
+          authorization: `Bearer ${mintToken(key, {
+            purpose: 'access',
+            sub: ADA.sub,
+            exp: Math.floor(Date.now() / 1000) + 3600,
+          })}`,
+        },
+        payload: { archived },
+      })
+    await patch(true)
+    return patch(false)
+  },
   'PUT /projects/:projectId/members': (built, key) =>
     built.inject({
       method: 'PUT',
@@ -129,7 +152,22 @@ function serverWithGatedRoutes() {
   // would be invisible to the routes' instance: `principalFor` would read no user record, fall back
   // to `free`, and the test would pass or fail for a reason unrelated to what it asserted. One
   // instance means the server behaves like a deployment, where there is one database.
-  const couch = fakeCouch().couch
+  const couch = fakeCouch({
+    seed: {
+      [`${REGISTRY_DATABASE}/${pointerId(ARCHIVED_PROJECT)}`]: {
+        _id: pointerId(ARCHIVED_PROJECT),
+        _rev: '1-a',
+        type: 'projectPointer',
+        projectId: ARCHIVED_PROJECT,
+        dbName: `project_${ARCHIVED_PROJECT}`,
+        projectName: 'Archived',
+        participants: [{ role: 'owner', userid: ADA.sub }],
+        addedAt: '2026-08-27T09:00:00.000Z',
+        archived: true,
+        archivedAt: 1_700_000_000,
+      },
+    },
+  }).couch
   const records = userRecords(couch)
   app = buildServer({
     logger: false,
@@ -173,7 +211,9 @@ describe('the enumeration that makes the seam real', () => {
   it('knows which routes are gated', () => {
     expect(gatedRoutes().map((entry) => `${entry.method} ${entry.path}`)).toEqual([
       'POST /projects',
+      'PATCH /projects/:projectId',
       'POST /projects',
+      'PATCH /projects/:projectId',
       'PUT /projects/:projectId/members',
     ])
   })
@@ -191,10 +231,13 @@ describe('the enumeration that makes the seam real', () => {
       .map((entry) => `${entry.method} ${entry.path}`)
       .filter((route) => registered.has(route))
 
-    // `POST /projects` twice: it asks `project.sync` and then `project.create`.
+    // `POST /projects` and `PATCH /projects/:projectId` each twice: they ask `project.sync` and
+    // then `project.create`.
     expect(implemented).toEqual([
       'POST /projects',
+      'PATCH /projects/:projectId',
       'POST /projects',
+      'PATCH /projects/:projectId',
       'PUT /projects/:projectId/members',
     ])
   })
@@ -234,6 +277,12 @@ describe('the enumeration that makes the seam real', () => {
     // upgrading to a plan that syncs at all.
     const { built, key, calls } = serverWithGatedRoutes()
     await DRIVERS['POST /projects']?.(built, key)
+    expect(calls).toEqual(['project.sync', 'project.create'])
+  })
+
+  it('asks the same way when unarchiving, with the owner as the principal', async () => {
+    const { built, key, calls } = serverWithGatedRoutes()
+    await DRIVERS['PATCH /projects/:projectId']?.(built, key)
     expect(calls).toEqual(['project.sync', 'project.create'])
   })
 

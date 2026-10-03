@@ -451,7 +451,22 @@ paths:
         # either. Declared properly and driven by a test per status in `projects/routes.test.ts`.
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
+        '403':
+          description: |
+            Refused, for one of three reasons a client branches on. `not-a-manager`: the caller
+            is a participant without the role to change settings. `plan-no-sync` and
+            `project-limit-reached`: the caller may change settings, but **unarchiving** a
+            project makes it active again, and the OWNER's plan (not the caller's: the owner
+            pays, a manager may unarchive) has no synchronized projects or no room left among
+            its projects that are not archived. Without that check an owner could archive,
+            create a replacement and unarchive, and walk past the limit. Nothing is written.
+          content:
+            application/problem+json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/NotAManager'
+                  - $ref: '#/components/schemas/PlanHasNoSync'
+                  - $ref: '#/components/schemas/ProjectLimitReached'
         '404': { $ref: '#/components/responses/NotFound' }
 
   /projects/{projectId}/members:
@@ -777,6 +792,25 @@ components:
         reason:
           type: string
           const: not-an-operator
+          description: >-
+            Pinned, so a handler that renamed it or stopped sending it fails the contract check
+            rather than silently becoming a refusal no client recognises.
+
+    NotAManager:
+      type: object
+      description: |
+        Changing a project's settings was refused: the caller is a participant whose role may
+        not change them. Distinct from the plan refusals so a client can tell "ask the owner"
+        from "upgrade".
+      required: [title, status, reason]
+      properties:
+        type: { type: string, format: uri }
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: string }
+        reason:
+          type: string
+          const: not-a-manager
           description: >-
             Pinned, so a handler that renamed it or stopped sending it fails the contract check
             rather than silently becoming a refusal no client recognises.
