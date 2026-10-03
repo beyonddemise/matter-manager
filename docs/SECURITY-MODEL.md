@@ -247,10 +247,15 @@ so a downgraded owner cannot keep using the database by trimming it. It is delib
 - A `_security` without `owners` leaves the rule inert. `securityFor` is the only builder, so a
   membership change or transfer moves `owners` in the same write as `members` and `writers`.
 - Server admins bypass it, as they bypass the whole validator.
+- **The role is only as fresh as the access token** (at most 5 minutes). A downgraded owner keeps
+  writing until their next refresh carries the new plan.
 
-**Two races remain by design.** Two requests racing at the limit can both pass (each counts
-before the gate and nothing serialises them), and the API's check is by design weaker than the
-validator's: the validator is the part that cannot be bypassed.
+**The count limit has one enforcer and a known race.** The validator backs only the sync rule
+(`project.sync`, through the plan role). The count limit (`project.create`) is enforced by the API
+alone, with nothing behind it in CouchDB. Each request counts before it asks the gate and nothing
+serialises the two (the accepted race, `backend/src/projects/routes.ts` around the comment on
+`principalFor`), so concurrent requests at the limit can exceed it by up to the number of
+concurrent requests.
 
 **Settings refusals by role are named too.** `PATCH /projects/:id` by somebody who is not an
 owner or manager answers 403 with `reason: 'not-a-manager'`, sharing a status with the plan
