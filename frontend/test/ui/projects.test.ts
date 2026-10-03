@@ -121,10 +121,9 @@ describe('talking to the API', () => {
   }
 
   it('sends the access token as a bearer', async () => {
-    // What the contract declares, and what `auth/bearer.ts` reads. Deliberately not
-    // `credentials: 'include'`: the session cookie is SameSite=Lax and would not be sent to an
-    // API on another site at all — the request would arrive unauthenticated and answer 401,
-    // which reads as "signed out" on a page that is signed in.
+    // What the contract declares, and what `auth/bearer.ts` reads. No cookie authenticates
+    // these routes: the only one the API sets after sign-in is the handoff, which authorises a
+    // single `POST /auth/token` and nothing else.
     const { calls, impl } = stubFetch(201, PROJECT)
     await projectsApi('https://api.example', () => 'a.token', impl).create({ name: 'x' })
 

@@ -291,12 +291,14 @@ export class AppShell extends LitElement {
         return
       }
       case 'signed-out':
-        // Arriving after `signed-in`, this is a sign-out of this tab: another tab signed out and
-        // removed the stored refresh token, so this tab's exchange had nothing to send. Treated
-        // as the expired path without its notice — nothing was refused, the user signed out
-        // elsewhere — so replication stops and the in-memory token goes, and local data stays,
-        // because removing it was the other tab's decision to make. On a first answer there is
-        // nothing running, and this only records the state.
+        // Arriving after `signed-in`, this is a sign-out of this tab. This tab's exchange had no
+        // refresh token to send, for one of two reasons: another tab signed out and removed the
+        // stored token, or the local store could not be read (`read` reports an unreadable store
+        // as no token). Either way this tab cannot renew its session. Treated as the expired path
+        // without its notice — nothing was refused by the server — so replication stops and the
+        // in-memory token goes. Local data stays: removing it is a sign-out's decision, not a
+        // refresher's. On a first answer there is nothing running, and this only records the
+        // state.
         if (this.session === 'signed-in') {
           this.endReplication()
           forgetTokens()

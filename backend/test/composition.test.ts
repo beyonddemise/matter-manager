@@ -76,7 +76,8 @@ describe('a fully configured deployment', () => {
 
   it('sends the browser back to the application, not to the API', () => {
     // `appOrigin` is where the callback redirects to when sign-in succeeds. Defaulting it to
-    // the API's own host would land the user on a JSON endpoint holding a session cookie.
+    // the API's own host would land the user on a JSON endpoint holding the handoff cookie,
+    // with no page there to exchange it.
     expect(serverOptions(COMPLETE).auth?.appOrigin).toBe('https://matter.example')
   })
 
