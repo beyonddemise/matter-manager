@@ -172,7 +172,7 @@ describe('the refresh token store', () => {
     const db = {
       get: async (id: string) => {
         const doc = docs.get(id)
-        if (doc === undefined) throw new Error('missing')
+        if (doc === undefined) throw Object.assign(new Error('missing'), { status: 404 })
         return doc
       },
       put: async (doc: { _id: string; _rev?: string; token?: string }) => {
@@ -206,6 +206,17 @@ describe('the refresh token store', () => {
     await store.write('r1')
     await store.write('r2')
     expect(await store.read()).toBe('r2')
+  })
+
+  it('reports a failure to remove the token rather than pretending it is gone', async () => {
+    // A credential left on a shared machine is the thing sign-out exists to prevent.
+    const { db } = fakeDb()
+    const store = pouchRefreshTokenStore(db)
+    await store.write('r1')
+    db.remove = async () => {
+      throw Object.assign(new Error('storage refused'), { status: 500 })
+    }
+    await expect(store.clear()).rejects.toThrow(/storage refused/)
   })
 
   it('clears the token, and clearing nothing is not an error', async () => {

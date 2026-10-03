@@ -103,7 +103,7 @@ export function forgetTokens(): void {
  * were ever given a remote counterpart; sign-out removes it explicitly and also destroys the
  * whole database.
  *
- * `read` swallows errors on purpose: an unreadable store is indistinguishable from a first visit
+ * `clear` treats only a 404 as success. `read` swallows errors on purpose: an unreadable store is indistinguishable from a first visit
  * for the caller, and the worst outcome is a sign-in prompt, never a wrongly kept session.
  */
 export function pouchRefreshTokenStore(db: PouchDB.Database): RefreshTokenStore {
@@ -128,8 +128,10 @@ export function pouchRefreshTokenStore(db: PouchDB.Database): RefreshTokenStore 
     async clear() {
       try {
         await db.remove(await db.get(id))
-      } catch {
-        /* already gone */
+      } catch (error) {
+        // Only "not there" means already gone. Anything else leaves a live credential on this
+        // device, so it is rethrown for `signOut` to report rather than swallowed.
+        if ((error as { status?: number }).status !== 404) throw error
       }
     },
   }

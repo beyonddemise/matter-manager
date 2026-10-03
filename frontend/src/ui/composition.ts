@@ -57,23 +57,17 @@ export const COUCH_BASE = '/db'
  * hold the *policy* and none of the PouchDB.
  */
 export function sessionDependencies(
-  fetchImpl: typeof fetch = fetch,
-  includeLocalCatalogue = false,
-  store: RefreshTokenStore = pouchRefreshTokenStore(localDatabase()),
+  fetchImpl: typeof fetch,
+  includeLocalCatalogue: boolean,
+  store: RefreshTokenStore,
+  held: HeldCredentials,
 ): SessionDependencies {
-  // Taken now, before `signOut` runs. `signOut` discards the access token and the stored
-  // refresh token *first*, as the steps that cannot fail, so by the time the server is asked to
-  // revoke them they would be gone and it would be asked to end nothing. The refresh token is
-  // read eagerly into a promise for the same reason; a store that cannot be read means "none".
-  const bearer = accessToken()
-  const heldRefreshToken = store.read().catch(() => undefined)
-
   return {
     endServerSession: endServerSessionVia(
       API_BASE,
       fetchImpl,
-      { read: () => heldRefreshToken, write: async () => {}, clear: async () => {} },
-      () => bearer,
+      { read: async () => held.refreshToken, write: async () => {}, clear: async () => {} },
+      () => held.bearer,
     ),
     // The catalogue on this device predates accounts and holds whatever was recorded before
     // signing in, so it is kept unless the reader asked otherwise. On a shared machine somebody
@@ -83,6 +77,17 @@ export function sessionDependencies(
     forgetTokens,
     forgetRefreshToken: () => store.clear(),
   }
+}
+
+/**
+ * The credentials the server has to be shown to revoke them.
+ *
+ * Captured by {@link endSession} before `signOut` starts, because `signOut` discards both
+ * locally first (the steps that cannot fail), after which there would be nothing left to send.
+ */
+export interface HeldCredentials {
+  readonly refreshToken?: string | undefined
+  readonly bearer?: string | undefined
 }
 
 /** What {@link requestTokens} found out. */
@@ -210,8 +215,16 @@ export function beginSignIn(
 export async function endSession(
   includeLocalCatalogue = false,
   fetchImpl: typeof fetch = fetch,
+  store: RefreshTokenStore = pouchRefreshTokenStore(localDatabase()),
 ): Promise<readonly string[]> {
-  return signOut(sessionDependencies(fetchImpl, includeLocalCatalogue))
+  // Awaited here, before `signOut`, so the order is explicit: `signOut` clears the stored
+  // refresh token and the in-memory access token before it asks the server to revoke them. A
+  // store that cannot be read means there is nothing to revoke, not a reason to stay signed in.
+  const held: HeldCredentials = {
+    refreshToken: await store.read().catch(() => undefined),
+    bearer: accessToken(),
+  }
+  return signOut(sessionDependencies(fetchImpl, includeLocalCatalogue, store, held))
 }
 
 /**

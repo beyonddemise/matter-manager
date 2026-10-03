@@ -1,6 +1,7 @@
+import PouchDB from 'pouchdb-browser'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { API_BASE, beginSignIn, COUCH_BASE } from '../../src/ui/composition.js'
-import { forgetTokens } from '../../src/ui/tokens.js'
+import { API_BASE, beginSignIn, COUCH_BASE, endSession } from '../../src/ui/composition.js'
+import { forgetTokens, pouchRefreshTokenStore, rememberAccessToken } from '../../src/ui/tokens.js'
 
 /**
  * #120: seven modules were written, tested, and imported by nothing but their own tests. Every
@@ -37,5 +38,32 @@ describe('starting the sign-in journey', () => {
     const go = vi.fn()
     beginSignIn(go)
     expect(go).toHaveBeenCalledWith('/api/auth/google')
+  })
+})
+
+describe('signing out through the real path', () => {
+  it('shows the server the refresh token and the bearer that sign-out discards locally', async () => {
+    // `signOut` forgets both before it asks the server to revoke anything, so they have to be
+    // captured first. Without that the request carries neither and revokes nothing. A real
+    // PouchDB-backed store, on a database of its own so the sign-out's destruction of `mm-local`
+    // does not interfere.
+    const db = new PouchDB(`refresh-token-test-${crypto.randomUUID()}`)
+    const store = pouchRefreshTokenStore(db)
+    await store.write('r1')
+    rememberAccessToken({ accessToken: 'access-1', expiresIn: 3600 })
+    const requests: Array<{ url: string; init: RequestInit }> = []
+    const fetchImpl = (async (url: string, init: RequestInit) => {
+      requests.push({ url, init })
+      return new Response(null, { status: 204 })
+    }) as unknown as typeof fetch
+
+    expect(await endSession(false, fetchImpl, store)).toEqual([])
+
+    expect(requests).toHaveLength(1)
+    expect(requests[0]?.url).toBe('/api/auth/signout')
+    expect(JSON.parse(String(requests[0]?.init.body))).toEqual({ refreshToken: 'r1' })
+    expect(requests[0]?.init.headers).toMatchObject({ authorization: 'Bearer access-1' })
+    expect(await store.read()).toBeUndefined()
+    await db.destroy()
   })
 })
