@@ -536,6 +536,17 @@ describe('the check catches drift it was built to catch', () => {
     })
   })
 
+  it('rejects a value that two oneOf alternatives both accept', () => {
+    // `oneOf` is exactly-one. Overlapping alternatives mean the contract does not say which
+    // shape it promised, and an any-of check would let that through unnoticed.
+    const schema = { oneOf: [{ type: 'object' }, { type: 'object', required: [] }] }
+
+    expect(validate({}, schema)).toEqual([
+      { at: '$', says: 'matches 2 of the alternatives, but oneOf requires exactly one' },
+    ])
+    expect(validate({}, { oneOf: [{ type: 'object' }, { type: 'string' }] })).toEqual([])
+  })
+
   it('notices a response that is not an object at all', () => {
     const schema = healthzSchema()
 

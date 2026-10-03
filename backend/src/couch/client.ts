@@ -71,6 +71,14 @@ export interface Security {
    * a writer can read the project and change nothing.
    */
   readonly writers?: { readonly names?: readonly string[] }
+  /**
+   * Who owns the project, which CouchDB itself does not interpret either.
+   *
+   * A custom key like `writers`: the server preserves it, and `_design/access` reads it from
+   * the `_security` argument to decide whether an owner's plan may sync at all. Built by
+   * `securityFor()` alone, so provisioning, membership changes and transfers cannot disagree.
+   */
+  readonly owners?: { readonly names?: readonly string[] }
 }
 
 /** The operations this service needs. Deliberately not "a CouchDB client" in general. */

@@ -314,12 +314,6 @@ describe('the declared actions', () => {
   })
 })
 
-/**
- * The compile-time half of the story, and the reason the policy table is declared with
- * `satisfies`. These assertions are checked by `tsc` during `npm run verify`, not by vitest —
- * a `@ts-expect-error` that stops being an error is itself an error, so the guarantee fails
- * loudly the moment it stops holding.
- */
 describe('project.sync', () => {
   it.each([
     ['free', false],
@@ -339,6 +333,12 @@ describe('project.sync', () => {
   })
 })
 
+/**
+ * The compile-time half of the story, and the reason the policy table is declared with
+ * `satisfies`. These assertions are checked by `tsc` during `npm run verify`, not by vitest —
+ * a `@ts-expect-error` that stops being an error is itself an error, so the guarantee fails
+ * loudly the moment it stops holding.
+ */
 describe('the policy table is complete at compile time', () => {
   it('rejects a table that is missing an action', () => {
     const incomplete = {

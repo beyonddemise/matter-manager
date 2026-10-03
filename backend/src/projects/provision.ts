@@ -22,7 +22,7 @@
  */
 
 import type { CouchClient } from '../couch/client.js'
-import type { Owner, Participant } from '../domain/index.js'
+import { type Owner, type Participant, securityFor } from '../domain/index.js'
 import { projectDatabaseName } from './names.js'
 import { ensureRegistry, pointerId, writePointer } from './registry.js'
 
@@ -164,10 +164,7 @@ export async function provisionProject(
   try {
     // Immediately, and before anything else. Until this lands the database is readable by
     // every account in the deployment.
-    await deps.couch.putSecurity(dbName, {
-      members: { names: [owner], roles: [] },
-      writers: { names: [owner] },
-    })
+    await deps.couch.putSecurity(dbName, securityFor([{ role: 'owner', userid: owner }]))
 
     await deps.couch.putDoc(dbName, {
       _id: '_design/access',

@@ -210,18 +210,24 @@ export function validate(value: unknown, schema: unknown, at = '$'): SchemaProbl
     })
   }
 
-  // `oneOf` as "at least one alternative holds". Strictly JSON Schema wants exactly one; the
-  // alternatives this contract uses are told apart by a pinned `const`, so they cannot overlap,
-  // and "any" keeps the checker small. When none holds, every alternative's complaint is
-  // reported, because the one a reader needs is the alternative they meant.
+  // `oneOf` is JSON Schema's exactly-one: a value two alternatives accept is as wrong as one
+  // none accepts, because the contract would then be ambiguous about which shape it promised.
+  // When none holds, every alternative's complaint is reported, because the one a reader needs
+  // is the alternative they meant.
   if (Array.isArray(rules.oneOf)) {
     const attempts = rules.oneOf.map((branch) => validate(value, branch, at))
-    if (!attempts.some((attempt) => attempt.length === 0)) {
+    const matching = attempts.filter((attempt) => attempt.length === 0).length
+    if (matching === 0) {
       problems.push({
         at,
         says: `matches none of the alternatives: ${attempts
           .map((attempt) => attempt.map((problem) => `${problem.at} ${problem.says}`).join(', '))
           .join(' | ')}`,
+      })
+    } else if (matching > 1) {
+      problems.push({
+        at,
+        says: `matches ${matching} of the alternatives, but oneOf requires exactly one`,
       })
     }
   }

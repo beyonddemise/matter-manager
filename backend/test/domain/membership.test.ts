@@ -66,6 +66,19 @@ describe('what CouchDB is told', () => {
     expect(security.writers.names).toEqual([ADA])
   })
 
+  it('names only the owners as owners', () => {
+    // `owners` is what the validator reads to refuse a plan that cannot sync. Managers and
+    // writers can write, but they do not own the project, so they must not be named here.
+    const security = securityFor([
+      { role: 'owner', userid: ADA },
+      { role: 'manage', userid: GRACE },
+      { role: 'write', userid: 'google|3' },
+      { role: 'read', userid: 'google|4' },
+    ])
+
+    expect(security.owners.names).toEqual([ADA])
+  })
+
   it('treats a manager as a writer', () => {
     // CouchDB has no way to express "may change who else has access", so from the database's
     // point of view a manager is simply somebody who may write.
@@ -87,7 +100,11 @@ describe('what CouchDB is told', () => {
   it('gives an empty project an empty membership rather than an absent one', () => {
     // `{}` and `{members: {names: []}}` are different to CouchDB: an absent `members` means
     // *any authenticated user may read*, which is the default a fresh database has.
-    expect(securityFor([])).toEqual({ members: { names: [], roles: [] }, writers: { names: [] } })
+    expect(securityFor([])).toEqual({
+      members: { names: [], roles: [] },
+      writers: { names: [] },
+      owners: { names: [] },
+    })
   })
 })
 

@@ -197,6 +197,19 @@ describe('accepting an offer', () => {
     expect(fake.security.get(DATABASE)?.members?.names).toContain(INSTALLER)
   })
 
+  it('leaves exactly the new owner in owners, whatever the previous owner retains', async () => {
+    // `owners` is what the validator uses to refuse a plan that cannot sync, so a stale entry
+    // would keep billing the previous owner's plan for a project they gave away.
+    const fake = registry(undefined, offer({ retainAccess: 'read' }))
+
+    await acceptTransfer(deps(fake), PROJECT_ID, homeowner, clock())
+
+    const security = fake.security.get(DATABASE)
+    expect(security?.owners?.names).toEqual([HOMEOWNER])
+    expect(security?.owners?.names).not.toContain(INSTALLER)
+    expect(security?.members?.names).toContain(INSTALLER)
+  })
+
   it('removes the previous owner entirely when nothing was retained', async () => {
     const fake = registry(undefined, offer())
 

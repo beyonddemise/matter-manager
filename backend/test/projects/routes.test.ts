@@ -251,6 +251,7 @@ describe('creating a project', () => {
     expect(fake.security.get(DATABASE)).toEqual({
       members: { names: [OWNER], roles: [] },
       writers: { names: [OWNER] },
+      owners: { names: [OWNER] },
     })
   })
 })

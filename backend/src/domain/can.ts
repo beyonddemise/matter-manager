@@ -142,9 +142,10 @@ export type Policy = (principal: Principal, project?: ProjectRef) => boolean
 /**
  * Permits the action.
  *
- * Four of the six policies are this one; `project.create` and `project.sync` are not. Named rather than written as `() => true` at each entry, so the table
- * below reads as a list of decisions — and so the one entry that is *not* this is visible at a
- * glance rather than having to be spotted among four identical lambdas.
+ * Four of the six policies are this one; `project.create` and `project.sync` are not. Named
+ * rather than written as `() => true` at each entry, so the table below reads as a list of
+ * decisions — and so the one entry that is *not* this is visible at a glance rather than having
+ * to be spotted among four identical lambdas.
  */
 export const ALLOW: Policy = () => true
 

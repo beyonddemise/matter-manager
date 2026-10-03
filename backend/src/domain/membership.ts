@@ -25,6 +25,8 @@ export const PROJECT_ROLES: readonly ProjectRole[] = ['read', 'write', 'manage',
 export interface ProjectSecurity {
   readonly members: { readonly names: readonly string[]; readonly roles: readonly string[] }
   readonly writers: { readonly names: readonly string[] }
+  /** The participants whose role is `owner`; what the validator checks against their plan. */
+  readonly owners: { readonly names: readonly string[] }
 }
 
 /** Whether somebody with this role may change who else has access. Enforced by the API alone. */
@@ -107,6 +109,10 @@ function ownerCount(participants: readonly Participant[]): number {
  * gets `{"forbidden": "You have read-only access to this project."}` from the database itself,
  * which is what makes read-only access real rather than an appearance.
  *
+ * **`owners` is the subset whose role is `owner`.** A custom key, like `writers`, that the
+ * validator reads to refuse an owner whose plan cannot sync. Because this is the only function
+ * that builds `_security`, a transfer or a membership change moves it in the same write.
+ *
  * `members.roles` is empty and stays empty. A role there would grant access to everybody
  * holding it, and this application's access is per person: a `roles` entry is the one way to
  * accidentally share every project with every account at once.
@@ -117,7 +123,11 @@ export function securityFor(participants: readonly Participant[]): ProjectSecuri
     .filter((participant) => canWrite(participant.role))
     .map((participant) => participant.userid)
 
-  return { members: { names, roles: [] }, writers: { names: writers } }
+  const owners = participants
+    .filter((participant) => participant.role === 'owner')
+    .map((participant) => participant.userid)
+
+  return { members: { names, roles: [] }, writers: { names: writers }, owners: { names: owners } }
 }
 
 /**

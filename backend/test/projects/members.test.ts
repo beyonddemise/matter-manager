@@ -93,6 +93,13 @@ describe('granting access', () => {
     expect(order.indexOf('putDoc')).toBeLessThan(order.indexOf('putSecurity'))
   })
 
+  it('names a second owner in owners when somebody is made one', async () => {
+    const { fake, deps } = project()
+    await changeMembership(deps, PROJECT_ID, ADA, 'grace@example.test', 'owner')
+
+    expect(fake.security.get(DATABASE)?.owners?.names).toEqual([ADA, GRACE])
+  })
+
   it('changes a role somebody already has', async () => {
     const { deps, participantsNow } = project([
       { role: 'owner', userid: ADA },
