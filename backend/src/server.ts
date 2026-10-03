@@ -20,11 +20,12 @@ import type { paths } from './generated/openapi.js'
 import { redactionOptions } from './logging.js'
 import { registerCustomerRoutes } from './profile/customer.js'
 import {
+  callerClaims,
   OPERATOR_ROLES,
   type ProfileDependencies,
   registerProfileRoutes,
-  sessionSubject,
 } from './profile/routes.js'
+import type { ProfileStore } from './profile/store.js'
 import { type ProjectDependencies, registerProjectRoutes } from './projects/routes.js'
 import { registerSecurity, type SecurityOptions } from './security/register.js'
 
@@ -60,6 +61,15 @@ export interface ServerOptions {
    * is being brought up.
    */
   readonly profile?: ProfileDependencies
+  /**
+   * The old `_users` store, which only `PUT /customer` still reads.
+   *
+   * **Transitional.** `customer.ts` moves onto the user record in the next task, and this field
+   * goes with it. `PUT /customer` is registered only when this is given alongside `profile`, so
+   * its caller is identified by the same bearer path as `/profile` while its data is still in
+   * `_users`.
+   */
+  readonly customerStore?: ProfileStore
   /**
    * Project provisioning and listing.
    *
@@ -178,17 +188,20 @@ export function buildServer(options: ServerOptions = {}): Server {
   if (options.profile !== undefined) {
     registerProfileRoutes(app, options.profile)
     // Registered on the same condition and from the same dependencies, because it needs exactly
-    // what the profile routes need: the store, and the key that says who is asking.
+    // what the profile routes need: the key that says who is asking, and the deny list.
     //
     // `OPERATOR_ROLES` is passed rather than re-declared in `customer.ts`. Two literal lists
     // would be free to drift, and the way they drift is the dangerous way round — a role
     // removed from one and left in the other is a gate that is still open in one place, and
     // the place it stays open is the route that can reach an account other than the caller's.
-    registerCustomerRoutes(app, {
-      store: options.profile.store,
-      subjectOf: sessionSubject(options.profile),
-      operatorRoles: OPERATOR_ROLES,
-    })
+    if (options.customerStore !== undefined) {
+      const callerOf = callerClaims(options.profile)
+      registerCustomerRoutes(app, {
+        store: options.customerStore,
+        subjectOf: (request) => callerOf(request)?.sub,
+        operatorRoles: OPERATOR_ROLES,
+      })
+    }
   }
   if (options.projects !== undefined) registerProjectRoutes(app, options.projects)
 

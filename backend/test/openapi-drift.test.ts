@@ -6,6 +6,7 @@ import { refreshStore } from '../src/auth/refresh-store.js'
 import { profileStore } from '../src/profile/store.js'
 import { buildServer, type Server } from '../src/server.js'
 import { forgetUsersDatabase } from '../src/users/database.js'
+import { recordEnsurer } from '../src/users/ensure.js'
 import { userRecords } from '../src/users/records.js'
 import {
   loadContract,
@@ -75,6 +76,8 @@ const server = (): Server => {
   const records = userRecords(couch)
   const clock = () => Math.floor(Date.now() / 1000)
   const key = SIGNING
+  const refresh = refreshStore(records, clock)
+  const deny = denyList(clock)
 
   app = buildServer({
     logger: false,
@@ -94,29 +97,20 @@ const server = (): Server => {
       verifyIdToken: async () => ({ sub: 'google|1234', email: 'ada@example.test', name: 'Ada' }),
       appOrigin: 'https://app.test',
       records,
-      refresh: refreshStore(records, clock),
-      deny: denyList(clock),
+      refresh,
+      deny,
       signIn: async () => ({ hasRecord: false }),
       logSignIn: () => undefined,
     },
     profile: {
-      // The **real** store over the fake CouchDB, and deliberately not a hand-written stub.
-      //
-      // It was `{ read, write, rememberUser } as unknown as ProfileDependencies['store']` — three
-      // methods, one of which (`write`) the interface does not even have, and missing `rolesOf`
-      // and `setPlan`. The cast is what allowed that: it told the compiler to stop checking the
-      // one thing it was in a position to check. `registerCustomerRoutes` is wired to this
-      // store, so the first request that reached `PUT /customer` past the session check would
-      // have called `rolesOf` on `undefined` and thrown a TypeError — a 500 from the test
-      // harness, on a route whose refusals this file now validates.
-      //
-      // Using `profileStore` instead means there is no interface to keep in step by hand: a
-      // method added to `ProfileStore` is implemented once, in the real implementation, and this
-      // server gets it. That is the compile-time guarantee the rest of the branch leans on, and
-      // a cast here is exactly the hole in it.
-      store,
+      records,
+      ensureRecord: recordEnsurer(records, refresh),
       key,
+      deny,
     },
+    // The **real** store over the fake CouchDB, and deliberately not a hand-written stub: a cast
+    // would stop the compiler checking the one thing it can. Transitional, for `PUT /customer`.
+    customerStore: store,
     projects: {
       couch,
       key,

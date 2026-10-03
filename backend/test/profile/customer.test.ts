@@ -1,10 +1,17 @@
 import { generateKeyPairSync } from 'node:crypto'
 import { afterEach, describe, expect, it } from 'vitest'
-import { mintToken, signingKeyFromPem } from '../../src/auth/jwt.js'
+import { denyList } from '../../src/auth/deny-list.js'
+import { signingKeyFromPem } from '../../src/auth/jwt.js'
+import { refreshStore } from '../../src/auth/refresh-store.js'
 import type { CouchClient, Revision } from '../../src/couch/client.js'
 import { type Profile, profileStore, userDocumentId } from '../../src/profile/store.js'
 import { buildServer, type Server } from '../../src/server.js'
+import { forgetUsersDatabase } from '../../src/users/database.js'
+import { recordEnsurer } from '../../src/users/ensure.js'
+import { userRecords } from '../../src/users/records.js'
 import { loadContract, operationsOf, validate } from '../support/contract.js'
+import { fakeCouch as supportCouch } from '../support/couch.js'
+import { accessTokenFor } from '../support/tokens.js'
 
 /**
  * `PUT /customer` — the only route that can reach an account other than the caller's.
@@ -84,13 +91,19 @@ function customerServer({
     Object.assign({}, userDoc(CALLER, callerRoles), ...subjects.map((subject) => userDoc(subject))),
   )
   const store = profileStore(couch)
-  app = buildServer({ logger: false, profile: { store, key } })
-
-  const token = mintToken(key, {
-    purpose: 'access',
-    sub: CALLER,
-    exp: Math.floor(Date.now() / 1000) + 3600,
+  // Only `PUT /customer` is under test here, and it still reads `_users` through `customerStore`.
+  // The record side is wired for completeness; nothing in this suite reaches it.
+  forgetUsersDatabase()
+  const records = userRecords(supportCouch().couch)
+  const refresh = refreshStore(records, () => Math.floor(Date.now() / 1000))
+  const deny = denyList(() => Math.floor(Date.now() / 1000))
+  app = buildServer({
+    logger: false,
+    profile: { records, ensureRecord: recordEnsurer(records, refresh), key, deny },
+    customerStore: store,
   })
+
+  const token = accessTokenFor(key, { sub: CALLER, email: `${CALLER}@example.test` })
 
   return {
     app,

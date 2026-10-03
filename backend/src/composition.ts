@@ -24,6 +24,7 @@ import { type ProfileStore, profileStore } from './profile/store.js'
 import { checkDesignDocs } from './projects/design-docs.js'
 import { originsFromEnv } from './security/config.js'
 import type { ServerOptions } from './server.js'
+import { recordEnsurer } from './users/ensure.js'
 import { type UserRecords, userRecords } from './users/records.js'
 
 /** The environment, as far as this module is concerned. */
@@ -184,11 +185,11 @@ export function serverOptions(env: Environment = process.env): ServerOptions {
   const sessionKey = sessionKeyFrom(env, key)
   const clock = () => Math.floor(Date.now() / 1000)
   const records = userRecords(couch)
-  const auth = authFrom(env, key, sessionKey, store, {
-    records,
-    refresh: refreshStore(records, clock),
-    deny: denyList(clock),
-  })
+  // One of each per process: the refresh store and the deny list are in memory, and `/profile`
+  // must see the same entries and the same signed-out tokens that the auth routes write.
+  const refresh = refreshStore(records, clock)
+  const deny = denyList(clock)
+  const auth = authFrom(env, key, sessionKey, store, { records, refresh, deny })
 
   return {
     security,
@@ -198,7 +199,13 @@ export function serverOptions(env: Environment = process.env): ServerOptions {
     // Verifies the **access** token, so it takes the key CouchDB validates. Present only when
     // there is a session key all the same: without one there is no sign-in, nobody can obtain an
     // access token, and a route that can never authenticate anybody is not a route.
-    ...(sessionKey === undefined ? {} : { profile: { store, key } }),
+    ...(sessionKey === undefined
+      ? {}
+      : {
+          profile: { records, ensureRecord: recordEnsurer(records, refresh), key, deny },
+          // Transitional: `PUT /customer` still reads `_users` until it moves onto the record.
+          customerStore: store,
+        }),
     ...(auth === undefined ? {} : { auth }),
   }
 }
