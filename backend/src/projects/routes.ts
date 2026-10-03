@@ -122,6 +122,7 @@ export interface ProjectDependencies {
 
 /** The actions these routes are gated by. Named so the routes and the map cannot drift. */
 const CREATE: Action = 'project.create'
+const SYNC: Action = 'project.sync'
 const INVITE: Action = 'project.invite'
 
 /**
@@ -182,9 +183,11 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDepende
    *
    * `role === 'owner'` rather than the row's presence: the view emits one row **per
    * participant**, so a project somebody shared with this user is theirs to open and not theirs
-   * to count. Archived ones do count, because archiving is not deletion (#55) — the database
-   * still exists — and the alternative lets a free account accumulate databases without limit
-   * by archiving each one.
+   * to count. Archived ones do not: archiving is how a project is put away, and a plan's
+   * allowance is for the projects somebody is working on. This reverses #55, which counted them
+   * because the database still exists. Accepted, because the other reading made archiving a
+   * dead end — a member at the limit could not make room without deleting — and the free plan,
+   * the one that could have accumulated databases that way, now owns none (`project.sync`).
    *
    * `ensureRegistry` first, for the reason `provisionProject` gives for doing it as its own
    * step 1: a registry that cannot be reached costs nothing at this point. Without it the
@@ -205,7 +208,9 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDepende
   }): Promise<Principal> => {
     const { sub } = caller
     await ensureRegistry(deps.couch)
-    const owned = (await projectsFor(deps.couch, sub)).filter((row) => row.role === 'owner').length
+    const owned = (await projectsFor(deps.couch, sub)).filter(
+      (row) => row.role === 'owner' && !row.archived,
+    ).length
     // By the address on the token, which is what the record is keyed by and what `/auth/token`
     // and `/profile` read — so all three agree on the plan. See `callerOf` for why not by `sub`.
     // Every token `/auth/token` mints carries an address; one without is answered as `free`.
@@ -240,11 +245,21 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDepende
     }
 
     try {
+      // Sync before capacity: a free account has no server projects to run out of, so telling
+      // it "no room" would send it to archive things when the fix is a plan that syncs.
+      gate(principal, SYNC)
       gate(principal, CREATE)
     } catch (error) {
       if (!(error instanceof NotEntitledError)) throw error
       // Named, not empty. `reply.code(403).send()` told the page nothing, so it could not tell
       // a capacity refusal from a permission one — and only one of those is fixed by upgrading.
+      if (error.action === SYNC) {
+        return problem(reply, {
+          title: 'This plan does not include synchronized projects.',
+          status: 403,
+          reason: 'plan-no-sync',
+        })
+      }
       return problem(reply, {
         title: 'This plan has no room for another project.',
         status: 403,

@@ -10,10 +10,16 @@ import {
   type Policy,
   PROJECT_LIMITS,
   type Principal,
+  SYNCED_PLANS,
   withinLimit,
 } from '../../src/domain/can.js'
 
-const owner: Principal = { sub: 'auth0|owner', plan: 'free', ownedProjects: 0 }
+/**
+ * A `member`, because the free plan owns no server projects: `project.sync` refuses it, and
+ * these tests are about the actions every paying owner is permitted. The free case is asserted
+ * separately below.
+ */
+const owner: Principal = { sub: 'auth0|owner', plan: 'member', ownedProjects: 0 }
 const project = { id: 'project:6ba7b810-9dad-11d1-80b4-00c04fd430c8' }
 
 describe('can', () => {
@@ -23,6 +29,14 @@ describe('can', () => {
 
   it('permits actions that have no project, such as creating one', () => {
     expect(can(owner, 'project.create')).toBe(true)
+  })
+
+  it('refuses a free owner only what a free plan does not include', () => {
+    // Everything but `project.sync` is still allowed for free: the page works locally, and
+    // creating a project locally never asks the server anything.
+    const free: Principal = { ...owner, plan: 'free' }
+    const refused = ACTIONS.filter((action) => !can(free, action, project))
+    expect(refused).toEqual(['project.sync'])
   })
 
   /**
@@ -292,7 +306,7 @@ describe('the declared actions', () => {
     expect(ACTIONS).toContain('device.attachPhoto')
   })
 
-  it('permits everything today, as ADR 0009 requires', () => {
+  it('permits everything to a paying owner, as ADR 0009 requires', () => {
     // `every` on an empty array is true, so an empty table would satisfy this on its own.
     // Asserting the count first is what stops that reading as a pass.
     expect(Object.values(POLICIES)).toHaveLength(ACTIONS.length)
@@ -306,6 +320,25 @@ describe('the declared actions', () => {
  * a `@ts-expect-error` that stops being an error is itself an error, so the guarantee fails
  * loudly the moment it stops holding.
  */
+describe('project.sync', () => {
+  it.each([
+    ['free', false],
+    ['member', true],
+    ['pro', true],
+  ] as const)('on %s is %s, however many projects are owned', (plan, expected) => {
+    // Independent of the count: whether a plan may own a server project at all is a different
+    // question from how many, and `project.create` answers only the second.
+    for (const ownedProjects of [0, 1, 5, 50]) {
+      expect(can({ sub: 'x', plan, ownedProjects }, 'project.sync')).toBe(expected)
+    }
+  })
+
+  it('is read from a frozen table covering every plan', () => {
+    expect(SYNCED_PLANS).toEqual({ free: false, member: true, pro: true })
+    expect(Object.isFrozen(SYNCED_PLANS)).toBe(true)
+  })
+})
+
 describe('the policy table is complete at compile time', () => {
   it('rejects a table that is missing an action', () => {
     const incomplete = {

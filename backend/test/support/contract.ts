@@ -210,6 +210,22 @@ export function validate(value: unknown, schema: unknown, at = '$'): SchemaProbl
     })
   }
 
+  // `oneOf` as "at least one alternative holds". Strictly JSON Schema wants exactly one; the
+  // alternatives this contract uses are told apart by a pinned `const`, so they cannot overlap,
+  // and "any" keeps the checker small. When none holds, every alternative's complaint is
+  // reported, because the one a reader needs is the alternative they meant.
+  if (Array.isArray(rules.oneOf)) {
+    const attempts = rules.oneOf.map((branch) => validate(value, branch, at))
+    if (!attempts.some((attempt) => attempt.length === 0)) {
+      problems.push({
+        at,
+        says: `matches none of the alternatives: ${attempts
+          .map((attempt) => attempt.map((problem) => `${problem.at} ${problem.says}`).join(', '))
+          .join(' | ')}`,
+      })
+    }
+  }
+
   const type = rules.type
   if (typeof type === 'string' && !matchesType(value, type)) {
     problems.push({ at, says: `must be ${type}, got ${describe(value)}` })
@@ -267,6 +283,7 @@ const SUPPORTED = new Set([
   'properties',
   'required',
   'items',
+  'oneOf',
   'const',
   'enum',
   'description',
@@ -286,7 +303,7 @@ const SUPPORTED = new Set([
  *
  * The point of a partial validator is that it is honest about being partial. The point of *this*
  * function is that "partial" must not quietly become "checks nothing": if someone adds a
- * `oneOf` or a `pattern` to the contract, the validator would ignore it and report success, and
+ * `anyOf` or a `pattern` to the contract, the validator would ignore it and report success, and
  * the drift check would go on passing while checking less than it used to.
  */
 export function unsupportedKeywords(schema: unknown, seen = new Set<string>()): Set<string> {
@@ -306,6 +323,10 @@ export function unsupportedKeywords(schema: unknown, seen = new Set<string>()): 
     }
 
     if (key === 'items') unsupportedKeywords(value, seen)
+
+    if (key === 'oneOf' && Array.isArray(value)) {
+      for (const branch of value) unsupportedKeywords(branch, seen)
+    }
   }
   return seen
 }

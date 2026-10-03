@@ -507,20 +507,23 @@ export interface paths {
                 400: components["responses"]["BadRequest"];
                 401: components["responses"]["Unauthorized"];
                 /**
-                 * @description No room for another project on this plan (ADR 0009).
+                 * @description Refused by the plan (ADR 0009), for one of two reasons a client branches on.
+                 *     `plan-no-sync` is asked first: the free plan owns no server projects, so there is
+                 *     no capacity to run out of. `project-limit-reached` is a paying plan with no room
+                 *     left among its projects that are not archived.
                  *
-                 *     Named rather than empty, because a page cannot tell a capacity refusal from a
-                 *     permission refusal by status code alone - and only one of the two is fixed by
-                 *     upgrading. A client that reads `projectLimit` from `GET /profile` should not
-                 *     normally reach this; it is the answer when it does anyway, which is what a limit
-                 *     enforced on the server rather than in the page means.
+                 *     Named rather than empty, because a page cannot tell either refusal from a
+                 *     permission refusal by status code alone - and the two are fixed differently. A
+                 *     client that reads `projectLimit` from `GET /profile` should not normally reach
+                 *     this; it is the answer when it does anyway, which is what a limit enforced on the
+                 *     server rather than in the page means.
                  */
                 403: {
                     headers: {
                         [name: string]: unknown;
                     };
                     content: {
-                        "application/problem+json": components["schemas"]["ProjectLimitReached"];
+                        "application/problem+json": components["schemas"]["PlanHasNoSync"] | components["schemas"]["ProjectLimitReached"];
                     };
                 };
                 /** @description The project could not be created, for a reason the caller cannot act on */
@@ -991,8 +994,26 @@ export interface components {
             reason: "not-an-operator";
         };
         /**
+         * @description Creating a project was refused: this plan does not include synchronized projects
+         *     (ADR 0009). The free plan keeps its projects on the device, so there is no server
+         *     project to count - upgrading is the fix, not archiving.
+         */
+        PlanHasNoSync: {
+            /** Format: uri */
+            type?: string;
+            title: string;
+            status: number;
+            detail?: string;
+            /**
+             * @description Pinned, so a handler that renamed it or stopped sending it fails the contract check rather than silently becoming a refusal no client recognises.
+             * @constant
+             */
+            reason: "plan-no-sync";
+        };
+        /**
          * @description Creating a project was refused: this plan has no room for another one (ADR 0009). The
-         *     count includes archived projects, which still have a database and still cost.
+         *     count is of projects that are not archived; an archived project keeps its database but
+         *     no longer takes a slot.
          */
         ProjectLimitReached: {
             /** Format: uri */

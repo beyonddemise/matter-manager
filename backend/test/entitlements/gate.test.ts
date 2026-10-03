@@ -17,8 +17,11 @@ import { fakeCouch } from '../support/couch.js'
  * `ownedProjects: 0` is a statement about Ada, not an arrangement to stay under a limit: an
  * account that owns nothing is below every entry in {@link PROJECT_LIMITS}, because a tier
  * whose limit were zero would be a tier that cannot create a project at all.
+ *
+ * A `member`, because the free plan owns no server projects and `project.sync` refuses it by
+ * design; the free refusal is asserted in `can.test.ts` and `projects/routes.test.ts`.
  */
-const ADA: Principal = { sub: 'google|1234', plan: 'free', ownedProjects: 0 }
+const ADA: Principal = { sub: 'google|1234', plan: 'member', ownedProjects: 0 }
 
 let app: Server | undefined
 
@@ -170,6 +173,7 @@ describe('the enumeration that makes the seam real', () => {
   it('knows which routes are gated', () => {
     expect(gatedRoutes().map((entry) => `${entry.method} ${entry.path}`)).toEqual([
       'POST /projects',
+      'POST /projects',
       'PUT /projects/:projectId/members',
     ])
   })
@@ -187,7 +191,12 @@ describe('the enumeration that makes the seam real', () => {
       .map((entry) => `${entry.method} ${entry.path}`)
       .filter((route) => registered.has(route))
 
-    expect(implemented).toEqual(['POST /projects', 'PUT /projects/:projectId/members'])
+    // `POST /projects` twice: it asks `project.sync` and then `project.create`.
+    expect(implemented).toEqual([
+      'POST /projects',
+      'POST /projects',
+      'PUT /projects/:projectId/members',
+    ])
   })
 
   it('watches the gate being called by every gated route that exists', async () => {
@@ -217,6 +226,15 @@ describe('the enumeration that makes the seam real', () => {
       await drive(built, key)
       expect(calls, `${route} did not call the gate`).toContain(entry.action)
     }
+  })
+
+  it('asks whether the plan syncs before asking whether it has room', async () => {
+    // Order is behaviour: a free account over its (zero) server allowance must hear
+    // `plan-no-sync`, not `project-limit-reached`, because only one of those is fixed by
+    // upgrading to a plan that syncs at all.
+    const { built, key, calls } = serverWithGatedRoutes()
+    await DRIVERS['POST /projects']?.(built, key)
+    expect(calls).toEqual(['project.sync', 'project.create'])
   })
 
   it('would notice a route that stopped calling the gate', async () => {

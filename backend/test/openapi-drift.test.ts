@@ -63,6 +63,9 @@ const SIGNING: SigningKey = (() => {
  */
 const CALLER_EMAIL = 'drift@example.test'
 
+/** The fake CouchDB behind the most recent {@link server}, for the requests that need seeding. */
+let fakeInUse: ReturnType<typeof fakeCouch> | undefined
+
 const server = (): Server => {
   // **One** CouchDB, wired to both the user records and the project routes.
   //
@@ -74,6 +77,7 @@ const server = (): Server => {
   // is one database behind both.
   forgetUsersDatabase()
   const fake = fakeCouch()
+  fakeInUse = fake
   const couch = fake.couch
   // The credentialed caller is an operator, written into the record directly (the Fauxton
   // equivalent: roles are never granted through the API), so `PUT /customer` can reach its 200
@@ -322,6 +326,46 @@ describe('every implemented route answers what the contract declares', () => {
           headers: credentials(),
           payload: { email: 'someone@example.test', plan: 'member' },
           expected: 200,
+        },
+      ]
+    }
+    if (route === 'POST /projects') {
+      // The credentialed pass is the free plan and reaches `plan-no-sync`. This caller is a
+      // member who already owns five projects, which reaches `project-limit-reached` — the
+      // other branch of the 403's `oneOf`, which nothing else here would drive.
+      const email = 'drift-member@example.test'
+      const sub = 'drift-member'
+      const fake = fakeInUse
+      if (fake === undefined) throw new Error('the drift fixture lost its fake CouchDB')
+      fake.documents.set(`${USERS_DB}/${userDocId(email)}`, {
+        _id: userDocId(email),
+        type: 'user',
+        sub,
+        email,
+        plan: 'member',
+      })
+      fake.rows = Array.from({ length: 5 }, (_unused, index) => ({
+        value: {
+          projectId: `owned-${index}`,
+          dbName: `project_owned_${index}`,
+          projectName: `Project ${index}`,
+          address: null,
+          role: 'owner',
+          archived: false,
+          ownerId: sub,
+        },
+      }))
+      const access = mintToken(SIGNING, {
+        purpose: 'access',
+        sub,
+        exp: Math.floor(Date.now() / 1000) + 3600,
+        email,
+      })
+      return [
+        {
+          headers: { authorization: `Bearer ${access}` },
+          payload: { name: 'Sixth' },
+          expected: 403,
         },
       ]
     }

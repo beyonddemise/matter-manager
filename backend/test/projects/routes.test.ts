@@ -117,10 +117,28 @@ function server(
     deny?: DenyList
     /** Leave `findUser` to its default, the real user records, instead of the stub below. */
     realLookups?: boolean
+    /**
+     * The plan on {@link OWNER}'s user record. `member` unless stated, because the free plan
+     * owns no server projects and most of what this file drives is a project that exists. Pass
+     * `null` for a caller with no record at all, which is answered as `free`.
+     */
+    plan?: Plan | null
   } = {},
 ) {
   forgetUsersDatabase()
   couch = fakeCouch(options.fails === undefined ? {} : { fails: options.fails })
+  const plan = options.plan === undefined ? 'member' : options.plan
+  if (plan !== null) {
+    // Seeded as an operator would have edited it, by the address on the owner's token.
+    const email = EMAILS[OWNER] as string
+    couch.documents.set(`${USERS_DB}/${userDocId(email)}`, {
+      _id: userDocId(email),
+      type: 'user',
+      sub: OWNER,
+      email,
+      plan,
+    })
+  }
   const refused: string[] = []
   const client =
     options.registryConflicts === true ? conflictingRegistry(couch.couch, refused) : couch.couch
@@ -245,17 +263,18 @@ describe('the entitlement seam', () => {
     const { app: built, gateCalls } = server()
     await create(built, { name: 'Musterstraße 12' })
 
-    expect(gateCalls).toHaveLength(1)
+    expect(gateCalls).toHaveLength(2)
   })
 
-  it('is called with project.create and the caller', async () => {
+  it('is called with project.sync, then project.create, and the caller', async () => {
     const { app: built, gateCalls } = server()
     await create(built, { name: 'Musterstraße 12' })
 
-    expect(gateCalls[0]).toEqual({
-      principal: { sub: OWNER, plan: 'free', ownedProjects: 0 },
-      action: 'project.create',
-    })
+    const principal = { sub: OWNER, plan: 'member', ownedProjects: 0 }
+    expect(gateCalls).toEqual([
+      { principal, action: 'project.sync' },
+      { principal, action: 'project.create' },
+    ])
   })
 
   it('refusing means 403, not 401', async () => {
@@ -898,7 +917,7 @@ describe('sharing a project', () => {
 
     expect(built.gateCalls.find((call) => call.action === 'project.invite')?.principal).toEqual({
       sub: OWNER,
-      plan: 'free',
+      plan: 'member',
       ownedProjects: 2,
     })
   })
@@ -1523,13 +1542,13 @@ describe('handing a project to somebody else', () => {
  *
  * @param options.plan what the user record holds, as an operator would have typed it
  * @param options.owned how many projects this subject owns
- * @param options.archived whether those owned projects are archived - they count either way (#55)
+ * @param options.archivedCount how many of those owned projects are archived - they do not count
  * @param options.memberOf how many further projects this subject can see but does not own
  */
 function serverWithProjects(options: {
   plan: Plan
   owned: number
-  archived?: boolean
+  archivedCount?: number
   memberOf?: number
 }): Server {
   const built = server()
@@ -1548,7 +1567,7 @@ function serverWithProjects(options: {
   // One row per participation, which is what the view emits: a project somebody shared with
   // this subject is a row of theirs carrying somebody else's `ownerId`. `read` rather than the
   // `member` a reader might expect - `ProjectRole` has four values and that is not one of them.
-  const rows = (count: number, role: string, archived: boolean, prefix: string) =>
+  const rows = (count: number, role: string, archivedCount: number, prefix: string) =>
     Array.from({ length: count }, (_unused, index) => ({
       value: {
         projectId: `${prefix}-${index}`,
@@ -1556,14 +1575,14 @@ function serverWithProjects(options: {
         projectName: `Project ${index}`,
         address: null,
         role,
-        archived,
+        archived: index < archivedCount,
         ownerId: role === 'owner' ? SUBJECT : 'google|somebody-else',
       },
     }))
 
   built.couch.rows = [
-    ...rows(options.owned, 'owner', options.archived === true, 'owned'),
-    ...rows(options.memberOf ?? 0, 'read', false, 'shared'),
+    ...rows(options.owned, 'owner', options.archivedCount ?? 0, 'owned'),
+    ...rows(options.memberOf ?? 0, 'read', 0, 'shared'),
   ]
 
   return built.app
@@ -1604,7 +1623,9 @@ describe("the caller's own record, found by the address on their token", () => {
 })
 
 describe('creating a project against the plan', () => {
-  it('creates the first project on a free plan', async () => {
+  it('refuses a free plan its first server project, naming plan-no-sync', async () => {
+    // The free plan keeps its projects on the device. A server project is what sync is, so
+    // there is nothing to count: the refusal is about the plan, not about capacity.
     const built = serverWithProjects({ plan: 'free', owned: 0 })
     const response = await built.inject({
       method: 'POST',
@@ -1612,13 +1633,33 @@ describe('creating a project against the plan', () => {
       headers: { authorization: bearer(SUBJECT) },
       payload: { name: 'Home' },
     })
-    expect(response.statusCode).toBe(201)
+    expect(response.statusCode).toBe(403)
+    expect(response.json()).toMatchObject({ reason: 'plan-no-sync' })
+    expect(validate(response.json(), contractSchema('POST', '/projects', '403'))).toEqual([])
   })
 
-  it('refuses the second, and says why in a way a client can branch on', async () => {
+  it('provisions nothing for a free plan', async () => {
+    const built = serverWithProjects({ plan: 'free', owned: 0 })
+    await built.inject({
+      method: 'POST',
+      url: '/projects',
+      headers: { authorization: bearer(SUBJECT) },
+      payload: { name: 'Home' },
+    })
+    // The registry is created before the caller can be counted, so only a project database
+    // is evidence of provisioning.
+    expect(
+      couch.calls.filter(
+        (call) => call.operation === 'createDb' && call.database.startsWith('project_'),
+      ),
+    ).toEqual([])
+    expect(couch.databases.has(`project_${PROJECT_ID}`)).toBe(false)
+  })
+
+  it('refuses a member at the limit, and says why in a way a client can branch on', async () => {
     // An empty 403 leaves the page unable to tell "you have used all your slots" from "you may
     // not do this", and those deserve different sentences.
-    const built = serverWithProjects({ plan: 'free', owned: 1 })
+    const built = serverWithProjects({ plan: 'member', owned: 5 })
     const response = await built.inject({
       method: 'POST',
       url: '/projects',
@@ -1629,13 +1670,13 @@ describe('creating a project against the plan', () => {
     expect(response.json()).toMatchObject({ reason: 'project-limit-reached' })
   })
 
-  it('answers the refusal the contract declares, reason and all', async () => {
+  it('answers the capacity refusal the contract declares, reason and all', async () => {
     // The contract declared this 403 with a bare description and no schema at all until this
     // task, so `reason` - which the handler had been sending since the limit was enforced - was
     // documented nowhere and checked by nothing. Two separate gaps made that invisible: no
     // schema to look up, and an `operationsOf` that collected only `application/json` while
     // every refusal here is `application/problem+json`.
-    const built = serverWithProjects({ plan: 'free', owned: 1 })
+    const built = serverWithProjects({ plan: 'member', owned: 5 })
     const response = await built.inject({
       method: 'POST',
       url: '/projects',
@@ -1650,40 +1691,56 @@ describe('creating a project against the plan', () => {
   it('would notice a refusal that stopped naming itself', async () => {
     // The negative control. `validate` ignores properties the contract does not declare, so the
     // test above would go on passing if `reason` left the 403 schema - and the page would branch
-    // on a field the contract no longer promised. This asserts both ways the pin can come
-    // loose: the field leaving `required`, and the `const` naming a different refusal.
+    // on a field the contract no longer promised. The 403 is now one of two refusals, so this
+    // asserts both ways the pin can come loose: the field going missing, and a reason that
+    // names neither refusal.
     const schema = contractSchema('POST', '/projects', '403')
 
-    expect(validate({ title: 'No', status: 403 }, schema)).toEqual([
-      { at: '$.reason', says: 'is required and missing' },
-    ])
+    expect(validate({ title: 'No', status: 403 }, schema)).not.toEqual([])
     // The other refusal's reason, which is what a copy-paste produces. A capacity 403 that said
     // `not-an-operator` would tell a page to explain a permission problem to somebody whose
     // only problem is that they have run out of slots - and only one of those is fixed by
     // upgrading, which is the whole reason the field exists.
-    expect(validate({ title: 'No', status: 403, reason: 'not-an-operator' }, schema)).toEqual([
-      { at: '$.reason', says: 'must be "project-limit-reached", got "not-an-operator"' },
-    ])
+    expect(validate({ title: 'No', status: 403, reason: 'not-an-operator' }, schema)).not.toEqual(
+      [],
+    )
+    // And both real reasons pass, so the check is not simply refusing everything.
+    expect(validate({ title: 'No', status: 403, reason: 'plan-no-sync' }, schema)).toEqual([])
+    expect(validate({ title: 'No', status: 403, reason: 'project-limit-reached' }, schema)).toEqual(
+      [],
+    )
   })
 
-  it('counts an archived project against the limit', async () => {
-    // Archiving is not deletion (#55) - the database still exists and still costs - so an
-    // archived project occupies its slot. The alternative would let a free account accumulate
-    // databases without limit by archiving each one.
-    const built = serverWithProjects({ plan: 'free', owned: 1, archived: true })
+  it('does not count an archived project against the limit', async () => {
+    // Reverses #55. Archiving is how a project is put away, and a plan's allowance is for the
+    // projects somebody is working on; the database of an archived one stays, but it no longer
+    // takes a slot. Five owned with two archived leaves a member with room.
+    const built = serverWithProjects({ plan: 'member', owned: 5, archivedCount: 2 })
     const response = await built.inject({
       method: 'POST',
       url: '/projects',
       headers: { authorization: bearer(SUBJECT) },
-      payload: { name: 'Second' },
+      payload: { name: 'Sixth' },
+    })
+    expect(response.statusCode).toBe(201)
+  })
+
+  it('still counts every project that is not archived', async () => {
+    const built = serverWithProjects({ plan: 'member', owned: 5, archivedCount: 0 })
+    const response = await built.inject({
+      method: 'POST',
+      url: '/projects',
+      headers: { authorization: bearer(SUBJECT) },
+      payload: { name: 'Sixth' },
     })
     expect(response.statusCode).toBe(403)
+    expect(response.json()).toMatchObject({ reason: 'project-limit-reached' })
   })
 
   it('does not count a project somebody else owns', async () => {
     // Membership is not ownership. A free user invited to a colleague's project keeps their
     // own slot, which is the point of counting ownership rather than visibility.
-    const built = serverWithProjects({ plan: 'free', owned: 0, memberOf: 3 })
+    const built = serverWithProjects({ plan: 'member', owned: 0, memberOf: 3 })
     const response = await built.inject({
       method: 'POST',
       url: '/projects',
@@ -1707,7 +1764,7 @@ describe('creating a project against the plan', () => {
   it('creates nothing when it refuses', async () => {
     // The refusal has to happen before provisioning, not alongside it. A limit enforced after
     // the database exists is a limit that costs exactly as much as no limit at all.
-    const built = serverWithProjects({ plan: 'free', owned: 1 })
+    const built = serverWithProjects({ plan: 'member', owned: 5 })
     await built.inject({
       method: 'POST',
       url: '/projects',

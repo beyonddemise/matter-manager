@@ -41,6 +41,9 @@ export type Enforcement =
  */
 export const ENFORCEMENT: Readonly<Record<Action, Enforcement>> = Object.freeze({
   'project.create': { kind: 'route', method: 'POST', path: '/projects' },
+  // The same route as `project.create`, asked first: whether the plan has a server project at
+  // all is answered before whether it has room for another.
+  'project.sync': { kind: 'route', method: 'POST', path: '/projects' },
   'project.invite': { kind: 'route', method: 'PUT', path: '/projects/:projectId/members' },
   'device.create': {
     kind: 'client',
