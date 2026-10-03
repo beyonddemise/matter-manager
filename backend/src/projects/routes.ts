@@ -74,8 +74,8 @@ export interface ProjectDependencies {
   /**
    * Creates or completes a user's record, moving their in-memory refresh entries onto it.
    *
-   * Called when somebody accepts a transfer: an owner has to be resolvable, and the recipient may
-   * have no record, or one without a `sub`. **Required**, and the same instance the profile and
+   * Called when somebody accepts a transfer or creates a project: an owner has to be resolvable,
+   * and the recipient may have no record, or one without a `sub`. **Required**, and the same instance the profile and
    * sign-in paths use, so the refresh entries it moves are the ones the auth routes wrote.
    */
   readonly ensureRecord: EnsureRecord
@@ -215,11 +215,13 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDepende
    * provisioning to have created the thing it counts. It is remembered per process, so every
    * later call is free.
    *
-   * **Two requests racing at the limit can both pass**: each counts before the gate and nothing
-   * holds a lock. Accepted rather than solved. The cost is one project over on a race nobody is
-   * trying to win, against a serialisation point on project creation for every account — and a
-   * limit that is one out under concurrency is a different thing from a limit that is not
-   * enforced.
+   * **Requests racing at the limit can all pass**: each counts before the gate and nothing
+   * holds a lock. That holds for every path that activates a project - creating one,
+   * unarchiving one and accepting a transfer of an active one - and in any mix of them.
+   * Accepted rather than solved. The overshoot is up to the number of concurrent requests, on
+   * a race nobody is trying to win, against a serialisation point on project activation for
+   * every account — and a limit that can be overshot under concurrency is a different thing
+   * from a limit that is not enforced.
    */
   const principalFor = async (caller: {
     readonly sub: string
@@ -344,6 +346,30 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDepende
     }
     const address = typeof body.address === 'string' ? body.address : undefined
     const client = typeof body.client === 'string' ? body.client : undefined
+
+    // The creator becomes an owner, and an owner has to be resolvable by subject: unarchiving
+    // asks the owner's plan through `readBySub`, whoever is asking. A record an operator created
+    // by address (`PUT /customer`) has no `sub` until something fills it in, so without this a
+    // paying owner read as `free` there and was refused their own unarchive as `plan-no-sync`.
+    //
+    // **Before provisioning, not after.** A failure then leaves nothing behind and is answered
+    // as the scrubbed 500 every other deployment failure here gets; after, it would leave a
+    // project whose owner cannot be resolved - the very state this exists to prevent - behind a
+    // 201. And it creates nothing from nothing: the gate has passed, which only a record by this
+    // address can make happen, so this fills in `sub` and moves refresh entries, as accepting a
+    // transfer does. Where the record already carries the subject it writes nothing.
+    if (caller.email !== undefined) {
+      try {
+        await deps.ensureRecord({
+          email: caller.email,
+          sub,
+          ...(caller.name === undefined ? {} : { name: caller.name }),
+        })
+      } catch (error) {
+        request.log.error({ err: error }, 'could not complete the creator record')
+        return problem(reply, { title: 'That project could not be created.', status: 500 })
+      }
+    }
 
     let project: ProjectSummary
     try {

@@ -12,7 +12,7 @@ import { forgetRegistry, pointerId, REGISTRY_DATABASE } from '../../src/projects
 import { transferId } from '../../src/projects/transfers.js'
 import { buildServer, type Server } from '../../src/server.js'
 import { forgetUsersDatabase, USERS_DB } from '../../src/users/database.js'
-import { recordEnsurer } from '../../src/users/ensure.js'
+import { type EnsureRecord, recordEnsurer } from '../../src/users/ensure.js'
 import { userDocId } from '../../src/users/key.js'
 import { userRecords } from '../../src/users/records.js'
 import { loadContract, operationsOf, validate } from '../support/contract.js'
@@ -126,6 +126,8 @@ function server(
     plan?: Plan | null
     /** The seconds clock the routes use, for tests that pin what a route stamps. */
     now?: () => number
+    /** Replaces the real record ensurer, for a test of what happens when it fails. */
+    ensureRecord?: EnsureRecord
   } = {},
 ) {
   forgetUsersDatabase()
@@ -160,10 +162,12 @@ function server(
       records,
       // The real ensurer over the same records, as composition wires it, so a test sees the
       // record acceptance creates rather than a stub's account of it.
-      ensureRecord: recordEnsurer(
-        records,
-        refreshStore(records, () => Math.floor(Date.now() / 1000)),
-      ),
+      ensureRecord:
+        options.ensureRecord ??
+        recordEnsurer(
+          records,
+          refreshStore(records, () => Math.floor(Date.now() / 1000)),
+        ),
       newId: () => PROJECT_ID,
       clock: () => '2026-08-27T09:00:00.000Z',
       // A spy *over* the real gate, not a stand-in for it. A recording gate that always
@@ -2141,6 +2145,77 @@ describe("the caller's own record, found by the address on their token", () => {
     })
 
     expect(response.statusCode).toBe(201)
+  })
+})
+
+describe("creating a project completes the creator's record", () => {
+  // An owner is found by subject wherever the caller is somebody else - unarchiving by a
+  // manager, or by the owner after their token's address has changed. A record an operator
+  // created by address through `PUT /customer` has no `sub` until something fills it in, so
+  // without this a paying owner read as `free` and their own unarchive answered `plan-no-sync`.
+
+  /**
+   * The `by_sub` view as CouchDB would answer it: a row only for a record that carries the
+   * subject. The fake's views are static, so this is computed from the stored documents on
+   * every read rather than seeded, which is what lets the test see a `sub` being filled in.
+   */
+  const bySubFromDocuments = (fake: FakeCouch) => {
+    Object.defineProperty(fake.rowsByDesign, 'by_sub', {
+      configurable: true,
+      enumerable: true,
+      get: () =>
+        [...fake.documents.entries()]
+          .filter(([key, doc]) => key.startsWith(`${USERS_DB}/`) && doc.sub === SUBJECT)
+          .map(([, doc]) => ({ id: doc._id, key: SUBJECT, value: null })),
+    })
+  }
+
+  const patch = (built: Server, payload: Record<string, unknown>) =>
+    built.inject({
+      method: 'PATCH',
+      url: `/projects/${PROJECT_ID}`,
+      headers: { authorization: bearer(SUBJECT) },
+      payload,
+    })
+
+  it('lets an owner whose record an operator created by address unarchive their project', async () => {
+    const { app: built, couch: fake } = server({ plan: null })
+    await userRecords(fake.couch).setPlan(SUBJECT_EMAIL, 'member')
+    bySubFromDocuments(fake)
+
+    expect((await create(built, { name: 'Home' }, SUBJECT)).statusCode).toBe(201)
+    expect((await patch(built, { archived: true })).statusCode).toBe(200)
+
+    const unarchived = await patch(built, { archived: false })
+    expect(unarchived.json()).toMatchObject({ archived: false })
+    expect(unarchived.statusCode).toBe(200)
+    expect(fake.documents.get(`${USERS_DB}/${userDocId(SUBJECT_EMAIL)}`)).toMatchObject({
+      sub: SUBJECT,
+      plan: 'member',
+    })
+  })
+
+  it('provisions nothing when the record cannot be completed', async () => {
+    // Before provisioning, so a failure leaves no project whose owner cannot be resolved. The
+    // caller passed the gate, so their record exists and this only fills in `sub`.
+    const { app: built, couch: fake } = server({
+      ensureRecord: async () => {
+        throw new CouchError(500, 'internal', 'matter_manager is down')
+      },
+    })
+
+    const response = await create(built, { name: 'Home' })
+
+    expect(response.statusCode).toBe(500)
+    expect(response.body).not.toContain('matter_manager')
+    expect(fake.databases.has(DATABASE)).toBe(false)
+  })
+
+  it('creates no record for a caller the plan refuses', async () => {
+    const { app: built, couch: fake } = server({ plan: null })
+
+    expect((await create(built, { name: 'Home' }, SUBJECT)).statusCode).toBe(403)
+    expect(fake.documents.has(`${USERS_DB}/${userDocId(SUBJECT_EMAIL)}`)).toBe(false)
   })
 })
 
