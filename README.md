@@ -69,7 +69,7 @@ flowchart LR
     CADDY["Caddy — TLS, sole ingress"]
     API["Fastify (TypeScript)<br/>OIDC · token issuance<br/>project provisioning"]
     subgraph CDB["CouchDB 3.5"]
-      USERS[("_users — profiles")]
+      USERS[("matter_manager — user records")]
       REG[("projects — registry")]
       PROJ[("project_uuid × N")]
     end

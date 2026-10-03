@@ -5,7 +5,7 @@ Four stores. Three live in CouchDB; one lives only in the browser.
 ```mermaid
 flowchart TB
   subgraph SERVER["CouchDB — server side"]
-    U[("_users<br/><i>profile store</i><br/>admin access only")]
+    U[("matter_manager<br/><i>user records</i><br/>admin access only")]
     R[("projects<br/><i>registry</i><br/>admin access only")]
     P[("project_uuid × N<br/><i>the shared unit</i><br/>per-project _security")]
   end
@@ -31,49 +31,37 @@ the whole authorisation design — see [ADR 0003](adr/0003-database-per-project.
 
 ---
 
-## `_users` — a profile store, not an authentication store
+## `matter_manager` — user records, not an authentication store
 
-CouchDB's built-in `_users` database. Never replicated.
+One record per person, keyed by verified address (`user:<base64url of the lower-cased address>`)
+and **created on demand**: by accepting an invitation, `PATCH /profile`, or an operator's
+`PUT /customer`. A plain sign-in creates none; such a user is `free` and their profile is built
+from their token. Admin access only; never replicated. This replaces the earlier use of
+CouchDB's built-in `_users`.
 
-**It is not what authenticates anyone.** Under JWT authentication CouchDB does not consult
-`_users` at all: the token's `sub` claim becomes `userCtx.name` and roles come from
-`_couchdb.roles`. A user with no `_users` document authenticates perfectly well — verified
-against CouchDB 3.5.2. This database is used here because it is a convenient, already-secured
-place to keep profiles, and for no other reason.
-
-Two consequences that follow, and will surprise anyone who assumes otherwise:
-
-- **Nothing keeps it in sync with reality.** An entry here is a profile record, not proof
-  that an account exists or may sign in.
-- **The browser cannot read it — not even its own document.** A JWT-authenticated request for
-  `_users/org.couchdb.user:<sub>` returns `403`. Verified. Profiles are therefore served by
-  `GET /profile`, and cached client-side like everything else the API owns.
-
-User documents follow CouchDB's required shape (`name`, `type: "user"`, `roles`) with the
-profile fields alongside. No password is set — password authentication is never used.
+**It is not what authenticates anyone.** Under JWT authentication CouchDB does not consult any
+user database: the token's `sub` claim becomes `userCtx.name` and roles come from
+`_couchdb.roles`, which the API fills with the record's plan at each mint. The browser cannot
+read this database, so profiles are served by `GET /profile` and cached client-side.
 
 ```jsonc
 {
-  "_id": "org.couchdb.user:auth0|abc123",
-  "name": "auth0|abc123",       // must equal the id suffix; also the JWT `sub`
-  "type": "user",               // required by CouchDB's own validation
-  "roles": [],
-  "displayName": "Stephan",
+  "_id": "user:c29tZW9uZUBleGFtcGxlLmNvbQ",
+  "type": "user",
+  "sub": "auth0|abc123",        // absent until the owner first signs in, if an operator created it
   "email": "someone@example.com",
-  "locale": "auto",             // "auto" | "en" | "de" — "auto" follows the browser
-  "theme": "auto",
-  "plan": "free",               // the entitlement seam reads this; see ADR 0009
-  "createdAt": "2026-08-19T08:00:00.000Z"
+  "displayName": "Stephan",
+  "locale": "auto",             // "auto" | "en" | "de"
+  "plan": "free",               // "free" | "member" | "pro"; absent means free (ADR 0009)
+  "roles": [],                  // set by hand in Fauxton; only "customerservice" is read
+  "refreshTokens": [{ "hash": "<sha256(jti)>", "exp": 1790000000, "createdAt": 1787400000 }]
 }
 ```
 
-`plan` exists from the first migration even though nothing consults it yet. That is the point
-of [ADR 0009](adr/0009-entitlement-seam-billing-deferred.md): `can(principal, action, project)`
-has somewhere to look when there is finally an answer, so choosing a billing model later
-changes one file rather than requiring a schema migration across every existing account.
-
-When updating a profile, read-modify-write the whole document. Never drop `roles`, and never
-introduce a `password` field.
+Writes name their fields, so no request body can set `roles`, `plan` (other than through the
+operator-gated routes), `sub`, `email` or `refreshTokens`. A `by_sub` view resolves a record by
+subject and skips records without one. See [SECURITY-MODEL.md](SECURITY-MODEL.md), *User records
+and tokens*.
 
 ---
 

@@ -90,10 +90,10 @@ functions. Matter Manager installs `_design/access` into every project database.
 replicated to a browser, because CouchDB has no row-level read permission and one readable
 registry would disclose every project's address and participant list to every user.
 
-**Profile store** — CouchDB's built-in `_users` database, used here to hold display name,
-email, locale and theme. **Not an authentication store**: under JWT auth CouchDB never
-consults it, and a browser cannot read even its own document. Profiles come from
-`GET /profile`.
+**User record** — a document in the admin-only `matter_manager` database, keyed by verified
+address and created on demand. Holds display name, locale, plan, operator roles and refresh-token
+hashes. **Not an authentication store**: under JWT auth CouchDB never consults it, and a browser
+cannot read it. Profiles come from `GET /profile`. (Replaced the earlier use of CouchDB's `_users`.)
 
 **`mm-local`** — a PouchDB database that exists only in the browser and is never given a
 remote counterpart. Caches `GET /projects` and `GET /profile` so project discovery and locale

@@ -121,14 +121,15 @@ Copy the client ID (ends `.apps.googleusercontent.com`) and secret (starts `GOCS
 
 **Why two keys.** The public half of `JWT_PRIVATE_KEY` is installed in CouchDB's `[jwt_keys]`, so
 anything signed with it is a database credential — and CouchDB checks only a signature and an
-expiry, evaluating no claim this service invented. Signing the thirty-day session cookie with it
-would therefore make that cookie a thirty-day direct database credential, whatever this API
-thought of the idea. `JWT_SESSION_PRIVATE_KEY` is never given to CouchDB, so a session cannot be
+expiry, evaluating no claim this service invented. Signing the thirty-day refresh token with it
+would therefore make that token a thirty-day direct database credential, whatever this API
+thought of the idea. `JWT_SESSION_PRIVATE_KEY` is never given to CouchDB, so a refresh token cannot be
 verified there at all. Reusing one key for both undoes this silently; the service refuses to
 serve sign-in rather than fall back.
 
-CouchDB (`COUCHDB_URL`, `COUCHDB_ADMIN_USER`, `COUCHDB_ADMIN_PASSWORD`) is needed too: signing in
-**writes**, creating or updating the `_users` document that the session then identifies.
+CouchDB (`COUCHDB_URL`, `COUCHDB_ADMIN_USER`, `COUCHDB_ADMIN_PASSWORD`) is needed too: the API reads and
+writes user records in the `matter_manager` database there (created on demand; a plain sign-in
+creates none).
 
 `APP_ORIGIN` and `GOOGLE_REDIRECT_URI` now share a host, and that is a change worth stating
 because the old warning was the opposite. Before `frontend/functions/` existed the application and
@@ -155,8 +156,7 @@ registers `/auth/*` only when they are. A half-configured deployment answers `GE
 with 404.
 
 `JWT_SESSION_PRIVATE_KEY` is the one that surprises people, because it is not a Google setting and
-its absence looks like a Google problem. It also takes `/profile` with it, which authenticates by
-the session cookie and so needs the key that verifies one. **A copy of `JWT_PRIVATE_KEY` counts as
+its absence looks like a Google problem. Sign-in cannot issue a refresh token or handoff without it. **A copy of `JWT_PRIVATE_KEY` counts as
 absent**: same key, two names, and the isolation described above is gone — so it is refused rather
 than accepted, and the symptom is the same 404.
 

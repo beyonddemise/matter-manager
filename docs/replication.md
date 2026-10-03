@@ -27,16 +27,20 @@ Four things happen along it, and each is somebody's job:
 
 ## The credential, and why there are two
 
-The browser never holds CouchDB credentials. It holds an `mm_session` cookie, and exchanges it
-at `POST /api/auth/token` for a one-hour access token whose public half **is** installed in
-CouchDB's `[jwt_keys]`. The session cookie is signed with a different key that CouchDB cannot
-verify at all — so a stolen session is not a database credential, which is the whole point of
-`JWT_SESSION_PRIVATE_KEY` existing separately from `JWT_PRIVATE_KEY`.
+The browser holds two tokens. After sign-in an httpOnly `mm_handoff` cookie (120 seconds, single
+use) authorises the first `POST /api/auth/token`, which returns a **5-minute access token** and a
+**30-day refresh token**. The access token's public half **is** installed in CouchDB's
+`[jwt_keys]` and carries the plan as `_couchdb.roles`; the page refreshes it by sending the
+refresh token in the body of `POST /api/auth/token`. The refresh token and handoff are signed
+with a different key that CouchDB cannot verify at all — so a stolen refresh token is not a
+database credential, which is the whole point of `JWT_SESSION_PRIVATE_KEY` existing separately
+from `JWT_PRIVATE_KEY`.
 
-That is also why the `/db` forwarder strips `Cookie`. The session cookie is `Path=/`, so the
-browser attaches it to every `/db/*` request without being asked; CouchDB has no use for it, and
-forwarding it would put a thirty-day credential into a second service's logs on every
-replication request, with nothing anywhere looking wrong.
+That is also why the `/db` forwarder strips `Cookie`. The handoff cookie is `Path=/`, so the
+browser may attach it to `/db/*` requests without being asked; CouchDB has no use for it, and
+forwarding a credential into a second service's logs on every replication request, with nothing
+anywhere looking wrong, is what the stripping prevents. See
+[SECURITY-MODEL.md](SECURITY-MODEL.md), *User records and tokens*.
 
 ## What has been observed, and what has not
 
@@ -68,7 +72,7 @@ emitted bare base64 DER instead of a PEM with `\n` escapes and the API crash-loo
 
 | Step | Result |
 | --- | --- |
-| `POST /api/auth/token` with the session cookie | `200`, `{accessToken, expiresIn: 3600}` |
+| `POST /api/auth/token` with the handoff cookie | `200`, `{accessToken, expiresIn: 300, refreshToken}` |
 | `GET /db/` with that token | `200` |
 | `GET /db/_session` | `200` |
 | `POST /api/projects` | `201`, database `project_<uuid>` |
