@@ -208,9 +208,13 @@ which sets a plan by address even before its owner has ever signed in. Such a re
 
 | | Lifetime | Carries | Signed with | Stored |
 |---|---|---|---|---|
-| Access | 5 minutes (`ACCESS_TOKEN_TTL = 300`) | `sub`, `email`, `jti`, `_couchdb.roles: [plan]` | the key CouchDB validates | nowhere; held in page memory |
-| Refresh | 30 days, **not rotated** | `sub`, `email`, `jti` | the session key CouchDB has never been given | `sha256(jti)` on the user record, or in backend memory if there is none |
-| Handoff (`mm_handoff` cookie) | 120 seconds, single use | `sub`, `email`, `jti` | the session key | the used `jti` goes on the deny list |
+| Access | 5 minutes (`ACCESS_TOKEN_TTL = 300`) | `sub`, `email`, `name?`, `jti`, `_couchdb.roles: [plan]` | the key CouchDB validates | nowhere; held in page memory |
+| Refresh | 30 days, **not rotated** | `sub`, `email`, `name?`, `jti` | the session key CouchDB has never been given | `sha256(jti)` on the user record, or in backend memory if there is none |
+| Handoff (`mm_handoff` cookie) | 120 seconds, single use | `sub`, `email`, `name?`, `jti` | the session key | the used `jti` goes on the deny list |
+
+`name?` is the provider's display name, present when the provider gave one. It travels from the
+handoff to the refresh token to every access token, because a record-less `GET /profile` is built
+from the access token's claims and `PATCH /profile` seeds a new record from them.
 
 - **Revocation is deletion.** A refresh is honoured only while its hash is found, so removing the
   entry ends that device's session. `isLive` is true if the record **or** memory holds the hash;

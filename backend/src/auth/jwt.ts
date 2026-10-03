@@ -79,7 +79,7 @@ export interface Claims {
   readonly iat?: number
   /** The verified address. Records are keyed by it; see `users/key.ts`. */
   readonly email?: string
-  /** The provider's display name, carried so a record-less profile has one. Handoff and refresh only. */
+  /** The provider's display name, carried so a record-less profile has one. Not on the flow carrier. */
   readonly name?: string
   /** A unique id: the deny list's key for access tokens, the stored hash's input for refresh. */
   readonly jti?: string

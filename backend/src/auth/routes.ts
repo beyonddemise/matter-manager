@@ -22,6 +22,7 @@
 
 import { randomUUID } from 'node:crypto'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
+import type { Plan } from '../domain/index.js'
 import { problem } from '../problem.js'
 import { planOf, type UserRecords } from '../users/records.js'
 import { bearerToken } from './bearer.js'
@@ -49,6 +50,42 @@ export const ACCESS_TOKEN_TTL = 300
 export const REFRESH_TOKEN_TTL = 30 * 24 * 3600
 /** How long the handoff cookie lives, in seconds. Long enough for a redirect, and no longer. */
 export const HANDOFF_TTL = 120
+
+/**
+ * The claims of a CouchDB access token, exactly as `POST /auth/token` mints them.
+ *
+ * One builder rather than an object literal in the route, so that the test helper which mints
+ * tokens for other suites (`test/support/tokens.ts`) mints **the same claims** rather than a
+ * hand-copied set. The copy is how this went wrong once: the helper carried `name` and the route
+ * did not, so every profile test passed while a record-less profile in production showed the
+ * provider subject as the user's name.
+ *
+ * `name` is carried when the provider gave one, because a record-less `GET /profile` is built
+ * from these claims and `PATCH /profile` seeds a new record from them.
+ *
+ * @param who - The verified subject and address, and the provider's display name if any
+ * @param plan - What the caller's record grants, as CouchDB will read it from `_couchdb.roles`
+ * @param now - The current time, in seconds since the epoch
+ * @returns Claims ready for `mintToken` with the key CouchDB validates
+ */
+export function accessClaims(
+  who: { readonly sub: string; readonly email: string; readonly name?: string | undefined },
+  plan: Plan,
+  now: number,
+): Claims {
+  return {
+    // Not interchangeable with the refresh token, deliberately. See `TokenPurpose`.
+    purpose: 'access',
+    sub: who.sub,
+    email: who.email,
+    ...(who.name === undefined ? {} : { name: who.name }),
+    // The deny list's key, so sign-out can refuse this token on this API before its expiry.
+    jti: randomUUID(),
+    iat: now,
+    exp: now + ACCESS_TOKEN_TTL,
+    '_couchdb.roles': [plan],
+  }
+}
 
 /** An identity whose address the provider vouched for. Records are keyed by it. */
 export type VerifiedIdentity = Identity & { readonly email: string; readonly emailVerified: true }
@@ -293,17 +330,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthDependencies)
 
     // Read on every mint, so an operator's change reaches CouchDB within one token lifetime.
     const plan = planOf(await deps.records.read(claims.email))
-    const accessToken = mintToken(deps.key, {
-      // Not interchangeable with the refresh token above, deliberately. See `TokenPurpose`.
-      purpose: 'access',
-      sub: claims.sub,
-      email: claims.email,
-      // The deny list's key, so sign-out can refuse this token on this API before its expiry.
-      jti: randomUUID(),
-      iat: now(),
-      exp: now() + ACCESS_TOKEN_TTL,
-      '_couchdb.roles': [plan],
-    })
+    const accessToken = mintToken(deps.key, accessClaims(claims, plan, now()))
 
     // Never cached. A token in a shared cache is a token for whoever asks next.
     reply.header('cache-control', 'no-store')

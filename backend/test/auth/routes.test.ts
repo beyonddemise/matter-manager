@@ -8,6 +8,7 @@ import { hashJti, refreshStore } from '../../src/auth/refresh-store.js'
 import { ACCESS_TOKEN_TTL, type AuthDependencies } from '../../src/auth/routes.js'
 import { buildServer, type Server } from '../../src/server.js'
 import { forgetUsersDatabase } from '../../src/users/database.js'
+import { recordEnsurer } from '../../src/users/ensure.js'
 import { userRecords } from '../../src/users/records.js'
 import { fakeCouch } from '../support/couch.js'
 
@@ -40,6 +41,11 @@ function signInServer(
     identity?: Identity
     signIn?: AuthDependencies['signIn']
     exchange?: typeof fetch
+    /**
+     * Also wire `/profile` over the same key, records and deny list, so a test can present the
+     * access token this service really mints rather than one a helper built to look like it.
+     */
+    withProfile?: boolean
   } = {},
 ) {
   forgetUsersDatabase()
@@ -89,6 +95,9 @@ function signInServer(
       logSignIn: (event) => logged.push(event),
       now,
     },
+    ...(overrides.withProfile === true
+      ? { profile: { records, ensureRecord: recordEnsurer(records, refresh), key, deny, now } }
+      : {}),
   })
   return {
     app,
@@ -558,6 +567,53 @@ describe('POST /auth/token', () => {
     })
 
     expect(response.headers['cache-control']).toBe('no-store')
+  })
+})
+
+describe('the access token carries the provider name', () => {
+  // A record-less profile is built from the access token's claims, and `PATCH /profile` seeds a
+  // new record from them. Without `name` in the token both fell back to the provider subject:
+  // a person who had only signed in was greeted as `google|1234`.
+  it('carries name in the access token itself', async () => {
+    const server = signInServer()
+    const { accessToken } = await tokensFor(server)
+
+    expect(verifyToken(accessToken, server.key.publicKey, 'access', at).name).toBe('Ada')
+  })
+
+  it('shows the provider name on a record-less profile', async () => {
+    const server = signInServer({ withProfile: true })
+    const { accessToken } = await tokensFor(server)
+    const response = await server.app.inject({
+      method: 'GET',
+      url: '/profile',
+      headers: { authorization: `Bearer ${accessToken}` },
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(response.json().displayName).toBe('Ada')
+  })
+
+  it('seeds the new record with the provider name on the first PATCH /profile', async () => {
+    const server = signInServer({ withProfile: true })
+    const { accessToken } = await tokensFor(server)
+    const response = await server.app.inject({
+      method: 'PATCH',
+      url: '/profile',
+      headers: { authorization: `Bearer ${accessToken}` },
+      payload: { locale: 'de' },
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect((await server.records.read('ada@example.com'))?.displayName).toBe('Ada')
+  })
+
+  it('omits name when the provider gave none', async () => {
+    const { name: _unused, ...nameless } = VERIFIED
+    const server = signInServer({ identity: nameless })
+    const { accessToken } = await tokensFor(server)
+
+    expect(verifyToken(accessToken, server.key.publicKey, 'access', at)).not.toHaveProperty('name')
   })
 })
 

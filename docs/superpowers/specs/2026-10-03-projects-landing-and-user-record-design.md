@@ -123,7 +123,7 @@ policy.
 | Token | Transport | Lifetime | Claims |
 | --- | --- | --- | --- |
 | Refresh | Response body; the page keeps it in `mm-local` and sends it in the body of the next `POST /auth/token` | 30 days, not rotated | `purpose:'refresh'`, `sub`, `email`, `name?`, `jti`, `exp`, `iat`; signed with the session key CouchDB never sees |
-| Access | Response body | **5 minutes** (`ACCESS_TOKEN_TTL = 300`) | `purpose:'access'`, `sub`, `email`, `jti`, `exp`, `iat`, `_couchdb.roles: [plan]` |
+| Access | Response body | **5 minutes** (`ACCESS_TOKEN_TTL = 300`) | `purpose:'access'`, `sub`, `email`, `name?`, `jti`, `exp`, `iat`, `_couchdb.roles: [plan]`; `name` is the provider's, so a record-less profile has one |
 
 - **Login.** The OIDC callback logs the sign-in, accepts pending invitations (creating the
   record only if there are any), and sets a short-lived (minutes),
