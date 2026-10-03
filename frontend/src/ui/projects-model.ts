@@ -19,7 +19,9 @@
  * last one heard, cached in `mm-local`, while offline or after a failed request) and
  * **unheard** (`undefined`). A stale list is trusted for facts — counts, roles, archived — so an
  * offline member with five server projects cannot create a sixth; it is never trusted for acts:
- * everything that needs the server is refused (`offline`, or `stale` when online).
+ * everything that needs the server is refused (`offline`, or `stale` when online). An unheard
+ * list is refused the same way: without this session's answer the page cannot see server-only
+ * projects, archived state or roles.
  *
  * Readings the table leaves open are decided here:
  *
@@ -73,8 +75,10 @@ export type Refusal =
   /** It needs the server, and there is no connection: "Needs a connection". */
   | 'offline'
   /**
-   * It needs the server, and the list the page holds is the last one heard rather than one the
-   * server just gave (the request failed). Offline reads `offline` instead.
+   * It needs the server, and the server has not just confirmed the list: the page holds only the
+   * last one heard, or none at all (the request failed with nothing cached). Without this
+   * session's list the page cannot see server-only projects, archived state or roles, so it
+   * would offer what the service then refuses. Offline reads `offline` instead.
    */
   | 'stale'
   /** The plan does not put projects on the server (lapsed or free owner). */
@@ -178,6 +182,11 @@ export interface ProjectsInput {
   /**
    * Whether `server` is a cached list rather than this session's answer. Its facts (counts, roles,
    * archived) still apply; actions that need the server are refused until a fresh one arrives.
+   *
+   * **Callers:** a list is fresh only if it was fetched in the current signed-in session, so pass
+   * `true` (or no list) whenever the session is `signed-out` or `expired`. The model checks the
+   * session before freshness, so a wrong `false` there cannot unlock anything, but it would claim
+   * a list nobody is entitled to have just heard.
    */
   readonly serverStale?: boolean
   /** The cached plan; `free` on a device that never signed in. */
@@ -247,13 +256,13 @@ export function projectsModel(input: ProjectsInput): ProjectsModel {
   const limit = limitFor(plan, input.reportedLimit)
   const overLimit = exceedsLimit(ownedCount, limit)
 
-  // Every action that needs the server asks these, in this order. A stale list is one the
-  // server did not just confirm (offline, or the request failed): good enough to count against,
-  // never good enough to act on.
+  // Every action that needs the server asks these, in this order. Only a fresh list lets one
+  // through: a stale one (offline, or the request failed) is good enough to count against, never
+  // to act on, and an unheard one is not even that.
   const needsServer = [
     [signedIn, 'signed-out'],
     [online, 'offline'],
-    [!stale, 'stale'],
+    [fresh, 'stale'],
   ] as const
 
   function row({ entry, project, kind, role }: Source): Row {

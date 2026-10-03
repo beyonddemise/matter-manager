@@ -113,7 +113,7 @@ describe('the page for every plan × session × connection × server list × loc
               ? no('signed-out')
               : !online
                 ? no('offline')
-                : list === 'stale'
+                : list !== 'fresh'
                   ? no('stale')
                   : undefined
           const label = `${plan}, ${session}, ${online ? 'online' : 'offline'}, ${list} list`
