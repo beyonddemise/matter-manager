@@ -60,7 +60,7 @@ FAILURES=0
 # that breaks after provisioning leaves one in production and the next run diagnoses its own
 # litter — which is exactly what the first run of this script did.
 cleanup() {
-  local archived signed_out
+  local archived signed_out kept signout_failed=0
   if [ -n "${PROJECT_ID}" ]; then
     # Archived, not deleted. There is no DELETE route — projects carry an `archived` flag and
     # `GET /projects` returns them either way, which is a deliberate choice about a catalogue
@@ -89,10 +89,24 @@ cleanup() {
       -K "${WORK}/auth.conf" -H 'Content-Type: application/json' \
       --data-binary "@${WORK}/signout.json" "${ORIGIN}/api/auth/signout")
     echo "${signed_out}"
-    [ "${signed_out}" = "204" ] ||
+    if [ "${signed_out}" != "204" ]; then
+      # Kept, not deleted. The file holds the only copy of a live thirty-day credential, and
+      # removing it would leave the operator unable to retry the revocation. `mktemp` creates it
+      # 0600 and the explicit chmod says so; it is outside ${WORK}, which is removed below.
+      kept=$(mktemp "${TMPDIR:-/tmp}/mm-probe-signout.XXXXXX")
+      chmod 600 "${kept}"
+      cp "${WORK}/signout.json" "${kept}"
       echo "  FAILED to sign out; the probe's refresh token may still be live until it expires." >&2
+      echo "  Kept for a retry (delete it afterwards): ${kept}" >&2
+      echo "  Retry: POST ${ORIGIN}/api/auth/signout with that file as the body." >&2
+      signout_failed=1
+    fi
   fi
   rm -rf "${WORK}"
+  # An EXIT trap's own `exit` sets the script's status, so a failed revocation cannot pass as a
+  # clean run.
+  [ "${signout_failed}" = "1" ] && exit 1
+  return 0
 }
 trap cleanup EXIT
 
