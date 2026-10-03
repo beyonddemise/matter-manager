@@ -353,7 +353,8 @@ The page decides from `can()` and the reported `projectLimit`, never from a tier
 1. Scheduled hard delete of projects archived more than 90 days ago.
 2. Server-side refresh-token hardening: optional rotation on use, pruning expired `refreshTokens`
    entries, a cap per account.
-3. A deny list shared across backend instances, needed once there is more than one.
+3. A deny list and record-less refresh store shared across backend instances (and surviving
+   restarts), needed once there is more than one.
 4. A read-only grace period for downgraded owners: after a downgrade their server projects stay
    readable for a set period, then are archived and, 90 days later, deleted by the job in (1).
 5. Refine sign-in logging: a proper sink, retention, and a PII policy for the address it records
