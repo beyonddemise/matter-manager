@@ -420,6 +420,39 @@ describe("accepting an active project is the recipient's plan to authorise", () 
     expect(participantsIn(fake)).toEqual([{ role: 'owner', userid: HOMEOWNER }])
   })
 
+  it('still asks on a retry when the first attempt did not ask because it was archived', async () => {
+    // Archived on attempt one (not gated), unarchived before the retry: now it counts.
+    const fake = registry(undefined, offer())
+    archive(fake, true)
+    let asked = 0
+    let conflicts = 1
+    const couch = {
+      ...fake.couch,
+      putDoc: async (database: string, document: { _id: string }) => {
+        if (document._id === pointerId(PROJECT_ID) && conflicts > 0) {
+          conflicts -= 1
+          archive(fake, false)
+          throw new CouchError(409, 'conflict', 'Document update conflict')
+        }
+        return fake.couch.putDoc(database, document)
+      },
+    } as FakeCouch['couch']
+
+    await acceptTransfer(
+      {
+        ...deps(fake, async () => {
+          asked += 1
+        }),
+        couch,
+      },
+      PROJECT_ID,
+      homeowner,
+      clock(),
+    )
+
+    expect(asked).toBe(1)
+  })
+
   it("does not ask about an offer that is not the recipient's to accept", async () => {
     const fake = registry(undefined, offer())
 

@@ -196,8 +196,10 @@ export async function acceptTransfer(
     }
     // The recipient's plan, for a project that is active. Before `ensureRecord`, which writes:
     // an account that is refused must not leave a record behind for having asked.
-    if (!authorised && pointer.archived !== true) await deps.authoriseAccept(identity)
-    authorised = true
+    if (!authorised && pointer.archived !== true) {
+      await deps.authoriseAccept(identity)
+      authorised = true
+    }
     // `acceptable` has matched the verified address to the offer, so it is present. Once, not
     // per conflict retry: the record does not change between attempts.
     if (!ensured && identity.email !== undefined) {

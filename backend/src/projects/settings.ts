@@ -163,6 +163,12 @@ async function syncProjectDocument(
 ): Promise<void> {
   for (let attempt = 1; ; attempt += 1) {
     const existing = await couch.getDoc<{ _id: string; _rev?: string }>(dbName, PROJECT_DOCUMENT_ID)
+    // Already right: nothing to write. Comparing against the document itself, not the pointer,
+    // is what lets a repeated PATCH heal a document whose earlier write failed.
+    if (existing !== undefined) {
+      const current = existing as { name?: unknown; client?: unknown; serverDb?: unknown }
+      if (current.name === name && current.client === client && current.serverDb === dbName) return
+    }
     const { client: _client, name: _name, ...rest } = (existing ?? {}) as Record<string, unknown>
     try {
       await couch.putDoc(dbName, {
@@ -286,11 +292,10 @@ export async function updateProjectSettings(
 
   // After the pointer, deliberately: the pointer is the source of truth for listing, so a
   // failure here leaves the list right and the replicated copy stale. It is not swallowed — it
-  // propagates as a 500 so the client knows the rename is half done and can repeat it, which is
-  // safe because both writes are idempotent.
-  if (name !== pointer.projectName || client !== pointer.client) {
-    await syncProjectDocument(deps.couch, pointer.dbName, name, client)
-  }
+  // propagates as a 500 so the client knows the rename is half done. Repeating the PATCH heals
+  // it, because the document is compared with itself and not with the pointer, which already
+  // holds the new values; every PATCH therefore converges the document, at the cost of one read.
+  await syncProjectDocument(deps.couch, pointer.dbName, name, client)
 
   return {
     projectId: pointer.projectId,

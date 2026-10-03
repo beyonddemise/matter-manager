@@ -613,8 +613,8 @@ describe('the project document follows the pointer', () => {
     expect(fake.documents.get(DOCUMENT)).not.toHaveProperty('client')
   })
 
-  it('is not touched by a change that is neither name nor client', async () => {
-    const { deps, fake } = project()
+  it('is not written when it already matches, as after a change that is neither name nor client', async () => {
+    const { deps, fake } = project(OWNER_ONLY, undefined, { client: 'Old' })
     fake.documents.set(DOCUMENT, { ...SEEDED })
 
     await updateProjectSettings(deps, PROJECT_ID, ADA, { archived: true })
@@ -657,6 +657,50 @@ describe('the project document follows the pointer', () => {
     await updateProjectSettings({ ...deps, couch }, PROJECT_ID, ADA, { name: 'Altbau' })
 
     expect(fake.documents.get(DOCUMENT)).toMatchObject({ name: 'Altbau' })
+  })
+
+  it('heals the document when the same PATCH is repeated after a failed write', async () => {
+    const { deps, fake } = project()
+    fake.documents.set(DOCUMENT, { ...SEEDED })
+    let failing = true
+    const couch = {
+      ...fake.couch,
+      putDoc: async (database: string, document: { _id: string }) => {
+        if (document._id === 'project' && failing) throw new CouchError(500, 'boom', 'boom')
+        return fake.couch.putDoc(database, document)
+      },
+    } as typeof fake.couch
+
+    await expect(
+      updateProjectSettings({ ...deps, couch }, PROJECT_ID, ADA, { name: 'Altbau' }),
+    ).rejects.toThrow(CouchError)
+    failing = false
+    await expect(
+      updateProjectSettings({ ...deps, couch }, PROJECT_ID, ADA, { name: 'Altbau' }),
+    ).resolves.toMatchObject({ name: 'Altbau' })
+
+    expect(fake.documents.get(DOCUMENT)).toMatchObject({ name: 'Altbau' })
+  })
+
+  it('gives up when the document write conflicts three times', async () => {
+    const { deps, fake } = project()
+    fake.documents.set(DOCUMENT, { ...SEEDED })
+    let attempts = 0
+    const couch = {
+      ...fake.couch,
+      putDoc: async (database: string, document: { _id: string }) => {
+        if (document._id === 'project') {
+          attempts += 1
+          throw new CouchError(409, 'conflict', 'Document update conflict')
+        }
+        return fake.couch.putDoc(database, document)
+      },
+    } as typeof fake.couch
+
+    await expect(
+      updateProjectSettings({ ...deps, couch }, PROJECT_ID, ADA, { name: 'Altbau' }),
+    ).rejects.toMatchObject({ status: 409 })
+    expect(attempts).toBe(3)
   })
 
   it('surfaces a failure after the pointer, which is the source of truth, was written', async () => {
