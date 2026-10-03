@@ -20,8 +20,9 @@ import type { Provider } from './auth/oidc.js'
 import { type RefreshStore, refreshStore } from './auth/refresh-store.js'
 import type { AuthDependencies } from './auth/routes.js'
 import { type CouchClient, couchClient } from './couch/client.js'
-import { type ProfileStore, profileStore } from './profile/store.js'
 import { checkDesignDocs } from './projects/design-docs.js'
+import { acceptInvitationsOnSignIn } from './projects/invitations.js'
+import { findUser } from './projects/users.js'
 import { originsFromEnv } from './security/config.js'
 import type { ServerOptions } from './server.js'
 import { recordEnsurer } from './users/ensure.js'
@@ -113,10 +114,9 @@ function providerFrom(env: Environment): Provider | undefined {
 /**
  * Everything sign-in needs, if this deployment has all of it.
  *
- * Needs the profile store as well as the provider, because signing in still **writes**:
- * `remember` creates or updates the `_users` document the profile routes read. That write is
- * transitional; the user record replaces it, and sign-in will then create a record only when an
- * invitation is redeemable.
+ * Signing in **writes** only when it has something to: `acceptInvitationsOnSignIn` creates or
+ * completes the user record when an invitation is redeemable or a record already exists, and
+ * does nothing for a person who needs neither (the spec, "Records are created on demand").
  *
  * `records`, `refresh` and `deny` are passed in rather than built here so that one of each
  * exists per process: the refresh store and the deny list are in memory, and a second instance
@@ -124,9 +124,9 @@ function providerFrom(env: Environment): Provider | undefined {
  */
 function authFrom(
   env: Environment,
+  couch: CouchClient,
   key: SigningKey,
   sessionKey: SigningKey | undefined,
-  store: ProfileStore,
   tokens: {
     readonly records: UserRecords
     readonly refresh: RefreshStore
@@ -151,12 +151,13 @@ function authFrom(
     verifyIdToken: (idToken: string) => verifyGoogleIdToken(provider, idToken, keys),
     appOrigin,
     ...tokens,
-    // Keeps today's `_users` write, which `/profile` still reads, and reports a record so the
-    // sign-in line is truthful about that write. Replaced when sign-in moves onto the record.
-    signIn: async (identity) => {
-      await store.remember(identity)
-      return { hasRecord: true }
-    },
+    // Redemption needs only to resolve addresses and subjects, which is `findUser` over the
+    // records; `invite` is for sharing with an unknown address and plays no part in it.
+    signIn: acceptInvitationsOnSignIn(
+      { couch, findUser: (value) => findUser(tokens.records, value) },
+      tokens.records,
+      recordEnsurer(tokens.records, tokens.refresh),
+    ),
   }
 }
 
@@ -181,7 +182,6 @@ export function serverOptions(env: Environment = process.env): ServerOptions {
   // Read now rather than at the first project. See `design-docs.ts`.
   checkDesignDocs()
 
-  const store = profileStore(couch)
   const sessionKey = sessionKeyFrom(env, key)
   const clock = () => Math.floor(Date.now() / 1000)
   const records = userRecords(couch)
@@ -189,13 +189,13 @@ export function serverOptions(env: Environment = process.env): ServerOptions {
   // must see the same entries and the same signed-out tokens that the auth routes write.
   const refresh = refreshStore(records, clock)
   const deny = denyList(clock)
-  const auth = authFrom(env, key, sessionKey, store, { records, refresh, deny })
+  const auth = authFrom(env, couch, key, sessionKey, { records, refresh, deny })
 
   return {
     security,
-    // The same store the profile routes use. One reader of `_users` per process, so a plan an
-    // operator sets is the plan the gate sees without a second path to keep in step.
-    projects: { couch, key, profiles: store },
+    // The same records the profile routes use, and the same deny list the auth routes write: a
+    // plan an operator sets is the plan the gate sees, and a signed-out token is refused here too.
+    projects: { couch, key, records, deny },
     // Verifies the **access** token, so it takes the key CouchDB validates. Present only when
     // there is a session key all the same: without one there is no sign-in, nobody can obtain an
     // access token, and a route that can never authenticate anybody is not a route.

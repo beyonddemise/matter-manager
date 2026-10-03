@@ -45,6 +45,11 @@ export interface FakeCouch {
   readonly calls: CouchCall[]
   /** Rows the next `view` returns. */
   rows: readonly unknown[]
+  /**
+   * Rows for one design document, taking precedence over {@link rows}. For a test whose code
+   * reads two views, which the single shared `rows` cannot answer differently.
+   */
+  readonly rowsByDesign: Record<string, readonly unknown[]>
 }
 
 /**
@@ -72,6 +77,7 @@ export function fakeCouch(
   const fails = options.fails ?? {}
 
   const state = { rows: [] as readonly unknown[] }
+  const rowsByDesign: Record<string, readonly unknown[]> = {}
 
   /** Whether this operation is set to fail for this database. */
   const failing = (operation: keyof CouchFailures, database: string): boolean => {
@@ -148,7 +154,7 @@ export function fakeCouch(
     ): Promise<{ readonly rows: readonly T[] }> {
       record({ operation: 'view', database, detail: { design, name, params } })
       if (failing('view', database)) refuse(`query ${design}/${name}`)
-      return { rows: state.rows as readonly T[] }
+      return { rows: (rowsByDesign[design] ?? state.rows) as readonly T[] }
     },
   }
 
@@ -158,6 +164,7 @@ export function fakeCouch(
     security,
     databases,
     calls,
+    rowsByDesign,
     get rows() {
       return state.rows
     },

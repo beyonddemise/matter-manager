@@ -5,15 +5,18 @@ import { type CouchClient, CouchError } from '../../src/couch/client.js'
 import type { Action, Plan, Principal } from '../../src/domain/index.js'
 import { NotEntitledError, gate as realGate } from '../../src/entitlements/gate.js'
 import { PROBLEM_JSON } from '../../src/problem.js'
-import { profileStore, userDocumentId } from '../../src/profile/store.js'
 import { forgetRegistry, REGISTRY_DATABASE } from '../../src/projects/registry.js'
 import { buildServer, type Server } from '../../src/server.js'
+import { forgetUsersDatabase, USERS_DB } from '../../src/users/database.js'
+import { userDocId } from '../../src/users/key.js'
+import { userRecords } from '../../src/users/records.js'
 import { loadContract, operationsOf, validate } from '../support/contract.js'
 import { type CouchFailures, type FakeCouch, fakeCouch } from '../support/couch.js'
 
 const OWNER = 'google|1234'
 /** The caller in the capacity tests. Distinct from {@link OWNER}, which owns nothing here. */
 const SUBJECT = 'user-1'
+const SUBJECT_EMAIL = 'user1@example.test'
 const PROJECT_ID = '8f14e45f-ceea-467a-9c0e-1b2c3d4e5f60'
 const DATABASE = `project_${PROJECT_ID}`
 
@@ -92,6 +95,7 @@ let couch: FakeCouch
 function server(
   options: { fails?: CouchFailures; gateRefuses?: boolean; registryConflicts?: boolean } = {},
 ) {
+  forgetUsersDatabase()
   couch = fakeCouch(options.fails === undefined ? {} : { fails: options.fails })
   const refused: string[] = []
   const client =
@@ -104,10 +108,10 @@ function server(
       couch: client,
       key: KEY,
       validator: () => 'function (newDoc) { return newDoc }',
-      // The real store against the fake CouchDB, so a test states a plan by seeding the
-      // `_users` document an operator would have edited - rather than by stubbing the read
-      // and proving only that a stub returns what it was given.
-      profiles: profileStore(client),
+      // The real records against the fake CouchDB, so a test states a plan by seeding the
+      // record an operator would have edited - rather than by stubbing the read and proving
+      // only that a stub returns what it was given.
+      records: userRecords(client),
       newId: () => PROJECT_ID,
       clock: () => '2026-08-27T09:00:00.000Z',
       // A spy *over* the real gate, not a stand-in for it. A recording gate that always
@@ -1264,14 +1268,14 @@ describe('handing a project to somebody else', () => {
 })
 
 /**
- * A server whose registry already holds what this caller owns, and whose `_users` document
+ * A server whose registry already holds what this caller owns, and whose user record
  * carries their plan.
  *
  * Separate from {@link server} because these tests are about a *precondition*: what matters is
  * how many projects exist before the request, and reaching that state by creating them would
  * mean driving the very route under test through the very limit under test.
  *
- * @param options.plan what the `_users` document holds, as an operator would have typed it
+ * @param options.plan what the user record holds, as an operator would have typed it
  * @param options.owned how many projects this subject owns
  * @param options.archived whether those owned projects are archived - they count either way (#55)
  * @param options.memberOf how many further projects this subject can see but does not own
@@ -1284,13 +1288,16 @@ function serverWithProjects(options: {
 }): Server {
   const built = server()
 
-  built.couch.documents.set(`_users/${userDocumentId(SUBJECT)}`, {
-    _id: userDocumentId(SUBJECT),
-    name: SUBJECT,
-    roles: [],
+  // The record, and the `by_sub` row that finds it by subject. The fake answers each view from
+  // its own rows, so the registry rows below do not stand in for this one.
+  built.couch.documents.set(`${USERS_DB}/${userDocId(SUBJECT_EMAIL)}`, {
+    _id: userDocId(SUBJECT_EMAIL),
     type: 'user',
+    sub: SUBJECT,
+    email: SUBJECT_EMAIL,
     plan: options.plan,
   })
+  built.couch.rowsByDesign.by_sub = [{ id: userDocId(SUBJECT_EMAIL), key: SUBJECT, value: null }]
 
   // One row per participation, which is what the view emits: a project somebody shared with
   // this subject is a row of theirs carrying somebody else's `ownerId`. `read` rather than the
@@ -1431,7 +1438,7 @@ describe('creating a project against the plan', () => {
   })
 
   it('reads the plan from the account rather than assuming one', async () => {
-    // The positive control for the refusal above: a handler that ignored `_users` entirely and
+    // The positive control for the refusal above: a handler that ignored the record entirely and
     // hard-coded `free` would pass every test in this block but this one.
     const built = serverWithProjects({ plan: 'member', owned: 1 })
     const response = await built.inject({
@@ -1441,5 +1448,26 @@ describe('creating a project against the plan', () => {
       payload: { name: 'Second' },
     })
     expect(response.statusCode).toBe(201)
+  })
+
+  it('finds the record by subject through the by_sub view', async () => {
+    // The token carries a subject and the record is keyed by address, so the only way to the
+    // plan is the view. A pro record the view does not point at must not lift the limit.
+    const built = serverWithProjects({ plan: 'pro', owned: 1 })
+    couch.rowsByDesign.by_sub = []
+    const response = await built.inject({
+      method: 'POST',
+      url: '/projects',
+      headers: { authorization: bearer(SUBJECT) },
+      payload: { name: 'Second' },
+    })
+    expect(response.statusCode).toBe(403)
+    expect(
+      couch.calls.some(
+        (call) =>
+          call.operation === 'view' &&
+          (call.detail as { design?: string } | undefined)?.design === 'by_sub',
+      ),
+    ).toBe(true)
   })
 })

@@ -3,7 +3,6 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { denyList } from '../src/auth/deny-list.js'
 import { mintToken, type SigningKey } from '../src/auth/jwt.js'
 import { refreshStore } from '../src/auth/refresh-store.js'
-import { profileStore } from '../src/profile/store.js'
 import { buildServer, type Server } from '../src/server.js'
 import { forgetUsersDatabase } from '../src/users/database.js'
 import { recordEnsurer } from '../src/users/ensure.js'
@@ -62,17 +61,16 @@ const SIGNING: SigningKey = (() => {
  * exactly the kind of check that reads as thorough and is not.
  */
 const server = (): Server => {
-  // **One** CouchDB, wired to both the profile store and the project routes.
+  // **One** CouchDB, wired to both the user records and the project routes.
   //
   // They were two separate `fakeCouch()` instances, which is inert only for as long as no test
-  // writes anything: the two stores share no documents, so a later test that seeded a `_users`
+  // writes anything: the two stores share no documents, so a later test that seeded a user
   // document through the profile side and then asked `POST /projects` for the subject's plan
   // would read an empty store, get `free`, and pass for a reason that has nothing to do with
   // what it was asserting. One instance means the server behaves like a deployment, where there
   // is one database behind both.
   forgetUsersDatabase()
   const couch = fakeCouch().couch
-  const store = profileStore(couch)
   const records = userRecords(couch)
   const clock = () => Math.floor(Date.now() / 1000)
   const key = SIGNING
@@ -111,7 +109,7 @@ const server = (): Server => {
     projects: {
       couch,
       key,
-      profiles: store,
+      records,
       validator: () => 'function (doc) { return doc }',
       identityOf: async (sub: string) => ({
         sub,

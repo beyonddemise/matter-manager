@@ -11,9 +11,12 @@
  */
 
 import type { Identity } from '../auth/oidc.js'
+import type { VerifiedIdentity } from '../auth/routes.js'
 import type { CouchClient } from '../couch/client.js'
 import { installDesign, once } from '../couch/design.js'
 import { foldEmail, type Invitation, isOpen, redeemable } from '../domain/index.js'
+import type { EnsureRecord } from '../users/ensure.js'
+import type { UserRecords } from '../users/records.js'
 import { changeMembership, type MembershipDependencies } from './members.js'
 import { ensureRegistry, REGISTRY_DATABASE } from './registry.js'
 
@@ -155,9 +158,9 @@ export interface Redemption {
 /**
  * Applies every invitation this identity may redeem, and removes it.
  *
- * Called during sign-in, **after** the identity has been verified and **before** the session is
- * issued — the same window `rememberUser` occupies, and for the same reason: a failure here
- * means no session, which is a sign-in that can simply be repeated. The alternative is somebody
+ * Called during sign-in, **after** the identity has been verified and **before** any tokens are
+ * issued, and only once the user's record exists (see {@link acceptInvitationsOnSignIn}). A
+ * failure here fails the sign-in, which can simply be repeated. The alternative is somebody
  * signed in without the access they were invited to and no way to notice.
  *
  * Each invitation is applied independently. One that cannot be applied — the project was deleted
@@ -214,24 +217,42 @@ async function removeInvitation(couch: CouchClient, invitation: InvitationDocume
 }
 
 /**
- * Wraps `rememberUser` so that signing in also accepts any invitations waiting for the address.
+ * Accepts pending invitations at sign-in, creating a record only when one is needed.
  *
- * **The order is load-bearing.** `remember` runs first, because redemption calls
- * `changeMembership`, which resolves the invitee's address to a subject through `_users` — and
- * until `remember` has written that account, there is nobody to resolve. Reversing the two
- * produces an invitation that is silently never applied on the one sign-in it was waiting for.
+ * **The record comes first.** Redemption resolves the invitee's address to a subject through
+ * `findUser`, which finds only records with a `sub`. Redeeming first would silently apply
+ * nothing on the one sign-in the invitation was waiting for.
  *
- * A failure in either half means **no session** — the window `AuthDependencies.rememberUser`
- * already occupies (M4-3), and for the same reason: a failed sign-in can simply be repeated,
- * whereas somebody signed in without the access they were invited to has no way to notice.
+ * Without a redeemable invitation, and without an existing record, nothing is written (the
+ * spec, "Records are created on demand"). An existing record is still completed, because an
+ * operator may have created it by address and its `sub` is filled in here.
+ *
+ * A failure in either half fails the sign-in, before any token is issued. That is deliberate: a
+ * failed sign-in can simply be repeated, and the invitation is still there for the repeat
+ * (nothing is removed until it has been applied), whereas somebody signed in without the access
+ * they were invited to has no way to notice.
+ *
+ * @returns whether a record exists for this identity afterwards
  */
 export function acceptInvitationsOnSignIn(
   deps: MembershipDependencies & { readonly couch: CouchClient },
-  remember: (identity: Identity) => Promise<void>,
+  records: UserRecords,
+  ensureRecord: EnsureRecord,
   now: () => number = () => Date.now(),
-): (identity: Identity) => Promise<void> {
+): (identity: VerifiedIdentity) => Promise<{ readonly hasRecord: boolean }> {
   return async (identity) => {
-    await remember(identity)
-    await redeemInvitations(deps, identity, now)
+    const pending = (await invitationsFor(deps.couch, identity.email, now)).filter(
+      (invitation) => redeemable(invitation, identity, now) === undefined,
+    )
+    const existing = await records.read(identity.email)
+    if (pending.length === 0 && existing === undefined) return { hasRecord: false }
+
+    await ensureRecord({
+      email: identity.email,
+      sub: identity.sub,
+      ...(identity.name === undefined ? {} : { name: identity.name }),
+    })
+    if (pending.length > 0) await redeemInvitations(deps, identity, now)
+    return { hasRecord: true }
   }
 }

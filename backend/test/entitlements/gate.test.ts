@@ -3,9 +3,10 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { mintToken, type SigningKey } from '../../src/auth/jwt.js'
 import { ACTIONS, type Action, PROJECT_LIMITS, type Principal } from '../../src/domain/index.js'
 import { ENFORCEMENT, gate, gatedRoutes, NotEntitledError } from '../../src/entitlements/gate.js'
-import { profileStore } from '../../src/profile/store.js'
 import { forgetRegistry } from '../../src/projects/registry.js'
 import { buildServer, type Server } from '../../src/server.js'
+import { forgetUsersDatabase } from '../../src/users/database.js'
+import { userRecords } from '../../src/users/records.js'
 import { fakeCouch } from '../support/couch.js'
 
 /**
@@ -114,11 +115,12 @@ function serverWithGatedRoutes() {
   const calls: Action[] = []
 
   forgetRegistry()
-  // **One** CouchDB behind both the routes and the profile store, where there were two.
+  forgetUsersDatabase()
+  // **One** CouchDB behind both the routes and the user records, where there were two.
   //
   // Inert today, because nothing here seeds anything. It stops being inert the moment a test
-  // states a plan the way `projects/routes.test.ts` does — by seeding the `_users` document an
-  // operator would have edited. Seeded through the profile store's instance, that document
+  // states a plan the way `projects/routes.test.ts` does — by seeding the user record an
+  // operator would have edited. Seeded through another instance, that document
   // would be invisible to the routes' instance: `principalFor` would read no profile, fall back
   // to `free`, and the test would pass or fail for a reason unrelated to what it asserted. One
   // instance means the server behaves like a deployment, where there is one database.
@@ -128,7 +130,7 @@ function serverWithGatedRoutes() {
     projects: {
       couch,
       key,
-      profiles: profileStore(couch),
+      records: userRecords(couch),
       validator: () => 'function (doc) { return doc }',
       gate: (_principal, action) => {
         calls.push(action)

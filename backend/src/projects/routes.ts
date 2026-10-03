@@ -13,6 +13,7 @@
 
 import type { FastifyInstance } from 'fastify'
 import { bearerSubject } from '../auth/bearer.js'
+import type { DenyList } from '../auth/deny-list.js'
 import type { SigningKey } from '../auth/jwt.js'
 import type { CouchClient } from '../couch/client.js'
 import {
@@ -26,7 +27,7 @@ import {
 } from '../domain/index.js'
 import { type Gate, NotEntitledError, gate as realGate } from '../entitlements/gate.js'
 import { problem } from '../problem.js'
-import type { ProfileStore } from '../profile/store.js'
+import { planOf, type UserRecords } from '../users/records.js'
 import { accessValidator } from './design-docs.js'
 import { type InvitationSender, storeInvitation } from './invitations.js'
 import {
@@ -59,14 +60,21 @@ export interface ProjectDependencies {
   /** The key the access token is verified with — the same one CouchDB validates it with. */
   readonly key: SigningKey
   /**
-   * Where a subject's plan is read from.
+   * Where a subject's plan is read from, and where an address or subject is resolved to an
+   * account.
    *
    * **Required, not optional.** An absent store would have to mean something, and the only
    * thing it could mean is `free` for everybody — which is a deployment that silently stops
    * charging, looks exactly like one that works, and is found by an invoice rather than by a
    * test. A missing wire is a compile error instead.
    */
-  readonly profiles: ProfileStore
+  readonly records: UserRecords
+  /**
+   * Access tokens signed out before they expired. Optional because a deployment without sign-in
+   * has no sign-out and so nothing to deny; where there is sign-in, composition passes the one
+   * list the auth routes write to.
+   */
+  readonly deny?: DenyList
   /**
    * The entitlement seam.
    *
@@ -89,15 +97,18 @@ export interface ProjectDependencies {
    * The verified identity behind a subject, for accepting a transfer.
    *
    * Rebuilt from what sign-in recorded rather than read off the token: acceptance is decided by
-   * an address the **provider** verified, and a token carries a subject. Absent means transfers
-   * cannot be accepted, which is what a deployment with no sign-in configured should answer.
+   * an address the **provider** verified, and a token carries a subject. Defaults to the user
+   * record, and `emailVerified: true` there is sound: a record's `sub` is only ever set by a
+   * sign-in, and sign-in refuses an address the provider did not verify, so a record that has a
+   * `sub` has a verified address. (A record without one, which an operator may have created by
+   * address alone, is no identity at all and yields `undefined`.)
    */
   readonly identityOf?: (
     sub: string,
   ) => Promise<
     { readonly sub: string; readonly email?: string; readonly emailVerified?: boolean } | undefined
   >
-  /** Finds a user by address or subject. Injected so a test needs no `_users`. */
+  /** Finds a user by address or subject. Injected so a test needs no user records. */
   readonly findUser?: MembershipDependencies['findUser']
   /**
    * How an invitation is sent (M5-4).
@@ -165,14 +176,15 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDepende
   const principalFor = async (sub: string): Promise<Principal> => {
     await ensureRegistry(deps.couch)
     const owned = (await projectsFor(deps.couch, sub)).filter((row) => row.role === 'owner').length
-    const profile = await deps.profiles.read(sub)
+    const record = await deps.records.readBySub(sub)
     // `free` is the only tier literal ADR 0009 permits outside the policy table, and it is here
-    // because a subject with no `_users` document has no plan to read rather than a cheap one.
-    return { sub, plan: profile?.plan ?? 'free', ownedProjects: owned }
+    // because a subject with no record has no plan to read rather than a cheap one. `planOf`
+    // owns that default, and the one for a plan this build does not know.
+    return { sub, plan: planOf(record), ownedProjects: owned }
   }
 
   app.post('/projects', async (request, reply) => {
-    const sub = bearerSubject(request, deps.key, now)
+    const sub = bearerSubject(request, deps.key, now, deps.deny)
     if (sub === undefined) return problem(reply, { title: 'Not signed in', status: 401 })
 
     let principal: Principal
@@ -245,7 +257,7 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDepende
   })
 
   app.get('/projects', async (request, reply) => {
-    const sub = bearerSubject(request, deps.key, now)
+    const sub = bearerSubject(request, deps.key, now, deps.deny)
     if (sub === undefined) return problem(reply, { title: 'Not signed in', status: 401 })
 
     const rows = await projectsFor(deps.couch, sub)
@@ -282,9 +294,19 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDepende
     })
   })
 
+  /** {@link ProjectDependencies.identityOf}, defaulting to the user record. */
+  const identityOf: NonNullable<ProjectDependencies['identityOf']> =
+    deps.identityOf ??
+    (async (sub) => {
+      const record = await deps.records.readBySub(sub)
+      return record?.sub === undefined
+        ? undefined
+        : { sub: record.sub, email: record.email, emailVerified: true }
+    })
+
   const membership: MembershipDependencies = {
     couch: deps.couch,
-    findUser: deps.findUser ?? ((value) => findUser(deps.couch, value)),
+    findUser: deps.findUser ?? ((value) => findUser(deps.records, value)),
     // Recorded **and then** sent. A send that fails must not leave an invitation nobody can
     // see; a record that fails must not leave a message promising access that was never
     // granted. Of the two orders, this is the one whose failure is recoverable — the invitation
@@ -311,7 +333,7 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDepende
   }
 
   app.patch('/projects/:projectId', async (request, reply) => {
-    const sub = bearerSubject(request, deps.key, now)
+    const sub = bearerSubject(request, deps.key, now, deps.deny)
     if (sub === undefined) return problem(reply, { title: 'Not signed in', status: 401 })
 
     const { projectId } = request.params as { projectId: string }
@@ -347,7 +369,7 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDepende
   })
 
   app.get('/projects/:projectId/members', async (request, reply) => {
-    const sub = bearerSubject(request, deps.key, now)
+    const sub = bearerSubject(request, deps.key, now, deps.deny)
     if (sub === undefined) return problem(reply, { title: 'Not signed in', status: 401 })
 
     const { projectId } = request.params as { projectId: string }
@@ -363,7 +385,7 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDepende
   })
 
   app.put('/projects/:projectId/members', async (request, reply) => {
-    const sub = bearerSubject(request, deps.key, now)
+    const sub = bearerSubject(request, deps.key, now, deps.deny)
     if (sub === undefined) return problem(reply, { title: 'Not signed in', status: 401 })
 
     // The real count, by the same rule the creation route uses, and deliberately not a
@@ -444,7 +466,7 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDepende
   const millis = deps.millis ?? (() => Date.now())
 
   app.post('/projects/:projectId/transfer', async (request, reply) => {
-    const sub = bearerSubject(request, deps.key, now)
+    const sub = bearerSubject(request, deps.key, now, deps.deny)
     if (sub === undefined) return problem(reply, { title: 'Not signed in', status: 401 })
 
     const { projectId } = request.params as { projectId: string }
@@ -492,7 +514,7 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDepende
   })
 
   app.get('/transfers', async (request, reply) => {
-    const sub = bearerSubject(request, deps.key, now)
+    const sub = bearerSubject(request, deps.key, now, deps.deny)
     if (sub === undefined) return problem(reply, { title: 'Not signed in', status: 401 })
 
     const account = await membership.findUser(sub)
@@ -517,7 +539,7 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDepende
   })
 
   app.post('/transfers/:projectId', async (request, reply) => {
-    const sub = bearerSubject(request, deps.key, now)
+    const sub = bearerSubject(request, deps.key, now, deps.deny)
     if (sub === undefined) return problem(reply, { title: 'Not signed in', status: 401 })
 
     const { projectId } = request.params as { projectId: string }
@@ -525,7 +547,7 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDepende
     // The identity is rebuilt from the account rather than taken from the token: the token
     // carries a subject, and acceptance is decided by a **verified address**. `verifiedEmail`
     // is what sign-in recorded, so it is the provider's answer rather than the caller's.
-    const identity = await deps.identityOf?.(sub)
+    const identity = await identityOf(sub)
     if (identity === undefined) {
       return problem(reply, { title: 'No such transfer.', status: 404 })
     }
@@ -543,7 +565,7 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDepende
   })
 
   app.delete('/transfers/:projectId', async (request, reply) => {
-    const sub = bearerSubject(request, deps.key, now)
+    const sub = bearerSubject(request, deps.key, now, deps.deny)
     if (sub === undefined) return problem(reply, { title: 'Not signed in', status: 401 })
 
     const { projectId } = request.params as { projectId: string }
