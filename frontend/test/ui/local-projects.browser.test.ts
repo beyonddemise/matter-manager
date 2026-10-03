@@ -2,6 +2,7 @@ import PouchDB from 'pouchdb-browser'
 import { afterEach, describe, expect, it } from 'vitest'
 import { PROJECT_DOCUMENT_ID } from '../../src/domain/documents/project.js'
 import {
+  localDatabase,
   localProfileCache,
   PROJECT_DATABASE_NAME,
   projectDatabase,
@@ -102,12 +103,33 @@ describe('adopting the legacy catalogue', () => {
   })
 
   it('is idempotent and never renames', async () => {
+    await projectDatabase().devices.save(device('device:lamp'))
     await adoptLegacyCatalogue('First')
     await adoptLegacyCatalogue('Second')
 
     expect(await localProfileCache().readLocalProjects()).toMatchObject([{ name: 'First' }])
     expect(await rawDatabase(PROJECT_DATABASE_NAME).get(PROJECT_DOCUMENT_ID)).toMatchObject({
       name: 'First',
+    })
+  })
+})
+
+describe('adopting on a device with nothing to adopt', () => {
+  it('creates and indexes nothing', async () => {
+    await adoptLegacyCatalogue('Phantom')
+
+    expect(await localProfileCache().readLocalProjects()).toEqual([])
+    expect(await documentCount(PROJECT_DATABASE_NAME)).toBe(0)
+  })
+
+  it('overwrites a malformed project document instead of failing with a conflict', async () => {
+    await rawDatabase(PROJECT_DATABASE_NAME).put({ _id: PROJECT_DOCUMENT_ID, type: 'oops' })
+
+    await adoptLegacyCatalogue('Repaired')
+
+    expect(await rawDatabase(PROJECT_DATABASE_NAME).get(PROJECT_DOCUMENT_ID)).toMatchObject({
+      type: 'project',
+      name: 'Repaired',
     })
   })
 })
@@ -138,6 +160,20 @@ describe('signing out with indexed local projects', () => {
 
     expect(await documentCount(dbName)).toBe(1)
     expect(await localProfileCache().readLocalProjects()).toMatchObject([{ dbName }])
+  })
+
+  it('keeps an opened local-only project even when the cache cannot be read', async () => {
+    // Without the index, the opened-handle fallback must not mistake local-only data for
+    // account data.
+    const { dbName } = await createLocalProject({ name: 'Mine' })
+    await localDatabase().close()
+    const destroyed: string[] = []
+
+    await removeLocalDatabases({}, async (name) => {
+      destroyed.push(name)
+    })
+
+    expect(destroyed).not.toContain(dbName)
   })
 
   it('always destroys a downloaded server copy', async () => {

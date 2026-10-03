@@ -247,7 +247,13 @@ export async function removeLocalDatabases(
   // What this session actually opened, which is the half the cache cannot lose. Taken *first*:
   // if the cache read below fails, `replicated` is empty, and a database this page has been
   // replicating into all along would survive the sign-out - silently, on a shared machine.
-  const alsoOpened = [...opened.keys()].filter((name) => name !== PROJECT_DATABASE_NAME)
+  // Local-only names (`project_local`, `project_local_<uuid>`) are filtered out unless the reader
+  // asked: this list exists for when the cache cannot be read, and in that state the index that
+  // would say "keep these" is unavailable, so the name itself has to.
+  const includeLocal = options.includeLocalCatalogue === true
+  const isLocalOnly = (name: string) =>
+    name === PROJECT_DATABASE_NAME || name.startsWith('project_local_')
+  const alsoOpened = [...opened.keys()].filter((name) => includeLocal || !isLocalOnly(name))
 
   let replicated: readonly string[] = []
   let indexed: readonly LocalProjectEntry[] = []
@@ -266,7 +272,6 @@ export async function removeLocalDatabases(
   // `project_local` included) - the "local catalogue" of #55, which predates accounts and so
   // goes only when asked. Such an entry is only *kept* if it can be re-listed afterwards
   // (below), because the index lives in `mm-local`, which is always destroyed.
-  const includeLocal = options.includeLocalCatalogue === true
   const indexedGoing = indexed.filter((entry) => includeLocal || entry.projectId !== undefined)
   const indexedKept = indexed.filter((entry) => !indexedGoing.includes(entry))
 
@@ -279,8 +284,7 @@ export async function removeLocalDatabases(
       ...ACCOUNT_DATABASE_NAMES,
       ...replicated,
       ...indexedGoing.map((entry) => entry.dbName),
-      // Opened but not indexed, or indexed but kept: neither is removed unless asked.
-      ...alsoOpened.filter((name) => !indexedKept.some((entry) => entry.dbName === name)),
+      ...alsoOpened,
       ...(includeLocal ? [PROJECT_DATABASE_NAME] : []),
     ]),
   ]

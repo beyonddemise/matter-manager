@@ -175,7 +175,7 @@ export interface LocalCache {
    * says only that something went wrong somewhere.
    */
   markAccessRemoved(projectId: string): Promise<void>
-  /** Every project database this device holds, in name order. */
+  /** Every project database this device holds, in id order (the prefix is constant, so name order). */
   readLocalProjects(): Promise<LocalProjectEntry[]>
   /**
    * Lists a database in the index. Re-adding a name replaces its entry, so adopting twice is

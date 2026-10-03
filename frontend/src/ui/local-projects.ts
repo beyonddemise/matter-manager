@@ -55,40 +55,59 @@ const clientField = (client: string | undefined): { client?: string } =>
 async function readProjectDocument(
   database: PouchDB.Database,
 ): Promise<(ProjectDocument & { _rev: string }) | undefined> {
+  const stored = await readRawProjectDocument(database)
+  return isProjectDocument(stored) ? (stored as ProjectDocument & { _rev: string }) : undefined
+}
+
+/** Whatever is stored under the `project` id, valid or not, or `undefined` if nothing is. */
+async function readRawProjectDocument(
+  database: PouchDB.Database,
+): Promise<{ _rev: string } | undefined> {
   try {
-    const document = await database.get(PROJECT_DOCUMENT_ID)
-    return isProjectDocument(document)
-      ? (document as ProjectDocument & { _rev: string })
-      : undefined
+    return (await database.get(PROJECT_DOCUMENT_ID)) as unknown as { _rev: string }
   } catch (error) {
     if ((error as { status?: unknown }).status === 404) return undefined
     throw error
   }
 }
 
+/** How many times a `project` document write re-reads after losing a revision race. */
+const WRITE_ATTEMPTS = 3
+
 /**
  * Writes the `project` document, replacing a previous revision's name and client.
  *
  * Keeps `serverDb` if one is already there: this is also reached for a database that was
- * synchronized, and dropping the pointer would sever it from its server project.
+ * synchronized, and dropping the pointer would sever it from its server project. A *malformed*
+ * document is overwritten through its `_rev` rather than left to fail with a 409. Retries a lost
+ * revision race a bounded number of times, like the index.
  */
 async function writeProjectDocument(
   database: PouchDB.Database,
   name: string,
   client: string | undefined,
 ): Promise<void> {
-  const existing = await readProjectDocument(database)
-  const document: ProjectDocument = {
-    _id: PROJECT_DOCUMENT_ID,
-    type: 'project',
-    name,
-    ...clientField(client),
-    ...(existing?.serverDb === undefined ? {} : { serverDb: existing.serverDb }),
+  for (let remaining = WRITE_ATTEMPTS; ; remaining -= 1) {
+    const raw = await readRawProjectDocument(database)
+    const existing = isProjectDocument(raw) ? raw : undefined
+    const document: ProjectDocument = {
+      _id: PROJECT_DOCUMENT_ID,
+      type: 'project',
+      name,
+      ...clientField(client),
+      ...(existing?.serverDb === undefined ? {} : { serverDb: existing.serverDb }),
+    }
+    try {
+      await database.put({
+        ...document,
+        ...(raw === undefined ? {} : { _rev: raw._rev }),
+      } as unknown as PouchDB.Core.PutDocument<object>)
+      return
+    } catch (error) {
+      const conflict = (error as { status?: unknown }).status === 409
+      if (!conflict || remaining <= 1) throw error
+    }
   }
-  await database.put({
-    ...document,
-    ...(existing === undefined ? {} : { _rev: existing._rev }),
-  } as unknown as PouchDB.Core.PutDocument<object>)
 }
 
 /**
@@ -153,6 +172,10 @@ export async function setLocalClient(
 /**
  * Deletes a local project's data and forgets it.
  *
+ * **The caller must stop replication of this database first** (a running sync would recreate or
+ * fight the destroy) **and must not leave it as the current project** - views holding its
+ * repositories would fail after the handle is forgotten.
+ *
  * Destroy first, entry second: if the destroy fails the project stays listed and can be tried
  * again, whereas the other order would strand a database nothing names. The memoised handle is
  * dropped either way, because after a failed destroy it may point at a half-removed store.
@@ -178,6 +201,8 @@ export async function destroyLocalProject(
  * index was lost, the database survived) is respected over the name offered, because it is what
  * the user last saw.
  *
+ * Does nothing when `project_local` holds no documents.
+ *
  * @param name what to call it, used only when it has no name yet
  */
 export async function adoptLegacyCatalogue(
@@ -189,6 +214,10 @@ export async function adoptLegacyCatalogue(
   if (indexed.some((entry) => entry.dbName === PROJECT_DATABASE_NAME)) return
 
   const database = deps.database(PROJECT_DATABASE_NAME)
+  // `rawDatabase` creates the store on open, so existence is judged by content: a fresh device
+  // (or one that never recorded anything) has no catalogue to adopt, and indexing an empty one
+  // would list a project nobody made.
+  if ((await database.info()).doc_count === 0) return
   const existing = await readProjectDocument(database)
   if (existing === undefined) await writeProjectDocument(database, name, undefined)
 
