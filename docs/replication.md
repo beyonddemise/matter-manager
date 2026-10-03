@@ -136,7 +136,7 @@ const now = Math.floor(Date.now() / 1000)
 const key = signingKeyFromPem(process.env.JWT_KEY_ID + '-session', process.env.JWT_SESSION_PRIVATE_KEY)
 const sub = `replication-probe-${now}`
 console.log(mintToken(key, {
-  purpose: 'handoff', sub, email: `${sub}@probe.invalid`, jti: randomUUID(), exp: now + 600, iat: now,
+  purpose: 'handoff', sub, email: `${sub}@probe.invalid`, jti: randomUUID(), exp: now + 120, iat: now,
 }))
 JS
 
@@ -144,7 +144,7 @@ bash scripts/probe-replication.sh
 rm -f /tmp/mm-handoff.jwt
 ```
 
-The handoff is a real ten-minute credential for a synthetic user, good for one exchange; the
+The handoff is a real two-minute credential (the API refuses one minted to live longer) for a synthetic user, good for one exchange; the
 probe signs out at the end, which revokes the refresh token that exchange returned. Delete the
 file afterwards; the
 script never prints it, never puts it in a process argument, and neither should anything else —

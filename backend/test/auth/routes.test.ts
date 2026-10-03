@@ -416,6 +416,34 @@ describe('POST /auth/token', () => {
     expect(reply.statusCode).toBe(401)
   })
 
+  it('refuses a handoff minted to live longer than its two minutes', async () => {
+    // The cookie is only as short-lived as the token inside it says. A handoff minted with a long
+    // `exp` (by a probe, or by a bug) would otherwise be a long-lived credential, so the lifetime
+    // is checked against `iat` as well as against the clock.
+    const server = signInServer()
+    const mint = (claims: { iat?: number; exp: number }) =>
+      mintToken(server.sessionKey, {
+        purpose: 'handoff',
+        sub: 'google|1234',
+        email: 'ada@example.com',
+        jti: crypto.randomUUID(),
+        ...claims,
+      })
+    const exchange = async (handoff: string) =>
+      (
+        await server.app.inject({
+          method: 'POST',
+          url: '/auth/token',
+          headers: { cookie: `mm_handoff=${encodeURIComponent(handoff)}` },
+        })
+      ).statusCode
+
+    expect(await exchange(mint({ iat: T0, exp: T0 + 600 }))).toBe(401)
+    expect(await exchange(mint({ exp: T0 + 120 }))).toBe(401)
+    expect(await exchange(mint({ iat: T0 + 3600, exp: T0 + 3660 }))).toBe(401)
+    expect(await exchange(mint({ iat: T0, exp: T0 + 120 }))).toBe(200)
+  })
+
   it('refreshes with the refresh token, returning the same refresh token', async () => {
     const server = signInServer()
     const first = await tokensFor(server)

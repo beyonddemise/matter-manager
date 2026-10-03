@@ -256,6 +256,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthDependencies)
       email: identity.email,
       ...(identity.name === undefined ? {} : { name: identity.name }),
       jti: randomUUID(),
+      iat: now(),
       exp: now() + HANDOFF_TTL,
     })
     setCookie(reply, `${FLOW_COOKIE}=; ${cookieAttributes(0, secure)}`)
@@ -285,6 +286,11 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthDependencies)
       return undefined
     }
     if (bridged.email === undefined || bridged.jti === undefined) return undefined
+    // The cookie lives as long as the token inside it says, so the token's own `exp` cannot be
+    // the only bound: a handoff minted with a long one (by a probe, or by a bug) would be a
+    // long-lived credential. Require an `iat` and a lifetime no longer than this service mints.
+    // The future-`iat` bound is `verifyToken`'s own tolerance, already applied above.
+    if (bridged.iat === undefined || bridged.exp - bridged.iat > HANDOFF_TTL) return undefined
     if (deps.deny.denied(bridged.jti)) return undefined
     return { ...bridged, email: bridged.email, jti: bridged.jti }
   }

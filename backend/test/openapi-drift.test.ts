@@ -252,6 +252,9 @@ describe('every implemented route answers what the contract declares', () => {
       ...claims,
       email: CALLER_EMAIL,
       jti: randomUUID(),
+      // The API refuses a handoff without an `iat`, or one minted to outlive its two minutes.
+      iat: Math.floor(Date.now() / 1000),
+      exp: Math.floor(Date.now() / 1000) + 120,
     })
     return {
       'content-type': 'application/json',
