@@ -18,6 +18,7 @@
  */
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
+import { problem } from '../problem.js'
 import { mintToken, type SigningKey, verifyToken } from './jwt.js'
 import type { Identity, Provider } from './oidc.js'
 import { beginSignIn, completeSignIn, readFlowState, SignInError } from './oidc.js'
@@ -193,13 +194,22 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthDependencies)
 
   app.post('/auth/token', async (request, reply) => {
     const session = cookie(request, SESSION_COOKIE)
-    if (session === undefined) return reply.code(401).send({ error: 'not signed in' })
+    // `{ title, status }` as `application/problem+json`, which is what the contract has always
+    // declared for this 401 — it answered `{ error: 'not signed in' }` as `application/json`,
+    // and both halves of that were wrong. Nothing read the body (the frontend's
+    // `readSessionState` branches on the status alone, deliberately, because a 401 here is an
+    // ordinary state rather than a failure), so the contract is the side that was right and
+    // this is the side that had drifted. The drift check validates this response now.
+    if (session === undefined) return problem(reply, { title: 'Not signed in', status: 401 })
 
     let sub: string
     try {
       sub = verifySession(session, deps, now)
     } catch {
-      return reply.code(401).send({ error: 'not signed in' })
+      // Byte-for-byte the answer above. A cookie that is absent and one that no longer verifies
+      // are the same fact to the caller — "sign in again" — and telling them apart would say
+      // whether a token this service issued is still good to somebody holding a stolen one.
+      return problem(reply, { title: 'Not signed in', status: 401 })
     }
 
     const accessToken = mintToken(deps.key, {

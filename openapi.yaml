@@ -36,6 +36,15 @@ tags:
     description: Project lifecycle and membership
   - name: profile
     description: The signed-in user's own settings
+  - name: admin
+    description: |
+      Operator endpoints. Reached only by an account holding the `customerservice` role, and
+      the only operations in this contract that name a subject other than the caller.
+
+      The role is granted by editing the account's `_users` document in CouchDB and cannot be
+      granted through this API at all. CouchDB's own `_admin` role is **not** accepted here: it
+      carries an unconditional bypass of every project database's write rules, so accepting it
+      would make "may change a plan" inseparable from "may write anything belonging to anyone".
 
 security:
   - bearerAuth: []
@@ -131,25 +140,41 @@ paths:
               schema: { $ref: '#/components/schemas/Profile' }
         '401': { $ref: '#/components/responses/Unauthorized' }
 
-    put:
+    patch:
       tags: [profile]
       summary: Update the signed-in user's own settings
       description: |
         Only the fields a user may change about themselves. `sub` and `email` come from the
         identity provider and are not writable here — a profile endpoint that accepted an
         arbitrary `sub` would be an account-takeover primitive.
+
+        PATCH rather than PUT, and every field is optional: an absent field is one the caller is
+        not changing. A `locale` that is present and not one of the three is still refused — only
+        nothing at all means "leave it alone".
+
+        `plan` is the exception to "about themselves": it may be sent only by an account holding
+        the `customerservice` role, and anybody else is answered 403 rather than having the field
+        quietly dropped. CouchDB's `_admin` is not accepted — see the `admin` tag for why that
+        role is excluded rather than merely unnecessary. See ADR 0009 — what a plan then permits
+        is decided by the policy table, never by a comparison against a tier.
       requestBody:
-        required: true
+        # Not `required`, because the handler does not require one: every field is optional, so
+        # an empty body is a PATCH that changes nothing and is answered 200 with the profile as
+        # it stands. Declaring it required said the opposite, and a generated client would have
+        # refused to make a request this service accepts.
+        required: false
         content:
           application/json:
             schema:
               type: object
-              required: [locale]
               properties:
                 locale:
                   type: string
                   enum: [auto, en, de]
                 displayName: { type: string }
+                plan:
+                  type: string
+                  enum: [free, user, pro]
       responses:
         '200':
           description: The updated profile
@@ -158,6 +183,93 @@ paths:
               schema: { $ref: '#/components/schemas/Profile' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        # `NotAnOperator` rather than `#/components/responses/Forbidden`, because the shared one
+        # says only "authenticated but not permitted" - which leaves `reason`, the field a
+        # client actually branches on, undescribed. See that schema for why it is spelled out
+        # rather than composed from `Problem`.
+        '403':
+          description: |
+            The caller sent `plan` and does not hold the `customerservice` role.
+
+            **Nothing in the request was applied**, including the `locale` or `displayName` that
+            came with it: half of an operator's intent is not an outcome anybody asked for. So
+            this is a refusal of the whole request, not of one field, and a client may re-send
+            the rest of it unchanged.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/NotAnOperator' }
+
+  /customer:
+    put:
+      tags: [admin]
+      summary: Set another account's plan
+      description: |
+        The operator counterpart to `PATCH /profile`. That operation takes its subject from the
+        session and never from the body - a profile endpoint accepting an arbitrary `sub` would
+        be an account-takeover primitive - so it can only ever reach the caller, and an operator
+        who can upgrade themselves and nobody else is not an operator tool. This operation names
+        a subject, and being a separate operation is what lets `/profile` keep that rule.
+
+        Reached only by an account holding the `customerservice` role — and deliberately not
+        CouchDB's `_admin`, for the reason the `admin` tag gives. **The role is checked
+        before the body is validated and before the subject is looked up**, so the answer to a
+        caller without the role is 403 whether or not the named account exists, and is identical
+        in both cases: answering 404 or 400 first would make this an oracle telling any
+        signed-in user which accounts exist.
+
+        Only `plan` is applied. `name`, `roles` and `type` are CouchDB's own and are written
+        back unchanged - an operator who could set `roles` could mint more operators, and the
+        role check above would then mean nothing.
+
+        What a plan then permits is decided by the policy table, never by a comparison against a
+        tier (ADR 0009).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sub, plan]
+              properties:
+                sub:
+                  type: string
+                  description: |
+                    The account to change; also the CouchDB username. Not the caller - that is
+                    the whole point of this operation.
+                plan:
+                  type: string
+                  enum: [free, user, pro]
+      responses:
+        '200':
+          description: The named account's profile, as stored
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Profile' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        # The same refusal `PATCH /profile` gives, by the same role check, carrying the same
+        # `reason` - so the same schema. The shared `Forbidden` response was used here until the
+        # contract had a way to say which refusal this is, and it left an operator tool's one
+        # refusal indistinguishable from every other 403 in the file.
+        '403':
+          description: |
+            The caller does not hold the `customerservice` role.
+
+            Answered **before** the body is validated and before the named subject is looked up,
+            so it is byte-for-byte the answer a non-operator gets whether or not that account
+            exists. See this operation's description for why that ordering is a requirement.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/NotAnOperator' }
+        '404':
+          description: |
+            No `_users` document for that subject - an account that has never signed in. Distinct
+            from 403 because "you may not" and "there is no such account" send an operator to
+            different places, and reached only *after* the role check, so it says that to an
+            operator and to nobody else.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
 
   /projects:
     get:
@@ -198,9 +310,37 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ProjectSummary' }
+        # The handler's own validation: a body with no `name`, or a name the domain refuses as
+        # too long, is answered 400 carrying the domain's message. Undeclared until the drift
+        # check began driving every operation rather than only `/healthz` - the response has
+        # existed since the route did, and nothing compared it against this file.
+        '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        # Previously a bare description with no schema at all, which meant the contract said
+        # nothing a check could read: `reason` was already being sent by the handler and was
+        # documented nowhere.
         '403':
-          description: Entitlement check refused (see ADR 0009)
+          description: |
+            No room for another project on this plan (ADR 0009).
+
+            Named rather than empty, because a page cannot tell a capacity refusal from a
+            permission refusal by status code alone - and only one of the two is fixed by
+            upgrading. A client that reads `projectLimit` from `GET /profile` should not
+            normally reach this; it is the answer when it does anyway, which is what a limit
+            enforced on the server rather than in the page means.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/ProjectLimitReached' }
+        # The one operation in this contract that can fail for the deployment's reasons rather
+        # than the caller's: it creates a database, writes its `_security` and installs its
+        # access rules, so a CouchDB that is unreachable mid-sequence is a real outcome. The
+        # body deliberately says nothing about which step or which database - that goes to the
+        # log, because a database name in a response is a fact about the deployment.
+        '500':
+          description: The project could not be created, for a reason the caller cannot act on
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
 
   /projects/{projectId}:
     parameters:
@@ -249,11 +389,15 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ProjectSummary' }
-        '400':
-          description: Nothing to change, or a name that is not a name
+        # Both of these were a bare `description:` with no `content:`, which reads as complete
+        # and is not: `operationsOf` in the drift check keys a response schema only where the
+        # contract declares a body, so it could not tell these from a 204 and validated neither
+        # their schema nor their media type. The handler has been answering RFC 9457 through
+        # `problem()` the whole time, and a client generated from this file got no body for
+        # either. Declared properly and driven by a test per status in `projects/routes.test.ts`.
+        '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '403':
-          description: Read or write access does not include changing settings
+        '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
 
   /projects/{projectId}/members:
@@ -273,7 +417,16 @@ paths:
               schema:
                 type: array
                 items: { $ref: '#/components/schemas/Member' }
+        # Every route in this service answers 401 to a request with no usable bearer, and three
+        # operations - this one, `PUT` below, and `POST .../transfer` - declared everything
+        # except that. The first thing the widened drift check found.
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
+        # `listMembers` refuses a project with no pointer, and one the caller is not a
+        # participant of, with 404 rather than 403 - whether a project exists is a fact about
+        # somebody else's house. Undeclared until the drift check drove a credentialed request
+        # at a project id nobody owns.
+        '404': { $ref: '#/components/responses/NotFound' }
 
     put:
       tags: [projects]
@@ -305,7 +458,26 @@ paths:
         # A missing address, a role outside the enum above, or `owner` - which this route
         # refuses because ownership moves through /projects/{projectId}/transfer.
         '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
+        # Three separate 404s: no project with this id, a caller who is not a participant of it,
+        # and an address that belongs to nobody (when this deployment cannot send invitations).
+        # The first two are 404 rather than 403 for the reason `NotFound` gives.
+        #
+        # Undeclared since the route was written, and invisible to the drift check, which drives
+        # one request per operation with an empty body - so this route answers 400 for the
+        # missing email long before it looks a project up. Found by reading the handler.
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        # This route reads the caller's principal the same way `POST /projects` does -
+        # `ensureRegistry`, the owned-projects view and a profile read - so it can fail for the
+        # deployment's reasons rather than the caller's. The body says nothing about which step
+        # or which database, for the reason `POST /projects`'s 500 gives.
+        '500':
+          description: The membership could not be changed, for a reason the caller cannot act on
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
 
   /projects/{projectId}/transfer:
     parameters:
@@ -338,7 +510,14 @@ paths:
       responses:
         '204': { description: Offered; the recipient must accept before ownership moves }
         '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
+        # No project with this id, and "you are not its owner" - which is answered 404 rather
+        # than 403 because whether a project exists is a fact about somebody else's house, and
+        # the caller may not be a participant at all. Undeclared until the handlers were read
+        # operation by operation; the drift check cannot reach it, because an empty body is
+        # refused 400 for the missing `toEmail` before the pointer is read.
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /transfers:
     get:
@@ -375,6 +554,11 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        # `acceptTransfer` re-reads and retries a conflicting registry write three times and then
+        # refuses, because a conflict that keeps happening is something the recipient should hear
+        # about rather than wait through. The one status `MembershipRefused` can carry that this
+        # operation did not declare.
+        '409': { $ref: '#/components/responses/Conflict' }
     delete:
       tags: [projects]
       summary: Decline an offer of ownership
@@ -412,7 +596,12 @@ components:
 
     Profile:
       type: object
-      required: [sub, email, displayName, locale]
+      # `plan` and `projectLimit` are required, not optional. A client that has to handle their
+      # absence is a client deciding for itself what a missing plan means - and the two answers
+      # it could pick, "free" and "unlimited", are the most and the least permissive readings
+      # available. Every profile has a plan; a document that has never been given one reads as
+      # `free`, which is a value rather than a gap.
+      required: [sub, email, displayName, locale, plan, projectLimit]
       properties:
         sub: { type: string, description: Internal user id; also the CouchDB username }
         email: { type: string, format: email }
@@ -421,6 +610,27 @@ components:
           type: string
           enum: [auto, en, de]
           description: '`auto` follows the browser; anything else overrides it.'
+        plan:
+          type: string
+          enum: [free, user, pro]
+          description: |
+            Set by an operator through `PUT /customer`, or by an operator's own
+            `PATCH /profile`; never by the account itself.
+
+            A stored value this build does not know - an operator's typo, or a tier from a
+            later version - reads as `free` rather than as an error, so the enum here is what
+            a client will actually receive and not merely what CouchDB may hold.
+        projectLimit:
+          type: integer
+          description: >-
+            How many projects this plan may own. **`-1` means unlimited** and must be tested
+            before it is compared - `owned >= limit` is true for every count when the limit is
+            `-1`, so a client that compares directly refuses every project on the one plan that
+            has no limit.
+
+            A number rather than a null or an absence, so one fact arrives in one shape.
+            Reported at all so a page can say "3 of 5 used" without a second copy of the policy
+            table, which is the duplication ADR 0009 exists to prevent.
 
     ProjectSummary:
       type: object
@@ -481,6 +691,52 @@ components:
           description: What the current owner keeps once the offer is accepted.
         expiresAt: { type: string, format: date-time }
 
+    # The two refusals a client must tell apart from an ordinary 403, each pinning the one
+    # value it can carry. Named schemas rather than inline copies, because `not-an-operator` is
+    # answered by two operations - `PATCH /profile` and `PUT /customer`, by the same role check -
+    # and two copies of a `const` are two things that can come to disagree.
+    #
+    # Spelled out rather than composed from `Problem` with an `allOf`: the contract checker
+    # (`backend/test/support/contract.ts`) supports neither `allOf` nor a `$ref` that can be
+    # narrowed afterwards - it resolves a `$ref` by replacing it, so a `$ref` to `Problem` would
+    # erase the `const` that is the entire point. The cost is that a field added to `Problem`
+    # does not appear here; the gain is that the one value each refusal carries is *checked*
+    # rather than merely described, which is what phase 2's projects page branches on.
+    NotAnOperator:
+      type: object
+      description: |
+        Setting a plan was refused: the caller does not hold the `customerservice` role.
+      required: [title, status, reason]
+      properties:
+        type: { type: string, format: uri }
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: string }
+        reason:
+          type: string
+          const: not-an-operator
+          description: >-
+            Pinned, so a handler that renamed it or stopped sending it fails the contract check
+            rather than silently becoming a refusal no client recognises.
+
+    ProjectLimitReached:
+      type: object
+      description: |
+        Creating a project was refused: this plan has no room for another one (ADR 0009). The
+        count includes archived projects, which still have a database and still cost.
+      required: [title, status, reason]
+      properties:
+        type: { type: string, format: uri }
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: string }
+        reason:
+          type: string
+          const: project-limit-reached
+          description: >-
+            Pinned, so a handler that renamed it or stopped sending it fails the contract check
+            rather than silently becoming a refusal no client recognises.
+
     Problem:
       type: object
       description: RFC 9457 problem details.
@@ -490,6 +746,23 @@ components:
         title: { type: string }
         status: { type: integer }
         detail: { type: string }
+        reason:
+          type: string
+          description: |
+            A stable, machine-readable name for *which* refusal this is, for the cases where a
+            client must do something different about two refusals that share a status code. A
+            capacity 403 and a permission 403 look identical by status, and only one of them is
+            fixed by upgrading.
+
+            `title` and `detail` are for a person to read; this is for code to branch on. A
+            client that branched on `title` would break on a rewording.
+
+            **Optional here, and deliberately not an enum.** This schema is shared by every
+            problem response in the contract, so an enum would have to list every reason any
+            operation will ever answer - a list that goes stale the moment one operation gains a
+            case, and that says nothing about which reasons *this* refusal can give. The
+            operations that answer a named reason pin their own value with `const` instead,
+            which is both narrower and local to the refusal it describes.
 
   responses:
     BadRequest:
@@ -512,6 +785,30 @@ components:
         No such thing, as far as this caller is concerned. Used in preference to 403 where a
         403 would confirm that something exists — a project id is a uuid, so the only way to
         hold one is to have been told it.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    Conflict:
+      description: |
+        Somebody else changed the same thing at the same time, and this service gave up
+        retrying.
+
+        The registry holds every participant of a project in a **single document**
+        (docs/DATA-MODEL.md), so two changes to the same project collide rather than merge.
+        The API is the document's only writer, so it re-reads and retries rather than merging —
+        three times, and then answers this. A conflict that survives three attempts is
+        something the caller should be told about rather than be made to wait through.
+
+        **Safe to retry** — the retry re-reads the current state rather than replaying a stale
+        one — but not a promise that nothing changed. Both operations that answer this write the
+        database's `_security` document before the registry document this conflict is about,
+        whenever the change narrows somebody's access (a transfer always does; a role change
+        does when it revokes or demotes). An exhausted retry can therefore leave `_security`
+        already rewritten to the access that change intended — and, for a transfer, the offer
+        still pending — while the registry still names the old participants. When the change
+        widens access instead, the ordering is reversed and nothing has been written. A caller
+        who needs to know which happened should re-read the members or the transfer offers
+        rather than assume either outcome.
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }

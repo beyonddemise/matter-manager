@@ -8,16 +8,21 @@
  * have applied — and the ones that get missed are, by definition, the ones nobody tested.
  *
  * So the seam exists now and the provider does not. Every gated action asks {@link can} from
- * the first day it is written. Today the answer is always yes.
+ * the first day it is written.
+ *
+ * **The seam is no longer hypothetical.** `project.create` is a real policy: it compares what
+ * the principal already owns against {@link PROJECT_LIMITS} for their plan, and refuses. The
+ * other four actions are still {@link ALLOW}, which is why the call sites exist and are
+ * exercised — the point was always that the day a policy became real should be a change to
+ * this table rather than an audit of every handler, and that day has now happened once.
  *
  * **This is deliberately not a permissions system.** Who may read or write a project is
  * decided by CouchDB per ADR 0003, and duplicating that here would create two answers to one
- * question. This answers only "does this account's plan allow it", which today is "yes".
+ * question. This answers only "does this account's plan allow it".
  *
- * When M8 arrives, the work is this file and its tests. The call sites already exist and are
- * already exercised, so a missing one shows up immediately rather than as a revenue leak.
- * Never `if (principal.plan === 'free')` in a component — that scattering is the precise
- * failure this module exists to prevent.
+ * When billing arrives, the work is still this file and its tests. Never
+ * `if (principal.plan === 'free')` in a component — that scattering is the precise failure this
+ * module exists to prevent, and it is exactly what a real limit invites.
  *
  * @module
  */
@@ -40,14 +45,66 @@ export const ACTIONS = [
 /** An action a plan may one day gate. */
 export type Action = (typeof ACTIONS)[number]
 
-/** Subscription tiers. One today; M8 adds the rest, and the policy table is where they land. */
-export type Plan = 'free'
+/**
+ * Subscription tiers.
+ *
+ * `free` was the only one until capacity became real. The others are named for what they are
+ * to a person rather than for what they cost, so a price change is not a type change.
+ */
+export type Plan = 'free' | 'user' | 'pro'
+
+/**
+ * How many projects each plan may own.
+ *
+ * A table rather than a conditional, for the reason the policy table below is a table: ADR 0009
+ * forbids `plan === 'free'` anywhere, and a lookup cannot drift from the type the way a chain of
+ * `if` can.
+ */
+export const PROJECT_LIMITS: Readonly<Record<Plan, number>> = Object.freeze({
+  free: 1,
+  user: 5,
+  /**
+   * Unlimited, as a sentinel rather than as `Infinity` or an absence.
+   *
+   * `Infinity` compares correctly and then serialises to `null`, so an API that computed with
+   * it would report something it did not mean. `undefined` forces every reader to handle two
+   * shapes. `-1` is one number, it survives JSON, and it is what the contract describes.
+   *
+   * **It must be tested before it is compared, never after.** `owned >= limit` with a limit of
+   * `-1` is true for every count including zero, so the plan with no limit would be the only
+   * one that can never create a project — a failure that is both silent and exactly backwards.
+   * Every read of this table goes through {@link withinLimit}, which is why that function
+   * exists rather than the comparison being written out at each call site.
+   */
+  pro: -1,
+} satisfies Record<Plan, number>)
+
+/**
+ * Whether one more project is allowed.
+ *
+ * The only place the `-1` sentinel is interpreted. Negative first, so unlimited never reaches
+ * the comparison.
+ */
+export function withinLimit(owned: number, limit: number): boolean {
+  return limit < 0 || owned < limit
+}
 
 /** Whoever is asking. `plan` is carried from the first migration so there is somewhere to put the answer. */
 export interface Principal {
   /** The OIDC subject, which is also the CouchDB user name. */
   readonly sub: string
   readonly plan: Plan
+  /**
+   * How many projects this subject owns.
+   *
+   * On the principal rather than passed to the policy, because `Policy` is
+   * `(principal, project?) => boolean` and a creation has no project to inspect — the count is
+   * a fact about the actor, which is what a principal is for. The cost is that the caller has
+   * to read it: `POST /projects` counts before it may ask. That is one query on the one route
+   * that needs it, against the alternative of a third argument threaded through every policy
+   * and every call site.
+   */
+  readonly ownedProjects: number
 }
 
 /** The project an action targets. Absent for actions that create one. */
@@ -64,7 +121,14 @@ export interface ProjectRef {
  */
 export type Policy = (principal: Principal, project?: ProjectRef) => boolean
 
-/** Permits the action. Every policy is this one today. */
+/**
+ * Permits the action.
+ *
+ * Four of the five policies are this one; `project.create` is not, and has not been since
+ * capacity became real. Named rather than written as `() => true` at each entry, so the table
+ * below reads as a list of decisions — and so the one entry that is *not* this is visible at a
+ * glance rather than having to be spotted among four identical lambdas.
+ */
 export const ALLOW: Policy = () => true
 
 /**
@@ -81,7 +145,8 @@ export const ALLOW: Policy = () => true
  * far earlier than the runtime error does.
  */
 export const POLICIES: Readonly<Record<Action, Policy>> = Object.freeze({
-  'project.create': ALLOW,
+  'project.create': (principal) =>
+    withinLimit(principal.ownedProjects, PROJECT_LIMITS[principal.plan]),
   'project.invite': ALLOW,
   'device.create': ALLOW,
   'device.attachPhoto': ALLOW,
@@ -91,10 +156,12 @@ export const POLICIES: Readonly<Record<Action, Policy>> = Object.freeze({
 /**
  * Applies a policy table to one question.
  *
- * Separate from {@link can} so the wiring can be tested against a table that refuses. With
- * only the real table — which permits everything — a `can` that ignored its policies entirely
- * would pass every test, and would keep passing on the day M8 writes a policy it never
- * consults. That failure is silent, and its symptom is revenue rather than an exception.
+ * Separate from {@link can} so the wiring can be tested against a table that refuses. That was
+ * written when the real table permitted everything, and it was load-bearing then: a `can` that
+ * ignored its policies entirely would have passed every test, and would have kept passing on
+ * the day a policy it never consulted was written. `project.create` is now that policy, so the
+ * real table refuses too — and this separation stays, because the next real policy arrives
+ * under the same conditions the first one did.
  *
  * An action with no policy is refused. It is unreachable from typed callers, but the API
  * boundary and stale persisted values are not typed; permitting the unrecognised is how a
@@ -142,8 +209,11 @@ export function evaluate(
 /**
  * Whether the principal's plan permits the action.
  *
- * Returns `true` for everything today. Call it anyway, from every gated action — that is the
- * entire point, and the cost of not doing so is an audit of the whole application later.
+ * It does **not** return `true` for everything: `project.create` refuses a principal already at
+ * their plan's limit. Call it from every gated action regardless of what that action's policy
+ * says today — the four that are still {@link ALLOW} are the ones whose call sites would
+ * otherwise have to be found and fitted later, and the cost of not calling it is an audit of
+ * the whole application.
  *
  * @param principal Whoever is asking.
  * @param action What they want to do.

@@ -18,7 +18,13 @@ import Fastify, { type FastifyInstance } from 'fastify'
 import { type AuthDependencies, registerAuthRoutes } from './auth/routes.js'
 import type { paths } from './generated/openapi.js'
 import { redactionOptions } from './logging.js'
-import { type ProfileDependencies, registerProfileRoutes } from './profile/routes.js'
+import { registerCustomerRoutes } from './profile/customer.js'
+import {
+  OPERATOR_ROLES,
+  type ProfileDependencies,
+  registerProfileRoutes,
+  sessionSubject,
+} from './profile/routes.js'
 import { type ProjectDependencies, registerProjectRoutes } from './projects/routes.js'
 import { registerSecurity, type SecurityOptions } from './security/register.js'
 
@@ -169,7 +175,21 @@ export function buildServer(options: ServerOptions = {}): Server {
   })
 
   if (options.auth !== undefined) registerAuthRoutes(app, options.auth)
-  if (options.profile !== undefined) registerProfileRoutes(app, options.profile)
+  if (options.profile !== undefined) {
+    registerProfileRoutes(app, options.profile)
+    // Registered on the same condition and from the same dependencies, because it needs exactly
+    // what the profile routes need: the store, and the session key that says who is asking.
+    //
+    // `OPERATOR_ROLES` is passed rather than re-declared in `customer.ts`. Two literal lists
+    // would be free to drift, and the way they drift is the dangerous way round — a role
+    // removed from one and left in the other is a gate that is still open in one place, and
+    // the place it stays open is the route that can reach an account other than the caller's.
+    registerCustomerRoutes(app, {
+      store: options.profile.store,
+      subjectOf: sessionSubject(options.profile),
+      operatorRoles: OPERATOR_ROLES,
+    })
+  }
   if (options.projects !== undefined) registerProjectRoutes(app, options.projects)
 
   return Object.assign(app, { registeredRoutes: () => [...routes] })

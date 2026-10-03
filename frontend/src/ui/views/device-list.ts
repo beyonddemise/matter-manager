@@ -23,9 +23,30 @@ import {
   labelsFilename,
   offerDownload,
 } from '../pdf/download.js'
-import { buildInventoryPdf, ExportCancelled, type InventoryProgress } from '../pdf/inventory.js'
-import { buildLabelPdf } from '../pdf/labels.js'
+import { ExportCancelled, type InventoryProgress } from '../pdf/progress.js'
 import { fieldValue } from './device-form.js'
+
+/**
+ * The two PDF builders, loaded when somebody asks for a PDF.
+ *
+ * **`pdf-lib` is 40% of the bundle every visitor downloads, for a feature behind a button.**
+ * Measured from the build's own sourcemaps: `pdf-lib` 212.5 kB, `@pdf-lib/standard-fonts`
+ * 127.0 kB, `@pdf-lib/upng` 24.2 kB and `pako` 44.5 kB — 408 kB of the 1,022 kB entry chunk,
+ * and nothing else in the application imports any of them. Somebody filing a device in a
+ * basement on a phone downloaded a PDF writer to do it.
+ *
+ * Written as two named `import()` calls rather than one interpolated path, so the graph stays
+ * exact — the same reasoning as `THEME_LOADERS` in `theme.ts` and `LOADERS` in
+ * `i18n/localization.ts`.
+ *
+ * `ExportCancelled` is imported statically, from `pdf/progress.js`, which deliberately has no
+ * dependencies: it is needed in a `catch` that has to run whether or not the load resolved, and
+ * importing it from `pdf/inventory.js` would pull `pdf-lib` back into the entry chunk and undo
+ * this without a single test going red. `scripts/check-lazy-pdf.mjs` is what makes that
+ * impossible rather than merely commented.
+ */
+const inventoryBuilder = () => import('../pdf/inventory.js')
+const labelBuilder = () => import('../pdf/labels.js')
 
 /**
  * The device list: rooms, in order, with what is in them.
@@ -368,6 +389,7 @@ export class DeviceListView extends LitElement {
       // rather than for the default one: a device the user cannot see is not in `groups()`,
       // so no amount of selecting can reach it.
       const chosen = selectForExport(this.groups(), selection)
+      const { buildInventoryPdf } = await inventoryBuilder()
       const bytes = await buildInventoryPdf(chosen, {
         labels: inventoryLabels(),
         onProgress: (progress) => {
@@ -417,6 +439,7 @@ export class DeviceListView extends LitElement {
         this.groups(),
         this.selected.size === 0 ? { kind: 'all' } : { kind: 'devices', ids: this.selected },
       )
+      const { buildLabelPdf } = await labelBuilder()
       const bytes = await buildLabelPdf(chosen, {
         stock: this.labelStock,
         start,

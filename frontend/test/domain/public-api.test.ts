@@ -110,10 +110,26 @@ const EXPECTED: ReadonlyArray<
   ['splitRoomPath', 'function'],
 ]
 
+/**
+ * One export, by name, off the namespace.
+ *
+ * Walking a namespace import dynamically is what `noDynamicNamespaceImportAccess` exists to
+ * discourage, and its reason — it defeats tree shaking, so the bundle carries the whole module
+ * — is about shipped code. This is a test, it is not bundled, and reaching each export *by
+ * name from a list* is the entire mechanism: the point is that the list and the module agree,
+ * which named imports cannot express without repeating every name a second time and giving the
+ * drift somewhere new to hide.
+ *
+ * Suppressed once, here, rather than at each of the two call sites — a lint comment per
+ * assertion reads as an exception being made twice instead of a decision taken once.
+ */
+// biome-ignore lint/performance/noDynamicNamespaceImportAccess: see above — a test, not bundled, and the dynamic access is the mechanism
+const exported = (name: string): unknown => core[name as keyof typeof core]
+
 describe('the public entry point', () => {
   it.each(EXPECTED.map(([name, kind]) => [name, kind]))('exports %s as a %s', (name, kind) => {
-    expect(core[name as keyof typeof core]).toBeDefined()
-    expect(typeof core[name as keyof typeof core]).toBe(kind)
+    expect(exported(name as string)).toBeDefined()
+    expect(typeof exported(name as string)).toBe(kind)
   })
 
   it('exports nothing beyond what is listed here', () => {

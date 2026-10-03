@@ -42,12 +42,27 @@ export interface SettingsChange {
   readonly archived?: boolean
 }
 
+/**
+ * The statuses a settings change can be refused with.
+ *
+ * A union rather than `number`, and it is not decoration. `status` is handed straight to
+ * `problem()` and becomes the HTTP status, so this type *is* the list of refusals
+ * `PATCH /projects/{projectId}` can answer — which is the question `openapi.yaml` has to agree
+ * with. Typed as `number` it was a question only grep could answer, and grep does not run in
+ * CI: a new `throw new SettingsRefused(422, …)` compiled, shipped, and drifted from the
+ * contract silently. Now the compiler refuses it until somebody has declared it.
+ *
+ * Mirrors what `MembershipRefused` has always done, for the same reason.
+ */
+export type SettingsRefusalStatus = 400 | 403 | 404
+
 /** A settings change that will not happen, carrying the status the route should answer with. */
 export class SettingsRefused extends Error {
   override readonly name = 'SettingsRefused'
-  readonly status: number
+  /** What the caller should be told, as an HTTP status. See {@link SettingsRefusalStatus}. */
+  readonly status: SettingsRefusalStatus
 
-  constructor(status: number, message: string) {
+  constructor(status: SettingsRefusalStatus, message: string) {
     super(message)
     this.status = status
   }

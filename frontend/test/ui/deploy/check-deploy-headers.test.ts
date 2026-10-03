@@ -191,7 +191,7 @@ describe('the deployment caching contract', () => {
     // to somebody else's rule, which sends the reader to a line that is correct.
     const headers = `${GOOD}\nhttps://example.test/x\n  Cache-Control: no-cache\n`
     const { output } = scan(headers)
-    const urlLine = headers.split('\n').findIndex((line) => line === 'https://example.test/x') + 1
+    const urlLine = headers.split('\n').indexOf('https://example.test/x') + 1
 
     expect(output).toContain(`line ${urlLine}`)
     expect(output).toContain('https://example.test/x')

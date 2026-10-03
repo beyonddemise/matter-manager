@@ -136,6 +136,52 @@ escalation.
 
 Run it against any new CouchDB version before adopting it.
 
+### Operator accounts and plans
+
+Two operations in the API are not about the caller's own account. Both are authenticated by the
+session cookie and both are gated by one role.
+
+| Operation | What it reaches | Gate |
+|---|---|---|
+| `PATCH /profile` with a `plan` field | the **caller's** own plan | holds `customerservice` |
+| `PUT /customer` | the plan of **any named account** | holds `customerservice` |
+
+A plan decides what an account may do — today, how many projects it may own
+([ADR 0009](adr/0009-entitlement-seam-billing-deferred.md)). Setting one is therefore an
+entitlement change, and `PUT /customer` is the only cookie-authenticated operation in this
+service whose blast radius is somebody else's account. Everywhere else a hole in a check lets a
+user grant themselves something; here it lets one user rewrite another user's entitlements.
+
+**The gate is exact membership of `OPERATOR_ROLES`** (`backend/src/profile/routes.ts`), tested
+with `includes` on each of the caller's roles and never by any test over the role's text. A
+substring match would turn `customerservices` — somebody else's role — into this one, and a case
+fold would turn `Customerservice`, a typo, into it. Either way an account that holds any role
+named *near* this one becomes an operator.
+
+**The role is granted by editing the account's `_users` document in CouchDB, and cannot be
+granted through this API.** That is the property the whole gate rests on, and it is structural
+rather than checked: `store.update` and `store.setPlan` both spread the stored document and then
+overwrite only their own named fields, so `roles` is carried through verbatim and no request
+body can reach it. An operator who could set `roles` could mint more operators, and the role
+check would then mean nothing.
+
+**`_admin` is deliberately not an operator role.** It was, briefly, and removing it is a
+decision rather than a tidy-up:
+
+- It never granted what it appeared to. The check reads the caller's `_users` document and
+  nothing else, while a CouchDB *server* admin is configured in `local.ini [admins]` and has no
+  `_users` document at all — so the real administrator held no roles as far as this gate was
+  concerned and was refused regardless.
+- So the only account it could ever admit is one with `roles: ["_admin"]` written into its
+  `_users` document — and that role gets the unconditional early return from every project
+  database's `validate_doc_update` shown above. Holding it does not mean "administrator"; it
+  means "may write any document in any project, past every rule in this model".
+
+Granting somebody the ability to change a plan must not require granting them everything. The
+way to make an operator is `customerservice`, and there is a test in both
+`test/profile/profile.test.ts` and `test/profile/customer.test.ts` asserting that a caller whose
+only role is `_admin` is refused, so re-adding it fails the build.
+
 ## What isolation does and does not give you
 
 **Does:** a member of project A cannot read project B, cannot enumerate databases
@@ -171,6 +217,9 @@ passcode.
   ([ADR 0011](adr/0011-user-owned-org-ready-tenancy.md)).
 - **Never gate an action without calling the entitlement seam**
   ([ADR 0009](adr/0009-entitlement-seam-billing-deferred.md)).
+- **Never add a role to `OPERATOR_ROLES` without checking what else that role already grants.**
+  A role is not a label; it is whatever every `validate_doc_update` in the deployment does with
+  it. See *Operator accounts and plans* above for the one that was added on its name alone.
 
 ## Operator requirements
 

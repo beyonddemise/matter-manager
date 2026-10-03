@@ -363,7 +363,12 @@ describe('issuing an access token', () => {
     // expiry and nothing else. A session that verifies as an access token is a thirty-day
     // direct database credential, which is exactly what the one-hour access token exists not
     // to be.
-    const { app: server, sessionCookie, key, sessionKey } = await signedIn()
+    // No `app`: this is asserted at the verifier rather than through a route, because it has
+    // to be. `signInServer` registers the three auth operations and nothing that consumes a
+    // bearer, and the property being pinned is CouchDB's — which evaluates the signature and
+    // the expiry and no claim this service invented. A 401 from an API route would be the
+    // weaker half of the answer.
+    const { sessionCookie, key, sessionKey } = await signedIn()
     const session = decodeURIComponent(sessionCookie.split('=').slice(1).join('='))
 
     // Refused on the **signature**, which is the stronger answer and the only one that also

@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { planInvitation } from '../../src/domain/index.js'
 import {
   acceptInvitationsOnSignIn,
   BY_INVITEE_DESIGN,

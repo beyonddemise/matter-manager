@@ -85,6 +85,29 @@ export interface Operation {
   readonly path: string
   /** Response schemas by status code, where the contract gives a JSON body. */
   readonly responses: Readonly<Record<string, unknown>>
+  /**
+   * Every status code the contract declares, **including the ones with no body at all**.
+   *
+   * Separate from {@link responses} because the two answer different questions, and conflating
+   * them lets a real disagreement pass. `responses` is "what shape does a 403 have", and it is
+   * necessarily silent about a 204 or a 302 — those declare no content, so there is nothing to
+   * key. A check that asked only `responses` therefore could not tell "the contract does not
+   * describe this status" from "the contract describes it as having no body", and the first of
+   * those is drift while the second is the contract working as intended.
+   *
+   * That distinction is the whole reason a route answering an **undeclared** 401 is now
+   * findable: three of them were, and `responses` alone could not have said so.
+   */
+  readonly declared: readonly string[]
+  /**
+   * The media type the contract declares per status, where it declares a body.
+   *
+   * Collected so the check can compare it against what the handler actually sent. Every refusal
+   * in this contract is `application/problem+json` and every handler was sending
+   * `application/json`, which no assertion anywhere could see — the schemas matched, so the
+   * bodies validated, and the label on them was wrong on every error response in the service.
+   */
+  readonly mediaTypes: Readonly<Record<string, string>>
 }
 
 const METHODS = ['get', 'put', 'post', 'delete', 'patch', 'head', 'options'] as const
@@ -101,13 +124,41 @@ export function operationsOf(contract: Record<string, unknown>): Operation[] {
 
       const responses = (operation.responses ?? {}) as Record<string, Record<string, unknown>>
       const schemas: Record<string, unknown> = {}
+      const mediaTypes: Record<string, string> = {}
       for (const [status, response] of Object.entries(responses)) {
         const content = (response.content ?? {}) as Record<string, { schema?: unknown }>
-        const json = content['application/json']
-        if (json?.schema !== undefined) schemas[status] = json.schema
+        // **Both media types**, and the second one is the whole point of reading two.
+        //
+        // Every refusal in this contract is declared `application/problem+json`, because that
+        // is what RFC 9457 problem details are served as. A collector that knew only
+        // `application/json` therefore gathered the success responses and silently dropped
+        // every 400, 401, 403 and 404 in the file — so no error response had ever been
+        // validated by anything. It did not fail: a test that looks a refusal's schema up by
+        // status got `undefined`, and `validate(value, undefined)` reports nothing wrong. The
+        // check read as thorough and covered only the happy path.
+        //
+        // `application/json` wins a tie because an operation that declared both would be
+        // declaring its ordinary body there; no operation here does.
+        const type =
+          content['application/json'] !== undefined
+            ? 'application/json'
+            : content['application/problem+json'] !== undefined
+              ? 'application/problem+json'
+              : undefined
+        const json = type === undefined ? undefined : content[type]
+        if (type !== undefined && json?.schema !== undefined) {
+          schemas[status] = json.schema
+          mediaTypes[status] = type
+        }
       }
 
-      found.push({ method: method.toUpperCase(), path, responses: schemas })
+      found.push({
+        method: method.toUpperCase(),
+        path,
+        responses: schemas,
+        declared: Object.keys(responses),
+        mediaTypes,
+      })
     }
   }
   return found

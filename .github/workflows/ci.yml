@@ -130,6 +130,25 @@ jobs:
       - name: Dependency policy
         run: npm run check:deps
 
+      # `backend/src/generated/openapi.ts` is compiled from `openapi.yaml` and committed, so a
+      # checkout builds without a code generation step. A committed generated file goes stale
+      # silently, and this one did: the generator could not run at all — `openapi-typescript`
+      # builds its output by constructing a TypeScript AST and the backend compiles with
+      # `typescript@^7`, the Go port, which has none of that API — so it threw on import, and
+      # nothing invoked it to find out. The file went three contract edits stale and each was
+      # patched by hand.
+      #
+      # Invisible to every other check in this file, which is the point of adding one. A stale
+      # `paths` type describes a service that no longer exists and the compiler agrees with it
+      # perfectly, so the Backend job's TypeScript step cannot see it. This regenerates in
+      # memory and compares; it writes nothing.
+      #
+      # In this job rather than the Backend one because the generator is a root devDependency:
+      # two TypeScripts in `backend/node_modules` collide on `bin.tsc`, which was measured to
+      # repoint `npm run typecheck` at 5.9.3. See `scripts/openapi-types.mjs`.
+      - name: The generated types match the contract
+        run: npm run check:openapi-types
+
       # Web Awesome Pro's presence, and the translation catalogue's currency. Both are in
       # `npm run verify`; the webawesome one was missing here, so a laptop and CI disagreed
       # about what "green" meant.
@@ -207,6 +226,17 @@ jobs:
 
       - name: The QR fallback is not in the bundle everyone downloads
         run: npm run check:lazy
+        working-directory: frontend
+
+      # The other half of the same decision, and it was not being kept. `pdf-lib`, its
+      # standard-font tables, `@pdf-lib/upng` and `pako` were 408 kB of a 1,022 kB entry chunk -
+      # 40% of the first load - for a feature reached by pressing Export. The builders are loaded
+      # on demand now, and a single static import puts them back with every test still green and
+      # the only symptom a first load nobody counts. The quiet way to undo it is a *type* import:
+      # `ExportCancelled` lives in `src/ui/pdf/progress.ts` precisely so the view can hold it
+      # without naming a module that imports `pdf-lib`.
+      - name: The PDF writer is not in the bundle everyone downloads
+        run: npm run check:lazy-pdf
         working-directory: frontend
 
       # #106 shipped an offline-first application whose icons and typography arrived from two
@@ -332,6 +362,16 @@ jobs:
       # prevented (#193).
       - name: Dependabot watches everything, and names it correctly
         run: node scripts/check-dependabot.mjs
+
+      # Two TypeScripts are installed on purpose - `^7` in frontend and backend, `^5` at the
+      # root for `openapi-typescript`, which needs a compiler API the Go port does not publish.
+      # They must not share a node_modules, because both declare `bin.tsc`. The residual hazard
+      # is that `npx tsc` resolves upward, so from the repository root it silently means 5.9.3:
+      # a root script reaching for the compiler would check a package against a compiler that
+      # package does not declare, and succeed. dependency-policy.json stated the premise; this
+      # is what makes it enforced rather than asserted in prose.
+      - name: No root script invokes tsc
+        run: node scripts/check-root-tsc.mjs
 
       # The repository root is the context, matching what `infra/compose.prod.yml` passes:
       # `infra/couchdb/design-docs` is copied from it. Nothing is pushed anywhere - building
