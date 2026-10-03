@@ -145,28 +145,83 @@ export function renderSignOut(
 }
 
 /**
+ * Where the sign-out confirmation is.
+ *
+ * - `ask`: the first question, with the box for the local-only projects. `pushing` while the
+ *   synchronized copies are being pushed after it was confirmed.
+ * - `unpushed`: some copies could not be pushed (ruling C-R10); `names` are theirs. Signing out
+ *   now destroys changes that exist nowhere else, so it takes a second, explicit confirm.
+ */
+export type SignOutStep =
+  | { readonly step: 'ask'; readonly pushing: boolean }
+  | { readonly step: 'unpushed'; readonly names: readonly string[] }
+
+/** What the sign-out confirmation calls back with. */
+export interface SignOutHandlers {
+  readonly onCancel: () => void
+  /** The first step's confirm; reads the box (`[data-remove-local]`) itself. */
+  readonly onConfirm: () => void
+  /** The second step's: sign out although the named copies were not pushed. */
+  readonly onConfirmUnpushed: () => void
+}
+
+/**
  * The sign-out confirmation.
  *
  * It exists because signing out has a question in it. Everything the *account* put on this
- * browser goes either way; the catalogue on this device predates accounts and holds whatever was
- * recorded before signing in, so taking it would be destroying data the account never owned.
- * Unticked by default: the safe answer is the one that keeps things. The confirm handler reads
- * the box (`[data-remove-local]`) itself.
+ * browser goes either way; the projects stored only on this device predate the account or never
+ * left it, so taking them would be destroying data the account never had. Unticked by default:
+ * the safe answer is the one that keeps things.
+ *
+ * Its second step names the synchronized copies whose push did not get through: they are
+ * destroyed with the rest, and what they hold that the server lacks is lost unless the reader
+ * cancels and tries again online.
  */
 export function renderSignOutConfirmation(
-  open: boolean,
-  onCancel: () => void,
-  onConfirm: () => void,
+  state: SignOutStep | undefined,
+  handlers: SignOutHandlers,
 ): TemplateResult | '' {
-  if (!open) return ''
+  if (state === undefined) return ''
+  const cancel = html`<wa-button slot="footer" data-cancel-sign-out @click=${handlers.onCancel}>
+    ${msg('Cancel')}
+  </wa-button>`
+  if (state.step === 'unpushed') {
+    return html`
+      <wa-dialog data-sign-out-dialog open label=${msg('Sign out')}>
+        <wa-callout variant="warning">
+          <wa-icon slot="icon" name="triangle-exclamation"></wa-icon>
+          ${msg('These projects have changes that are not on the server yet. Signing out removes them from this device.')}
+        </wa-callout>
+        <ul data-unpushed>
+          ${state.names.map((name) => html`<li>${name}</li>`)}
+        </ul>
+        ${cancel}
+        <wa-button
+          slot="footer"
+          variant="danger"
+          data-confirm-unpushed
+          @click=${handlers.onConfirmUnpushed}
+        >
+          ${msg('Sign out anyway')}
+        </wa-button>
+      </wa-dialog>
+    `
+  }
   return html`
     <wa-dialog data-sign-out-dialog open label=${msg('Sign out')}>
       <p>${msg('Everything this account put on this browser will be removed.')}</p>
-      <wa-checkbox data-remove-local>
-        ${msg('Also remove the devices stored only on this device')}
+      <wa-checkbox data-remove-local ?disabled=${state.pushing}>
+        ${msg('Also remove projects stored only on this device')}
       </wa-checkbox>
-      <wa-button slot="footer" data-cancel-sign-out @click=${onCancel}>${msg('Cancel')}</wa-button>
-      <wa-button slot="footer" variant="brand" data-confirm-sign-out @click=${onConfirm}>
+      ${cancel}
+      <wa-button
+        slot="footer"
+        variant="brand"
+        data-confirm-sign-out
+        ?loading=${state.pushing}
+        ?disabled=${state.pushing}
+        @click=${handlers.onConfirm}
+      >
         ${msg('Sign out')}
       </wa-button>
     </wa-dialog>

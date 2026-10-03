@@ -13,6 +13,7 @@ import { localDatabase } from './db/project-database.js'
 import { negotiateLocale } from './i18n/locale.js'
 import { activateLocale } from './i18n/localization.js'
 import type { LocalProjectDependencies } from './local-projects.js'
+import { beginProjectAction } from './project-busy.js'
 import type { Project } from './projects.js'
 import { ProjectsController } from './projects-controller.js'
 import { matchRoute } from './router/match.js'
@@ -32,6 +33,7 @@ import {
   renderSignOutConfirmation,
   renderSyncing,
   renderUpgrade,
+  type SignOutStep,
 } from './shell-header.js'
 import type { SyncManager } from './sync/manager.js'
 import type { SyncState } from './sync/replication.js'
@@ -196,8 +198,8 @@ export class AppShell extends LitElement implements ViewHost {
    */
   declare session: SessionState | undefined
 
-  /** Whether the sign-out confirmation is open. */
-  declare signingOut: boolean
+  /** The sign-out confirmation's step, or `undefined` while it is closed. */
+  declare signingOut: SignOutStep | undefined
   /** Whether the upgrade dialog is open. */
   declare upgrading: boolean
   /** Whether the "session ended" notice is showing. Dismissed by the reader, never by timeout. */
@@ -255,7 +257,7 @@ export class AppShell extends LitElement implements ViewHost {
     // its old strings while its neighbours change - a silent failure, hence the test in
     // `i18n.browser.test.ts` that switches locale and checks each view's text.
     updateWhenLocaleChanges(this)
-    this.signingOut = false
+    this.signingOut = undefined
     this.upgrading = false
     this.sessionEndedNotice = false
     this.hash = window.location.hash
@@ -462,21 +464,71 @@ export class AppShell extends LitElement implements ViewHost {
   }
 
   private onAskSignOut = (): void => {
-    this.signingOut = true
+    this.signOutAttempt += 1
+    this.signingOut = { step: 'ask', pushing: false }
   }
 
   private onCancelSignOut = (): void => {
-    this.signingOut = false
+    // Moves the attempt on, so pushes still running for the one cancelled sign out nobody.
+    this.signOutAttempt += 1
+    this.signingOut = undefined
   }
 
   private onSignIn = (): void => {
     ;(this.signIn ?? beginSignIn)()
   }
 
+  /** Counts sign-out dialogs, so a push that outlives its dialog (cancelled) signs nobody out. */
+  private signOutAttempt = 0
+
+  /** The first step's "also remove projects stored only on this device", kept for the second. */
+  private removeLocalProjects = false
+
+  /**
+   * The first step confirmed: every synchronized copy is pushed (ruling C-R10), and the sign-out
+   * goes ahead only if all of them got through. Otherwise the dialog names the ones that did not
+   * and waits for a second, explicit confirm — or a cancel, which leaves everything as it was.
+   *
+   * The busy registry is held throughout (`project-busy.ts`): a refresh landing now (the
+   * profile, a reconnection) must not reopen a copy about to be destroyed or hand replication a
+   * list of its own.
+   */
   private onSignOut = async (): Promise<void> => {
     const box = this.querySelector('[data-remove-local]') as { checked?: boolean } | null
-    const includeLocalCatalogue = box?.checked === true
-    this.signingOut = false
+    this.removeLocalProjects = box?.checked === true
+    const attempt = this.signOutAttempt
+    this.signingOut = { step: 'ask', pushing: true }
+    const end = beginProjectAction()
+    let signedOut = false
+    try {
+      const unpushed = await this.projects.unpushedCopies()
+      if (attempt !== this.signOutAttempt) return
+      if (unpushed.length > 0) {
+        this.signingOut = { step: 'unpushed', names: unpushed }
+        return
+      }
+      await this.signOut()
+      signedOut = true
+    } finally {
+      end()
+    }
+    if (signedOut) await this.afterSignOut()
+  }
+
+  /** The second step confirmed: signs out although the named copies were not pushed. */
+  private onSignOutUnpushed = async (): Promise<void> => {
+    const end = beginProjectAction()
+    try {
+      await this.signOut()
+    } finally {
+      end()
+    }
+    await this.afterSignOut()
+  }
+
+  /** Ends the session and removes what the account put on this browser. Run while held busy. */
+  private async signOut(): Promise<void> {
+    this.signingOut = undefined
 
     // The state is set whatever happened, because `signOut` never throws and always leaves the
     // browser signed out: it forgets the token first, unconditionally, and every later step is
@@ -495,12 +547,17 @@ export class AppShell extends LitElement implements ViewHost {
     this.tokenRefresher?.stop()
     this.tokenRefresher = undefined
 
-    await (this.signOutOf ?? endSession)(includeLocalCatalogue)
+    await (this.signOutOf ?? endSession)(this.removeLocalProjects)
     this.session = 'signed-out'
-    // Back to a project that is certainly here. The account's copies are gone from this browser,
-    // so the open project falls back to the first local one (or a freshly adopted catalogue);
-    // leaving the views on a destroyed copy would show an empty list that looks exactly like
-    // having lost everything.
+  }
+
+  /**
+   * Back to a project that is certainly here, once the busy registry is let go (an apply while
+   * it is held is skipped). The account's copies are gone from this browser, so the open project
+   * falls back to the first local one (or a freshly adopted catalogue); leaving the views on a
+   * destroyed copy would show an empty list that looks exactly like having lost everything.
+   */
+  private async afterSignOut(): Promise<void> {
     await this.projects.refresh(false)
   }
 
@@ -560,7 +617,11 @@ export class AppShell extends LitElement implements ViewHost {
           )}
           ${renderSignOut(this.session, this.onAskSignOut)}
         </nav>
-        ${renderSignOutConfirmation(this.signingOut, this.onCancelSignOut, this.onSignOut)}
+        ${renderSignOutConfirmation(this.signingOut, {
+          onCancel: this.onCancelSignOut,
+          onConfirm: this.onSignOut,
+          onConfirmUnpushed: this.onSignOutUnpushed,
+        })}
 
         <main class="wa-stack wa-gap-m app-main">
           <!-- Offered, never applied by itself. Reloading out from under someone mid-form is

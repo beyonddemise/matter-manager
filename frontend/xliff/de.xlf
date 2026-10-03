@@ -546,10 +546,6 @@
   <source>Everything this account put on this browser will be removed.</source>
   <target>Alles, was dieses Konto in diesem Browser abgelegt hat, wird entfernt.</target>
 </trans-unit>
-<trans-unit id="s577d290a0e9134ac">
-  <source>Also remove the devices stored only on this device</source>
-  <target>Auch die Geräte entfernen, die nur auf diesem Gerät gespeichert sind</target>
-</trans-unit>
 <trans-unit id="s6464c2a7a815108b">
   <source>Rooms</source>
   <target>Räume</target>
@@ -913,6 +909,18 @@
 <trans-unit id="s5e2fdf2a8c4604db">
   <source>Back to projects</source>
   <target>Zurück zu den Projekten</target>
+</trans-unit>
+<trans-unit id="sbf0a4d1b0f0526b4">
+  <source>These projects have changes that are not on the server yet. Signing out removes them from this device.</source>
+  <target>Diese Projekte haben Änderungen, die noch nicht auf dem Server sind. Wenn Sie sich abmelden, werden sie von diesem Gerät entfernt.</target>
+</trans-unit>
+<trans-unit id="se54a478afde28a31">
+  <source>Sign out anyway</source>
+  <target>Trotzdem abmelden</target>
+</trans-unit>
+<trans-unit id="se3776cafec73ec12">
+  <source>Also remove projects stored only on this device</source>
+  <target>Auch Projekte entfernen, die nur auf diesem Gerät gespeichert sind</target>
 </trans-unit>
 </body>
 </file>

@@ -19,7 +19,7 @@ import {
   useProjectDatabase,
 } from '../../src/ui/db/project-database.js'
 import type { LocalProjectDependencies } from '../../src/ui/local-projects.js'
-import { beginProjectAction } from '../../src/ui/project-busy.js'
+import { beginProjectAction, projectActionRunning } from '../../src/ui/project-busy.js'
 import type { Project } from '../../src/ui/projects.js'
 import type { SyncableProject } from '../../src/ui/sync/manager.js'
 import type { ProjectsView } from '../../src/ui/views/projects.js'
@@ -83,19 +83,23 @@ function fakeNetwork(onLine = true) {
 }
 
 /** A replication manager that records every list it is handed. */
-function recordingSync() {
+function recordingSync(push: (projectId: string) => Promise<void> = async () => {}) {
   const sets: (readonly SyncableProject[])[] = []
+  const pushes: string[] = []
   const manager = {
     set: (projects: readonly SyncableProject[]) => void sets.push(projects),
     running: () => [],
     stateOf: () => undefined,
     stop: () => {},
-    pushNow: async () => {},
+    pushNow: async (projectId: string) => {
+      pushes.push(projectId)
+      await push(projectId)
+    },
     suspend: () => {},
     resume: () => {},
     stopAll: () => {},
   }
-  return { manager, sets }
+  return { manager, sets, pushes }
 }
 
 interface Options {
@@ -107,6 +111,8 @@ interface Options {
   readonly followLocale?: unknown
   readonly signOutOf?: unknown
   readonly store?: LocalProjectDependencies
+  /** What each push does; succeeds by default. */
+  readonly push?: (projectId: string) => Promise<void>
 }
 
 /** The shell, wired to fakes, settled past its first refresh. */
@@ -114,7 +120,7 @@ async function mount(options: Options = {}) {
   const store = options.store ?? isolatedProjectStore()
   for (const indexed of options.local ?? []) await store.cache().addLocalProject(indexed)
   if (options.cachedProfile !== undefined) await store.cache().writeProfile(options.cachedProfile)
-  const sync = recordingSync()
+  const sync = recordingSync(options.push)
   const list = vi.fn(options.list ?? (async () => [] as readonly Project[]))
   const signOutOf = options.signOutOf ?? vi.fn(async () => [])
   await Promise.all(
@@ -650,6 +656,122 @@ describe('signing out from the menu', () => {
       () => (signOutOf as ReturnType<typeof vi.fn>).mock.calls.length > 0,
       'never signed out',
     )
+  })
+
+  /** Opens the dialog from the menu and confirms its first step. */
+  async function askAndConfirm(element: Element): Promise<void> {
+    await waitUntil(() => element.querySelector('nav [data-sign-out]') !== null, 'not in the menu')
+    ;(element.querySelector('nav [data-sign-out]') as HTMLElement).click()
+    await waitUntil(() => element.querySelector('[data-confirm-sign-out]') !== null, 'no dialog')
+    ;(element.querySelector('[data-confirm-sign-out]') as HTMLElement).click()
+  }
+
+  const calls = (signOutOf: unknown) => (signOutOf as ReturnType<typeof vi.fn>).mock.calls
+
+  const synced = { local: [copy], cachedProfile: profile(), list: async () => [project()] }
+
+  it('says "projects" in its checkbox, not devices', async () => {
+    const { element } = await mount({ cachedProfile: profile() })
+    await waitUntil(() => element.querySelector('nav [data-sign-out]') !== null, 'not in the menu')
+    ;(element.querySelector('nav [data-sign-out]') as HTMLElement).click()
+    await waitUntil(() => element.querySelector('[data-remove-local]') !== null, 'no checkbox')
+    expect(text(element.querySelector('[data-remove-local]'))).toBe(
+      'Also remove projects stored only on this device',
+    )
+  })
+
+  it('pushes every synchronized copy first, and goes straight on when all got through', async () => {
+    // Ruling C-R10.
+    const { element, sync, signOutOf } = await mount(synced)
+    await inputSettles(element, (i) => i.server !== undefined, 'no list arrived')
+
+    await askAndConfirm(element)
+
+    await waitUntil(() => calls(signOutOf).length > 0, 'never signed out')
+    expect(sync.pushes).toEqual(['p1'])
+    expect(calls(signOutOf)[0]).toEqual([false])
+    expect(element.querySelector('[data-unpushed]')).toBeNull()
+  })
+
+  it('names the copies a push could not empty, and keeps everything on cancel', async () => {
+    const { element, store, signOutOf } = await mount({
+      ...synced,
+      push: async () => {
+        throw new Error('the server refused')
+      },
+    })
+    await inputSettles(element, (i) => i.server !== undefined, 'no list arrived')
+
+    await askAndConfirm(element)
+
+    await waitUntil(() => element.querySelector('[data-unpushed]') !== null, 'no second step')
+    expect(text(element.querySelector('[data-sign-out-dialog]'))).toContain(
+      'These projects have changes that are not on the server yet. Signing out removes them from this device.',
+    )
+    expect(text(element.querySelector('[data-unpushed]'))).toBe('Beta')
+    expect(calls(signOutOf)).toHaveLength(0)
+
+    ;(element.querySelector('[data-cancel-sign-out]') as HTMLElement).click()
+    await element.updateComplete
+
+    expect(element.querySelector('[data-sign-out-dialog]')).toBeNull()
+    expect(calls(signOutOf)).toHaveLength(0)
+    expect(await store.cache().readLocalProjects()).toEqual([copy])
+    expect(element.querySelector('nav [data-sign-out]')).not.toBeNull()
+  })
+
+  it('signs out, as first asked, once the second step is confirmed', async () => {
+    const { element, signOutOf } = await mount({
+      ...synced,
+      push: async () => {
+        throw new Error('the server refused')
+      },
+    })
+    await inputSettles(element, (i) => i.server !== undefined, 'no list arrived')
+    await waitUntil(() => element.querySelector('nav [data-sign-out]') !== null, 'not in the menu')
+    ;(element.querySelector('nav [data-sign-out]') as HTMLElement).click()
+    await waitUntil(() => element.querySelector('[data-remove-local]') !== null, 'no dialog')
+    ;(element.querySelector('[data-remove-local]') as HTMLElement & { checked: boolean }).checked =
+      true
+    ;(element.querySelector('[data-confirm-sign-out]') as HTMLElement).click()
+    await waitUntil(() => element.querySelector('[data-unpushed]') !== null, 'no second step')
+
+    ;(element.querySelector('[data-confirm-unpushed]') as HTMLElement).click()
+
+    await waitUntil(() => calls(signOutOf).length > 0, 'never signed out')
+    expect(calls(signOutOf)[0]).toEqual([true])
+  })
+
+  it('asks the second question offline without trying to push', async () => {
+    const { element, sync, signOutOf } = await mount({ ...synced, network: fakeNetwork(false) })
+    await inputSettles(element, (i) => i.local.length === 1, 'no index')
+
+    await askAndConfirm(element)
+
+    await waitUntil(() => element.querySelector('[data-unpushed]') !== null, 'no second step')
+    expect(sync.pushes).toEqual([])
+    expect(calls(signOutOf)).toHaveLength(0)
+  })
+
+  it('holds the busy registry while it works', async () => {
+    // Important 2: a refresh landing mid-sign-out (the profile, a reconnection) must not reopen
+    // a copy about to be destroyed or hand replication a list.
+    const seen: boolean[] = []
+    const { element, signOutOf } = await mount({
+      ...synced,
+      push: async () => void seen.push(projectActionRunning()),
+      signOutOf: vi.fn(async () => {
+        seen.push(projectActionRunning())
+        return []
+      }),
+    })
+    await inputSettles(element, (i) => i.server !== undefined, 'no list arrived')
+
+    await askAndConfirm(element)
+
+    await waitUntil(() => calls(signOutOf).length > 0, 'never signed out')
+    await waitUntil(() => !projectActionRunning(), 'never let go')
+    expect(seen).toEqual([true, true])
   })
 
   it('is not in the menu while signed out', async () => {

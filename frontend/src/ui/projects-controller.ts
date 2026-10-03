@@ -34,7 +34,12 @@ import {
 import { onProjectActionsIdle, projectActionEpoch, projectActionRunning } from './project-busy.js'
 import { fetchProjectList, type ProjectFacts, readProjectFacts } from './project-inputs.js'
 import type { Project } from './projects.js'
-import { type ProjectsInput, projectsModel, synchronizedProjects } from './projects-model.js'
+import {
+  type ProjectsInput,
+  projectsModel,
+  type Row,
+  synchronizedProjects,
+} from './projects-model.js'
 import type { SessionState } from './session.js'
 import type { SyncManager } from './sync/manager.js'
 import type { SyncState } from './sync/replication.js'
@@ -52,6 +57,13 @@ export interface ProjectsHost extends ReactiveControllerHost {
   /** The local index and databases; injected by tests. */
   readonly projectStore?: LocalProjectDependencies
 }
+
+/**
+ * How long signing out waits for each copy's push. Shorter than an action's: the reader is
+ * waiting on a dialog, and a push that has not finished by then is reported as not pushed, which
+ * only asks them once more — it never destroys anything unasked.
+ */
+const SIGN_OUT_PUSH_TIMEOUT_MS = 30_000
 
 /** What the page reads before the first read: a device holding nothing yet. */
 const NO_FACTS: ProjectFacts = {
@@ -203,6 +215,41 @@ export class ProjectsController implements ReactiveController {
     this.syncing = undefined
     this.fresh = undefined
     this.host.requestUpdate()
+  }
+
+  /**
+   * Pushes every synchronized copy once, for signing out, and names the ones that did not get
+   * everything to the server (ruling C-R10).
+   *
+   * Signing out destroys every copy of a server project on this device, so a change that never
+   * left one goes with it. Each copy is pushed with `pushNow`, which resolves only when the server
+   * holds everything; one that fails, times out, or cannot be tried (offline, no replication) is
+   * named, so the reader decides with the names in front of them. All are pushed at once, and
+   * every failure is collected rather than stopping at the first.
+   *
+   * Only rows the page shows as synchronized: they are what replication was handed, and so all
+   * `pushNow` can push. An archived project's copy cannot be pushed at all — the server refuses
+   * every write to it — and was already warned about when it was archived.
+   *
+   * @returns the names of the copies with changes that may not be on the server, in page order
+   */
+  async unpushedCopies(): Promise<readonly string[]> {
+    const model = projectsModel(this.input())
+    const copies = [...model.owned, ...model.shared].filter(
+      (row): row is Row & { projectId: string } =>
+        row.location === 'synced' && row.projectId !== undefined,
+    )
+    const { sync } = this
+    if (copies.length === 0) return []
+    if (!this.host.online || sync === undefined) return copies.map((row) => row.name)
+    const outcomes = await Promise.allSettled(
+      copies.map((row) =>
+        sync.pushNow(row.projectId, { signal: AbortSignal.timeout(SIGN_OUT_PUSH_TIMEOUT_MS) }),
+      ),
+    )
+    return copies
+      .filter((_, index) => outcomes[index]?.status !== 'fulfilled')
+      .map((row) => row.name)
   }
 
   /**
