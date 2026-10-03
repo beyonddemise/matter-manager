@@ -21,7 +21,23 @@
  */
 
 import PouchDB from 'pouchdb-browser'
-import { localDatabase, localProfileCache, removeLocalDatabases } from './db/project-database.js'
+import {
+  localDatabase,
+  localProfileCache,
+  rawDatabase,
+  removeLocalDatabases,
+} from './db/project-database.js'
+
+// Transitional: the projects page (next task) is the real consumer. Re-exported here so the
+// module is reachable from the entry point, which `check:graph` requires of every module.
+export {
+  adoptLegacyCatalogue,
+  createLocalProject,
+  destroyLocalProject,
+  renameLocalProject,
+  setLocalClient,
+} from './local-projects.js'
+
 import { type Locale, profileApi, resolveProfileLocale } from './profile.js'
 import { type Project, projectsApi } from './projects.js'
 import {
@@ -276,7 +292,9 @@ export function projectSync(
     // `as unknown as` because `sync/replication.ts` declares only the sliver of PouchDB it
     // uses - which is what lets its tests run without a database - and a structural match
     // against PouchDB's much larger surface is not something TypeScript will infer.
-    local: (dbName) => new PouchDB(dbName) as unknown as ReturnType<ManagerDependencies['local']>,
+    // The memoised handle, not a second `new PouchDB(dbName)`: two handles on one store fire
+    // every change feed twice.
+    local: (dbName) => rawDatabase(dbName) as unknown as ReturnType<ManagerDependencies['local']>,
     remote: (dbName) =>
       remoteProject(dbName, {
         couchUrl: COUCH_BASE,

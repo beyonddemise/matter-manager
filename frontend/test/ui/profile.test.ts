@@ -39,6 +39,18 @@ const noProjects = {
   markAccessRemoved: async (): Promise<never> => {
     throw new Error('the profile tests do not use the project cache')
   },
+  readLocalProjects: async (): Promise<never> => {
+    throw new Error('the profile tests do not use the project cache')
+  },
+  addLocalProject: async (): Promise<never> => {
+    throw new Error('the profile tests do not use the project cache')
+  },
+  updateLocalProject: async (): Promise<never> => {
+    throw new Error('the profile tests do not use the project cache')
+  },
+  removeLocalProject: async (): Promise<never> => {
+    throw new Error('the profile tests do not use the project cache')
+  },
 }
 
 /** A cache backed by a variable, so a test can start it full, empty or broken. */

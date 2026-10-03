@@ -12,6 +12,7 @@
 import PouchDB from 'pouchdb-browser'
 import {
   type LocalCache,
+  type LocalProjectEntry,
   localCache,
   type ProjectRepositories,
   projectRepositories,
@@ -27,15 +28,21 @@ import { PROJECT_CHANGED } from '../current-project.js'
  */
 export const PROJECT_DATABASE_NAME = 'project_local'
 
+/** A database and the repositories built over it; one handle serves both. */
+interface OpenedProject {
+  readonly database: PouchDB.Database
+  readonly repositories: ProjectRepositories
+}
+
 /**
- * One set of repositories per database, kept for as long as the page lives.
+ * One handle per database, with the repositories over it, kept for as long as the page lives.
  *
  * Keyed by name rather than a single handle, because #55 lets the reader move between projects
  * and switching back should not reopen what is already open. Memoised at all because a second
  * `new PouchDB(name)` is a second handle on the same store, and the change feeds M2-6 attaches
  * would then fire twice.
  */
-const opened = new Map<string, ProjectRepositories>()
+const opened = new Map<string, OpenedProject>()
 
 /** Which database the views are reading. Changed only through {@link useProjectDatabase}. */
 let currentName: string = PROJECT_DATABASE_NAME
@@ -79,12 +86,40 @@ export function localCatalogue(): ProjectRepositories {
  * it does not open it twice - two handles on one store means every change feed fires twice.
  */
 export function openProject(dbName: string): ProjectRepositories {
+  return openHandle(dbName).repositories
+}
+
+/** The memoised handle for a database, opening it on first use. */
+function openHandle(dbName: string): OpenedProject {
   const existing = opened.get(dbName)
   if (existing !== undefined) return existing
 
-  const repositories = projectRepositories(new PouchDB(dbName))
-  opened.set(dbName, repositories)
-  return repositories
+  const database = new PouchDB(dbName)
+  const handle = { database, repositories: projectRepositories(database) }
+  opened.set(dbName, handle)
+  return handle
+}
+
+/**
+ * The raw PouchDB for a project database, for what the repositories do not model: replication,
+ * and the `project` document (which is not a device or a room).
+ *
+ * The *same* handle {@link openProject} uses, not a second `new PouchDB(name)`: two handles on
+ * one store would fire every change feed twice. Callers must not destroy it directly - go
+ * through `destroyLocalProject`, which also forgets it.
+ */
+export function rawDatabase(dbName: string): PouchDB.Database {
+  return openHandle(dbName).database
+}
+
+/**
+ * Drops the memoised handle for a database that has been (or is being) destroyed.
+ *
+ * A destroyed PouchDB handle does not come back, so keeping it would fail every later read of a
+ * database that was since recreated under the same name.
+ */
+export function forgetProject(dbName: string): void {
+  opened.delete(dbName)
 }
 
 /** Which database {@link projectDatabase} will open. Exported so a test can read it back. */
@@ -215,12 +250,25 @@ export async function removeLocalDatabases(
   const alsoOpened = [...opened.keys()].filter((name) => name !== PROJECT_DATABASE_NAME)
 
   let replicated: readonly string[] = []
+  let indexed: readonly LocalProjectEntry[] = []
   try {
-    replicated = (await localProfileCache().readProjects()).map((project) => project.dbName)
+    const profileCache = localProfileCache()
+    replicated = (await profileCache.readProjects()).map((project) => project.dbName)
+    indexed = await profileCache.readLocalProjects()
   } catch {
     // An unreadable cache means the fixed names below are all that can be removed. Reporting
     // nothing removable would be worse: the two that are certain would survive as well.
   }
+
+  // What the index lists splits in two, and the sign-out control's checkbox decides one half.
+  // A database with a `projectId` is a downloaded copy of the account's server project: it is
+  // the previous user's data and always goes. One without is a local-only project (the legacy
+  // `project_local` included) - the "local catalogue" of #55, which predates accounts and so
+  // goes only when asked. Such an entry is only *kept* if it can be re-listed afterwards
+  // (below), because the index lives in `mm-local`, which is always destroyed.
+  const includeLocal = options.includeLocalCatalogue === true
+  const indexedGoing = indexed.filter((entry) => includeLocal || entry.projectId !== undefined)
+  const indexedKept = indexed.filter((entry) => !indexedGoing.includes(entry))
 
   // The local catalogue is only included when the reader asked. It predates accounts and holds
   // whatever was recorded before signing in, so signing out of an unrelated account must not
@@ -230,8 +278,10 @@ export async function removeLocalDatabases(
     ...new Set([
       ...ACCOUNT_DATABASE_NAMES,
       ...replicated,
-      ...alsoOpened,
-      ...(options.includeLocalCatalogue === true ? [PROJECT_DATABASE_NAME] : []),
+      ...indexedGoing.map((entry) => entry.dbName),
+      // Opened but not indexed, or indexed but kept: neither is removed unless asked.
+      ...alsoOpened.filter((name) => !indexedKept.some((entry) => entry.dbName === name)),
+      ...(includeLocal ? [PROJECT_DATABASE_NAME] : []),
     ]),
   ]
 
@@ -245,6 +295,18 @@ export async function removeLocalDatabases(
   const failures = outcomes.flatMap((outcome) =>
     outcome.status === 'rejected' ? [outcome.reason] : [],
   )
+
+  // Re-list the local-only projects that were deliberately kept, in the fresh `mm-local` the
+  // destroy above leaves behind. Without this they would stay on disk with nothing naming them:
+  // unreachable, and invisible to the next sign-out that does ask for them to go.
+  if (indexedKept.length > 0) {
+    try {
+      const fresh = localProfileCache()
+      for (const entry of indexedKept) await fresh.addLocalProject(entry)
+    } catch (error) {
+      failures.push(error)
+    }
+  }
 
   if (failures.length > 0) {
     throw new AggregateError(failures, 'Some local data could not be removed from this browser.')

@@ -99,6 +99,32 @@ export interface CachedProject extends ServerProject {
   readonly fetchedAt: string
 }
 
+/**
+ * A project database that lives on this device and is listed in the index.
+ *
+ * The index exists because IndexedDB cannot be enumerated portably (`indexedDB.databases()` is
+ * missing from Firefox before 126), so "which databases does this browser hold for me" has to be
+ * written down. It names every local-only project and every downloaded copy of a server one.
+ */
+export interface LocalProjectEntry {
+  /** The PouchDB name: `project_local_<uuid>`, `project_local`, or a server `project_<id>`. */
+  readonly dbName: string
+  /** What the project is called. Mirrors the `project` document so a list needs no database. */
+  readonly name: string
+  /** Who the project is for. Absent rather than empty. */
+  readonly client?: string
+  /** The server's id for it once it is synchronized. Absent while local-only. */
+  readonly projectId?: string
+  /** When this device first knew of the project, ISO-8601. */
+  readonly createdAt: string
+}
+
+/** The id prefix that makes the local index a contiguous, listable key range. */
+const LOCAL_PROJECT_PREFIX = 'local:project:'
+
+/** The document id one index entry is stored under. */
+const localProjectId = (dbName: string): string => `${LOCAL_PROJECT_PREFIX}${dbName}`
+
 /** The id prefix that makes cached projects a contiguous, listable key range. */
 const PROJECT_PREFIX = 'cache:project:'
 
@@ -149,8 +175,25 @@ export interface LocalCache {
    * says only that something went wrong somewhere.
    */
   markAccessRemoved(projectId: string): Promise<void>
+  /** Every project database this device holds, in name order. */
+  readLocalProjects(): Promise<LocalProjectEntry[]>
   /**
-   * Removes everything.
+   * Lists a database in the index. Re-adding a name replaces its entry, so adopting twice is
+   * harmless.
+   */
+  addLocalProject(entry: LocalProjectEntry): Promise<void>
+  /**
+   * Changes an entry's fields. Does nothing for a name that is not indexed: inventing an entry
+   * would claim a database this device may not hold.
+   */
+  updateLocalProject(
+    dbName: string,
+    patch: Partial<Omit<LocalProjectEntry, 'dbName'>>,
+  ): Promise<void>
+  /** Removes an entry, if there is one. Does not touch the database itself. */
+  removeLocalProject(dbName: string): Promise<void>
+  /**
+   * Removes everything, the local index included (it lives in this database).
    *
    * Called on sign-out. The cache holds a name and an email address, which are the
    * signed-in user's and nobody else's — leaving them behind on a shared machine is the
@@ -232,6 +275,45 @@ export function localCache(database: PouchDB.Database): LocalCache {
           ...(changed ?? {}),
           _id: projectCacheId(projectId),
           _rev: stored._rev,
+          ...(changed === undefined ? { _deleted: true } : {}),
+        } as unknown as PouchDB.Core.PutDocument<object>)
+        return
+      } catch (error) {
+        if (!isConflict(error) || remaining <= 1) throw error
+      }
+    }
+  }
+
+  /**
+   * Replaces, changes or deletes one index entry, retrying when another tab wins the revision.
+   *
+   * Same retry as {@link amend}, over a different key range: `change` receives the stored entry
+   * (or `undefined`) and returns what to store, or `undefined` to delete it.
+   */
+  const rewriteEntry = async (
+    dbName: string,
+    change: (stored: LocalProjectEntry | undefined) => LocalProjectEntry | undefined,
+  ): Promise<void> => {
+    const id = localProjectId(dbName)
+    for (let remaining = WRITE_ATTEMPTS; ; remaining -= 1) {
+      let stored: (LocalProjectEntry & { _rev: string }) | undefined
+      try {
+        stored = (await database.get(id)) as unknown as LocalProjectEntry & { _rev: string }
+      } catch (error) {
+        if (!isMissing(error)) throw error
+      }
+
+      const { _id, _rev, ...entry } = (stored ?? {}) as LocalProjectEntry & {
+        _id?: string
+        _rev?: string
+      }
+      const changed = change(stored === undefined ? undefined : (entry as LocalProjectEntry))
+      if (changed === undefined && stored === undefined) return
+      try {
+        await database.put({
+          ...(changed ?? {}),
+          _id: id,
+          ...(stored === undefined ? {} : { _rev: stored._rev }),
           ...(changed === undefined ? { _deleted: true } : {}),
         } as unknown as PouchDB.Core.PutDocument<object>)
         return
@@ -331,6 +413,36 @@ export function localCache(database: PouchDB.Database): LocalCache {
 
     async markAccessRemoved(projectId: string): Promise<void> {
       await amend(projectId, (project) => ({ ...project, accessRemoved: true }))
+    },
+
+    async readLocalProjects(): Promise<LocalProjectEntry[]> {
+      const { rows } = await database.allDocs({
+        startkey: LOCAL_PROJECT_PREFIX,
+        endkey: `${LOCAL_PROJECT_PREFIX}${HIGHEST_ID_CHARACTER}`,
+        include_docs: true,
+      })
+      return rows.flatMap((row) => {
+        if (!row.doc) return []
+        const { _id, _rev, ...entry } = row.doc as unknown as LocalProjectEntry & {
+          _id: string
+          _rev: string
+        }
+        return [entry as LocalProjectEntry]
+      })
+    },
+
+    async addLocalProject(entry: LocalProjectEntry): Promise<void> {
+      await rewriteEntry(entry.dbName, () => entry)
+    },
+
+    async updateLocalProject(dbName, patch): Promise<void> {
+      await rewriteEntry(dbName, (stored) =>
+        stored === undefined ? undefined : { ...stored, ...patch, dbName },
+      )
+    },
+
+    async removeLocalProject(dbName: string): Promise<void> {
+      await rewriteEntry(dbName, () => undefined)
     },
 
     async clear(): Promise<void> {

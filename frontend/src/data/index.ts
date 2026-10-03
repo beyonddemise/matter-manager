@@ -27,6 +27,7 @@ export {
   type CachedProfile,
   type CachedProject,
   type LocalCache,
+  type LocalProjectEntry,
   localCache,
   PROFILE_ID,
   type ProjectLocalState,
