@@ -266,6 +266,29 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthDependencies)
     return reply.redirect(`${deps.appOrigin}${returnTo}`, 302)
   })
 
+  /**
+   * The claims of a handoff cookie that may be exchanged now, or `undefined`.
+   *
+   * Every failure is the same `undefined` — absent, forged, expired, already used — because the
+   * caller then falls back to the body, and which of those it was changes nothing about that.
+   *
+   * @param handoff - The raw `mm_handoff` cookie value, if the request carried one
+   */
+  const verifiedHandoff = (
+    handoff: string | undefined,
+  ): (Claims & { readonly email: string; readonly jti: string }) | undefined => {
+    if (handoff === undefined) return undefined
+    let bridged: Claims
+    try {
+      bridged = verifyToken(handoff, deps.sessionKey.publicKey, 'handoff', now)
+    } catch {
+      return undefined
+    }
+    if (bridged.email === undefined || bridged.jti === undefined) return undefined
+    if (deps.deny.denied(bridged.jti)) return undefined
+    return { ...bridged, email: bridged.email, jti: bridged.jti }
+  }
+
   app.post('/auth/token', async (request, reply) => {
     const body = request.body as { refreshToken?: unknown } | null | undefined
     // `{ title, status }` as `application/problem+json`, as the contract declares. Every refusal
@@ -276,39 +299,21 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthDependencies)
 
     let claims: Claims & { readonly email: string }
     let refreshToken: string
-    if (body?.refreshToken !== undefined) {
-      // Present but not a token is a refusal, never a fall-through to the handoff cookie: a
-      // caller that sent *something* meant to refresh, and quietly answering for a different
-      // credential would make which one was honoured depend on what else the browser held.
-      if (typeof body.refreshToken !== 'string' || body.refreshToken === '') return unauthorized()
-      let presented: Claims
-      try {
-        presented = verifyToken(body.refreshToken, deps.sessionKey.publicKey, 'refresh', now)
-      } catch {
-        return unauthorized()
-      }
-      if (presented.email === undefined || presented.jti === undefined) return unauthorized()
-      // A signature alone is not enough: revocation is deletion of the stored hash, so a token
-      // is honoured only while its hash is still found (see `refresh-store.ts`).
-      if (!(await deps.refresh.isLive(presented.email, hashJti(presented.jti)))) {
-        return unauthorized()
-      }
-      claims = { ...presented, email: presented.email }
-      // Returned unchanged. Rotation is tracked as an issue, not done here.
-      refreshToken = body.refreshToken
-    } else {
-      const handoff = cookie(request, HANDOFF_COOKIE)
-      if (handoff === undefined) return unauthorized()
-      let bridged: Claims
-      try {
-        bridged = verifyToken(handoff, deps.sessionKey.publicKey, 'handoff', now)
-      } catch {
-        return unauthorized()
-      }
-      if (bridged.email === undefined || bridged.jti === undefined) return unauthorized()
+    // **A handoff that verifies wins over a body refresh token** (controller ruling, item 5 of
+    // the phase A final review). The handoff means a sign-in finished within the last two
+    // minutes, which is newer than anything the page has kept — and the page sends its stored
+    // refresh token on every call, because it cannot see the httpOnly cookie to know a handoff
+    // is waiting. Letting the body win turned two ordinary situations into an immediate
+    // "session ended": a sign-out that revoked the token on the server but could not remove it
+    // from the device, and signing in as somebody else on a device holding the first account's
+    // token. The page stores the refresh token this answer returns, replacing the old one.
+    //
+    // A handoff that does *not* verify (spent, expired, forged) is not a sign-in that just
+    // happened, so it is ignored and the body decides, exactly as if no cookie had been sent.
+    const bridged = verifiedHandoff(cookie(request, HANDOFF_COOKIE))
+    if (bridged !== undefined) {
       // Single use. The deny list already forgets entries at their expiry, which is exactly the
       // lifetime a used handoff has to be remembered for.
-      if (deps.deny.denied(bridged.jti)) return unauthorized()
       deps.deny.deny(bridged.jti, bridged.exp)
 
       const jti = randomUUID()
@@ -326,6 +331,27 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthDependencies)
       // Only the hash is stored, so a leaked record or memory dump is not a set of credentials.
       await deps.refresh.remember(bridged.email, { hash: hashJti(jti), exp, createdAt: now() })
       setCookie(reply, `${HANDOFF_COOKIE}=; ${cookieAttributes(0, secure)}`)
+    } else if (body?.refreshToken !== undefined) {
+      // Present but not a token is a refusal (R11), never a quiet success: with no handoff to
+      // honour, a caller that sent *something* meant to refresh, and that something failed.
+      if (typeof body.refreshToken !== 'string' || body.refreshToken === '') return unauthorized()
+      let presented: Claims
+      try {
+        presented = verifyToken(body.refreshToken, deps.sessionKey.publicKey, 'refresh', now)
+      } catch {
+        return unauthorized()
+      }
+      if (presented.email === undefined || presented.jti === undefined) return unauthorized()
+      // A signature alone is not enough: revocation is deletion of the stored hash, so a token
+      // is honoured only while its hash is still found (see `refresh-store.ts`).
+      if (!(await deps.refresh.isLive(presented.email, hashJti(presented.jti)))) {
+        return unauthorized()
+      }
+      claims = { ...presented, email: presented.email }
+      // Returned unchanged. Rotation is tracked as an issue (#209), not done here.
+      refreshToken = body.refreshToken
+    } else {
+      return unauthorized()
     }
 
     // Read on every mint, so an operator's change reaches CouchDB within one token lifetime.

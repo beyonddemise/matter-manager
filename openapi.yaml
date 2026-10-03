@@ -111,6 +111,11 @@ paths:
           out, or deleting its hash from the user record, revokes it. The same refresh token is
           returned, not rotated.
 
+        When both are sent, a handoff cookie that verifies wins: it means a sign-in has just
+        finished, which is newer than any refresh token the page kept. The page then stores the
+        refresh token returned, replacing its old one. A handoff that does not verify is ignored,
+        and a `refreshToken` that is present but not a valid, stored token is then a 401.
+
         Offline clients never call it - local writes must never block on token freshness.
       security: []
       requestBody:

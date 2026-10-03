@@ -53,6 +53,19 @@ describe('requestTokens', () => {
     expect(store.held).toBe('new')
   })
 
+  it('replaces a stale stored token with the one a fresh sign-in was answered with', async () => {
+    // The page cannot see the httpOnly handoff cookie, so it sends its stored token on every
+    // call. The server honours a handoff that verifies over the body token and answers with a
+    // new refresh token; keeping the old one would send a dead token at the next refresh.
+    const store = memoryStore('stale')
+    const fetchImpl = json(200, { accessToken: 'a', expiresIn: 300, refreshToken: 'fresh' })
+    expect(await requestTokens(store, fetchImpl)).toEqual({ kind: 'refreshed', expiresIn: 300 })
+    const init = fetchImpl.mock.calls[0]?.[1] as RequestInit
+    expect(init.credentials).toBe('include')
+    expect(JSON.parse(String(init.body))).toEqual({ refreshToken: 'stale' })
+    expect(store.held).toBe('fresh')
+  })
+
   it('reports ended and forgets the token when a stored refresh token is refused', async () => {
     const store = memoryStore('r1')
     expect(await requestTokens(store, json(401, { title: 'Not signed in', status: 401 }))).toEqual({

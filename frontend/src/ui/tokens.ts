@@ -9,8 +9,8 @@
  * **The refresh token is the exception, by explicit decision.** It lives in `mm-local` as a
  * `_local/` document so a reload can get a new access token without signing in again. That makes
  * it readable by any script on this origin, which is the trade-off the spec's "The trade-off of a
- * body token" accepts and bounds: it is never replicated, it is rotated on use, and sign-out
- * revokes it on the server and removes it here. The httpOnly cookies cannot do this job because
+ * body token" accepts and bounds: it is never replicated, it is **not** rotated (that is #209),
+ * and sign-out revokes it on the server and removes it here. The httpOnly cookies cannot do this job because
  * the page must be able to present the token itself, in a request body.
  *
  * The test that watches web storage stays: `localStorage` and `sessionStorage` still receive
@@ -48,7 +48,10 @@ export interface TokenResponse extends AccessTokenResponse {
 export interface RefreshTokenStore {
   /** The stored token, or `undefined` when none is held or the store cannot be read. */
   read(): Promise<string | undefined>
-  /** Replaces the stored token. Refresh tokens rotate, so every exchange writes a new one. */
+  /**
+   * Replaces the stored token. Called when an exchange returns a different one — after a fresh
+   * sign-in, since refresh tokens are not rotated (#209) and a refresh returns the same token.
+   */
   write(token: string): Promise<void>
   /** Removes the stored token; a no-op when there is none. */
   clear(): Promise<void>
@@ -103,8 +106,9 @@ export function forgetTokens(): void {
  * were ever given a remote counterpart; sign-out removes it explicitly and also destroys the
  * whole database.
  *
- * `clear` treats only a 404 as success. `read` swallows errors on purpose: an unreadable store is indistinguishable from a first visit
- * for the caller, and the worst outcome is a sign-in prompt, never a wrongly kept session.
+ * `clear` treats only a 404 as success. `read` swallows errors on purpose: an unreadable store is
+ * indistinguishable from a first visit for the caller, and the worst outcome is a sign-in prompt,
+ * never a wrongly kept session.
  */
 export function pouchRefreshTokenStore(db: PouchDB.Database): RefreshTokenStore {
   const id = '_local/refresh-token'

@@ -106,8 +106,10 @@ export type TokenOutcome =
  * There is no "am I signed in" endpoint and there does not need to be: the exchange is the
  * question. The first call after sign-in has no stored token and authenticates with the httpOnly
  * handoff cookie, which is why `credentials: 'include'` stays; every later call sends the stored
- * refresh token in the body. The server rotates it, so the answer is written back whenever it
- * differs.
+ * refresh token in the body. The server does **not** rotate it (#209), so ordinarily the same
+ * token comes back. It differs after a fresh sign-in: a handoff that verifies wins over the body
+ * token on the server, and the new refresh token it returns replaces the stored one — which is
+ * why the answer is written back whenever it differs.
  *
  * Only a 401 ends anything. Offline, a proxy in the way or a 5xx is **not** an answer and
  * reports `unreachable` without discarding the stored token, because this application works
@@ -116,7 +118,7 @@ export type TokenOutcome =
  * @param signal aborted when nobody wants the answer any more (the refresher was stopped, which
  *   is what signing out does). Checked before every side effect, not only passed to `fetch`:
  *   a response already received would otherwise still remember the access token and write the
- *   rotated refresh token *after* sign-out cleared both, re-arming a signed-out browser. An
+ *   returned refresh token *after* sign-out cleared both, re-arming a signed-out browser. An
  *   aborted request reports `unreachable` and changes nothing.
  */
 export async function requestTokens(

@@ -227,6 +227,11 @@ from the access token's claims and `PATCH /profile` seeds a new record from them
 - **Record-less refresh entries live in memory and a restart loses them.** Those users get a 401
   at their next refresh and sign in again, keeping their local data. The cost falls only on
   people who have used nothing that needed the server. A store shared across instances is #210.
+- **A fresh handoff wins.** When `POST /auth/token` receives both a handoff cookie that verifies
+  and a body refresh token, it honours the handoff: a sign-in just finished, and a stale stored
+  token must not end the session it began. The page then replaces its stored refresh token. A
+  handoff that does not verify is ignored; a present but malformed body token with no handoff to
+  honour is a 401.
 - **Sign-out** denies the presented access token, clears the cookies, then revokes the presented
   refresh token. If revocation fails it answers **500**, never 204: the hash is still stored, so
   the refresh token is still a live thirty-day credential, and claiming "signed out" would hide

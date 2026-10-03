@@ -144,6 +144,13 @@ policy.
     to be present and unexpired in the store. The same refresh token is returned; it is **not
     rotated**.
 
+  When both arrive, **a handoff cookie that verifies wins**: it means a sign-in has just
+  finished, and the page, which cannot see the httpOnly cookie, sends its stored refresh token on
+  every call. Letting the body win made a stale stored token (a sign-out that could not clear the
+  device, or a sign-in as another account) end the session that had just begun. The page stores
+  the refresh token returned, replacing its old one. A handoff that does not verify is ignored;
+  a body token that is present but malformed, with no handoff to honour, is still a 401.
+
   **Where the hash is stored** depends on whether the user has a record: in its
   `refreshTokens` if so, otherwise in an in-memory `Map<hash, { email, exp }>` on the backend.
   `ensureRecord` moves every in-memory entry for the address into the new record, so creating a
@@ -193,6 +200,8 @@ Phase A is implemented. Where the code differs from the text above, the code is 
 - `isLive` is true if the **record or memory** holds the hash (ruling R8), so a record created
   without draining memory (an operator setting a plan) never signs anybody out.
 - `POST /auth/signout` answers 500, not 204, when revoking the refresh token fails.
+- `POST /auth/token` prefers a handoff cookie that verifies over a body refresh token (final
+  review, item 5); the access token carries `name?`.
 - The client refreshes at `expiresIn − 2×margin` (not one) and when the page becomes visible.
 - Frontend browser tests run Lit in production mode.
 - `chunkSizeWarningLimit` in `frontend/vite.config.ts` is 700.

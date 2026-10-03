@@ -62,6 +62,8 @@ function signInServer(
   const key = newKey()
   // A *different* key, and that is the entire point of it. See the key-isolation tests below.
   const sessionKey = newKey('ec-session')
+  // Who the provider says signed in. Mutable, so one test can sign in twice as two people.
+  let identity = overrides.identity ?? VERIFIED
   app = buildServer({
     logger: false,
     auth: {
@@ -72,7 +74,7 @@ function signInServer(
       }),
       key,
       sessionKey,
-      verifyIdToken: async () => overrides.identity ?? VERIFIED,
+      verifyIdToken: async () => identity,
       appOrigin: 'https://matter.example',
       // The provider's token endpoint, faked. Letting this reach Google would be a test that
       // needs credentials, a network and a real user — and therefore a test nobody runs.
@@ -110,6 +112,10 @@ function signInServer(
     fails,
     logged,
     signedIn,
+    /** Makes the next sign-in somebody else's. */
+    signInAs: (next: Identity) => {
+      identity = next
+    },
     advance: (s: number) => {
       t += s
     },
@@ -525,27 +531,106 @@ describe('POST /auth/token', () => {
     expect(again.statusCode).toBe(401)
   })
 
-  it('refuses a refreshToken that is not a token, rather than falling back to the handoff', async () => {
-    // A caller that sent *something* meant to refresh. Answering for the handoff cookie instead
-    // would make which credential was honoured depend on what else the browser held.
+  it('refuses a refreshToken that is not a token when there is no handoff to honour', async () => {
+    // R11. A caller that sent *something* meant to refresh, and with no fresh sign-in behind
+    // it there is nothing else to honour: the malformed token is the request, and it fails.
     const server = signInServer()
-    const cookie = await completeSignIn(server)
     for (const refreshToken of [123, '', null, { token: 'x' }]) {
+      const reply = await server.app.inject({
+        method: 'POST',
+        url: '/auth/token',
+        payload: { refreshToken },
+      })
+      expect(reply.statusCode, JSON.stringify(refreshToken)).toBe(401)
+    }
+  })
+
+  it('honours a handoff that verifies whatever the body holds', async () => {
+    // The handoff means a sign-in finished seconds ago, which is newer than anything the page
+    // kept. The page sends its stored refresh token on every call, so a malformed or stale one
+    // there must not turn the sign-in that just happened into "session ended".
+    const server = signInServer()
+    for (const refreshToken of [123, '', null, { token: 'x' }, 'not.a.token']) {
+      const cookie = await completeSignIn(server)
       const reply = await server.app.inject({
         method: 'POST',
         url: '/auth/token',
         headers: { cookie },
         payload: { refreshToken },
       })
-      expect(reply.statusCode, JSON.stringify(refreshToken)).toBe(401)
+      expect(reply.statusCode, JSON.stringify(refreshToken)).toBe(200)
     }
-    // The handoff was never consulted, so it is still good for the call that means it.
-    const real = await server.app.inject({
+  })
+
+  it('prefers a fresh handoff over a stored refresh token that has been revoked', async () => {
+    // The case that produced an immediate "session ended": sign-out revoked the token on the
+    // server but could not remove it from this device, the user signed in again, and the page
+    // sent the dead token alongside the new handoff.
+    const server = signInServer()
+    const stale = await tokensFor(server)
+    await server.app.inject({
+      method: 'POST',
+      url: '/auth/signout',
+      payload: { refreshToken: stale.refreshToken },
+    })
+    const cookie = await completeSignIn(server)
+
+    const reply = await server.app.inject({
       method: 'POST',
       url: '/auth/token',
       headers: { cookie },
+      payload: { refreshToken: stale.refreshToken },
     })
-    expect(real.statusCode).toBe(200)
+
+    expect(reply.statusCode).toBe(200)
+    expect(reply.json().refreshToken).not.toBe(stale.refreshToken)
+    expect(cookieNamed(reply.headers, 'mm_handoff')).toContain('Max-Age=0')
+  })
+
+  it('prefers a fresh handoff over a live refresh token for somebody else', async () => {
+    // Signing in as another account on a device that still holds the first one's token. The
+    // sign-in is the user's latest intent; answering for the old account would put them back in
+    // it without asking.
+    const server = signInServer()
+    const first = await tokensFor(server)
+    server.signInAs({
+      sub: 'google|5678',
+      email: 'grace@example.com',
+      emailVerified: true,
+      name: 'Grace',
+    })
+    const cookie = await completeSignIn(server)
+
+    const reply = await server.app.inject({
+      method: 'POST',
+      url: '/auth/token',
+      headers: { cookie },
+      payload: { refreshToken: first.refreshToken },
+    })
+
+    expect(reply.statusCode).toBe(200)
+    const access = verifyToken(reply.json().accessToken, server.key.publicKey, 'access', at)
+    expect(access).toMatchObject({ sub: 'google|5678', email: 'grace@example.com' })
+  })
+
+  it('falls back to the body refresh token when the handoff no longer verifies', async () => {
+    // A handoff cookie that is spent or expired is not a sign-in that just happened, so the
+    // stored refresh token is the request — exactly as if no cookie had been sent.
+    const server = signInServer()
+    const cookie = await completeSignIn(server)
+    const tokens = (
+      await server.app.inject({ method: 'POST', url: '/auth/token', headers: { cookie } })
+    ).json()
+
+    const reply = await server.app.inject({
+      method: 'POST',
+      url: '/auth/token',
+      headers: { cookie },
+      payload: { refreshToken: tokens.refreshToken },
+    })
+
+    expect(reply.statusCode).toBe(200)
+    expect(reply.json().refreshToken).toBe(tokens.refreshToken)
   })
 
   it('refuses with neither a handoff nor a refresh token', async () => {

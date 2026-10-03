@@ -100,7 +100,7 @@ export function startRefresher(deps: RefresherDependencies): { stop(): void } {
       outcome = await deps.request(controller.signal)
     } catch {
       // Why not let it propagate: `request` can fail *after* it has changed state (the access
-      // token remembered, the rotated refresh token not yet written), and a rejection here would
+      // token remembered, a changed refresh token not yet written), and a rejection here would
       // be unhandled and would also end the loop. Retrying is the right answer to an unknown.
       outcome = { kind: 'unreachable' }
     }
