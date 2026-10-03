@@ -1,8 +1,12 @@
-import { generateKeyPairSync } from 'node:crypto'
+import { generateKeyPairSync, randomUUID } from 'node:crypto'
 import { afterEach, describe, expect, it } from 'vitest'
+import { denyList } from '../src/auth/deny-list.js'
 import { mintToken, type SigningKey } from '../src/auth/jwt.js'
+import { refreshStore } from '../src/auth/refresh-store.js'
 import { profileStore } from '../src/profile/store.js'
 import { buildServer, type Server } from '../src/server.js'
+import { forgetUsersDatabase } from '../src/users/database.js'
+import { userRecords } from '../src/users/records.js'
 import {
   loadContract,
   operationsOf,
@@ -65,8 +69,11 @@ const server = (): Server => {
   // would read an empty store, get `free`, and pass for a reason that has nothing to do with
   // what it was asserting. One instance means the server behaves like a deployment, where there
   // is one database behind both.
+  forgetUsersDatabase()
   const couch = fakeCouch().couch
   const store = profileStore(couch)
+  const records = userRecords(couch)
+  const clock = () => Math.floor(Date.now() / 1000)
   const key = SIGNING
 
   app = buildServer({
@@ -86,7 +93,11 @@ const server = (): Server => {
       sessionKey: key,
       verifyIdToken: async () => ({ sub: 'google|1234', email: 'ada@example.test', name: 'Ada' }),
       appOrigin: 'https://app.test',
-      rememberUser: async () => undefined,
+      records,
+      refresh: refreshStore(records, clock),
+      deny: denyList(clock),
+      signIn: async () => ({ hasRecord: false }),
+      logSignIn: () => undefined,
     },
     profile: {
       // The **real** store over the fake CouchDB, and deliberately not a hand-written stub.
@@ -104,7 +115,7 @@ const server = (): Server => {
       // server gets it. That is the compile-time guarantee the rest of the branch leans on, and
       // a cast here is exactly the hole in it.
       store,
-      sessionKey: key,
+      key,
     },
     projects: {
       couch,
@@ -217,7 +228,7 @@ describe('every implemented route answers what the contract declares', () => {
    *
    * Credentialed reaches past that, to the 200s, 400s, 403s and 404s a route answers when it
    * has a subject and an empty body to complain about. The credentials are minted from this
-   * server's own key, so they are genuine rather than mocked: `bearerSubject` and the session
+   * server's own key, so they are genuine rather than mocked: `bearerSubject` and the handoff
    * verifier do their real work, and a route that stopped accepting a valid token would show up
    * here as a 401 where the contract declares a 200.
    *
@@ -228,11 +239,18 @@ describe('every implemented route answers what the contract declares', () => {
   const credentials = () => {
     const claims = { sub: 'drift-user', exp: Math.floor(Date.now() / 1000) + 3600 }
     const access = mintToken(SIGNING, { purpose: 'access', ...claims })
-    const session = mintToken(SIGNING, { purpose: 'session', ...claims })
+    // A fresh `jti` per request, because a handoff is single use and each operation's pass
+    // should reach `POST /auth/token`'s 200 rather than a 401 for a handoff already spent.
+    const handoff = mintToken(SIGNING, {
+      purpose: 'handoff',
+      ...claims,
+      email: 'drift@example.test',
+      jti: randomUUID(),
+    })
     return {
       'content-type': 'application/json',
       authorization: `Bearer ${access}`,
-      cookie: `mm_session=${encodeURIComponent(session)}`,
+      cookie: `mm_handoff=${encodeURIComponent(handoff)}`,
     }
   }
 

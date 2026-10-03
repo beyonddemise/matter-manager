@@ -100,7 +100,12 @@ export interface paths {
             };
             requestBody?: never;
             responses: {
-                /** @description Redirect to the web app with a session established */
+                /**
+                 * @description Redirect to the web app with a two-minute, single-use, `HttpOnly` `mm_handoff`
+                 *     cookie set, which authorises the first `POST /auth/token`. On failure, including an
+                 *     address the provider has not verified, the redirect carries `?signin=failed` and no
+                 *     handoff.
+                 */
                 302: {
                     headers: {
                         [name: string]: unknown;
@@ -127,13 +132,21 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Issue a CouchDB-validatable access token
-         * @description Returns a short-lived ES256 (EC P-256) JWT whose `sub` is the CouchDB username. PouchDB sends
-         *     it as a bearer token on replication requests; CouchDB validates it with the public
-         *     key without consulting this API.
+         * Issue an access token, and a refresh token
+         * @description Returns a five-minute ES256 (EC P-256) access token whose `sub` is the CouchDB username
+         *     and whose `_couchdb.roles` carry the plan, read on every call. PouchDB sends it as a
+         *     bearer token on replication requests; CouchDB validates it with the public key without
+         *     consulting this API.
          *
-         *     Called on sign-in and again whenever replication receives a 401. Offline clients
-         *     never call it - local writes must never block on token freshness.
+         *     Accepts either credential:
+         *
+         *     - the `mm_handoff` cookie set by the sign-in callback (first call after sign-in). It is
+         *       single use; this call mints the refresh token and clears the cookie;
+         *     - a `refreshToken` in the body (every later call). It must still be stored; signing
+         *       out, or deleting its hash from the user record, revokes it. The same refresh token is
+         *       returned, not rotated.
+         *
+         *     Offline clients never call it - local writes must never block on token freshness.
          */
         post: {
             parameters: {
@@ -142,9 +155,15 @@ export interface paths {
                 path?: never;
                 cookie?: never;
             };
-            requestBody?: never;
+            requestBody?: {
+                content: {
+                    "application/json": {
+                        refreshToken?: string;
+                    };
+                };
+            };
             responses: {
-                /** @description A new access token */
+                /** @description A new access token, and the refresh token to present next time */
                 200: {
                     headers: {
                         [name: string]: unknown;
@@ -154,6 +173,7 @@ export interface paths {
                             accessToken: string;
                             /** @description Seconds until expiry */
                             expiresIn: number;
+                            refreshToken: string;
                         };
                     };
                 };
@@ -177,9 +197,10 @@ export interface paths {
         put?: never;
         /**
          * End the session
-         * @description Clears the session cookie. Necessary as a server operation because that cookie is
-         *     `HttpOnly` — the page cannot remove it, and a page that merely forgot its own token
-         *     would still be signed in on the next request.
+         * @description Revokes the presented refresh token, refuses the presented bearer access token on this
+         *     API until its expiry, and clears the sign-in cookies. CouchDB validates access tokens
+         *     itself, so a copy already taken replicates until it expires; the five-minute lifetime
+         *     bounds that.
          *
          *     Removing local databases is the browser's half and is not undone by this.
          */
@@ -190,9 +211,15 @@ export interface paths {
                 path?: never;
                 cookie?: never;
             };
-            requestBody?: never;
+            requestBody?: {
+                content: {
+                    "application/json": {
+                        refreshToken?: string;
+                    };
+                };
+            };
             responses: {
-                /** @description Signed out. Also the answer when there was no session to end. */
+                /** @description Signed out. Also the answer when there was nothing to sign out of. */
                 204: {
                     headers: {
                         [name: string]: unknown;

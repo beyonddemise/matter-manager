@@ -244,18 +244,22 @@ describe('the profile endpoints', () => {
   function serve(seed = storedAda({ locale: 'de' })) {
     const key = newKey()
     const { couch, writes } = fakeCouch(seed)
-    app = buildServer({ logger: false, profile: { store: profileStore(couch), sessionKey: key } })
-    const session = mintToken(key, {
-      purpose: 'session',
+    app = buildServer({ logger: false, profile: { store: profileStore(couch), key } })
+    const token = mintToken(key, {
+      purpose: 'access',
       sub: 'google|1234',
       exp: Math.floor(Date.now() / 1000) + 3600,
     })
-    return { app, key, writes, cookie: `mm_session=${encodeURIComponent(session)}` }
+    return { app, key, writes, authorization: `Bearer ${token}` }
   }
 
   it('answers GET with what the contract declares', async () => {
-    const { app: server, cookie } = serve()
-    const response = await server.inject({ method: 'GET', url: '/profile', headers: { cookie } })
+    const { app: server, authorization } = serve()
+    const response = await server.inject({
+      method: 'GET',
+      url: '/profile',
+      headers: { authorization },
+    })
 
     expect(response.statusCode).toBe(200)
 
@@ -276,9 +280,9 @@ describe('the profile endpoints', () => {
     // arrives with the profile. The alternative is a copy of PROJECT_LIMITS in the browser -
     // the duplication ADR 0009 exists to prevent - and the copy is the one that would be wrong
     // the first time a tier changed.
-    const { app: server, cookie } = serve(storedAda({ locale: 'de', plan: 'member' }))
+    const { app: server, authorization } = serve(storedAda({ locale: 'de', plan: 'member' }))
     const body = (
-      await server.inject({ method: 'GET', url: '/profile', headers: { cookie } })
+      await server.inject({ method: 'GET', url: '/profile', headers: { authorization } })
     ).json() as Profile
 
     expect(body.plan).toBe('member')
@@ -293,9 +297,9 @@ describe('the profile endpoints', () => {
     //
     // `toBe` is `Object.is`, so this one line already refuses `null`, `undefined` and an absent
     // key; it does not need three assertions to say so.
-    const { app: server, cookie } = serve(storedAda({ locale: 'de', plan: 'pro' }))
+    const { app: server, authorization } = serve(storedAda({ locale: 'de', plan: 'pro' }))
     const body = (
-      await server.inject({ method: 'GET', url: '/profile', headers: { cookie } })
+      await server.inject({ method: 'GET', url: '/profile', headers: { authorization } })
     ).json() as Profile
 
     expect(body.projectLimit).toBe(-1)
@@ -321,11 +325,11 @@ describe('the profile endpoints', () => {
   })
 
   it('answers PATCH with what the contract declares', async () => {
-    const { app: server, cookie } = serve()
+    const { app: server, authorization } = serve()
     const response = await server.inject({
       method: 'PATCH',
       url: '/profile',
-      headers: { cookie, 'content-type': 'application/json' },
+      headers: { authorization, 'content-type': 'application/json' },
       payload: { locale: 'en' },
     })
 
@@ -360,11 +364,11 @@ describe('the profile endpoints', () => {
   it('takes the subject from the session, never from the body', async () => {
     // A profile endpoint that accepted an arbitrary subject would be an account-takeover
     // primitive: send somebody else's id, change their settings.
-    const { app: server, cookie, writes } = serve()
+    const { app: server, authorization, writes } = serve()
     await server.inject({
       method: 'PATCH',
       url: '/profile',
-      headers: { cookie, 'content-type': 'application/json' },
+      headers: { authorization, 'content-type': 'application/json' },
       payload: { locale: 'en', sub: 'google|victim', name: 'attacker' },
     })
 
@@ -377,11 +381,11 @@ describe('the profile endpoints', () => {
     ['a locale that is not a string', { locale: 42 }],
     ['a locale explicitly set to nothing', { locale: null }],
   ])('refuses %s, naming the field', async (_case, payload) => {
-    const { app: server, cookie } = serve()
+    const { app: server, authorization } = serve()
     const response = await server.inject({
       method: 'PATCH',
       url: '/profile',
-      headers: { cookie, 'content-type': 'application/json' },
+      headers: { authorization, 'content-type': 'application/json' },
       payload,
     })
 
@@ -394,11 +398,11 @@ describe('the profile endpoints', () => {
     // that changes something else, and the stored preference has to survive it. Defaulting to
     // `auto` here instead would silently return a German speaker to whatever their browser
     // says the first time they edited their display name.
-    const { app: server, cookie, writes } = serve()
+    const { app: server, authorization, writes } = serve()
     const response = await server.inject({
       method: 'PATCH',
       url: '/profile',
-      headers: { cookie, 'content-type': 'application/json' },
+      headers: { authorization, 'content-type': 'application/json' },
       payload: { displayName: 'Ada Lovelace' },
     })
 
@@ -411,11 +415,11 @@ describe('the profile endpoints', () => {
   it('leaves a display name alone when the request does not mention one', async () => {
     // What a form that only changed the language sends. An empty display name is a name nobody
     // has, so it is treated the same way.
-    const { app: server, cookie, writes } = serve()
+    const { app: server, authorization, writes } = serve()
     await server.inject({
       method: 'PATCH',
       url: '/profile',
-      headers: { cookie, 'content-type': 'application/json' },
+      headers: { authorization, 'content-type': 'application/json' },
       payload: { locale: 'en', displayName: '   ' },
     })
 
@@ -425,8 +429,12 @@ describe('the profile endpoints', () => {
   it('is never stored in a shared cache', async () => {
     // A profile is per-user. A cache holding one can hand somebody else's name and email to the
     // next request.
-    const { app: server, cookie } = serve()
-    const response = await server.inject({ method: 'GET', url: '/profile', headers: { cookie } })
+    const { app: server, authorization } = serve()
+    const response = await server.inject({
+      method: 'GET',
+      url: '/profile',
+      headers: { authorization },
+    })
 
     expect(response.headers['cache-control']).toContain('no-store')
     expect(response.headers['cache-control']).toContain('private')
@@ -435,8 +443,12 @@ describe('the profile endpoints', () => {
   it('treats a session outliving its account as not signed in', async () => {
     // Rather than a 404 or a 500. The honest statement is that this credential no longer
     // identifies anybody.
-    const { app: server, cookie } = serve({})
-    const response = await server.inject({ method: 'GET', url: '/profile', headers: { cookie } })
+    const { app: server, authorization } = serve({})
+    const response = await server.inject({
+      method: 'GET',
+      url: '/profile',
+      headers: { authorization },
+    })
 
     expect(response.statusCode).toBe(401)
   })
@@ -465,16 +477,16 @@ describe('the plan a PATCH may carry', () => {
       },
     })
     const store = profileStore(couch)
-    app = buildServer({ logger: false, profile: { store, sessionKey: key } })
+    app = buildServer({ logger: false, profile: { store, key } })
     const token = mintToken(key, {
-      purpose: 'session',
+      purpose: 'access',
       sub: 'user-1',
       exp: Math.floor(Date.now() / 1000) + 3600,
     })
 
     return {
       app,
-      cookie: `mm_session=${encodeURIComponent(token)}`,
+      authorization: `Bearer ${token}`,
       // Read back through the store rather than out of the raw document, so a document with no
       // `plan` at all reads as `free` here the same way it reads as `free` everywhere else.
       storedPlan: async () => (await store.read('user-1'))?.plan,
@@ -482,19 +494,19 @@ describe('the plan a PATCH may carry', () => {
   }
 
   /** One PATCH, since every test below is the same request with a different body. */
-  const patch = (server: Server, cookie: string, payload: Record<string, unknown>) =>
+  const patch = (server: Server, authorization: string, payload: Record<string, unknown>) =>
     server.inject({
       method: 'PATCH',
       url: '/profile',
-      headers: { cookie, 'content-type': 'application/json' },
+      headers: { authorization, 'content-type': 'application/json' },
       payload,
     })
 
   it('changes the locale without requiring anything else', async () => {
     // PATCH because the semantics were already partial: the old handler treated an absent
     // displayName as "leave it alone" while requiring locale on every request.
-    const { app: server, cookie } = serveWithRoles([])
-    const response = await patch(server, cookie, { locale: 'en' })
+    const { app: server, authorization } = serveWithRoles([])
+    const response = await patch(server, authorization, { locale: 'en' })
 
     expect(response.statusCode).toBe(200)
     expect((response.json() as Profile).locale).toBe('en')
@@ -505,8 +517,8 @@ describe('the plan a PATCH may carry', () => {
     // request, not a mistake. The contract declared `requestBody: required: true` against this
     // behaviour until now, and a client generated from it would have refused to send a request
     // this service accepts. Asserted here so the contract cannot drift back.
-    const { app: server, cookie } = serveWithRoles([])
-    const response = await patch(server, cookie, {})
+    const { app: server, authorization } = serveWithRoles([])
+    const response = await patch(server, authorization, {})
 
     expect(response.statusCode).toBe(200)
     // The profile as it stands, not a default. A handler that treated an absent locale as
@@ -518,8 +530,8 @@ describe('the plan a PATCH may carry', () => {
   it('refuses a plan from an ordinary user, and does not quietly ignore it', async () => {
     // Silently dropping the field would be the wrong refusal: a caller that asked for something
     // and was not told it was refused concludes the field does not exist.
-    const { app: server, cookie, storedPlan } = serveWithRoles([])
-    const response = await patch(server, cookie, { plan: 'pro' })
+    const { app: server, authorization, storedPlan } = serveWithRoles([])
+    const response = await patch(server, authorization, { plan: 'pro' })
 
     expect(response.statusCode).toBe(403)
     expect(JSON.stringify(response.json())).toContain('not-an-operator')
@@ -532,8 +544,8 @@ describe('the plan a PATCH may carry', () => {
     // `operationsOf` collected only `application/json`, and every refusal here is declared
     // `application/problem+json`, so the lookup returned `undefined` and `validate` found
     // nothing wrong with it.
-    const { app: server, cookie } = serveWithRoles([])
-    const response = await patch(server, cookie, { plan: 'pro' })
+    const { app: server, authorization } = serveWithRoles([])
+    const response = await patch(server, authorization, { plan: 'pro' })
 
     expect(response.statusCode).toBe(403)
     const schema = operationsOf(loadContract()).find(
@@ -568,8 +580,8 @@ describe('the plan a PATCH may carry', () => {
   })
 
   it('accepts a plan from a role holder', async () => {
-    const { app: server, cookie, storedPlan } = serveWithRoles(['customerservice'])
-    const response = await patch(server, cookie, { plan: 'pro' })
+    const { app: server, authorization, storedPlan } = serveWithRoles(['customerservice'])
+    const response = await patch(server, authorization, { plan: 'pro' })
 
     expect(response.statusCode).toBe(200)
     expect(await storedPlan()).toBe('pro')
@@ -591,8 +603,8 @@ describe('the plan a PATCH may carry', () => {
     // unconditional bypass of `validate_doc_update` on every project database in the
     // deployment. So the entry admitted nobody who needed it and, if it ever did fire, only an
     // account that could already write any document belonging to anybody.
-    const { app: server, cookie, storedPlan } = serveWithRoles(['_admin'])
-    const response = await patch(server, cookie, { plan: 'member' })
+    const { app: server, authorization, storedPlan } = serveWithRoles(['_admin'])
+    const response = await patch(server, authorization, { plan: 'member' })
 
     expect(response.statusCode).toBe(403)
     expect(JSON.stringify(response.json())).toContain('not-an-operator')
@@ -607,8 +619,8 @@ describe('the plan a PATCH may carry', () => {
       // `customerservices` is somebody else's role and `Customerservice` is a typo. Either
       // passing would make the gate an approximation of itself: a substring test lets the
       // plural and the prefix through, and a case fold lets the typo through.
-      const { app: server, cookie, storedPlan } = serveWithRoles([role])
-      const response = await patch(server, cookie, { plan: 'pro' })
+      const { app: server, authorization, storedPlan } = serveWithRoles([role])
+      const response = await patch(server, authorization, { plan: 'pro' })
 
       expect(response.statusCode).toBe(403)
       expect(await storedPlan()).toBe('free')
@@ -616,8 +628,8 @@ describe('the plan a PATCH may carry', () => {
   )
 
   it('refuses a plan string it does not know', async () => {
-    const { app: server, cookie, storedPlan } = serveWithRoles(['customerservice'])
-    const response = await patch(server, cookie, { plan: 'enterprise' })
+    const { app: server, authorization, storedPlan } = serveWithRoles(['customerservice'])
+    const response = await patch(server, authorization, { plan: 'enterprise' })
 
     expect(response.statusCode).toBe(400)
     expect(JSON.stringify(response.json())).toContain('plan')
@@ -627,8 +639,8 @@ describe('the plan a PATCH may carry', () => {
   it('applies a locale and a plan from one request', async () => {
     // Both fields in one body, because the plan is written by `setPlan` and the locale by
     // `update` — two writes, and the second must not undo the first.
-    const { app: server, cookie, storedPlan } = serveWithRoles(['customerservice'])
-    const response = await patch(server, cookie, { locale: 'en', plan: 'pro' })
+    const { app: server, authorization, storedPlan } = serveWithRoles(['customerservice'])
+    const response = await patch(server, authorization, { locale: 'en', plan: 'pro' })
 
     expect(response.statusCode).toBe(200)
     expect((response.json() as Profile).locale).toBe('en')
@@ -639,12 +651,16 @@ describe('the plan a PATCH may carry', () => {
     // All or nothing. Applying the locale and refusing the plan would answer 403 to a request
     // that had in fact changed something, and the caller would have no way to know which half
     // landed.
-    const { app: server, cookie, storedPlan } = serveWithRoles([])
-    const response = await patch(server, cookie, { locale: 'en', plan: 'pro' })
+    const { app: server, authorization, storedPlan } = serveWithRoles([])
+    const response = await patch(server, authorization, { locale: 'en', plan: 'pro' })
 
     expect(response.statusCode).toBe(403)
     expect(await storedPlan()).toBe('free')
-    const after = await server.inject({ method: 'GET', url: '/profile', headers: { cookie } })
+    const after = await server.inject({
+      method: 'GET',
+      url: '/profile',
+      headers: { authorization },
+    })
     expect((after.json() as Profile).locale).toBe('de')
   })
 
@@ -652,9 +668,9 @@ describe('the plan a PATCH may carry', () => {
     // The gate is only reached by a request that asked for a plan. An ordinary locale change
     // from a user with no roles must not be refused, which is the regression a role check
     // placed above the `plan !== undefined` guard would cause.
-    const { app: server, cookie, storedPlan } = serveWithRoles([])
+    const { app: server, authorization, storedPlan } = serveWithRoles([])
 
-    expect((await patch(server, cookie, { locale: 'en' })).statusCode).toBe(200)
+    expect((await patch(server, authorization, { locale: 'en' })).statusCode).toBe(200)
     expect(await storedPlan()).toBe('free')
   })
 })

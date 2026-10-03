@@ -178,7 +178,7 @@ export function buildServer(options: ServerOptions = {}): Server {
   if (options.profile !== undefined) {
     registerProfileRoutes(app, options.profile)
     // Registered on the same condition and from the same dependencies, because it needs exactly
-    // what the profile routes need: the store, and the session key that says who is asking.
+    // what the profile routes need: the store, and the key that says who is asking.
     //
     // `OPERATOR_ROLES` is passed rather than re-declared in `customer.ts`. Two literal lists
     // would be free to drift, and the way they drift is the dangerous way round — a role

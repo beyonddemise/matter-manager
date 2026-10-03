@@ -59,6 +59,17 @@ describe('refreshStore', () => {
     expect(await store.isLive(ADA.email, 'rec')).toBe(false)
   })
 
+  it('still honours a memory entry after a record is created without draining', async () => {
+    // An operator setting a plan creates the record through `setPlan`, which knows nothing of
+    // this store. Creating a record must never sign anybody out.
+    const { couch } = fakeCouch()
+    const records = userRecords(couch)
+    const store = refreshStore(records, () => 0)
+    await store.remember(ADA.email, entry('mem'))
+    await records.setPlan(ADA.email, 'pro')
+    expect(await store.isLive(ADA.email, 'mem')).toBe(true)
+  })
+
   it('drains the memory entries for one address', async () => {
     const { couch } = fakeCouch()
     const store = refreshStore(userRecords(couch), () => 0)

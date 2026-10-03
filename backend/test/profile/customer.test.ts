@@ -9,7 +9,7 @@ import { loadContract, operationsOf, validate } from '../support/contract.js'
 /**
  * `PUT /customer` — the only route that can reach an account other than the caller's.
  *
- * Everything else authenticated by the session cookie takes its subject from that cookie, so the
+ * Everything else authenticated by the access token takes its subject from that token, so the
  * worst a broken check can do is let somebody change their own record. This route takes the
  * subject from the request body, which means a hole in the gate is one user rewriting another
  * user's entitlements. Hence a test per refusal, and hence every test asserting what reached the
@@ -84,17 +84,17 @@ function customerServer({
     Object.assign({}, userDoc(CALLER, callerRoles), ...subjects.map((subject) => userDoc(subject))),
   )
   const store = profileStore(couch)
-  app = buildServer({ logger: false, profile: { store, sessionKey: key } })
+  app = buildServer({ logger: false, profile: { store, key } })
 
   const token = mintToken(key, {
-    purpose: 'session',
+    purpose: 'access',
     sub: CALLER,
     exp: Math.floor(Date.now() / 1000) + 3600,
   })
 
   return {
     app,
-    cookie: `mm_session=${encodeURIComponent(token)}`,
+    authorization: `Bearer ${token}`,
     // Read back through the store rather than out of the raw document, so a document with no
     // `plan` at all reads as `free` here the same way it reads as `free` everywhere else.
     storedPlan: async (sub: string) => (await store.read(sub))?.plan,
@@ -104,11 +104,12 @@ function customerServer({
 }
 
 /** One PUT, since every test below is the same request with a different body or credential. */
-const put = (server: Server, payload: Record<string, unknown>, cookie?: string) =>
+const put = (server: Server, payload: Record<string, unknown>, authorization?: string) =>
   server.inject({
     method: 'PUT',
     url: '/customer',
-    headers: cookie === undefined ? {} : { cookie, 'content-type': 'application/json' },
+    headers:
+      authorization === undefined ? {} : { authorization, 'content-type': 'application/json' },
     payload,
   })
 
@@ -118,13 +119,13 @@ describe('PUT /customer', () => {
     // it an operator can upgrade themselves and nobody else.
     const {
       app: server,
-      cookie,
+      authorization,
       storedPlan,
     } = customerServer({
       callerRoles: ['customerservice'],
       subjects: ['other'],
     })
-    const response = await put(server, { sub: 'other', plan: 'member' }, cookie)
+    const response = await put(server, { sub: 'other', plan: 'member' }, authorization)
 
     expect(response.statusCode).toBe(200)
     expect(await storedPlan('other')).toBe('member')
@@ -140,14 +141,14 @@ describe('PUT /customer', () => {
     // would otherwise upgrade the operator and nobody else — silently, with a 200.
     const {
       app: server,
-      cookie,
+      authorization,
       storedPlan,
     } = customerServer({
       callerRoles: ['customerservice'],
       subjects: ['other'],
     })
 
-    expect((await put(server, { sub: 'other', plan: 'pro' }, cookie)).statusCode).toBe(200)
+    expect((await put(server, { sub: 'other', plan: 'pro' }, authorization)).statusCode).toBe(200)
     expect(await storedPlan('other')).toBe('pro')
     expect(await storedPlan(CALLER)).toBe('free')
   })
@@ -155,13 +156,13 @@ describe('PUT /customer', () => {
   it('refuses a caller without the role', async () => {
     const {
       app: server,
-      cookie,
+      authorization,
       storedPlan,
     } = customerServer({
       callerRoles: [],
       subjects: ['other'],
     })
-    const response = await put(server, { sub: 'other', plan: 'pro' }, cookie)
+    const response = await put(server, { sub: 'other', plan: 'pro' }, authorization)
 
     expect(response.statusCode).toBe(403)
     expect(JSON.stringify(response.json())).toContain('not-an-operator')
@@ -182,13 +183,13 @@ describe('PUT /customer', () => {
     // self-grant.
     const {
       app: server,
-      cookie,
+      authorization,
       storedPlan,
     } = customerServer({
       callerRoles: [role],
       subjects: ['other'],
     })
-    const response = await put(server, { sub: 'other', plan: 'pro' }, cookie)
+    const response = await put(server, { sub: 'other', plan: 'pro' }, authorization)
 
     expect(response.statusCode).toBe(403)
     expect(await storedPlan('other')).toBe('free')
@@ -210,14 +211,14 @@ describe('PUT /customer', () => {
     // anything belonging to anyone" is the widest possible reading of "may change a plan".
     const {
       app: server,
-      cookie,
+      authorization,
       storedPlan,
       writes,
     } = customerServer({
       callerRoles: ['_admin'],
       subjects: ['other'],
     })
-    const response = await put(server, { sub: 'other', plan: 'pro' }, cookie)
+    const response = await put(server, { sub: 'other', plan: 'pro' }, authorization)
 
     expect(response.statusCode).toBe(403)
     expect(JSON.stringify(response.json())).toContain('not-an-operator')
@@ -231,11 +232,11 @@ describe('PUT /customer', () => {
     // Distinct from 403 on purpose: "you may not" and "there is no such account" send an
     // operator to different places, and `store.setPlan` throws a nameable error for exactly
     // this so the route does not have to guess from a bare Error.
-    const { app: server, cookie } = customerServer({
+    const { app: server, authorization } = customerServer({
       callerRoles: ['customerservice'],
       subjects: [],
     })
-    const response = await put(server, { sub: 'ghost', plan: 'member' }, cookie)
+    const response = await put(server, { sub: 'ghost', plan: 'member' }, authorization)
 
     expect(response.statusCode).toBe(404)
     // The body, not only the code. Fastify answers an *unregistered* route 404 as well, so a
@@ -267,8 +268,8 @@ describe('the order the checks run in', () => {
   // name and learn from the status code whether that account exists.
 
   it('answers 403 rather than 404 when a non-operator names an account that does not exist', async () => {
-    const { app: server, cookie } = customerServer({ callerRoles: [], subjects: [] })
-    const response = await put(server, { sub: 'ghost', plan: 'pro' }, cookie)
+    const { app: server, authorization } = customerServer({ callerRoles: [], subjects: [] })
+    const response = await put(server, { sub: 'ghost', plan: 'pro' }, authorization)
 
     expect(response.statusCode).toBe(403)
   })
@@ -277,9 +278,9 @@ describe('the order the checks run in', () => {
     // The property stated directly: an account that exists and one that does not must be
     // indistinguishable to a caller who may not do this. A 404 for the ghost and a 403 for the
     // real account would let anyone enumerate the user base one name at a time.
-    const { app: server, cookie } = customerServer({ callerRoles: [], subjects: ['other'] })
-    const exists = await put(server, { sub: 'other', plan: 'pro' }, cookie)
-    const ghost = await put(server, { sub: 'ghost', plan: 'pro' }, cookie)
+    const { app: server, authorization } = customerServer({ callerRoles: [], subjects: ['other'] })
+    const exists = await put(server, { sub: 'other', plan: 'pro' }, authorization)
+    const ghost = await put(server, { sub: 'ghost', plan: 'pro' }, authorization)
 
     // Which status they agree *on*, asserted first. "The two answers are equal" is true of two
     // Fastify route-not-found 404s as well, so equality alone passed before this route existed.
@@ -291,8 +292,8 @@ describe('the order the checks run in', () => {
   it('answers 403 rather than 400 when a non-operator sends a body it cannot use', async () => {
     // Same leak, one step earlier. Validating first would let an unauthorised caller tell 400
     // from 404 and so enumerate accounts without ever holding a role.
-    const { app: server, cookie } = customerServer({ callerRoles: [], subjects: ['other'] })
-    const response = await put(server, { sub: 'other', plan: 'enterprise' }, cookie)
+    const { app: server, authorization } = customerServer({ callerRoles: [], subjects: ['other'] })
+    const response = await put(server, { sub: 'other', plan: 'enterprise' }, authorization)
 
     expect(response.statusCode).toBe(403)
   })
@@ -302,13 +303,13 @@ describe('the body PUT /customer accepts', () => {
   it('refuses a plan string it does not know', async () => {
     const {
       app: server,
-      cookie,
+      authorization,
       storedPlan,
     } = customerServer({
       callerRoles: ['customerservice'],
       subjects: ['other'],
     })
-    const response = await put(server, { sub: 'other', plan: 'enterprise' }, cookie)
+    const response = await put(server, { sub: 'other', plan: 'enterprise' }, authorization)
 
     expect(response.statusCode).toBe(400)
     expect(JSON.stringify(response.json())).toContain('plan')
@@ -318,14 +319,14 @@ describe('the body PUT /customer accepts', () => {
   it.each([[undefined], [''], [42], [null]])('refuses a sub of %s', async (sub) => {
     const {
       app: server,
-      cookie,
+      authorization,
       writes,
     } = customerServer({
       callerRoles: ['customerservice'],
       subjects: ['other'],
     })
     const before = writes.length
-    const response = await put(server, { sub, plan: 'pro' }, cookie)
+    const response = await put(server, { sub, plan: 'pro' }, authorization)
 
     expect(response.statusCode).toBe(400)
     expect(JSON.stringify(response.json())).toContain('sub')
@@ -333,14 +334,14 @@ describe('the body PUT /customer accepts', () => {
   })
 
   it('refuses a body that is not there at all', async () => {
-    const { app: server, cookie } = customerServer({
+    const { app: server, authorization } = customerServer({
       callerRoles: ['customerservice'],
       subjects: ['other'],
     })
     const response = await server.inject({
       method: 'PUT',
       url: '/customer',
-      headers: { cookie },
+      headers: { authorization },
     })
 
     // 400 either way — Fastify's own body check or the handler's. What matters is that a
@@ -360,7 +361,7 @@ describe('the body PUT /customer accepts', () => {
     // set `roles` could mint more operators, and then the role gate above means nothing.
     const {
       app: server,
-      cookie,
+      authorization,
       writes,
     } = customerServer({
       callerRoles: ['customerservice'],
@@ -369,7 +370,7 @@ describe('the body PUT /customer accepts', () => {
     const response = await put(
       server,
       { sub: 'other', plan: 'pro', roles: ['_admin'], type: 'evil', displayName: 'pwned' },
-      cookie,
+      authorization,
     )
 
     expect(response.statusCode).toBe(200)
@@ -401,11 +402,11 @@ describe('what the contract says about PUT /customer', () => {
     )
     expect(declared, 'the contract describes no PUT /customer').toBeDefined()
 
-    const { app: server, cookie } = customerServer({
+    const { app: server, authorization } = customerServer({
       callerRoles: ['customerservice'],
       subjects: ['other'],
     })
-    const response = await put(server, { sub: 'other', plan: 'member' }, cookie)
+    const response = await put(server, { sub: 'other', plan: 'member' }, authorization)
 
     const schema = declared?.responses[String(response.statusCode)]
     expect(
@@ -429,8 +430,8 @@ describe('what the contract says about PUT /customer', () => {
     // every refusal in the contract is `application/problem+json` - so this operation's 403 and
     // 404 were invisible to every contract assertion ever written, and a test that looked one
     // up got `undefined`, which `validate` finds nothing wrong with.
-    const { app: server, cookie } = customerServer({ callerRoles: [], subjects: ['other'] })
-    const response = await put(server, { sub: 'other', plan: 'pro' }, cookie)
+    const { app: server, authorization } = customerServer({ callerRoles: [], subjects: ['other'] })
+    const response = await put(server, { sub: 'other', plan: 'pro' }, authorization)
 
     expect(response.statusCode).toBe(403)
     expect(validate(response.json(), declaredFor(403))).toEqual([])
@@ -440,11 +441,11 @@ describe('what the contract says about PUT /customer', () => {
     // The status this operation exists to be able to give: an operator needs to tell "no such
     // account" from "you may not", and nobody else may tell them apart at all. It was declared
     // in the contract from the start and checked by nothing.
-    const { app: server, cookie } = customerServer({
+    const { app: server, authorization } = customerServer({
       callerRoles: ['customerservice'],
       subjects: [],
     })
-    const response = await put(server, { sub: 'ghost', plan: 'pro' }, cookie)
+    const response = await put(server, { sub: 'ghost', plan: 'pro' }, authorization)
 
     expect(response.statusCode).toBe(404)
     expect(validate(response.json(), declaredFor(404))).toEqual([])

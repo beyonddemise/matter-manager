@@ -23,7 +23,7 @@ import { isPlan, type ProfileStore, UnknownSubjectError } from './store.js'
 export interface CustomerDependencies {
   readonly store: ProfileStore
   /**
-   * Resolves the caller from the session cookie. The same function `PATCH /profile` uses —
+   * Resolves the caller from the bearer access token. The same function `PATCH /profile` uses —
    * `sessionSubject` in `routes.ts`, passed in rather than rebuilt so there is one answer to
    * "who is asking" rather than two that can disagree.
    */

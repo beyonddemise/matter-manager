@@ -1,35 +1,60 @@
 /**
  * The three sign-in operations the contract declares.
  *
- * **Tokens never touch `localStorage`**, which the issue asks for and which shapes all three:
+ * **Tokens never touch `localStorage`**, and the four credentials here each live where their
+ * use allows:
  *
  * - the sign-in flow's PKCE carrier is an **httpOnly** cookie the page cannot read;
- * - the session established by the callback is an **httpOnly** cookie too;
- * - the CouchDB access token is returned by `POST /auth/token` **in a response body**, for the
- *   page to hold in memory and re-request when replication gets a 401.
+ * - the callback sets an **httpOnly** handoff cookie, two minutes long and single use, whose
+ *   only power is to authorise the first `POST /auth/token`;
+ * - that call returns the CouchDB access token and the refresh token **in a response body**.
+ *   The access token is held in memory and re-requested when it expires; the refresh token is
+ *   kept in `mm-local` (IndexedDB) by explicit decision, so a reload or a new tab can refresh
+ *   without a redirect. The cost of a script-readable refresh token is set out in the spec's
+ *   "trade-off of a body token" (`docs/superpowers/specs/2026-10-03-projects-landing-and-user-record-design.md`).
  *
- * That last one is deliberate rather than inconsistent. The access token has to be *readable* by
- * the page — PouchDB puts it in an `Authorization` header — so it cannot be httpOnly. Keeping it
- * in memory means it dies with the tab; keeping it in `localStorage` means it survives, is
- * readable by any script that ever runs on the origin, and grants direct access to the user's
- * CouchDB database. Short-lived and in memory is the trade this makes.
+ * The access token has to be *readable* by the page — PouchDB puts it in an `Authorization`
+ * header — so it cannot be httpOnly. Five minutes and in memory is the trade this makes, and it
+ * is also what bounds how stale a plan in `_couchdb.roles` can be.
  *
  * @module
  */
 
+import { randomUUID } from 'node:crypto'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { problem } from '../problem.js'
-import { mintToken, type SigningKey, verifyToken } from './jwt.js'
+import { planOf, type UserRecords } from '../users/records.js'
+import { bearerToken } from './bearer.js'
+import type { DenyList } from './deny-list.js'
+import { type Claims, mintToken, type SigningKey, verifyToken } from './jwt.js'
 import type { Identity, Provider } from './oidc.js'
 import { beginSignIn, completeSignIn, readFlowState, SignInError } from './oidc.js'
+import { hashJti, type RefreshStore } from './refresh-store.js'
+import { consoleSignInLog, type SignInLogger } from './sign-in-log.js'
 
 /** The cookie carrying the PKCE verifier and state across the redirect. */
 const FLOW_COOKIE = 'mm_flow'
-/** The cookie identifying the signed-in user afterwards. */
-const SESSION_COOKIE = 'mm_session'
+/** Bridges the redirect to the first `POST /auth/token`. Two minutes, single use. */
+const HANDOFF_COOKIE = 'mm_handoff'
 
-/** How long a CouchDB access token lives. */
-export const ACCESS_TOKEN_TTL = 3600
+/**
+ * How long a CouchDB access token lives, in seconds.
+ *
+ * Five minutes, because CouchDB verifies the token itself and never asks this service: sign-out
+ * cannot reach a copy already taken, and a plan an operator changes reaches CouchDB only at the
+ * next mint. This number is the bound on both.
+ */
+export const ACCESS_TOKEN_TTL = 300
+/** How long a refresh token lives, in seconds. Revocation, not expiry, is what ends one early. */
+export const REFRESH_TOKEN_TTL = 30 * 24 * 3600
+/** How long the handoff cookie lives, in seconds. Long enough for a redirect, and no longer. */
+export const HANDOFF_TTL = 120
+
+/** An identity whose address the provider vouched for. Records are keyed by it. */
+export type VerifiedIdentity = Identity & { readonly email: string; readonly emailVerified: true }
+
+const isVerified = (identity: Identity): identity is VerifiedIdentity =>
+  identity.email !== undefined && identity.email !== '' && identity.emailVerified === true
 
 /** What the routes need that this module does not own. */
 export interface AuthDependencies {
@@ -38,17 +63,18 @@ export interface AuthDependencies {
    * The key CouchDB validates.
    *
    * Its public half is installed in CouchDB's `[jwt_keys]` by `keys.ts`, so **anything signed
-   * with it is a database credential**. Only the access token is, and only for an hour.
+   * with it is a database credential**. Only the access token is, and only for five minutes.
    */
   readonly key: SigningKey
   /**
-   * The key for credentials CouchDB must never accept: the session cookie and the PKCE carrier.
+   * The key for credentials CouchDB must never accept: the refresh token, the handoff cookie
+   * and the PKCE carrier.
    *
    * A separate key rather than a `purpose` claim, because **CouchDB does not evaluate claims it
    * was not taught about** — it checks a signature and an expiry, and nothing else. So a
-   * thirty-day session signed with the key above was a thirty-day database credential however
-   * carefully this service refused to accept one. A claim cannot fix that; a key CouchDB has
-   * never been given can, because CouchDB cannot verify the signature at all.
+   * thirty-day refresh token signed with the key above would be a thirty-day database credential
+   * however carefully this service refused to accept one. A claim cannot fix that; a key CouchDB
+   * has never been given can, because CouchDB cannot verify the signature at all.
    *
    * Its public half is never installed anywhere.
    */
@@ -57,8 +83,16 @@ export interface AuthDependencies {
   readonly verifyIdToken: (idToken: string) => Promise<Identity>
   /** Where the browser is sent after a successful sign-in. */
   readonly appOrigin: string
-  /** Records or updates the user. Returns nothing the routes need; failures propagate. */
-  readonly rememberUser: (identity: Identity) => Promise<void>
+  /** User records: read on every mint, for the plan the access token carries. */
+  readonly records: UserRecords
+  /** Where refresh-token hashes are kept, and therefore where revoking one happens. */
+  readonly refresh: RefreshStore
+  /** Access tokens signed out before their expiry, and handoffs already exchanged. */
+  readonly deny: DenyList
+  /** Accepts pending invitations, creating the record only when one is redeemable. */
+  readonly signIn: (identity: VerifiedIdentity) => Promise<{ readonly hasRecord: boolean }>
+  /** Where each completed sign-in is recorded. Defaults to one JSON line on stdout. */
+  readonly logSignIn?: SignInLogger
   /**
    * How the provider's token endpoint is reached.
    *
@@ -106,14 +140,15 @@ function setCookie(reply: FastifyReply, value: string): void {
 }
 
 /**
- * Registers Google sign-in, callback, sign-out, and access-token routes.
+ * Registers Google sign-in, callback, sign-out, and token routes.
  *
  * @param app - The Fastify application to which the routes are added
- * @param deps - Authentication providers, keys, callbacks, and runtime dependencies
+ * @param deps - Authentication providers, keys, stores, and runtime dependencies
  */
 export function registerAuthRoutes(app: FastifyInstance, deps: AuthDependencies): void {
   const secure = !deps.appOrigin.startsWith('http://localhost')
   const now = deps.now ?? (() => Math.floor(Date.now() / 1000))
+  const logSignIn = deps.logSignIn ?? consoleSignInLog()
 
   app.get('/auth/google', async (request, reply) => {
     const returnTo = (request.query as { returnTo?: string }).returnTo ?? '/'
@@ -131,28 +166,39 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthDependencies)
 
     // The user pressed Cancel at the consent screen. Not an error to report — they made a
     // choice — so they are returned to the application signed out, with **no partial account
-    // created**, which is the issue's third scenario. Nothing has been written by this point.
+    // created**. Nothing has been written by this point.
     if (query.error !== undefined || query.code === undefined) {
       clearCookies(reply, secure)
       return reply.redirect(`${deps.appOrigin}/`, 302)
     }
 
-    let identity: Identity
+    let identity: VerifiedIdentity
     let returnTo = '/'
     try {
       const flow = readFlowState(cookie(request, FLOW_COOKIE), query.state, deps.sessionKey, now)
       returnTo = flow.returnTo
-      identity = await completeSignIn(
+      const claimed = await completeSignIn(
         deps.provider,
         query.code,
         flow,
         deps.verifyIdToken,
         deps.fetchImpl,
       )
-      // Written *after* the identity is verified and *before* the session is issued. A failure
-      // here means no session, which is the right way round: a signed-in user whose profile
-      // does not exist would fail on their next request in a way nothing explains.
-      await deps.rememberUser(identity)
+      // Records, invitations and refresh hashes are all keyed by the address, so an address the
+      // provider did not vouch for would let somebody sign in as whoever they typed.
+      if (!isVerified(claimed)) {
+        throw new SignInError('unverified', 'The provider did not verify this address.')
+      }
+      identity = claimed
+      // After the identity is verified and before the handoff is issued. A failure here means
+      // no handoff, which is the right way round: a failed sign-in can simply be repeated.
+      const { hasRecord } = await deps.signIn(identity)
+      logSignIn({
+        sub: identity.sub,
+        email: identity.email,
+        provider: deps.provider.name,
+        hasRecord,
+      })
     } catch (error) {
       // Not logged with the query: it contains an authorization code. `SignInError` carries a
       // short problem code, and anything else is a fault rather than a rejected sign-in.
@@ -164,90 +210,139 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthDependencies)
       return reply.redirect(`${deps.appOrigin}/?signin=failed`, 302)
     }
 
-    // The session, as an httpOnly cookie the page cannot read. Its only use is to authorise
-    // `POST /auth/token`, which is what hands the page something it *can* read.
-    const session = mintToken(deps.sessionKey, {
-      purpose: 'session',
+    // The handoff, as an httpOnly cookie the page cannot read. Its only use is to authorise the
+    // first `POST /auth/token`, which is what hands the page something it *can* read. It carries
+    // the address and name so that call needs no lookup to mint a refresh token.
+    const handoff = mintToken(deps.sessionKey, {
+      purpose: 'handoff',
       sub: identity.sub,
-      exp: now() + 30 * 24 * 3600,
+      email: identity.email,
+      ...(identity.name === undefined ? {} : { name: identity.name }),
+      jti: randomUUID(),
+      exp: now() + HANDOFF_TTL,
     })
     setCookie(reply, `${FLOW_COOKIE}=; ${cookieAttributes(0, secure)}`)
     setCookie(
       reply,
-      `${SESSION_COOKIE}=${encodeURIComponent(session)}; ${cookieAttributes(30 * 24 * 3600, secure)}`,
+      `${HANDOFF_COOKIE}=${encodeURIComponent(handoff)}; ${cookieAttributes(HANDOFF_TTL, secure)}`,
     )
-
     return reply.redirect(`${deps.appOrigin}${returnTo}`, 302)
   })
 
-  app.post('/auth/signout', async (_request, reply) => {
-    // Necessary as a *server* operation because the session cookie is httpOnly: the page cannot
-    // remove it, and a page that merely forgot its own token would still be signed in on the
-    // next request.
-    //
-    // No session check. Signing out when already signed out is not an error, and answering 401
-    // to it would leave a user who is confused about their state unable to reach a state they
-    // are certain about.
-    clearCookies(reply, secure)
-    return reply.code(204).send()
-  })
-
   app.post('/auth/token', async (request, reply) => {
-    const session = cookie(request, SESSION_COOKIE)
-    // `{ title, status }` as `application/problem+json`, which is what the contract has always
-    // declared for this 401 — it answered `{ error: 'not signed in' }` as `application/json`,
-    // and both halves of that were wrong. Nothing read the body (the frontend's
-    // `readSessionState` branches on the status alone, deliberately, because a 401 here is an
-    // ordinary state rather than a failure), so the contract is the side that was right and
-    // this is the side that had drifted. The drift check validates this response now.
-    if (session === undefined) return problem(reply, { title: 'Not signed in', status: 401 })
+    const body = request.body as { refreshToken?: unknown } | null | undefined
+    // `{ title, status }` as `application/problem+json`, as the contract declares. Every refusal
+    // below is byte-for-byte this one: a credential that is absent, expired, forged, spent or
+    // revoked is the same fact to the caller — "sign in again" — and telling them apart would
+    // say whether a token this service issued is still good to somebody holding a stolen one.
+    const unauthorized = () => problem(reply, { title: 'Not signed in', status: 401 })
 
-    let sub: string
-    try {
-      sub = verifySession(session, deps, now)
-    } catch {
-      // Byte-for-byte the answer above. A cookie that is absent and one that no longer verifies
-      // are the same fact to the caller — "sign in again" — and telling them apart would say
-      // whether a token this service issued is still good to somebody holding a stolen one.
-      return problem(reply, { title: 'Not signed in', status: 401 })
+    let claims: Claims & { readonly email: string }
+    let refreshToken: string
+    if (typeof body?.refreshToken === 'string' && body.refreshToken !== '') {
+      let presented: Claims
+      try {
+        presented = verifyToken(body.refreshToken, deps.sessionKey.publicKey, 'refresh', now)
+      } catch {
+        return unauthorized()
+      }
+      if (presented.email === undefined || presented.jti === undefined) return unauthorized()
+      // A signature alone is not enough: revocation is deletion of the stored hash, so a token
+      // is honoured only while its hash is still found (see `refresh-store.ts`).
+      if (!(await deps.refresh.isLive(presented.email, hashJti(presented.jti)))) {
+        return unauthorized()
+      }
+      claims = { ...presented, email: presented.email }
+      // Returned unchanged. Rotation is tracked as an issue, not done here.
+      refreshToken = body.refreshToken
+    } else {
+      const handoff = cookie(request, HANDOFF_COOKIE)
+      if (handoff === undefined) return unauthorized()
+      let bridged: Claims
+      try {
+        bridged = verifyToken(handoff, deps.sessionKey.publicKey, 'handoff', now)
+      } catch {
+        return unauthorized()
+      }
+      if (bridged.email === undefined || bridged.jti === undefined) return unauthorized()
+      // Single use. The deny list already forgets entries at their expiry, which is exactly the
+      // lifetime a used handoff has to be remembered for.
+      if (deps.deny.denied(bridged.jti)) return unauthorized()
+      deps.deny.deny(bridged.jti, bridged.exp)
+
+      const jti = randomUUID()
+      const exp = now() + REFRESH_TOKEN_TTL
+      claims = {
+        purpose: 'refresh',
+        sub: bridged.sub,
+        email: bridged.email,
+        ...(bridged.name === undefined ? {} : { name: bridged.name }),
+        jti,
+        iat: now(),
+        exp,
+      }
+      refreshToken = mintToken(deps.sessionKey, claims)
+      // Only the hash is stored, so a leaked record or memory dump is not a set of credentials.
+      await deps.refresh.remember(bridged.email, { hash: hashJti(jti), exp, createdAt: now() })
+      setCookie(reply, `${HANDOFF_COOKIE}=; ${cookieAttributes(0, secure)}`)
     }
 
+    // Read on every mint, so an operator's change reaches CouchDB within one token lifetime.
+    const plan = planOf(await deps.records.read(claims.email))
     const accessToken = mintToken(deps.key, {
-      // Not interchangeable with the session cookie above, deliberately. See `TokenPurpose`.
+      // Not interchangeable with the refresh token above, deliberately. See `TokenPurpose`.
       purpose: 'access',
-      sub,
-      exp: now() + ACCESS_TOKEN_TTL,
+      sub: claims.sub,
+      email: claims.email,
+      // The deny list's key, so sign-out can refuse this token on this API before its expiry.
+      jti: randomUUID(),
       iat: now(),
+      exp: now() + ACCESS_TOKEN_TTL,
+      '_couchdb.roles': [plan],
     })
 
     // Never cached. A token in a shared cache is a token for whoever asks next.
     reply.header('cache-control', 'no-store')
-    return { accessToken, expiresIn: ACCESS_TOKEN_TTL }
+    return { accessToken, expiresIn: ACCESS_TOKEN_TTL, refreshToken }
+  })
+
+  app.post('/auth/signout', async (request, reply) => {
+    // No credential is required. Signing out when signed out is not an error, and answering 401
+    // would leave a user who is confused about their state unable to reach one they are certain
+    // about. Each credential presented is ended as far as this service can end it.
+    const body = request.body as { refreshToken?: unknown } | null | undefined
+    if (typeof body?.refreshToken === 'string') {
+      try {
+        const claims = verifyToken(body.refreshToken, deps.sessionKey.publicKey, 'refresh', now)
+        if (claims.email !== undefined && claims.jti !== undefined) {
+          await deps.refresh.revoke(claims.email, hashJti(claims.jti))
+        }
+      } catch {
+        // A token that does not verify has nothing to revoke.
+      }
+    }
+    const access = bearerToken(request.headers.authorization)
+    if (access !== undefined) {
+      try {
+        const claims = verifyToken(access, deps.key.publicKey, 'access', now)
+        // This API only: CouchDB never asks, so a copy already taken replicates until `exp`.
+        if (claims.jti !== undefined) deps.deny.deny(claims.jti, claims.exp)
+      } catch {
+        // Expired or forged: nothing to deny.
+      }
+    }
+    clearCookies(reply, secure)
+    return reply.code(204).send()
   })
 }
 
 /**
- * Reads the session cookie, throwing if it is not one this service issued and still valid.
- *
- * Deliberately the same verification a CouchDB token gets: same algorithm guard, same wrapped
- * signature check, same expiry rule. A separate one here would be a second place to forget the
- * algorithm check — and a session cookie is exactly the token an attacker would most like to
- * present with `alg: none`.
- *
- * Verified with `sessionKey`, never with the key CouchDB was given. See
- * {@link AuthDependencies.sessionKey} for why those are two keys and not one.
- */
-function verifySession(session: string, deps: AuthDependencies, now: () => number): string {
-  return verifyToken(session, deps.sessionKey.publicKey, 'session', now).sub
-}
-
-/**
- * Clears the authentication flow and session cookies.
+ * Clears the sign-in flow and handoff cookies.
  *
  * @param reply - The response to which expired cookie headers are appended
  * @param secure - Whether the cookies require the `Secure` attribute
  */
 function clearCookies(reply: FastifyReply, secure: boolean): void {
   setCookie(reply, `${FLOW_COOKIE}=; ${cookieAttributes(0, secure)}`)
-  setCookie(reply, `${SESSION_COOKIE}=; ${cookieAttributes(0, secure)}`)
+  setCookie(reply, `${HANDOFF_COOKIE}=; ${cookieAttributes(0, secure)}`)
 }

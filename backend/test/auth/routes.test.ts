@@ -1,17 +1,31 @@
 import { generateKeyPairSync } from 'node:crypto'
 import { afterEach, describe, expect, it } from 'vitest'
+import { denyList } from '../../src/auth/deny-list.js'
 import { googleProvider } from '../../src/auth/google.js'
 import { mintToken, signingKeyFromPem, verifyToken } from '../../src/auth/jwt.js'
 import type { Identity } from '../../src/auth/oidc.js'
-import { ACCESS_TOKEN_TTL } from '../../src/auth/routes.js'
+import { hashJti, refreshStore } from '../../src/auth/refresh-store.js'
+import { ACCESS_TOKEN_TTL, type AuthDependencies } from '../../src/auth/routes.js'
 import { buildServer, type Server } from '../../src/server.js'
+import { forgetUsersDatabase } from '../../src/users/database.js'
+import { userRecords } from '../../src/users/records.js'
+import { fakeCouch } from '../support/couch.js'
 
 function newKey(kid = 'ec-test') {
   const { privateKey } = generateKeyPairSync('ec', { namedCurve: 'prime256v1' })
   return signingKeyFromPem(kid, privateKey.export({ type: 'pkcs8', format: 'pem' }).toString())
 }
 
-const IDENTITY: Identity = { sub: 'google|1234', email: 'ada@example.com', name: 'Ada' }
+const VERIFIED: Identity = {
+  sub: 'google|1234',
+  email: 'ada@example.com',
+  emailVerified: true,
+  name: 'Ada',
+}
+
+/** The test clock's starting point. Every verification below reads the same instant. */
+const T0 = 1_800_000_000
+const at = () => T0
 
 let app: Server | undefined
 
@@ -20,50 +34,74 @@ afterEach(async () => {
   app = undefined
 })
 
-/** The service with sign-in wired to a provider that is not Google. */
+/** The service with sign-in wired to a fake provider and a fake CouchDB. */
 function signInServer(
   overrides: {
-    verifyIdToken?: (idToken: string) => Promise<Identity>
-    remembered?: Identity[]
-    rememberUser?: (identity: Identity) => Promise<void>
+    identity?: Identity
+    signIn?: AuthDependencies['signIn']
     exchange?: typeof fetch
   } = {},
 ) {
+  forgetUsersDatabase()
+  let t = T0
+  const now = () => t
+  const fake = fakeCouch()
+  const records = userRecords(fake.couch)
+  const refresh = refreshStore(records, now)
+  const deny = denyList(now)
+  const logged: unknown[] = []
+  const signedIn: Identity[] = []
   const key = newKey()
-  // A *different* key, and that is the entire point of it. See the tests below.
+  // A *different* key, and that is the entire point of it. See the key-isolation tests below.
   const sessionKey = newKey('ec-session')
-  const remembered = overrides.remembered ?? []
-
   app = buildServer({
     logger: false,
     auth: {
       provider: googleProvider({
-        clientId: 'client-123',
-        clientSecret: 'secret',
+        clientId: 'c',
+        clientSecret: 's',
         redirectUri: 'https://matter.example/auth/google/callback',
       }),
       key,
       sessionKey,
-      verifyIdToken: overrides.verifyIdToken ?? (async () => IDENTITY),
+      verifyIdToken: async () => overrides.identity ?? VERIFIED,
       appOrigin: 'https://matter.example',
       // The provider's token endpoint, faked. Letting this reach Google would be a test that
       // needs credentials, a network and a real user — and therefore a test nobody runs.
       fetchImpl:
         overrides.exchange ??
-        ((async () =>
-          ({
-            ok: true,
-            status: 200,
-            json: async () => ({ id_token: 'header.payload.signature' }),
-          }) as unknown as Response) as unknown as typeof fetch),
-      rememberUser:
-        overrides.rememberUser ??
+        ((async () => ({
+          ok: true,
+          status: 200,
+          json: async () => ({ id_token: 'h.p.s' }),
+        })) as unknown as typeof fetch),
+      records,
+      refresh,
+      deny,
+      signIn:
+        overrides.signIn ??
         (async (identity) => {
-          remembered.push(identity)
+          signedIn.push(identity)
+          return { hasRecord: false }
         }),
+      logSignIn: (event) => logged.push(event),
+      now,
     },
   })
-  return { app, key, sessionKey, remembered }
+  return {
+    app,
+    key,
+    sessionKey,
+    records,
+    refresh,
+    deny,
+    fake,
+    logged,
+    signedIn,
+    advance: (s: number) => {
+      t += s
+    },
+  }
 }
 
 /** Every `Set-Cookie` on a reply, as strings. */
@@ -78,6 +116,33 @@ const cookieNamed = (headers: Record<string, unknown>, name: string): string | u
 /** The value of a cookie, decoded. */
 const cookieValue = (entry: string): string =>
   decodeURIComponent(entry.slice(entry.indexOf('=') + 1).split(';')[0] ?? '')
+
+/** Runs the redirect dance and returns the callback's reply. */
+async function callback(server: ReturnType<typeof signInServer>) {
+  const start = await server.app.inject({ method: 'GET', url: '/auth/google' })
+  const flow = cookieNamed(start.headers, 'mm_flow') ?? ''
+  const state = new URL(String(start.headers.location)).searchParams.get('state') ?? ''
+  return server.app.inject({
+    method: 'GET',
+    url: `/auth/google/callback?code=c&state=${encodeURIComponent(state)}`,
+    headers: { cookie: `mm_flow=${encodeURIComponent(cookieValue(flow))}` },
+  })
+}
+
+/** Runs the redirect dance and returns the handoff cookie header to send to /auth/token. */
+async function completeSignIn(server: ReturnType<typeof signInServer>): Promise<string> {
+  const reply = await callback(server)
+  const handoff = cookieNamed(reply.headers, 'mm_handoff')
+  if (handoff === undefined) throw new Error('no handoff cookie')
+  return `mm_handoff=${encodeURIComponent(cookieValue(handoff))}`
+}
+
+/** Signs in and exchanges the handoff, returning the token pair. */
+async function tokensFor(server: ReturnType<typeof signInServer>) {
+  const cookie = await completeSignIn(server)
+  const reply = await server.app.inject({ method: 'POST', url: '/auth/token', headers: { cookie } })
+  return reply.json() as { accessToken: string; expiresIn: number; refreshToken: string }
+}
 
 describe('offering sign-in', () => {
   it('is absent when no provider is configured', async () => {
@@ -100,11 +165,11 @@ describe('offering sign-in', () => {
   })
 
   it('sets the flow carrier as an httpOnly cookie', async () => {
-    // The issue's rule: tokens never in `localStorage`. The PKCE verifier is the strictest case
-    // — the page has no reason to read it, so it is put somewhere the page cannot.
+    // The PKCE verifier is the strictest case — the page has no reason to read it, so it is put
+    // somewhere the page cannot.
     const { app: server } = signInServer()
     const response = await server.inject({ method: 'GET', url: '/auth/google' })
-    const flow = cookieNamed(response.headers as Record<string, unknown>, 'mm_flow')
+    const flow = cookieNamed(response.headers, 'mm_flow')
 
     expect(flow).toBeDefined()
     expect(flow).toContain('HttpOnly')
@@ -118,17 +183,13 @@ describe('offering sign-in', () => {
     const { app: server } = signInServer()
     const response = await server.inject({ method: 'GET', url: '/auth/google' })
 
-    expect(cookieNamed(response.headers as Record<string, unknown>, 'mm_flow')).not.toContain(
-      'SameSite=Strict',
-    )
+    expect(cookieNamed(response.headers, 'mm_flow')).not.toContain('SameSite=Strict')
   })
 
   it('keeps the verifier out of the redirect', async () => {
     const { app: server } = signInServer()
     const response = await server.inject({ method: 'GET', url: '/auth/google' })
-    const carrier = cookieValue(
-      cookieNamed(response.headers as Record<string, unknown>, 'mm_flow') ?? '',
-    )
+    const carrier = cookieValue(cookieNamed(response.headers, 'mm_flow') ?? '')
     const flow = JSON.parse(Buffer.from(carrier.split('.')[1] ?? '', 'base64url').toString())
 
     expect(String(response.headers.location)).not.toContain(flow.verifier)
@@ -136,85 +197,107 @@ describe('offering sign-in', () => {
 })
 
 describe('completing sign-in', () => {
-  /** Runs a whole sign-in and returns the callback's reply. */
-  async function signIn(overrides: Parameters<typeof signInServer>[0] = {}) {
-    const built = signInServer(overrides)
-    const start = await built.app.inject({ method: 'GET', url: '/auth/google' })
-    const carrier = cookieNamed(start.headers as Record<string, unknown>, 'mm_flow') ?? ''
-    const state = new URL(String(start.headers.location)).searchParams.get('state') ?? ''
+  it('returns the user to the application with a handoff cookie', async () => {
+    const server = signInServer()
+    const reply = await callback(server)
 
-    const callback = await built.app.inject({
-      method: 'GET',
-      url: `/auth/google/callback?code=the-code&state=${encodeURIComponent(state)}`,
-      headers: { cookie: carrier.split(';')[0] ?? '' },
-    })
-    return { ...built, callback }
-  }
+    expect(reply.statusCode).toBe(302)
+    expect(reply.headers.location).toBe('https://matter.example/')
 
-  it('returns the user to the application with a session', async () => {
-    const { callback, sessionKey } = await signIn()
-
-    expect(callback.statusCode).toBe(302)
-    expect(callback.headers.location).toBe('https://matter.example/')
-
-    const session = cookieNamed(callback.headers as Record<string, unknown>, 'mm_session')
-    expect(session).toContain('HttpOnly')
-    expect(verifyToken(cookieValue(session ?? ''), sessionKey.publicKey, 'session').sub).toBe(
-      'google|1234',
-    )
+    const handoff = cookieNamed(reply.headers, 'mm_handoff')
+    expect(handoff).toContain('HttpOnly')
+    expect(handoff).toContain('SameSite=Lax')
+    expect(handoff).toContain('Max-Age=120')
+    expect(
+      verifyToken(cookieValue(handoff ?? ''), server.sessionKey.publicKey, 'handoff', at),
+    ).toMatchObject({ sub: 'google|1234', email: 'ada@example.com', name: 'Ada' })
   })
 
-  it('records the user', async () => {
-    // The issue's first scenario: "a profile document is created". This is the seam that does
-    // it; M4-5 fills in what the document contains.
-    const { remembered } = await signIn()
+  it('sets no session cookie any more', async () => {
+    const reply = await callback(signInServer())
 
-    expect(remembered).toEqual([IDENTITY])
+    expect(cookieNamed(reply.headers, 'mm_session')).toBeUndefined()
+  })
+
+  it('hands the verified identity to signIn', async () => {
+    const server = signInServer()
+    await callback(server)
+
+    expect(server.signedIn).toEqual([VERIFIED])
   })
 
   it('clears the flow carrier once it is spent', async () => {
     // A PKCE verifier that outlives its exchange is a credential lying around for no reason.
-    const { callback } = await signIn()
+    const reply = await callback(signInServer())
 
-    expect(cookieNamed(callback.headers as Record<string, unknown>, 'mm_flow')).toContain(
-      'Max-Age=0',
-    )
+    expect(cookieNamed(reply.headers, 'mm_flow')).toContain('Max-Age=0')
   })
 
-  it('records the user before issuing the session, not after', async () => {
-    // The right way round. A signed-in user whose profile does not exist would fail on their
-    // next request in a way nothing explains; a failed sign-in they can simply repeat.
-    const { callback } = await signIn({
-      rememberUser: async () => {
-        throw new Error('storage is down')
-      },
-    })
-
-    expect(callback.headers.location).toContain('signin=failed')
-    expect(cookieNamed(callback.headers as Record<string, unknown>, 'mm_session')).toContain(
-      'Max-Age=0',
+  it('issues no handoff when signIn fails', async () => {
+    // The right way round. A failed sign-in the user can simply repeat; a handoff for somebody
+    // whose invitations were half-accepted is a state nothing explains.
+    const reply = await callback(
+      signInServer({
+        signIn: async () => {
+          throw new Error('storage is down')
+        },
+      }),
     )
+
+    expect(reply.headers.location).toContain('signin=failed')
+    expect(cookieNamed(reply.headers, 'mm_handoff')).toContain('Max-Age=0')
+  })
+})
+
+describe('sign-in creates no record', () => {
+  it('logs one line and writes nothing to matter_manager', async () => {
+    const server = signInServer()
+    await completeSignIn(server)
+    expect(server.logged).toEqual([
+      { sub: 'google|1234', email: 'ada@example.com', provider: 'google', hasRecord: false },
+    ])
+    expect(
+      [...server.fake.documents.keys()].some((k) => k.startsWith('matter_manager/user:')),
+    ).toBe(false)
+  })
+
+  it('refuses an unverified address', async () => {
+    // Records are keyed by the address, so an address the provider did not vouch for would let
+    // somebody sign in as whoever they typed.
+    const server = signInServer({ identity: { ...VERIFIED, emailVerified: false } })
+    const reply = await callback(server)
+
+    expect(String(reply.headers.location)).toContain('signin=failed')
+    expect(cookieValue(cookieNamed(reply.headers, 'mm_handoff') ?? '')).toBe('')
+    expect(server.signedIn).toEqual([])
+    expect(server.logged).toEqual([])
+  })
+
+  it('refuses an identity with no address at all', async () => {
+    const server = signInServer({ identity: { sub: 'google|1234', emailVerified: true } })
+    const reply = await callback(server)
+
+    expect(String(reply.headers.location)).toContain('signin=failed')
+    expect(server.signedIn).toEqual([])
   })
 })
 
 describe('abandoning sign-in', () => {
   it('returns the user signed out, with nothing created', async () => {
-    // The issue's third scenario. Google sends `error=access_denied` when the user presses
-    // Cancel, and nothing has been written by that point — so there is no partial account to
-    // clean up, which is a property of the ordering rather than of a cleanup step.
-    const { app: server, remembered } = signInServer()
-    const response = await server.inject({
+    // Google sends `error=access_denied` when the user presses Cancel, and nothing has been
+    // written by that point — so there is no partial account to clean up, which is a property
+    // of the ordering rather than of a cleanup step.
+    const server = signInServer()
+    const response = await server.app.inject({
       method: 'GET',
       url: '/auth/google/callback?error=access_denied&state=whatever',
     })
 
     expect(response.statusCode).toBe(302)
     expect(response.headers.location).toBe('https://matter.example/')
-    expect(response.headers.location).not.toContain('failed')
-    expect(remembered).toEqual([])
-    expect(cookieNamed(response.headers as Record<string, unknown>, 'mm_session')).toContain(
-      'Max-Age=0',
-    )
+    expect(server.signedIn).toEqual([])
+    expect(server.logged).toEqual([])
+    expect(cookieNamed(response.headers, 'mm_handoff')).toContain('Max-Age=0')
   })
 
   it('does not report a cancelled sign-in as a failure', async () => {
@@ -232,19 +315,20 @@ describe('abandoning sign-in', () => {
 describe('a callback that was not started here', () => {
   it('is refused when the state does not match', async () => {
     // CSRF: an attacker walks a victim's browser through *their* sign-in, and the victim ends
-    // up signed in as the attacker in an application holding their home's commissioning codes.
-    const { app: server, remembered } = signInServer()
-    const start = await server.inject({ method: 'GET', url: '/auth/google' })
-    const carrier = cookieNamed(start.headers as Record<string, unknown>, 'mm_flow') ?? ''
+    // up signed in as the attacker.
+    const server = signInServer()
+    const start = await server.app.inject({ method: 'GET', url: '/auth/google' })
+    const carrier = cookieNamed(start.headers, 'mm_flow') ?? ''
 
-    const response = await server.inject({
+    const response = await server.app.inject({
       method: 'GET',
       url: '/auth/google/callback?code=c&state=not-the-state',
       headers: { cookie: carrier.split(';')[0] ?? '' },
     })
 
     expect(response.headers.location).toContain('signin=failed')
-    expect(remembered).toEqual([])
+    expect(server.signedIn).toEqual([])
+    expect(cookieValue(cookieNamed(response.headers, 'mm_handoff') ?? '')).toBe('')
   })
 
   it('is refused when there is no carrier at all', async () => {
@@ -258,250 +342,276 @@ describe('a callback that was not started here', () => {
   })
 })
 
-describe('issuing an access token', () => {
-  async function signedIn() {
-    const built = signInServer()
-    const start = await built.app.inject({ method: 'GET', url: '/auth/google' })
-    const carrier = cookieNamed(start.headers as Record<string, unknown>, 'mm_flow') ?? ''
-    const state = new URL(String(start.headers.location)).searchParams.get('state') ?? ''
-    const callback = await built.app.inject({
-      method: 'GET',
-      url: `/auth/google/callback?code=c&state=${encodeURIComponent(state)}`,
-      headers: { cookie: carrier.split(';')[0] ?? '' },
-    })
-    const session = cookieNamed(callback.headers as Record<string, unknown>, 'mm_session') ?? ''
-    return { ...built, sessionCookie: session.split(';')[0] ?? '' }
-  }
-
-  it('answers what the contract declares', async () => {
-    const { app: server, sessionCookie, key } = await signedIn()
-    const response = await server.inject({
+describe('POST /auth/token', () => {
+  it('exchanges the handoff cookie for both tokens, once', async () => {
+    const server = signInServer()
+    const cookie = await completeSignIn(server)
+    const first = await server.app.inject({
       method: 'POST',
       url: '/auth/token',
-      headers: { cookie: sessionCookie },
+      headers: { cookie },
     })
+    expect(first.statusCode).toBe(200)
+    const body = first.json()
+    expect(body).toMatchObject({ expiresIn: 300 })
+    expect(ACCESS_TOKEN_TTL).toBe(300)
+    expect(typeof body.refreshToken).toBe('string')
 
-    expect(response.statusCode).toBe(200)
-    const body = response.json() as { accessToken: string; expiresIn: number }
-    expect(body.expiresIn).toBe(ACCESS_TOKEN_TTL)
-    expect(verifyToken(body.accessToken, key.publicKey, 'access').sub).toBe('google|1234')
+    const access = verifyToken(body.accessToken, server.key.publicKey, 'access', at)
+    expect(access).toMatchObject({
+      sub: 'google|1234',
+      email: 'ada@example.com',
+      '_couchdb.roles': ['free'],
+    })
+    expect(typeof access.jti).toBe('string')
+
+    const replay = await server.app.inject({
+      method: 'POST',
+      url: '/auth/token',
+      headers: { cookie },
+    })
+    expect(replay.statusCode).toBe(401)
   })
 
-  it('returns the token in the body rather than a cookie', async () => {
-    // Deliberate, and the one place a token is readable by the page: PouchDB has to put it in
-    // an Authorization header, so it cannot be httpOnly. In memory it dies with the tab; in
-    // `localStorage` it survives and is readable by any script that ever runs on the origin.
-    const { app: server, sessionCookie } = await signedIn()
-    const response = await server.inject({
+  it('clears the handoff cookie once it is spent', async () => {
+    const server = signInServer()
+    const cookie = await completeSignIn(server)
+    const reply = await server.app.inject({
       method: 'POST',
       url: '/auth/token',
-      headers: { cookie: sessionCookie },
+      headers: { cookie },
     })
 
-    expect(cookies(response.headers as Record<string, unknown>)).toEqual([])
-    expect(response.json()).toHaveProperty('accessToken')
+    expect(cookieNamed(reply.headers, 'mm_handoff')).toContain('Max-Age=0')
   })
 
-  it('does not accept an access token as a session', async () => {
-    // The access token is the one credential this service hands to page scripts on purpose —
-    // PouchDB has to put it in a header, so it cannot be httpOnly. If it also works as a
-    // session, then exfiltrating it is not a one-hour problem: it can be presented here to
-    // mint a fresh access token, and again, for as long as the attacker keeps asking. The
-    // hour-long lifetime would be a limit on nothing.
-    const { app: server, sessionCookie } = await signedIn()
-    const minted = await server.inject({
+  it('refuses a handoff after its two minutes', async () => {
+    const server = signInServer()
+    const cookie = await completeSignIn(server)
+    server.advance(120)
+
+    const reply = await server.app.inject({
       method: 'POST',
       url: '/auth/token',
-      headers: { cookie: sessionCookie },
+      headers: { cookie },
     })
-    const { accessToken } = minted.json() as { accessToken: string }
-
-    const replayed = await server.inject({
-      method: 'POST',
-      url: '/auth/token',
-      headers: { cookie: `mm_session=${encodeURIComponent(accessToken)}` },
-    })
-
-    expect(replayed.statusCode).toBe(401)
+    expect(reply.statusCode).toBe(401)
   })
 
-  it('signs the session with a key CouchDB does not have', async () => {
-    // The finding the `purpose` claim could not answer. **CouchDB does not evaluate `purpose`**
-    // — it checks a signature and an expiry, using the public key this service installs in
-    // `[jwt_keys]`. So a thirty-day session cookie presented straight to CouchDB as a bearer
-    // was accepted by CouchDB no matter what this service would have said about it.
-    //
-    // A claim cannot fix that. A second key can: sessions are signed with a key whose public
-    // half is never installed, so CouchDB cannot verify one at all. This asserts the property
-    // CouchDB actually enforces — the signature — rather than the one it ignores.
-    const { app: server, key, sessionCookie } = await signedIn()
-    const session = decodeURIComponent(sessionCookie.split('=').slice(1).join('='))
+  it('refreshes with the refresh token, returning the same refresh token', async () => {
+    const server = signInServer()
+    const first = await tokensFor(server)
+    const again = await server.app.inject({
+      method: 'POST',
+      url: '/auth/token',
+      payload: { refreshToken: first.refreshToken },
+    })
+    expect(again.statusCode).toBe(200)
+    expect(again.json().refreshToken).toBe(first.refreshToken)
+  })
 
-    expect(() => verifyToken(session, key.publicKey, 'session')).toThrow(
-      expect.objectContaining({ problem: 'signature' }),
+  it('carries a plan an operator set since the last refresh, without signing in again', async () => {
+    const server = signInServer()
+    const first = await tokensFor(server)
+    await server.records.setPlan('ada@example.com', 'pro')
+    const again = (
+      await server.app.inject({
+        method: 'POST',
+        url: '/auth/token',
+        payload: { refreshToken: first.refreshToken },
+      })
+    ).json()
+    const claims = verifyToken(again.accessToken, server.key.publicKey, 'access', at)
+    expect(claims['_couchdb.roles']).toEqual(['pro'])
+  })
+
+  it('refuses a refresh token whose hash an admin deleted from the record', async () => {
+    const server = signInServer()
+    const first = await tokensFor(server)
+    await server.records.ensure(
+      { email: 'ada@example.com', sub: 'google|1234' },
+      server.refresh.drain('ada@example.com'),
     )
-    await server.close()
+    const { jti } = verifyToken(first.refreshToken, server.sessionKey.publicKey, 'refresh', at)
+    await server.records.removeRefresh('ada@example.com', hashJti(String(jti)))
+    const again = await server.app.inject({
+      method: 'POST',
+      url: '/auth/token',
+      payload: { refreshToken: first.refreshToken },
+    })
+    expect(again.statusCode).toBe(401)
+  })
+
+  it('refuses an access token presented as a refresh token', async () => {
+    // The access token is handed to page scripts on purpose. If it also worked as a refresh
+    // token, exfiltrating one would mint fresh access tokens for as long as the thief asked.
+    const server = signInServer()
+    const first = await tokensFor(server)
+    const again = await server.app.inject({
+      method: 'POST',
+      url: '/auth/token',
+      payload: { refreshToken: first.accessToken },
+    })
+    expect(again.statusCode).toBe(401)
+  })
+
+  it('refuses a handoff presented as a refresh token', async () => {
+    // Same key, different purpose: the claim is what keeps a two-minute bridge from being
+    // replayed as a thirty-day credential.
+    const server = signInServer()
+    const cookie = await completeSignIn(server)
+    const handoff = decodeURIComponent(cookie.slice('mm_handoff='.length))
+    const again = await server.app.inject({
+      method: 'POST',
+      url: '/auth/token',
+      payload: { refreshToken: handoff },
+    })
+    expect(again.statusCode).toBe(401)
+  })
+
+  it('refuses a refresh token presented as the handoff cookie', async () => {
+    const server = signInServer()
+    const { refreshToken } = await tokensFor(server)
+    const again = await server.app.inject({
+      method: 'POST',
+      url: '/auth/token',
+      headers: { cookie: `mm_handoff=${encodeURIComponent(refreshToken)}` },
+    })
+    expect(again.statusCode).toBe(401)
+  })
+
+  it('refuses a refresh token signed by somebody else', async () => {
+    // Well-formed, unexpired, correctly shaped — and signed with a key this service has never
+    // seen. Without the signature check this mints a CouchDB token for whoever the forger chose.
+    const server = signInServer()
+    const forged = mintToken(newKey('someone-elses-key'), {
+      purpose: 'refresh',
+      sub: 'google|victim',
+      email: 'victim@example.com',
+      jti: 'j',
+      exp: T0 + 3600,
+    })
+    const again = await server.app.inject({
+      method: 'POST',
+      url: '/auth/token',
+      payload: { refreshToken: forged },
+    })
+    expect(again.statusCode).toBe(401)
+  })
+
+  it('refuses a refresh token claiming alg none', async () => {
+    const server = signInServer()
+    const header = Buffer.from(JSON.stringify({ alg: 'none', typ: 'JWT' })).toString('base64url')
+    const payload = Buffer.from(
+      JSON.stringify({ purpose: 'refresh', sub: 'google|victim', exp: T0 + 3600 }),
+    ).toString('base64url')
+    const again = await server.app.inject({
+      method: 'POST',
+      url: '/auth/token',
+      payload: { refreshToken: `${header}.${payload}.` },
+    })
+    expect(again.statusCode).toBe(401)
+  })
+
+  it('refuses with neither a handoff nor a refresh token', async () => {
+    const { app: server } = signInServer()
+
+    const response = await server.inject({ method: 'POST', url: '/auth/token' })
+    expect(response.statusCode).toBe(401)
+    expect(response.headers['content-type']).toMatch(/^application\/problem\+json/)
+  })
+
+  it('is never cached', async () => {
+    // A token in a shared cache is a token for whoever asks next.
+    const server = signInServer()
+    const cookie = await completeSignIn(server)
+    const response = await server.app.inject({
+      method: 'POST',
+      url: '/auth/token',
+      headers: { cookie },
+    })
+
+    expect(response.headers['cache-control']).toBe('no-store')
+  })
+})
+
+describe('which key signs what', () => {
+  it('signs the handoff and the refresh token with a key CouchDB does not have', async () => {
+    // **CouchDB does not evaluate `purpose`** — it checks a signature and an expiry, using the
+    // public key this service installs in `[jwt_keys]`. A thirty-day refresh token signed with
+    // that key would be a thirty-day database credential however carefully this service refused
+    // it. A key CouchDB has never been given is what closes that.
+    const server = signInServer()
+    const cookie = await completeSignIn(server)
+    const handoff = decodeURIComponent(cookie.slice('mm_handoff='.length))
+    const { refreshToken } = (
+      await server.app.inject({ method: 'POST', url: '/auth/token', headers: { cookie } })
+    ).json()
+
+    for (const token of [handoff, refreshToken]) {
+      expect(() => verifyToken(token, server.key.publicKey, 'access', at)).toThrow(
+        expect.objectContaining({ problem: 'signature' }),
+      )
+    }
   })
 
   it('signs the access token with the key CouchDB does have', async () => {
     // The positive control. Signing *everything* with the session key would pass the test
     // above and leave replication unable to authenticate at all.
-    const { app: server, key, sessionCookie } = await signedIn()
-    const minted = await server.inject({
-      method: 'POST',
-      url: '/auth/token',
-      headers: { cookie: sessionCookie },
-    })
-    const { accessToken } = minted.json() as { accessToken: string }
+    const server = signInServer()
+    const { accessToken } = await tokensFor(server)
 
-    expect(verifyToken(accessToken, key.publicKey, 'access').sub).toBe('google|1234')
-  })
-
-  it('does not accept a session as a CouchDB bearer', async () => {
-    // The same substitution the other way round, and the more expensive one: the session lasts
-    // thirty days and CouchDB validates these tokens **itself**, checking a signature and an
-    // expiry and nothing else. A session that verifies as an access token is a thirty-day
-    // direct database credential, which is exactly what the one-hour access token exists not
-    // to be.
-    // No `app`: this is asserted at the verifier rather than through a route, because it has
-    // to be. `signInServer` registers the three auth operations and nothing that consumes a
-    // bearer, and the property being pinned is CouchDB's — which evaluates the signature and
-    // the expiry and no claim this service invented. A 401 from an API route would be the
-    // weaker half of the answer.
-    const { sessionCookie, key, sessionKey } = await signedIn()
-    const session = decodeURIComponent(sessionCookie.split('=').slice(1).join('='))
-
-    // Refused on the **signature**, which is the stronger answer and the only one that also
-    // binds CouchDB: it checks a signature and an expiry and evaluates no claim this service
-    // invented, so a purpose mismatch would have stopped this API and not the database.
-    expect(() => verifyToken(session, key.publicKey, 'access')).toThrow(
-      expect.objectContaining({ problem: 'signature' }),
-    )
-
-    // And still refused by purpose when checked against its own key, so the claim is doing its
-    // job for the credentials that *do* share one.
-    expect(() => verifyToken(session, sessionKey.publicKey, 'access')).toThrow(
-      expect.objectContaining({ problem: 'purpose' }),
-    )
-  })
-
-  it('is never cached', async () => {
-    // A token in a shared cache is a token for whoever asks next.
-    const { app: server, sessionCookie } = await signedIn()
-    const response = await server.inject({
-      method: 'POST',
-      url: '/auth/token',
-      headers: { cookie: sessionCookie },
-    })
-
-    expect(response.headers['cache-control']).toBe('no-store')
-  })
-
-  it('refuses without a session', async () => {
-    const { app: server } = signInServer()
-
-    expect((await server.inject({ method: 'POST', url: '/auth/token' })).statusCode).toBe(401)
-  })
-
-  it('refuses a session signed by somebody else', async () => {
-    // A well-formed, unexpired, correctly-shaped token — signed with a key this service has
-    // never seen. If the signature were not checked, this would mint a CouchDB token for
-    // whatever `sub` the forger chose, which is direct access to that user's database.
-    const { app: server } = signInServer()
-    const forged = mintToken(newKey('someone-elses-key'), {
-      purpose: 'access',
-      sub: 'google|victim',
-      exp: Math.floor(Date.now() / 1000) + 3600,
-    })
-
-    const response = await server.inject({
-      method: 'POST',
-      url: '/auth/token',
-      headers: { cookie: `mm_session=${encodeURIComponent(forged)}` },
-    })
-
-    expect(response.statusCode).toBe(401)
-  })
-
-  it('refuses an expired session', async () => {
-    const { app: server, key } = signInServer()
-    const stale = mintToken(key, { purpose: 'access', sub: 'google|1234', exp: 1000 })
-
-    const response = await server.inject({
-      method: 'POST',
-      url: '/auth/token',
-      headers: { cookie: `mm_session=${encodeURIComponent(stale)}` },
-    })
-
-    expect(response.statusCode).toBe(401)
-  })
-
-  it('refuses a session claiming alg none', async () => {
-    // The classic. `verifySession` deliberately reuses the same verification a CouchDB token
-    // gets, so the algorithm guard applies here too — and a session cookie is exactly the token
-    // an attacker would most like to present unsigned.
-    const { app: server } = signInServer()
-    const header = Buffer.from(JSON.stringify({ alg: 'none', typ: 'JWT' })).toString('base64url')
-    const payload = Buffer.from(
-      JSON.stringify({ sub: 'google|victim', exp: Math.floor(Date.now() / 1000) + 3600 }),
-    ).toString('base64url')
-
-    const response = await server.inject({
-      method: 'POST',
-      url: '/auth/token',
-      headers: { cookie: `mm_session=${encodeURIComponent(`${header}.${payload}.`)}` },
-    })
-
-    expect(response.statusCode).toBe(401)
+    expect(verifyToken(accessToken, server.key.publicKey, 'access', at).sub).toBe('google|1234')
   })
 })
 
-describe('signing out', () => {
-  it('clears the session cookie', async () => {
-    // Necessary as a server operation because the cookie is httpOnly: the page cannot remove it,
-    // and a page that merely forgot its own token would still be signed in on the next request.
-    const { app: server } = signInServer()
-    const response = await server.inject({ method: 'POST', url: '/auth/signout' })
-
-    expect(response.statusCode).toBe(204)
-    expect(cookieNamed(response.headers as Record<string, unknown>, 'mm_session')).toContain(
-      'Max-Age=0',
-    )
+describe('POST /auth/signout', () => {
+  it('revokes the refresh token and denies the access token', async () => {
+    const server = signInServer()
+    const tokens = await tokensFor(server)
+    const out = await server.app.inject({
+      method: 'POST',
+      url: '/auth/signout',
+      headers: { authorization: `Bearer ${tokens.accessToken}` },
+      payload: { refreshToken: tokens.refreshToken },
+    })
+    expect(out.statusCode).toBe(204)
+    const again = await server.app.inject({
+      method: 'POST',
+      url: '/auth/token',
+      payload: { refreshToken: tokens.refreshToken },
+    })
+    expect(again.statusCode).toBe(401)
+    const { jti } = verifyToken(tokens.accessToken, server.key.publicKey, 'access', at)
+    expect(server.deny.denied(String(jti))).toBe(true)
   })
 
-  it('clears the flow carrier too', async () => {
-    // A half-finished sign-in left behind at sign-out is a PKCE verifier lying around for a flow
-    // nobody is going to complete.
-    const { app: server } = signInServer()
-    const response = await server.inject({ method: 'POST', url: '/auth/signout' })
-
-    expect(cookieNamed(response.headers as Record<string, unknown>, 'mm_flow')).toContain(
-      'Max-Age=0',
-    )
-  })
-
-  it('succeeds when there was no session to end', async () => {
+  it('answers 204 with nothing to sign out of', async () => {
     // Signing out when already signed out is not an error. Answering 401 would leave a user who
     // is confused about their state unable to reach a state they are certain about.
-    const { app: server } = signInServer()
-
-    expect((await server.inject({ method: 'POST', url: '/auth/signout' })).statusCode).toBe(204)
+    const server = signInServer()
+    expect((await server.app.inject({ method: 'POST', url: '/auth/signout' })).statusCode).toBe(204)
   })
 
-  it('is honest about what it can and cannot revoke', async () => {
-    // The session cookie is cleared, and the browser will stop sending it. The access token
-    // already issued stays cryptographically valid until it expires — which is why it is
-    // short-lived, and why revoking one before its time is M5's problem rather than something
-    // this endpoint quietly pretends to do.
-    const { app: server, key } = signInServer()
-    const stillValid = mintToken(key, {
-      purpose: 'access',
-      sub: 'google|1234',
-      exp: Math.floor(Date.now() / 1000) + 3600,
+  it('answers 204 for tokens that do not verify', async () => {
+    const server = signInServer()
+    const out = await server.app.inject({
+      method: 'POST',
+      url: '/auth/signout',
+      headers: { authorization: 'Bearer not.a.token' },
+      payload: { refreshToken: 'nor.is.this' },
     })
+    expect(out.statusCode).toBe(204)
+    expect(server.deny.size()).toBe(0)
+  })
 
-    await server.inject({ method: 'POST', url: '/auth/signout' })
+  it('clears the flow and handoff cookies', async () => {
+    // A half-finished sign-in left behind at sign-out is a credential for a flow nobody is going
+    // to complete.
+    const { app: server } = signInServer()
+    const response = await server.inject({ method: 'POST', url: '/auth/signout' })
 
-    expect(verifyToken(stillValid, key.publicKey, 'access').sub).toBe('google|1234')
+    expect(cookieNamed(response.headers, 'mm_flow')).toContain('Max-Age=0')
+    expect(cookieNamed(response.headers, 'mm_handoff')).toContain('Max-Age=0')
   })
 })

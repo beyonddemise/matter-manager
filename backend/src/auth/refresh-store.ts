@@ -23,7 +23,7 @@ export const hashJti = (jti: string): string => createHash('sha256').update(jti)
 export interface RefreshStore {
   /** Stores on the record if there is one, otherwise in memory. */
   remember(email: string, entry: RefreshEntry): Promise<void>
-  /** Whether a stored, unexpired entry has this hash. */
+  /** Whether a stored, unexpired entry has this hash, on the record or in memory. */
   isLive(email: string, hash: string): Promise<boolean>
   /** Removes the entry from the record and from memory, whichever holds it. */
   revoke(email: string, hash: string): Promise<void>
@@ -45,8 +45,11 @@ export function refreshStore(records: UserRecords, now: () => number): RefreshSt
     },
 
     async isLive(email, hash) {
-      const onRecord = await records.hasRefresh(email, hash, now())
-      if (onRecord !== undefined) return onRecord
+      if ((await records.hasRefresh(email, hash, now())) === true) return true
+      // Memory is consulted even when a record exists. A record can be created by a path that
+      // does not drain this store (an operator setting a plan), and the spec's promise is that
+      // creating a record never signs anybody out. Revocation is unaffected: `revoke` clears
+      // both, and `drain` empties memory whenever entries move onto a record.
       return live(memory.get(userKey(email)) ?? []).some((e) => e.hash === hash)
     },
 

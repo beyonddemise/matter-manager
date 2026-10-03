@@ -12,16 +12,19 @@
  * @module
  */
 
+import { type DenyList, denyList } from './auth/deny-list.js'
 import { googleProvider, jwksCache, verifyGoogleIdToken } from './auth/google.js'
 import { type SigningKey, signingKeyFromPem } from './auth/jwt.js'
 import { couchAdmin, installSigningKey, verifyCorsOrigins } from './auth/keys.js'
 import type { Provider } from './auth/oidc.js'
+import { type RefreshStore, refreshStore } from './auth/refresh-store.js'
 import type { AuthDependencies } from './auth/routes.js'
 import { type CouchClient, couchClient } from './couch/client.js'
 import { type ProfileStore, profileStore } from './profile/store.js'
 import { checkDesignDocs } from './projects/design-docs.js'
 import { originsFromEnv } from './security/config.js'
 import type { ServerOptions } from './server.js'
+import { type UserRecords, userRecords } from './users/records.js'
 
 /** The environment, as far as this module is concerned. */
 export type Environment = Record<string, string | undefined>
@@ -45,11 +48,11 @@ function keyFrom(env: Environment): SigningKey | undefined {
 }
 
 /**
- * The key for session cookies and PKCE carriers — the one CouchDB is never given.
+ * The key for refresh tokens, handoff cookies and PKCE carriers — the one CouchDB is never given.
  *
  * A second variable rather than a second knob: the `kid` is derived, because nothing looks a
- * session token up by name. What matters is that it is **not** the `kid` CouchDB was taught, so
- * a session presented to CouchDB names a key that was never installed.
+ * refresh token up by name. What matters is that it is **not** the `kid` CouchDB was taught, so
+ * a refresh token presented to CouchDB names a key that was never installed.
  *
  * No fallback to `JWT_PRIVATE_KEY`. A deployment that forgot this should serve no sign-in, not
  * quietly reinstate the thirty-day database credential this exists to remove.
@@ -109,15 +112,25 @@ function providerFrom(env: Environment): Provider | undefined {
 /**
  * Everything sign-in needs, if this deployment has all of it.
  *
- * Needs the profile store as well as the provider, because signing in **writes**: `remember`
- * creates or updates the `_users` document that the session then identifies. Sign-in without
- * somewhere to record the user would authenticate somebody into an account that does not exist.
+ * Needs the profile store as well as the provider, because signing in still **writes**:
+ * `remember` creates or updates the `_users` document the profile routes read. That write is
+ * transitional; the user record replaces it, and sign-in will then create a record only when an
+ * invitation is redeemable.
+ *
+ * `records`, `refresh` and `deny` are passed in rather than built here so that one of each
+ * exists per process: the refresh store and the deny list are in memory, and a second instance
+ * would be a second memory that disagrees with the first.
  */
 function authFrom(
   env: Environment,
   key: SigningKey,
   sessionKey: SigningKey | undefined,
   store: ProfileStore,
+  tokens: {
+    readonly records: UserRecords
+    readonly refresh: RefreshStore
+    readonly deny: DenyList
+  },
 ): AuthDependencies | undefined {
   const provider = providerFrom(env)
   const appOrigin = appOriginFrom(env)
@@ -136,7 +149,13 @@ function authFrom(
     sessionKey,
     verifyIdToken: (idToken: string) => verifyGoogleIdToken(provider, idToken, keys),
     appOrigin,
-    rememberUser: (identity) => store.remember(identity),
+    ...tokens,
+    // Keeps today's `_users` write, which `/profile` still reads, and reports a record so the
+    // sign-in line is truthful about that write. Replaced when sign-in moves onto the record.
+    signIn: async (identity) => {
+      await store.remember(identity)
+      return { hasRecord: true }
+    },
   }
 }
 
@@ -163,16 +182,23 @@ export function serverOptions(env: Environment = process.env): ServerOptions {
 
   const store = profileStore(couch)
   const sessionKey = sessionKeyFrom(env, key)
-  const auth = authFrom(env, key, sessionKey, store)
+  const clock = () => Math.floor(Date.now() / 1000)
+  const records = userRecords(couch)
+  const auth = authFrom(env, key, sessionKey, store, {
+    records,
+    refresh: refreshStore(records, clock),
+    deny: denyList(clock),
+  })
 
   return {
     security,
     // The same store the profile routes use. One reader of `_users` per process, so a plan an
     // operator sets is the plan the gate sees without a second path to keep in step.
     projects: { couch, key, profiles: store },
-    // Needs the **session** key, because it authenticates by the session cookie. Present only
-    // when there is one, since a route that can never authenticate anybody is not a route.
-    ...(sessionKey === undefined ? {} : { profile: { store, sessionKey } }),
+    // Verifies the **access** token, so it takes the key CouchDB validates. Present only when
+    // there is a session key all the same: without one there is no sign-in, nobody can obtain an
+    // access token, and a route that can never authenticate anybody is not a route.
+    ...(sessionKey === undefined ? {} : { profile: { store, key } }),
     ...(auth === undefined ? {} : { auth }),
   }
 }

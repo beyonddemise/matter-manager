@@ -1,21 +1,18 @@
 /**
  * `GET /profile` and `PATCH /profile`.
  *
- * Both are authenticated by the session cookie rather than by a bearer, because they are called
- * by the *page* rather than by replication — and the page's credential is the httpOnly cookie
- * it cannot read (see `auth/routes.ts` for why that split exists).
+ * Both are authenticated by the bearer access token. They were authenticated by the `mm_session`
+ * cookie until that cookie was replaced by the refresh token (see `auth/routes.ts`); reading the
+ * access token here is the transitional step until these routes move onto the user record.
  *
  * @module
  */
 
 import type { FastifyInstance, FastifyRequest } from 'fastify'
+import { bearerSubject } from '../auth/bearer.js'
 import type { SigningKey } from '../auth/jwt.js'
-import { verifyToken } from '../auth/jwt.js'
 import { problem } from '../problem.js'
 import { isLocale, isPlan, type ProfileStore } from './store.js'
-
-/** The cookie the sign-in flow sets. Named here too rather than exported across modules. */
-const SESSION_COOKIE = 'mm_session'
 
 /**
  * The roles that may set a plan.
@@ -56,64 +53,32 @@ export const OPERATOR_ROLES: readonly string[] = ['customerservice']
 export interface ProfileDependencies {
   readonly store: ProfileStore
   /**
-   * The **session** key, not the one CouchDB validates.
+   * The key CouchDB validates, because these routes read the **access** token.
    *
-   * These routes authenticate by the session cookie, so they verify with the key that signs
-   * one. Naming it plainly because the two are interchangeable to the type checker and not at
-   * all interchangeable in what they mean — see `AuthDependencies.sessionKey`.
+   * Not the session key: that signs refresh tokens and handoffs, which must never be accepted
+   * as a bearer. The two are interchangeable to the type checker and not at all in what they
+   * mean — see `AuthDependencies.sessionKey`.
    */
-  readonly sessionKey: SigningKey
+  readonly key: SigningKey
   readonly now?: () => number
 }
 
-/** Reads one cookie out of a request. */
-function cookie(request: FastifyRequest, name: string): string | undefined {
-  const header = request.headers.cookie
-  if (header === undefined) return undefined
-  for (const part of header.split(';')) {
-    const [key, ...rest] = part.trim().split('=')
-    if (key === name) return decodeURIComponent(rest.join('='))
-  }
-  return undefined
-}
-
 /**
- * Identifies the authenticated subject from the session cookie.
- *
- * @param now - Supplies the current Unix time for token verification.
- * @returns The subject identifier if the session token is valid, `undefined` otherwise.
- */
-function subjectOf(
-  request: FastifyRequest,
-  sessionKey: SigningKey,
-  now: () => number,
-): string | undefined {
-  const session = cookie(request, SESSION_COOKIE)
-  if (session === undefined) return undefined
-  try {
-    return verifyToken(session, sessionKey.publicKey, 'session', now).sub
-  } catch {
-    return undefined
-  }
-}
-
-/**
- * How a caller is identified on the cookie-authenticated routes.
+ * How a caller is identified on the profile and customer routes: by the bearer access token.
  *
  * Exported so that the operator endpoint in `customer.ts` identifies its caller by exactly this
  * code path — including the default for `now`, which is the part a second copy would get wrong
- * without anything going red. A route that still verified the cookie, but against a different
- * clock or against the key CouchDB validates rather than the key that signs a session, would
- * look identical from the outside and admit callers this one refuses.
+ * without anything going red. A route that verified the token against a different clock or a
+ * different key would look identical from the outside and admit callers this one refuses.
  *
  * @returns A function reading the authenticated subject from a request, `undefined` when there
- *   is no valid session.
+ *   is no valid access token.
  */
 export function sessionSubject(
-  deps: Pick<ProfileDependencies, 'sessionKey' | 'now'>,
+  deps: Pick<ProfileDependencies, 'key' | 'now'>,
 ): (request: FastifyRequest) => string | undefined {
   const now = deps.now ?? (() => Math.floor(Date.now() / 1000))
-  return (request) => subjectOf(request, deps.sessionKey, now)
+  return (request) => bearerSubject(request, deps.key, now)
 }
 
 export function registerProfileRoutes(app: FastifyInstance, deps: ProfileDependencies): void {
