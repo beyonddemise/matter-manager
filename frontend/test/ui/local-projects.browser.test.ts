@@ -14,6 +14,7 @@ import {
   createLocalProject,
   destroyLocalProject,
   indexServerProject,
+  localProjectDefaults,
   renameLocalProject,
   setLocalClient,
 } from '../../src/ui/local-projects.js'
@@ -74,6 +75,29 @@ describe('local projects', () => {
     const document = await rawDatabase(dbName).get(PROJECT_DOCUMENT_ID)
     expect('client' in document).toBe(false)
     expect((await localProfileCache().readLocalProjects())[0]).not.toHaveProperty('client')
+  })
+
+  it('re-reads and writes again when another writer moved the project document first', async () => {
+    // A revision race: between this write's read and its put, another writer (a second tab,
+    // replication) changes the document, so the put is refused with a 409 and must be retried
+    // from a fresh read rather than reported as a failure.
+    const { dbName } = await createLocalProject({ name: 'Old' })
+    const database = rawDatabase(dbName)
+    let raced = false
+    const racing = Object.create(database) as PouchDB.Database
+    racing.put = (async (doc: PouchDB.Core.PutDocument<object>) => {
+      if (!raced) {
+        raced = true
+        const current = await database.get(PROJECT_DOCUMENT_ID)
+        await database.put({ ...current, name: 'Elsewhere' })
+      }
+      return database.put(doc)
+    }) as never
+
+    await renameLocalProject(dbName, 'New', { ...localProjectDefaults, database: () => racing })
+
+    expect(raced).toBe(true)
+    expect(await database.get(PROJECT_DOCUMENT_ID)).toMatchObject({ name: 'New' })
   })
 
   it('destroys the database, the handle and the entry', async () => {

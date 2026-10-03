@@ -30,8 +30,9 @@ export interface ProjectDocument {
 /**
  * Whether a value read from a database is a project document.
  *
- * Checks the discriminators and the required fields (`serverDb` and `client` strict when present), not the extras: documents may gain fields
- * in later phases and an old client must still recognise one.
+ * Checks the discriminators and the required fields (`serverDb` and `client` strict when present),
+ * not the extras: documents may gain fields in later phases and an old client must still recognise
+ * one.
  */
 export function isProjectDocument(value: unknown): value is ProjectDocument {
   if (typeof value !== 'object' || value === null) return false

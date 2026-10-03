@@ -72,8 +72,9 @@ export function writeCurrentProjectId(
  *
  * The choice is matched by **database name, then project id**, because Open stores
  * `projectId ?? dbName`: a local-only project has only its name, and a project promoted since it
- * was chosen keeps its old name in storage. A promotion's source never matches by id. The legacy {@link LOCAL_PROJECT_ID} means the
- * first-run catalogue. Only projects with a database on this device are candidates.
+ * was chosen keeps its old name in storage. A promotion's source never matches by id. The legacy
+ * {@link LOCAL_PROJECT_ID} means the first-run catalogue. Only projects with a database on this
+ * device are candidates.
  *
  * When nothing matches — a copy removed, signed out, a stale id — it falls back to the first
  * local-only project (always editable), then to any copy, then to the first-run catalogue.

@@ -34,7 +34,6 @@ const EXPECTED: ReadonlyArray<
   ['planDeviceEdit', 'function'],
   ['setDeviceDisabled', 'function'],
   ['addRemark', 'function'],
-  ['planMigration', 'function'],
   ['resurrectedRooms', 'function'],
   ['worthRemembering', 'function'],
   ['DELETION_MEMORY_DAYS', 'number'],
