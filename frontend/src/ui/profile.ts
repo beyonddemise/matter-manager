@@ -21,6 +21,7 @@
  */
 
 import type { CachedProfile, LocalCache } from '../data/index.js'
+import { type Plan, planOf } from '../domain/plan.js'
 import { accessToken } from './tokens.js'
 
 /** What a user may choose, matching the contract's enum. */
@@ -32,6 +33,10 @@ export interface Profile {
   readonly email: string
   readonly displayName: string
   readonly locale: Locale
+  /** The account's plan. */
+  readonly plan: Plan
+  /** Projects the account may own; `-1` is unlimited. */
+  readonly projectLimit: number
 }
 
 const LOCALES: readonly string[] = ['auto', 'en', 'de']
@@ -90,6 +95,11 @@ export function cachedLocale(cached: CachedProfile | undefined): Locale | undefi
   return cached !== undefined && isLocale(cached.locale) ? cached.locale : undefined
 }
 
+/** The cached profile's plan; `free` on a device that never signed in or holds an unknown one. */
+export function cachedPlan(cached: CachedProfile | undefined): Plan {
+  return planOf(cached?.plan)
+}
+
 /**
  * Loads the profile, preferring the cache and correcting it from the server.
  *
@@ -134,6 +144,8 @@ export async function resolveProfileLocale(
         ...(profile.locale === 'auto' ? {} : { locale: profile.locale }),
         email: profile.email,
         name: profile.displayName,
+        plan: profile.plan,
+        projectLimit: profile.projectLimit,
         fetchedAt: now(),
       })
       .catch(() => {

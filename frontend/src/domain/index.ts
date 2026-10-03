@@ -119,6 +119,19 @@ export {
   type ExportSelection,
   selectForExport,
 } from './pdf/selection.js'
+export {
+  canOwnAnother,
+  isPlan,
+  LAYOUTS,
+  limitFor,
+  type Plan,
+  PROJECT_LIMITS,
+  planOf,
+  planSyncs,
+  SYNCED_PLANS,
+  showsUpgrade,
+  withinLimit,
+} from './plan.js'
 export type { ProjectRole } from './role.js'
 export {
   devicesInRoom,

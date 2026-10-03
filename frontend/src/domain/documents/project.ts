@@ -20,14 +20,17 @@ export interface ProjectDocument {
   readonly name: string
   /** Who the project is for. Absent rather than empty. */
   readonly client?: string
-  /** The name of the project's database on the server. */
-  readonly serverDb: string
+  /**
+   * The name of the project's database on the server. Absent while the project is local-only:
+   * the frontend writes this document there, and there is no server database to name yet.
+   */
+  readonly serverDb?: string
 }
 
 /**
  * Whether a value read from a database is a project document.
  *
- * Checks the discriminators and the required fields, not the extras: documents may gain fields
+ * Checks the discriminators and the required fields (`serverDb` and `client` strict when present), not the extras: documents may gain fields
  * in later phases and an old client must still recognise one.
  */
 export function isProjectDocument(value: unknown): value is ProjectDocument {
@@ -37,7 +40,7 @@ export function isProjectDocument(value: unknown): value is ProjectDocument {
     doc._id === PROJECT_DOCUMENT_ID &&
     doc.type === 'project' &&
     typeof doc.name === 'string' &&
-    typeof doc.serverDb === 'string' &&
+    (doc.serverDb === undefined || typeof doc.serverDb === 'string') &&
     (doc.client === undefined || typeof doc.client === 'string')
   )
 }

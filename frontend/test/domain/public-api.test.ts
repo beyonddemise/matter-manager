@@ -42,6 +42,17 @@ const EXPECTED: ReadonlyArray<
   ['browseDevices', 'function'],
   ['PROJECT_DOCUMENT_ID', 'string'],
   ['isProjectDocument', 'function'],
+  // plan
+  ['PROJECT_LIMITS', 'object'],
+  ['SYNCED_PLANS', 'object'],
+  ['LAYOUTS', 'object'],
+  ['withinLimit', 'function'],
+  ['isPlan', 'function'],
+  ['planOf', 'function'],
+  ['limitFor', 'function'],
+  ['planSyncs', 'function'],
+  ['canOwnAnother', 'function'],
+  ['showsUpgrade', 'function'],
   // base38
   ['BASE38_ALPHABET', 'string'],
   ['Base38Error', 'function'],

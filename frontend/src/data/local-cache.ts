@@ -36,6 +36,13 @@ export interface CachedProfile {
   readonly locale?: string
   readonly email?: string
   readonly name?: string
+  /**
+   * The account's plan, as the server reported it. A plain string: it is whatever an older or
+   * newer build wrote, and `planOf` decides what this build makes of it.
+   */
+  readonly plan?: string
+  /** The server's project limit for the account; `-1` is unlimited. */
+  readonly projectLimit?: number
   /** When this was fetched, ISO-8601. For showing how stale a cached answer is. */
   readonly fetchedAt: string
 }
