@@ -223,7 +223,7 @@ from the access token's claims and `PATCH /profile` seeds a new record from them
 - **Revocation is deletion.** A refresh is honoured only while its hash is found, so removing the
   entry ends that device's session. `isLive` is true if the record **or** memory holds the hash;
   memory is consulted even when a record exists, so creating a record by a path that does not
-  drain memory (an operator setting a plan) never signs anybody out. Memory entries live until
+  move memory entries onto it (an operator setting a plan) never signs anybody out. Memory entries live until
   their expiry or a restart.
 - **Record-less refresh entries live in memory and a restart loses them.** Those users get a 401
   at their next refresh and sign in again, keeping their local data. The cost falls only on
