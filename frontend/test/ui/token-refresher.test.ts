@@ -1,14 +1,24 @@
 import { describe, expect, it } from 'vitest'
 import type { TokenOutcome } from '../../src/ui/composition.js'
-import { BACKOFF_CAP_MS, backoffDelay, startRefresher } from '../../src/ui/token-refresher.js'
+import {
+  BACKOFF_CAP_MS,
+  backoffDelay,
+  MIN_REFRESH_DELAY_MS,
+  refreshDelay,
+  startRefresher,
+} from '../../src/ui/token-refresher.js'
 
 /** A clock-free scheduler: tasks run only when the test says so. */
 function harness(outcomes: (TokenOutcome | Error)[]) {
+  let clock = 0
+  const visibleHandlers: (() => void)[] = []
+  const signals: AbortSignal[] = []
   const timers: { run: () => void; ms: number }[] = []
   const onlineHandlers: (() => void)[] = []
   const seen: TokenOutcome[] = []
   const refresher = startRefresher({
-    request: async () => {
+    request: async (signal) => {
+      signals.push(signal)
       const next = outcomes.shift() ?? { kind: 'refreshed', expiresIn: 300 }
       if (next instanceof Error) throw next
       return next
@@ -23,10 +33,18 @@ function harness(outcomes: (TokenOutcome | Error)[]) {
       onlineHandlers.push(run)
       return () => onlineHandlers.splice(onlineHandlers.indexOf(run), 1)
     },
+    onVisible: (run) => {
+      visibleHandlers.push(run)
+      return () => visibleHandlers.splice(visibleHandlers.indexOf(run), 1)
+    },
+    now: () => clock,
     random: () => 1,
   })
   const flush = () => new Promise((r) => setTimeout(r, 0))
-  return { timers, onlineHandlers, seen, refresher, flush }
+  const advance = (ms: number) => {
+    clock += ms
+  }
+  return { timers, onlineHandlers, visibleHandlers, signals, advance, seen, refresher, flush }
 }
 
 describe('backoffDelay', () => {
@@ -45,11 +63,21 @@ describe('backoffDelay', () => {
   })
 })
 
+describe('refreshDelay', () => {
+  it('refreshes two margins before expiry, so the token is never withheld before its successor', () => {
+    expect(refreshDelay(300)).toBe(240_000)
+  })
+
+  it('never schedules sooner than the floor', () => {
+    expect(refreshDelay(31)).toBe(MIN_REFRESH_DELAY_MS)
+  })
+})
+
 describe('startRefresher', () => {
   it('schedules the next refresh before the token expires', async () => {
     const h = harness([{ kind: 'refreshed', expiresIn: 300 }])
     await h.flush()
-    expect(h.timers.at(-1)?.ms).toBe((300 - 30) * 1000)
+    expect(h.timers.at(-1)?.ms).toBe((300 - 60) * 1000)
   })
 
   it('retries silently with backoff while unreachable, never reporting it as ended', async () => {
@@ -107,5 +135,33 @@ describe('startRefresher', () => {
     await h.flush()
     expect(h.seen).toEqual([])
     expect(h.timers).toHaveLength(0)
+  })
+
+  it('aborts the signal handed to a request in flight when stopped', async () => {
+    const h = harness([{ kind: 'refreshed', expiresIn: 300 }])
+    expect(h.signals[0]?.aborted).toBe(false)
+    h.refresher.stop()
+    expect(h.signals[0]?.aborted).toBe(true)
+  })
+
+  it('refreshes at once on becoming visible when the refresh is overdue', async () => {
+    const h = harness([
+      { kind: 'refreshed', expiresIn: 300 },
+      { kind: 'refreshed', expiresIn: 300 },
+    ])
+    await h.flush()
+    h.advance(240_000)
+    for (const run of h.visibleHandlers) run()
+    await h.flush()
+    expect(h.seen).toHaveLength(2)
+  })
+
+  it('leaves a refresh that is not yet due alone when the page becomes visible', async () => {
+    const h = harness([{ kind: 'refreshed', expiresIn: 300 }])
+    await h.flush()
+    h.advance(1000)
+    for (const run of h.visibleHandlers) run()
+    await h.flush()
+    expect(h.seen).toHaveLength(1)
   })
 })

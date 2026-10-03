@@ -112,12 +112,23 @@ export type TokenOutcome =
  * Only a 401 ends anything. Offline, a proxy in the way or a 5xx is **not** an answer and
  * reports `unreachable` without discarding the stored token, because this application works
  * offline and an unwell server must not sign anybody out.
+ *
+ * @param signal aborted when nobody wants the answer any more (the refresher was stopped, which
+ *   is what signing out does). Checked before every side effect, not only passed to `fetch`:
+ *   a response already received would otherwise still remember the access token and write the
+ *   rotated refresh token *after* sign-out cleared both, re-arming a signed-out browser. An
+ *   aborted request reports `unreachable` and changes nothing.
  */
 export async function requestTokens(
   store: RefreshTokenStore,
   fetchImpl: typeof fetch = fetch,
+  signal?: AbortSignal,
 ): Promise<TokenOutcome> {
+  // A function, not repeated property reads: TypeScript would narrow `signal.aborted` after the
+  // first check and call the later ones impossible, though it can change across every `await`.
+  const aborted = (): boolean => signal?.aborted === true
   const stored = await store.read()
+  if (aborted()) return { kind: 'unreachable' }
   let response: Response
   try {
     response = await fetchImpl(`${API_BASE}/auth/token`, {
@@ -126,10 +137,12 @@ export async function requestTokens(
       credentials: 'include',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(stored === undefined ? {} : { refreshToken: stored }),
+      ...(signal === undefined ? {} : { signal }),
     })
   } catch {
     return { kind: 'unreachable' }
   }
+  if (aborted()) return { kind: 'unreachable' }
 
   if (isSessionEnded(response.status)) {
     if (stored === undefined) return { kind: 'signed-out' }
@@ -144,6 +157,9 @@ export async function requestTokens(
   } catch {
     return { kind: 'unreachable' }
   }
+  // Again after the body: reading it is asynchronous too, and this is the last point before the
+  // state changes.
+  if (aborted()) return { kind: 'unreachable' }
 
   // A 200 whose body is not a token pair is a server fault, not a session, so it is
   // `unreachable` rather than `signed-out`: the server being unwell must not sign anybody out.

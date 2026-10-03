@@ -33,16 +33,44 @@ export function backoffDelay(attempt: number, random: () => number = Math.random
   return Math.round(ceiling * (0.5 + random() / 2))
 }
 
+/**
+ * No refresh is scheduled sooner than this after the last one, however short the token's life.
+ * A server that issued 31-second tokens would otherwise be asked every second.
+ */
+export const MIN_REFRESH_DELAY_MS = 5000
+
+/**
+ * How long to wait before refreshing a token that lives `expiresIn` seconds.
+ *
+ * **Two margins early, not one.** `accessToken()` stops handing out a token at
+ * `expiresIn - EXPIRY_MARGIN_SECONDS`; refreshing at exactly that moment leaves the request
+ * itself (and any retry) running in a window where replication carries no `Authorization`
+ * header at all. One extra margin of lead time covers a slow round trip.
+ */
+export function refreshDelay(expiresIn: number): number {
+  return Math.max(MIN_REFRESH_DELAY_MS, (expiresIn - 2 * EXPIRY_MARGIN_SECONDS) * 1000)
+}
+
 /** Everything the refresher reaches for, so a test can run it without a clock or a network. */
 export interface RefresherDependencies {
-  /** Asks for a token. Should not throw, but a throw is read as `unreachable`. */
-  readonly request: () => Promise<TokenOutcome>
+  /**
+   * Asks for a token. Should not throw, but a throw is read as `unreachable`. The signal is
+   * aborted by `stop()`, so a request in flight can refrain from storing what it fetched.
+   */
+  readonly request: (signal: AbortSignal) => Promise<TokenOutcome>
   /** Told every outcome, including each successful refresh. */
   readonly onOutcome: (outcome: TokenOutcome) => void
   /** Runs `run` after `ms`; returns a function that cancels it. */
   readonly schedule: (run: () => void, ms: number) => () => void
   /** Calls `run` whenever the browser regains a network; returns an unsubscribe. */
   readonly onOnline: (run: () => void) => () => void
+  /**
+   * Calls `run` when the page becomes visible again; returns an unsubscribe. Background tabs have
+   * their timers throttled, so a refresh due while hidden can be late by minutes.
+   */
+  readonly onVisible?: (run: () => void) => () => void
+  /** The clock in milliseconds, for deciding whether a refresh is overdue. */
+  readonly now?: () => number
   readonly random?: () => number
 }
 
@@ -56,12 +84,20 @@ export function startRefresher(deps: RefresherDependencies): { stop(): void } {
   let attempt = 0
   let cancel: (() => void) | undefined
   let stopped = false
+  let dueAt = 0
+  const now = deps.now ?? Date.now
+  const controller = new AbortController()
+
+  const arm = (ms: number): void => {
+    dueAt = now() + ms
+    cancel = deps.schedule(() => void run(), ms)
+  }
 
   const run = async (): Promise<void> => {
     cancel = undefined
     let outcome: TokenOutcome
     try {
-      outcome = await deps.request()
+      outcome = await deps.request(controller.signal)
     } catch {
       // Why not let it propagate: `request` can fail *after* it has changed state (the access
       // token remembered, the rotated refresh token not yet written), and a rejection here would
@@ -73,13 +109,10 @@ export function startRefresher(deps: RefresherDependencies): { stop(): void } {
     switch (outcome.kind) {
       case 'refreshed':
         attempt = 0
-        cancel = deps.schedule(
-          () => void run(),
-          Math.max(1, outcome.expiresIn - EXPIRY_MARGIN_SECONDS) * 1000,
-        )
+        arm(refreshDelay(outcome.expiresIn))
         return
       case 'unreachable':
-        cancel = deps.schedule(() => void run(), backoffDelay(attempt, deps.random))
+        arm(backoffDelay(attempt, deps.random))
         attempt += 1
         return
       case 'ended':
@@ -97,10 +130,21 @@ export function startRefresher(deps: RefresherDependencies): { stop(): void } {
     void run()
   })
 
+  // Retries only what is overdue: a visible tab whose timer is still running has nothing to
+  // catch up on.
+  const unsubscribeVisible = deps.onVisible?.(() => {
+    if (stopped || cancel === undefined || now() < dueAt) return
+    cancel()
+    void run()
+  })
+
   void run()
   return {
     stop() {
       stopped = true
+      // Aborted so a request in flight does not store a token after sign-out has cleared them.
+      controller.abort()
+      unsubscribeVisible?.()
       cancel?.()
       unsubscribe()
     },

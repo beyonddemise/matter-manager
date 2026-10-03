@@ -87,11 +87,18 @@ export const VIEWS: Readonly<Record<string, (params: ViewParams) => TemplateResu
 function startRealRefresher(onOutcome: (outcome: TokenOutcome) => void): { stop(): void } {
   const store = pouchRefreshTokenStore(localDatabase())
   return startRefresher({
-    request: () => requestTokens(store),
+    request: (signal) => requestTokens(store, fetch, signal),
     onOutcome,
     schedule: (run, ms) => {
       const timer = setTimeout(run, ms)
       return () => clearTimeout(timer)
+    },
+    onVisible: (run) => {
+      const onChange = () => {
+        if (document.visibilityState === 'visible') run()
+      }
+      document.addEventListener('visibilitychange', onChange)
+      return () => document.removeEventListener('visibilitychange', onChange)
     },
     onOnline: (run) => {
       let first = true

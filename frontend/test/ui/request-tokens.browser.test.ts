@@ -94,4 +94,28 @@ describe('requestTokens', () => {
     ) as unknown as typeof fetch
     expect(await requestTokens(memoryStore('r1'), fetchImpl)).toEqual({ kind: 'unreachable' })
   })
+
+  it('remembers nothing and writes nothing when stopped while the request is pending', async () => {
+    // Sign-out stops the refresher; a response landing afterwards must not re-arm the browser.
+    forgetTokens()
+    const store = memoryStore('r1')
+    const controller = new AbortController()
+    let release: (r: Response) => void = () => {}
+    const pending = new Promise<Response>((resolve) => {
+      release = resolve
+    })
+    const fetchImpl = vi.fn(() => pending) as unknown as typeof fetch
+    const result = requestTokens(store, fetchImpl, controller.signal)
+    await new Promise((r) => setTimeout(r, 0))
+    controller.abort()
+    release(
+      new Response(JSON.stringify({ accessToken: 'a', expiresIn: 300, refreshToken: 'r2' }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    )
+    expect(await result).toEqual({ kind: 'unreachable' })
+    expect(accessToken()).toBeUndefined()
+    expect(store.held).toBe('r1')
+  })
 })
