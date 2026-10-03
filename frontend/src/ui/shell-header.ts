@@ -149,12 +149,18 @@ export function renderSignOut(
  *
  * - `ask`: the first question, with the box for the local-only projects. `pushing` while the
  *   synchronized copies are being pushed after it was confirmed.
- * - `unpushed`: some copies could not be pushed (ruling C-R10); `names` are theirs. Signing out
- *   now destroys changes that exist nowhere else, so it takes a second, explicit confirm.
+ * - `unpushed`: some copies may hold changes the server lacks (rulings C-R10, C-R16) — a push
+ *   failed, or they cannot be pushed at all — or the index could not be read to tell. Signing
+ *   out may then destroy changes that exist nowhere else, so it takes a second, explicit confirm.
  */
 export type SignOutStep =
   | { readonly step: 'ask'; readonly pushing: boolean }
-  | { readonly step: 'unpushed'; readonly names: readonly string[] }
+  | {
+      readonly step: 'unpushed'
+      readonly names: readonly string[]
+      /** The index could not be read, so what signing out would destroy is unknown. */
+      readonly unreadable: boolean
+    }
 
 /** What the sign-out confirmation calls back with. */
 export interface SignOutHandlers {
@@ -182,19 +188,36 @@ export function renderSignOutConfirmation(
   handlers: SignOutHandlers,
 ): TemplateResult | '' {
   if (state === undefined) return ''
+  // The dialog's own hide (Escape, its X) is a cancel: without this the dialog would close while
+  // the shell still believed it open, and a push still running would carry on into a sign-out.
+  // Only the dialog's own: an element inside it can fire the same event.
+  const onHide = (event: Event) => {
+    if (event.target === event.currentTarget) handlers.onCancel()
+  }
   const cancel = html`<wa-button slot="footer" data-cancel-sign-out @click=${handlers.onCancel}>
     ${msg('Cancel')}
   </wa-button>`
   if (state.step === 'unpushed') {
     return html`
-      <wa-dialog data-sign-out-dialog open label=${msg('Sign out')}>
+      <wa-dialog data-sign-out-dialog open label=${msg('Sign out')} @wa-after-hide=${onHide}>
         <wa-callout variant="warning">
           <wa-icon slot="icon" name="triangle-exclamation"></wa-icon>
-          ${msg('These projects have changes that are not on the server yet. Signing out removes them from this device.')}
+          ${msg('These projects may have changes that are not on the server. Signing out removes them from this device.')}
         </wa-callout>
-        <ul data-unpushed>
-          ${state.names.map((name) => html`<li>${name}</li>`)}
-        </ul>
+        ${
+          state.names.length === 0
+            ? ''
+            : html`<ul data-unpushed>
+                ${state.names.map((name) => html`<li>${name}</li>`)}
+              </ul>`
+        }
+        ${
+          state.unreadable
+            ? html`<p data-unreadable>
+                ${msg('The projects on this device could not be checked.')}
+              </p>`
+            : ''
+        }
         ${cancel}
         <wa-button
           slot="footer"
@@ -208,7 +231,7 @@ export function renderSignOutConfirmation(
     `
   }
   return html`
-    <wa-dialog data-sign-out-dialog open label=${msg('Sign out')}>
+    <wa-dialog data-sign-out-dialog open label=${msg('Sign out')} @wa-after-hide=${onHide}>
       <p>${msg('Everything this account put on this browser will be removed.')}</p>
       <wa-checkbox data-remove-local ?disabled=${state.pushing}>
         ${msg('Also remove projects stored only on this device')}

@@ -184,6 +184,7 @@ export class AppShell extends LitElement implements ViewHost {
     connectivity: { attribute: false },
     takeUpdate: { attribute: false },
     projectStore: { attribute: false },
+    signOutPushTimeoutMs: { attribute: false },
   }
 
   declare hash: string
@@ -222,6 +223,8 @@ export class AppShell extends LitElement implements ViewHost {
    * Injected by tests, so they never touch what the application keeps; the real ones otherwise.
    */
   declare projectStore?: LocalProjectDependencies
+  /** How long signing out waits for each push; injected by tests, the controller's default otherwise. */
+  declare signOutPushTimeoutMs?: number
   declare signIn?: () => void
   declare signOutOf?: (includeLocalCatalogue: boolean) => Promise<readonly string[]>
   /** What the browser last said about the network. See `connectivity.ts` on trusting it. */
@@ -501,10 +504,10 @@ export class AppShell extends LitElement implements ViewHost {
     const end = beginProjectAction()
     let signedOut = false
     try {
-      const unpushed = await this.projects.unpushedCopies()
+      const check = await this.projects.unpushedCopies()
       if (attempt !== this.signOutAttempt) return
-      if (unpushed.length > 0) {
-        this.signingOut = { step: 'unpushed', names: unpushed }
+      if (check.names.length > 0 || check.unreadable) {
+        this.signingOut = { step: 'unpushed', names: check.names, unreadable: check.unreadable }
         return
       }
       await this.signOut()

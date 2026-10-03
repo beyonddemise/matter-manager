@@ -210,9 +210,10 @@ a later `idle` cannot hide the refusal. The page shows it as "No permission to s
 "Archived — read-only" for an archived project.
 
 The header bar carries the email (or Sign in), the network state, the sync summary and Upgrade;
-**Sign out** is the last item of the left navigation. Signing out first pushes every
-synchronized copy once; if any push fails, or the device is offline, the dialog names those
-projects and asks a second time before going on. It holds the busy registry throughout, then
+**Sign out** is the last item of the left navigation. Signing out first reads the index afresh
+and pushes every synchronized copy once; the dialog then names every copy that may hold changes
+the server lacks (a failed or timed-out push, everything offline, and copies of archived or
+no-longer-listed projects, which cannot be pushed) and asks a second time before going on. It holds the busy registry throughout, then
 destroys `mm-local` and the server copies, and keeps local-only projects unless "Also remove
 projects stored only on this device" is ticked (the kept index entries are re-written into the
 fresh `mm-local`). A refused refresh token ends the session without deleting anything.

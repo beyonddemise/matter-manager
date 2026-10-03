@@ -910,10 +910,6 @@
   <source>Back to projects</source>
   <target>Zurück zu den Projekten</target>
 </trans-unit>
-<trans-unit id="sbf0a4d1b0f0526b4">
-  <source>These projects have changes that are not on the server yet. Signing out removes them from this device.</source>
-  <target>Diese Projekte haben Änderungen, die noch nicht auf dem Server sind. Wenn Sie sich abmelden, werden sie von diesem Gerät entfernt.</target>
-</trans-unit>
 <trans-unit id="se54a478afde28a31">
   <source>Sign out anyway</source>
   <target>Trotzdem abmelden</target>
@@ -929,6 +925,14 @@
 <trans-unit id="se69e1c39eae660c9">
   <source>This project changed — try again</source>
   <target>Dieses Projekt hat sich geändert – bitte versuchen Sie es erneut</target>
+</trans-unit>
+<trans-unit id="s012da7dfcc47a657">
+  <source>These projects may have changes that are not on the server. Signing out removes them from this device.</source>
+  <target>Diese Projekte haben möglicherweise Änderungen, die nicht auf dem Server sind. Wenn Sie sich abmelden, werden sie von diesem Gerät entfernt.</target>
+</trans-unit>
+<trans-unit id="s211581895248b54f">
+  <source>The projects on this device could not be checked.</source>
+  <target>Die Projekte auf diesem Gerät konnten nicht geprüft werden.</target>
 </trans-unit>
 </body>
 </file>

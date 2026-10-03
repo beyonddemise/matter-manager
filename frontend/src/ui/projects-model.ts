@@ -39,8 +39,8 @@
  *   row. It offers promote again, to finish the job (no slot needed: the project exists), and
  *   delete; rename waits, since the name now lives on the server too. It is never an orphan:
  *   its data has never been anywhere else, whatever the list says. Once the server-named copy is
-  listed too (only the source's destroy failed), the copy alone is the project and the source
-  is not shown.
+ *   listed too (only the source's destroy failed), the copy alone is the project and the source
+ *   is not shown.
  * - **A copy with no server project to compare with** (stale list not naming it, or unheard)
  *   reads `synced`, its last known state, so removing it still demands the push only `synced`
  *   asks for. Its role is the one the index recorded, and **owner** when none was: counting a

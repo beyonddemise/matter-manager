@@ -9,7 +9,8 @@
     /* eslint-disable @typescript-eslint/no-explicit-any */
 
     export const templates = {
-      's01924e0434d0960b': str`${0} auswählen`,
+      's012da7dfcc47a657': `Diese Projekte haben möglicherweise Änderungen, die nicht auf dem Server sind. Wenn Sie sich abmelden, werden sie von diesem Gerät entfernt.`,
+'s01924e0434d0960b': str`${0} auswählen`,
 's033f47026d02c003': `Geben Sie den Projektnamen genau ein, um es zu löschen`,
 's0384e1e586dd5707': `Wie Sie es im Alltag nennen würden: „Deckenlampe Küche“.`,
 's03daa792818ba91c': `Nicht alles konnte hochgeladen werden, daher wurde die lokale Kopie behalten. Bitte versuchen Sie es erneut.`,
@@ -31,6 +32,7 @@
 's1c5e4b31f51478ba': `Der Server war nicht erreichbar`,
 's1e86539302492dfb': `Lokale Kopie entfernen?`,
 's1f7698c061c208c9': `Öffnen`,
+'s211581895248b54f': `Die Projekte auf diesem Gerät konnten nicht geprüft werden.`,
 's21ef3efa969c9e81': `Zum dunklen Erscheinungsbild wechseln`,
 's21fe63f6e181184e': `Alles, was dieses Konto in diesem Browser abgelegt hat, wird entfernt.`,
 's247c22e9516af7c0': `Es werden nur Kombinationen angeboten, die den Kontraststandard AA erfüllen.`,
@@ -173,7 +175,6 @@
 'sbc4cbc3f5750b49c': `Auf diesem Gerät erfasst`,
 'sbd65c5758efd65aa': `Matter-Manager-Etiketten`,
 'sbe294870a557225c': `Ein manueller Kopplungscode hat 11 oder 21 Ziffern. Leerzeichen und Bindestriche zählen nicht mit, es kommt nur auf die Ziffern an.`,
-'sbf0a4d1b0f0526b4': `Diese Projekte haben Änderungen, die noch nicht auf dem Server sind. Wenn Sie sich abmelden, werden sie von diesem Gerät entfernt.`,
 'sc57ea0983bcd594f': `Setup-Code`,
 'sc611e5288567bd05': `Die Kamera wird von einer anderen Anwendung verwendet. Schließen Sie diese und versuchen Sie es erneut, oder geben Sie den Code ein.`,
 'sc6f37e089e93f72d': str`Projekte, die Ihr Tarif erlaubt: ${0}. Projekte, die Ihnen gehören: ${1}. Alles bleibt nutzbar, aber neue Projekte können nicht angelegt werden.`,

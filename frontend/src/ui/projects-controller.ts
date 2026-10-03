@@ -18,6 +18,7 @@
  */
 
 import type { ReactiveController, ReactiveControllerHost } from 'lit'
+import { isLocalOnlyDatabase } from '../data/index.js'
 import { DEFAULT_PLAN } from '../domain/plan.js'
 import { projectSync, projects } from './composition.js'
 import {
@@ -56,6 +57,16 @@ export interface ProjectsHost extends ReactiveControllerHost {
   readonly makeSync?: (onState: (id: string, state: SyncState) => void) => SyncManager
   /** The local index and databases; injected by tests. */
   readonly projectStore?: LocalProjectDependencies
+  /** How long signing out waits for each push; injected by tests, 30 s otherwise. */
+  readonly signOutPushTimeoutMs?: number | undefined
+}
+
+/** What signing out found before destroying anything; see {@link ProjectsController.unpushedCopies}. */
+export interface SignOutCheck {
+  /** The copies that may hold changes the server lacks, in page order. */
+  readonly names: readonly string[]
+  /** Whether the index could not be read, so what would be destroyed is unknown. */
+  readonly unreadable: boolean
 }
 
 /**
@@ -218,38 +229,55 @@ export class ProjectsController implements ReactiveController {
   }
 
   /**
-   * Pushes every synchronized copy once, for signing out, and names the ones that did not get
-   * everything to the server (ruling C-R10).
+   * Pushes every synchronized copy once, for signing out, and names every copy that may hold
+   * changes the server lacks (rulings C-R10, C-R16).
    *
    * Signing out destroys every copy of a server project on this device, so a change that never
-   * left one goes with it. Each copy is pushed with `pushNow`, which resolves only when the server
-   * holds everything; one that fails, times out, or cannot be tried (offline, no replication) is
-   * named, so the reader decides with the names in front of them. All are pushed at once, and
-   * every failure is collected rather than stopping at the first.
+   * left one goes with it. Two kinds are named:
    *
-   * Only rows the page shows as synchronized: they are what replication was handed, and so all
-   * `pushNow` can push. An archived project's copy cannot be pushed at all — the server refuses
-   * every write to it — and was already warned about when it was archived.
+   * - **Synchronized copies** whose push failed, timed out, or could not be tried (offline, no
+   *   replication). Each is pushed with `pushNow`, which resolves only when the server holds
+   *   everything; all at once, every failure collected.
+   * - **Copies of archived projects, and copies a fresh list no longer names.** They cannot be
+   *   pushed — the server refuses every write to an archived project, and one no longer listed
+   *   is not the caller's to write — yet may hold edits made before another device archived it
+   *   or access was revoked. Named without trying.
    *
-   * @returns the names of the copies with changes that may not be on the server, in page order
+   * The index is **read afresh** rather than taken from the last applied facts: a copy indexed
+   * since then (a download in another tab) would otherwise be destroyed unnamed. An index that
+   * cannot be read is reported as `unreadable`: what would be destroyed is then unknown, which
+   * must be asked about rather than assumed empty.
    */
-  async unpushedCopies(): Promise<readonly string[]> {
-    const model = projectsModel(this.input())
-    const copies = [...model.owned, ...model.shared].filter(
+  async unpushedCopies(): Promise<SignOutCheck> {
+    let local: ProjectsInput['local']
+    try {
+      local = await this.store().cache().readLocalProjects()
+    } catch {
+      return { names: [], unreadable: true }
+    }
+    const model = projectsModel({ ...this.input(), local })
+    const rows = [...model.owned, ...model.shared]
+    const synced = rows.filter(
       (row): row is Row & { projectId: string } =>
         row.location === 'synced' && row.projectId !== undefined,
     )
-    const { sync } = this
-    if (copies.length === 0) return []
-    if (!this.host.online || sync === undefined) return copies.map((row) => row.name)
-    const outcomes = await Promise.allSettled(
-      copies.map((row) =>
-        sync.pushNow(row.projectId, { signal: AbortSignal.timeout(SIGN_OUT_PUSH_TIMEOUT_MS) }),
-      ),
+    // Server-named copies the page shows as `local`: remnants and orphans. A half-done
+    // promotion's source is local-only by name, and kept unless the reader asked.
+    const unpushable = rows.filter(
+      (row) =>
+        row.location === 'local' && row.projectId !== undefined && !isLocalOnlyDatabase(row.dbName),
     )
-    return copies
-      .filter((_, index) => outcomes[index]?.status !== 'fulfilled')
-      .map((row) => row.name)
+    const { sync } = this
+    let failed: readonly Row[] = synced
+    if (synced.length > 0 && this.host.online && sync !== undefined) {
+      const timeout = this.host.signOutPushTimeoutMs ?? SIGN_OUT_PUSH_TIMEOUT_MS
+      const outcomes = await Promise.allSettled(
+        synced.map((row) => sync.pushNow(row.projectId, { signal: AbortSignal.timeout(timeout) })),
+      )
+      failed = synced.filter((_, index) => outcomes[index]?.status !== 'fulfilled')
+    }
+    const named = new Set<Row>([...failed, ...unpushable])
+    return { names: rows.filter((row) => named.has(row)).map((row) => row.name), unreadable: false }
   }
 
   /**

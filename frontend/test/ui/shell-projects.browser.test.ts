@@ -83,7 +83,9 @@ function fakeNetwork(onLine = true) {
 }
 
 /** A replication manager that records every list it is handed. */
-function recordingSync(push: (projectId: string) => Promise<void> = async () => {}) {
+function recordingSync(
+  push: (projectId: string, signal?: AbortSignal) => Promise<void> = async () => {},
+) {
   const sets: (readonly SyncableProject[])[] = []
   const pushes: string[] = []
   const manager = {
@@ -91,9 +93,9 @@ function recordingSync(push: (projectId: string) => Promise<void> = async () => 
     running: () => [],
     stateOf: () => undefined,
     stop: () => {},
-    pushNow: async (projectId: string) => {
+    pushNow: async (projectId: string, options?: { signal?: AbortSignal }) => {
       pushes.push(projectId)
-      await push(projectId)
+      await push(projectId, options?.signal)
     },
     suspend: () => {},
     resume: () => {},
@@ -112,7 +114,9 @@ interface Options {
   readonly signOutOf?: unknown
   readonly store?: LocalProjectDependencies
   /** What each push does; succeeds by default. */
-  readonly push?: (projectId: string) => Promise<void>
+  readonly push?: (projectId: string, signal?: AbortSignal) => Promise<void>
+  /** How long signing out waits for each push. */
+  readonly signOutPushTimeoutMs?: number
 }
 
 /** The shell, wired to fakes, settled past its first refresh. */
@@ -140,6 +144,7 @@ async function mount(options: Options = {}) {
       .signOutOf=${signOutOf}
       .signIn=${() => {}}
       .projectStore=${store}
+      .signOutPushTimeoutMs=${options.signOutPushTimeoutMs}
     ></app-shell>
   `)) as AppShell
   await element.updateComplete
@@ -706,7 +711,7 @@ describe('signing out from the menu', () => {
 
     await waitUntil(() => element.querySelector('[data-unpushed]') !== null, 'no second step')
     expect(text(element.querySelector('[data-sign-out-dialog]'))).toContain(
-      'These projects have changes that are not on the server yet. Signing out removes them from this device.',
+      'These projects may have changes that are not on the server. Signing out removes them from this device.',
     )
     expect(text(element.querySelector('[data-unpushed]'))).toBe('Beta')
     expect(calls(signOutOf)).toHaveLength(0)
@@ -772,6 +777,155 @@ describe('signing out from the menu', () => {
     await waitUntil(() => calls(signOutOf).length > 0, 'never signed out')
     await waitUntil(() => !projectActionRunning(), 'never let go')
     expect(seen).toEqual([true, true])
+  })
+
+  it('names an archived project’s copy without trying to push it', async () => {
+    // Re-review A: archived elsewhere, its copy may hold edits that never left, and the server
+    // refuses every write now — so it cannot be pushed, only named.
+    const { element, sync, signOutOf } = await mount({
+      ...synced,
+      list: async () => [project({ archived: true })],
+    })
+    await inputSettles(element, (i) => i.server !== undefined, 'no list arrived')
+
+    await askAndConfirm(element)
+
+    await waitUntil(() => element.querySelector('[data-unpushed]') !== null, 'no second step')
+    expect(text(element.querySelector('[data-unpushed]'))).toBe('Beta')
+    expect(sync.pushes).toEqual([])
+    expect(calls(signOutOf)).toHaveLength(0)
+  })
+
+  it('names a copy the server no longer lists', async () => {
+    const { element, sync } = await mount({ ...synced, list: async () => [] })
+    await inputSettles(element, (i) => i.server !== undefined, 'no list arrived')
+
+    await askAndConfirm(element)
+
+    await waitUntil(() => element.querySelector('[data-unpushed]') !== null, 'no second step')
+    expect(text(element.querySelector('[data-unpushed]'))).toBe('Beta')
+    expect(sync.pushes).toEqual([])
+  })
+
+  it('reads the index afresh, so a copy listed since the last refresh is pushed too', async () => {
+    const { element, store, sync, signOutOf } = await mount({
+      cachedProfile: profile(),
+      list: async () => [project()],
+    })
+    await inputSettles(element, (i) => i.server !== undefined, 'no list arrived')
+    await store.cache().addLocalProject(copy)
+
+    await askAndConfirm(element)
+
+    await waitUntil(() => calls(signOutOf).length > 0, 'never signed out')
+    expect(sync.pushes).toEqual(['p1'])
+  })
+
+  it('asks the second question when the index cannot be read', async () => {
+    const base = isolatedProjectStore()
+    let unreadable = false
+    const store: LocalProjectDependencies = {
+      ...base,
+      cache: () => ({
+        ...base.cache(),
+        readLocalProjects: async () => {
+          if (unreadable) throw new Error('the index is gone')
+          return base.cache().readLocalProjects()
+        },
+      }),
+    }
+    const { element, signOutOf } = await mount({ ...synced, store })
+    await inputSettles(element, (i) => i.server !== undefined, 'no list arrived')
+    unreadable = true
+
+    await askAndConfirm(element)
+
+    await waitUntil(() => element.querySelector('[data-unreadable]') !== null, 'no second step')
+    expect(calls(signOutOf)).toHaveLength(0)
+  })
+
+  it('names a copy whose push did not finish in time', async () => {
+    const { element, signOutOf } = await mount({
+      ...synced,
+      signOutPushTimeoutMs: 50,
+      push: (_projectId, signal) =>
+        new Promise((_resolve, reject) => {
+          signal?.addEventListener('abort', () => reject(signal.reason))
+        }),
+    })
+    await inputSettles(element, (i) => i.server !== undefined, 'no list arrived')
+
+    await askAndConfirm(element)
+
+    await waitUntil(() => element.querySelector('[data-unpushed]') !== null, 'no second step')
+    expect(text(element.querySelector('[data-unpushed]'))).toBe('Beta')
+    expect(calls(signOutOf)).toHaveLength(0)
+  })
+
+  /** Mounts with pushes that wait for `release`, confirms, and waits for them to start. */
+  async function pushesHeld() {
+    let release = () => {}
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const mounted = await mount({ ...synced, push: () => held })
+    await inputSettles(mounted.element, (i) => i.server !== undefined, 'no list arrived')
+    await askAndConfirm(mounted.element)
+    await waitUntil(() => mounted.sync.pushes.length > 0, 'never pushed')
+    return { ...mounted, release }
+  }
+
+  it('does not sign out when pushes finish after Cancel', async () => {
+    const { element, signOutOf, release } = await pushesHeld()
+
+    ;(element.querySelector('[data-cancel-sign-out]') as HTMLElement).click()
+    await element.updateComplete
+    release()
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    await element.updateComplete
+
+    expect(calls(signOutOf)).toHaveLength(0)
+    expect(element.querySelector('[data-sign-out-dialog]')).toBeNull()
+  })
+
+  it('cancels when the dialog itself is closed (Escape, its X)', async () => {
+    const { element, signOutOf, release } = await pushesHeld()
+
+    const dialog = element.querySelector('[data-sign-out-dialog]') as HTMLElement & {
+      open: boolean
+    }
+    dialog.open = false
+    await waitUntil(
+      () => element.querySelector('[data-sign-out-dialog]') === null,
+      'the closed dialog was not cancelled',
+    )
+    release()
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    await element.updateComplete
+
+    expect(calls(signOutOf)).toHaveLength(0)
+    expect(element.querySelector('[data-sign-out-dialog]')).toBeNull()
+  })
+
+  it('cancels when the second step’s dialog itself is closed', async () => {
+    const { element, signOutOf } = await mount({
+      ...synced,
+      push: async () => {
+        throw new Error('the server refused')
+      },
+    })
+    await inputSettles(element, (i) => i.server !== undefined, 'no list arrived')
+    await askAndConfirm(element)
+    await waitUntil(() => element.querySelector('[data-unpushed]') !== null, 'no second step')
+
+    ;(element.querySelector('[data-sign-out-dialog]') as HTMLElement & { open: boolean }).open =
+      false
+
+    await waitUntil(
+      () => element.querySelector('[data-sign-out-dialog]') === null,
+      'the closed dialog was not cancelled',
+    )
+    expect(calls(signOutOf)).toHaveLength(0)
   })
 
   it('is not in the menu while signed out', async () => {

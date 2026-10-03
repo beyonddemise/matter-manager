@@ -461,12 +461,15 @@ Deviations from the phase C text above. Everything not listed was built as speci
 - **Sign-out keeps today's semantics, and pushes first.** Server copies (indexed with a
   `projectId`) and `mm-local` are always destroyed; local-only projects, `project_local`
   included, only with "Also remove projects stored only on this device". Kept local-only entries
-  are re-written into the fresh `mm-local`. Before anything is destroyed every synchronized copy
-  is pushed once (`pushNow`, checkpoint-free); if any push fails, times out, or the device is
-  offline, the dialog lists those projects ("These projects have changes that are not on the
-  server yet. Signing out removes them from this device.") and needs a second confirm, and
-  cancel keeps everything (ruling C-R10). The whole sign-out holds the busy registry. Copies of
-  archived projects are not pushed: the server refuses every write to them.
+  are re-written into the fresh `mm-local`. Before anything is destroyed the index is read
+  afresh and every synchronized copy is pushed once (`pushNow`, checkpoint-free). The dialog
+  then lists every copy that may hold changes the server lacks ("These projects may have
+  changes that are not on the server. Signing out removes them from this device.") and needs a
+  second confirm; cancel, Escape or the dialog's X keeps everything (rulings C-R10, C-R16).
+  Listed are the synchronized copies whose push failed or timed out (all of them offline), and
+  every copy of an archived project or of one a fresh list no longer names: those cannot be
+  pushed, so they are named without trying. An index that cannot be read also leads to the
+  second step. The whole sign-out holds the busy registry.
 - **`LocalProjectEntry` gained an optional `role`**, written on download and promote, so an
   offline device can tell a shared copy from an owned one. Missing on an entry with a `projectId`
   reads as owner.
@@ -524,7 +527,11 @@ Known limits:
   holds nothing the source lacks unless that copy-back itself failed.
 - **A promotion whose source destroy failed leaves the source on disk**, still indexed but not
   shown (the page shows the copy). Its data is on the server; it goes with "Also remove projects
-  stored only on this device" at sign-out.
+  stored only on this device" at sign-out. Without that box the copy goes and the source stays,
+  so after the sign-out it reappears as a half-promotion row (local, offering promote again).
+- **A failed copy-back followed by a sign-out loses the survivor's writes.** If the copy-back
+  of a refused promote itself fails, the edits made during the transfer are only in the
+  unindexed server-named copy; signing out before a retried promote destroys it unnamed.
 - **The stale list can be up to a session old.** It is trusted for facts, never for acts.
 - A transient list omission right after `POST /projects` can mint a duplicate server project (no
   data loss).
