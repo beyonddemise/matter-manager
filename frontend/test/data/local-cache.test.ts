@@ -186,6 +186,16 @@ describe('the local project index', () => {
     expect(await cache.readLocalProjects()).toEqual([])
   })
 
+  it('keeps the role of a downloaded copy, and lets it change', async () => {
+    const cache = localCache(memoryDatabase())
+    const shared = { ...entry('project_s1', 'S'), projectId: 's1', role: 'write' as const }
+    await cache.addLocalProject(shared)
+    expect(await cache.readLocalProjects()).toEqual([shared])
+
+    await cache.updateLocalProject('project_s1', { role: 'read' })
+    expect(await cache.readLocalProjects()).toEqual([{ ...shared, role: 'read' }])
+  })
+
   it('does not invent an entry when patching one that is not there', async () => {
     const cache = localCache(memoryDatabase())
     await cache.updateLocalProject('project_local_x', { name: 'X' })

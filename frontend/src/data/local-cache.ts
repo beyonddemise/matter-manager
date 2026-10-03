@@ -115,6 +115,17 @@ export interface LocalProjectEntry {
   readonly client?: string
   /** The server's id for it once it is synchronized. Absent while local-only. */
   readonly projectId?: string
+  /**
+   * The caller's role on the server project, as last heard when the copy was made or refreshed.
+   *
+   * Recorded so the projects page can tell a downloaded *shared* project from an owned one when
+   * no server list is to hand: owned ones count against the limit and follow the owner's plan.
+   * Absent on a copy with a `projectId` reads as owner: counting a project that may be shared
+   * can refuse a create that would have fitted, while the opposite reading could create past
+   * the limit. Promoting writes no role (the promoter owns it); downloading should write one.
+   * Meaningless while local-only.
+   */
+  readonly role?: 'owner' | 'manage' | 'write' | 'read'
   /** When this device first knew of the project, ISO-8601. */
   readonly createdAt: string
 }

@@ -40,7 +40,8 @@ const LOCAL: readonly LocalProjectEntry[] = [
   local({ dbName: 'project_local_alpha', name: 'Alpha', client: 'Acme' }),
   local({ dbName: 'project_bravo', name: 'Bravo', projectId: 'bravo' }),
   local({ dbName: 'project_delta', name: 'Delta', projectId: 'delta' }),
-  local({ dbName: 'project_foxtrot', name: 'Foxtrot', projectId: 'foxtrot' }),
+  // Downloaded from a share: the index remembers the role for when no server list is to hand.
+  local({ dbName: 'project_foxtrot', name: 'Foxtrot', projectId: 'foxtrot', role: 'read' }),
 ]
 
 const SERVER: readonly Project[] = [
@@ -85,73 +86,47 @@ const na = no('not-applicable')
 const PLANS: readonly Plan[] = ['free', 'member', 'pro']
 const SESSIONS: readonly Session[] = ['signed-in', 'signed-out', 'expired']
 const CONNECTIONS = [true, false] as const
+/** This session's answer, the last one cached, or none ever heard. */
+const LISTS = ['fresh', 'stale', 'unheard'] as const
 
-describe('the page for every plan × session × connection × location', () => {
+describe('the page for every plan × session × connection × server list × location', () => {
   for (const plan of PLANS) {
     for (const session of SESSIONS) {
       for (const online of CONNECTIONS) {
-        const signedIn = session === 'signed-in'
-        // The server list is only ever heard while signed in; offline it is the last one heard.
-        const model = projectsModel(
-          input({ plan, session, online, server: signedIn ? SERVER : undefined }),
-        )
-        const syncs = plan !== 'free'
-        // The refusal any server action gets before plan or role is asked.
-        const server = (): Permission | undefined =>
-          !signedIn ? no('signed-out') : !online ? no('offline') : undefined
-        const label = `${plan}, ${session}, ${online ? 'online' : 'offline'}`
+        for (const list of LISTS) {
+          const signedIn = session === 'signed-in'
+          const heard = list !== 'unheard'
+          const model = projectsModel(
+            input({
+              plan,
+              session,
+              online,
+              server: heard ? SERVER : undefined,
+              serverStale: list === 'stale',
+            }),
+          )
+          const syncs = plan !== 'free'
+          const limit = { free: 1, member: 5, pro: Number.POSITIVE_INFINITY }[plan]
+          // The refusal any server action gets before plan or role is asked.
+          const server = (): Permission | undefined =>
+            !signedIn
+              ? no('signed-out')
+              : !online
+                ? no('offline')
+                : list === 'stale'
+                  ? no('stale')
+                  : undefined
+          const label = `${plan}, ${session}, ${online ? 'online' : 'offline'}, ${list} list`
 
-        it(`${label}: a local-only project is always editable and can always be deleted`, () => {
-          const row = byKey(model, 'project_local_alpha')
-          expect(row).toMatchObject({ location: 'local', editable: true, archived: false })
-          expect(row.actions).toEqual<RowActions>({
-            open: ok,
-            rename: ok,
-            promote: server() ?? (syncs ? ok : no('plan')),
-            download: na,
-            removeLocal: na,
-            deleteLocal: ok,
-            removeServer: na,
-          })
-        })
-
-        it(`${label}: an owned synchronized project`, () => {
-          const row = byKey(model, 'project_bravo')
-          expect(row).toMatchObject({ location: 'synced', projectId: 'bravo', editable: syncs })
-          expect(row.actions).toEqual<RowActions>({
-            open: ok,
-            rename: server() ?? ok,
-            promote: na,
-            download: na,
-            removeLocal: server() ?? ok,
-            deleteLocal: na,
-            removeServer: server() ?? ok,
-          })
-        })
-
-        if (signedIn) {
-          it(`${label}: an owned server-only project`, () => {
-            const row = byKey(model, 'project_charlie')
-            expect(row).toMatchObject({ location: 'server', role: 'owner', editable: syncs })
-            expect(row.actions).toEqual<RowActions>({
-              // "Not available offline": there is nothing on this device to open.
-              open: online ? ok : no('offline'),
-              rename: server() ?? ok,
-              promote: na,
-              download: server() ?? (syncs ? ok : no('plan')),
-              removeLocal: na,
-              deleteLocal: na,
-              removeServer: server() ?? ok,
-            })
-          })
-
-          it(`${label}: the local copy of an archived project is local, read-only, delete-only`, () => {
-            const row = byKey(model, 'project_delta')
-            expect(row).toMatchObject({ location: 'local', archived: true, editable: false })
+          it(`${label}: a local-only project is always editable and can always be deleted`, () => {
+            const row = byKey(model, 'project_local_alpha')
+            expect(row).toMatchObject({ location: 'local', editable: true, archived: false })
+            expect(row.role).toBeUndefined()
             expect(row.actions).toEqual<RowActions>({
               open: ok,
-              rename: no('read-only'),
-              promote: na,
+              rename: ok,
+              // Three owned projects are within every plan that syncs.
+              promote: server() ?? (syncs ? ok : no('plan')),
               download: na,
               removeLocal: na,
               deleteLocal: ok,
@@ -159,22 +134,26 @@ describe('the page for every plan × session × connection × location', () => {
             })
           })
 
-          it(`${label}: a project shared for writing downloads on any plan`, () => {
-            const row = byKey(model, 'project_echo')
-            expect(model.shared).toContain(row)
-            expect(row).toMatchObject({ location: 'server', role: 'write', editable: true })
+          it(`${label}: an owned synchronized project`, () => {
+            const row = byKey(model, 'project_bravo')
+            expect(row).toMatchObject({
+              location: 'synced',
+              projectId: 'bravo',
+              role: 'owner',
+              editable: syncs,
+            })
             expect(row.actions).toEqual<RowActions>({
-              open: online ? ok : no('offline'),
-              rename: server() ?? no('role'),
+              open: ok,
+              rename: server() ?? ok,
               promote: na,
-              download: server() ?? ok,
-              removeLocal: na,
+              download: na,
+              removeLocal: server() ?? ok,
               deleteLocal: na,
-              removeServer: server() ?? no('role'),
+              removeServer: server() ?? ok,
             })
           })
 
-          it(`${label}: a project shared for reading is never editable`, () => {
+          it(`${label}: a project shared for reading is shared and never editable`, () => {
             const row = byKey(model, 'project_foxtrot')
             expect(model.shared).toContain(row)
             expect(row).toMatchObject({ location: 'synced', role: 'read', editable: false })
@@ -183,35 +162,94 @@ describe('the page for every plan × session × connection × location', () => {
           })
 
           it(`${label}: counts owned projects once wherever they live, never shared or archived`, () => {
-            expect(model.owned.map((row) => row.name)).toEqual([
-              'Alpha',
-              'Bravo',
-              'Charlie',
-              'Delta',
-            ])
-            expect(model.shared.map((row) => row.name)).toEqual(['Echo', 'Foxtrot'])
             expect(model.ownedCount).toBe(3)
+            expect(model.shared.map((row) => row.name)).toEqual(
+              heard ? ['Echo', 'Foxtrot'] : ['Foxtrot'],
+            )
           })
-        } else {
-          it(`${label}: unheard server: copies read as synchronized, server-only rows are absent`, () => {
-            expect(rows(model).map((row) => row.location)).toEqual([
-              'local',
-              'synced',
-              'synced',
-              'synced',
-            ])
-            expect(rows(model).some((row) => row.dbName === 'project_charlie')).toBe(false)
+
+          it(`${label}: creation, its target and its refusal`, () => {
+            const target = signedIn && online && syncs ? 'synced' : 'local'
+            expect(model.createTarget).toBe(target)
+            expect(model.canCreate).toEqual(
+              !signedIn
+                ? no('signed-out')
+                : 3 >= limit
+                  ? no('limit')
+                  : target === 'synced' && list !== 'fresh'
+                    ? no('offline-server')
+                    : ok,
+            )
           })
+
+          it(`${label}: the layout is the plan's`, () => {
+            expect(model.layout).toBe(plan)
+          })
+
+          if (heard) {
+            it(`${label}: an owned server-only project`, () => {
+              const row = byKey(model, 'project_charlie')
+              expect(row).toMatchObject({ location: 'server', role: 'owner', editable: syncs })
+              expect(row.actions).toEqual<RowActions>({
+                // "Not available offline": there is nothing on this device to open.
+                open: server() ?? ok,
+                rename: server() ?? ok,
+                promote: na,
+                download: server() ?? (syncs ? ok : no('plan')),
+                removeLocal: na,
+                deleteLocal: na,
+                removeServer: server() ?? ok,
+              })
+            })
+
+            it(`${label}: the copy of an archived project is local, read-only, delete-only`, () => {
+              const row = byKey(model, 'project_delta')
+              expect(row).toMatchObject({ location: 'local', archived: true, editable: false })
+              expect(row.actions).toEqual<RowActions>({
+                open: ok,
+                rename: no('read-only'),
+                promote: na,
+                download: na,
+                removeLocal: na,
+                deleteLocal: ok,
+                removeServer: na,
+              })
+            })
+
+            it(`${label}: a project shared for writing downloads on any plan`, () => {
+              const row = byKey(model, 'project_echo')
+              expect(model.shared).toContain(row)
+              expect(row).toMatchObject({ location: 'server', role: 'write', editable: true })
+              expect(row.actions).toEqual<RowActions>({
+                open: server() ?? ok,
+                rename: server() ?? no('role'),
+                promote: na,
+                download: server() ?? ok,
+                removeLocal: na,
+                deleteLocal: na,
+                removeServer: server() ?? no('role'),
+              })
+            })
+
+            it(`${label}: owned lists every owned project, the archived copy included`, () => {
+              expect(model.owned.map((row) => row.name)).toEqual([
+                'Alpha',
+                'Bravo',
+                'Charlie',
+                'Delta',
+              ])
+            })
+          } else {
+            it(`${label}: copies read as synchronized, server-only rows are absent`, () => {
+              expect(model.owned.map((row) => [row.name, row.location])).toEqual([
+                ['Alpha', 'local'],
+                ['Bravo', 'synced'],
+                ['Delta', 'synced'],
+              ])
+              expect(rows(model).some((row) => row.dbName === 'project_charlie')).toBe(false)
+            })
+          }
         }
-
-        it(`${label}: creation and its target`, () => {
-          expect(model.createTarget).toBe(signedIn && online && syncs ? 'synced' : 'local')
-          if (!signedIn) expect(model.canCreate).toEqual(no('signed-out'))
-        })
-
-        it(`${label}: the layout is the plan's`, () => {
-          expect(model.layout).toBe(plan)
-        })
       }
     }
   }
@@ -245,6 +283,31 @@ describe('the limit', () => {
     expect(model.overLimit).toBe(true)
     expect(model.canCreate).toEqual(no('limit'))
     expect(model.owned.map((row) => row.actions.open.allowed)).toEqual([true, true, true, true])
+  })
+
+  it('over the limit, promoting is refused: the server counts only its own active projects', () => {
+    // A pro account downgraded to member, keeping six server projects and one local-only one.
+    const six = Array.from({ length: 6 }, (_, i) => server(`p${i}`))
+    const model = projectsModel(
+      input({ local: [local({ dbName: 'project_local_x', name: 'X' })], server: six }),
+    )
+    expect(model.overLimit).toBe(true)
+    expect(byKey(model, 'project_local_x').actions.promote).toEqual(no('limit'))
+  })
+
+  it('offline with the last known list: five server projects leave no room for a sixth', () => {
+    const five = Array.from({ length: 5 }, (_, i) => server(`p${i}`))
+    const model = projectsModel(
+      input({ local: [], server: five, serverStale: true, online: false }),
+    )
+    expect(model.ownedCount).toBe(5)
+    expect(model.createTarget).toBe('local')
+    expect(model.canCreate).toEqual(no('limit'))
+  })
+
+  it('online with only the last known list: a synchronized create waits for a fresh one', () => {
+    const model = only([], { serverStale: true })
+    expect(model.canCreate).toEqual(no('offline-server'))
   })
 
   it('at the limit is not over it', () => {
@@ -317,23 +380,66 @@ describe('joining the local index with the server list', () => {
     expect(byKey(model, 'project_bravo')).toMatchObject({ name: 'New', client: 'Client' })
   })
 
-  it('a copy the server no longer lists at all is local and read-only, delete-only', () => {
+  it('a copy a fresh list no longer names is local, read-only, delete-only, with a warning', () => {
     const model = projectsModel(input({ server: [] }))
     const row = byKey(model, 'project_bravo')
     expect(row).toMatchObject({ location: 'local', archived: false, editable: false })
-    expect(row.actions.deleteLocal).toEqual(ok)
+    expect(row.actions.deleteLocal).toEqual({ allowed: true, warn: 'unpushed-may-be-lost' })
     expect(row.actions.rename).toEqual(no('read-only'))
     expect(row.actions.removeLocal).toEqual(na)
     // Gone from the server's count, so gone from the page's.
     expect(model.ownedCount).toBe(1)
   })
 
-  it('a copy whose role was never heard counts as owned: the reading that never over-creates', () => {
-    const model = projectsModel(input({ server: undefined, online: false }))
-    expect(model.owned).toHaveLength(4)
-    expect(model.ownedCount).toBe(4)
-    expect(byKey(model, 'project_foxtrot').location).toBe('synced')
-    expect(byKey(model, 'project_foxtrot').role).toBeUndefined()
+  it('a stale list is never proof that a copy is gone', () => {
+    const model = projectsModel(input({ server: [], serverStale: true, online: false }))
+    const row = byKey(model, 'project_bravo')
+    expect(row).toMatchObject({ location: 'synced', editable: true })
+    expect(row.actions.deleteLocal).toEqual(na)
+    expect(row.actions.removeLocal).toEqual(no('offline'))
+  })
+
+  it('a copy of an archived project in the last known list is local and read-only', () => {
+    const model = projectsModel(input({ serverStale: true, online: false }))
+    const row = byKey(model, 'project_delta')
+    expect(row).toMatchObject({ location: 'local', archived: true, editable: false })
+    expect(row.actions.deleteLocal).toEqual(ok)
+  })
+
+  it('with no server list, a copy takes the role its index entry recorded', () => {
+    const model = projectsModel(
+      input({
+        server: undefined,
+        online: false,
+        local: [
+          local({ dbName: 'project_w', projectId: 'w', role: 'write' }),
+          local({ dbName: 'project_m', projectId: 'm', role: 'manage' }),
+        ],
+      }),
+    )
+    expect(model.ownedCount).toBe(0)
+    expect(model.shared.map((row) => [row.dbName, row.role, row.editable])).toEqual([
+      ['project_m', 'manage', true],
+      ['project_w', 'write', true],
+    ])
+  })
+
+  it('a copy that recorded no role is the owner’s: the reading that never over-creates', () => {
+    const model = projectsModel(
+      input({ server: undefined, local: [local({ dbName: 'project_o', projectId: 'o' })] }),
+    )
+    expect(model.owned.map((row) => row.role)).toEqual(['owner'])
+    expect(model.ownedCount).toBe(1)
+  })
+
+  it('the server list’s role wins over the one the index recorded', () => {
+    const model = projectsModel(
+      input({
+        local: [local({ dbName: 'project_x', projectId: 'x', role: 'read' })],
+        server: [server('x', { role: 'manage' })],
+      }),
+    )
+    expect(byKey(model, 'project_x').role).toBe('manage')
   })
 
   it('a manager renames a shared project; a writer does not', () => {
@@ -362,7 +468,8 @@ describe('joining the local index with the server list', () => {
     expect(byKey(model, 'project_bravo').syncState).toBe('denied')
     expect(byKey(model, 'project_charlie').syncState).toBe('offline')
     expect(byKey(model, 'project_local_alpha').syncState).toBeUndefined()
-    expect(asked).not.toContain(undefined)
+    // Asked once for every project with a server side, and never for the local-only one.
+    expect(asked.sort()).toEqual(['bravo', 'charlie', 'delta', 'echo', 'foxtrot'])
   })
 
   it('keys every row by its database name', () => {
