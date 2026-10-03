@@ -35,7 +35,7 @@ fail=0
 cleanup() {
   rm -f "$WORK_DD"
   curl -s -u "$ADMIN" -X DELETE "$URL/$DB" >/dev/null 2>&1 || true
-  for u in "vam-writer" "vam-reader" "vam-outsider"; do
+  for u in "vam-writer" "vam-reader" "vam-outsider" "vam-owner-free" "vam-owner-member"; do
     rev=$(curl -s -u "$ADMIN" "$URL/_users/org.couchdb.user:$u" | grep -o '"_rev":"[^"]*"' | cut -d'"' -f4 || true)
     [ -n "$rev" ] && curl -s -u "$ADMIN" -X DELETE "$URL/_users/org.couchdb.user:$u?rev=$rev" >/dev/null 2>&1 || true
   done
@@ -64,8 +64,18 @@ for u in vam-writer vam-reader vam-outsider; do
     -d "{\"name\":\"$u\",\"password\":\"$PW\",\"roles\":[],\"type\":\"user\"}" >/dev/null
 done
 
+# Two owners differing only in roles: CouchDB hands a basic-auth user's `_users` roles to the
+# validator as userCtx.roles, which is the same place the JWT's roles end up in production.
+for u in vam-owner-free vam-owner-member; do
+  roles='[]'
+  [ "$u" = vam-owner-member ] && roles='["member"]'
+  curl -s -u "$ADMIN" -X PUT "$URL/_users/org.couchdb.user:$u" \
+    -H 'Content-Type: application/json' \
+    -d "{\"name\":\"$u\",\"password\":\"$PW\",\"roles\":$roles,\"type\":\"user\"}" >/dev/null
+done
+
 curl -s -u "$ADMIN" -X PUT "$URL/$DB/_security" -H 'Content-Type: application/json' \
-  -d '{"members":{"names":["vam-writer","vam-reader"],"roles":[]},"writers":{"names":["vam-writer"]}}' >/dev/null
+  -d '{"members":{"names":["vam-writer","vam-reader","vam-owner-free","vam-owner-member"],"roles":[]},"writers":{"names":["vam-writer","vam-owner-free","vam-owner-member"]},"owners":{"names":["vam-owner-free","vam-owner-member"]}}' >/dev/null
 
 # Install the REAL validation function, read from design-docs/access.js.
 #
@@ -121,6 +131,26 @@ assert "an audit entry cannot be EDITED" \
 assert "an audit entry cannot be DELETED" \
   "$(curl -s -u "vam-writer:$PW" -X DELETE "$URL/$DB/audit:1?rev=$arev")" \
   'immutable'
+
+assert "_security preserves the non-standard 'owners' key" \
+  "$(curl -s -u "$ADMIN" "$URL/$DB/_security")" '"owners"'
+
+assert "an owner without a paying plan cannot write" \
+  "$(curl -s -u "vam-owner-free:$PW" -X PUT "$URL/$DB/plan:1" -H 'Content-Type: application/json' -d '{"type":"device","name":"Porch"}')" \
+  'does not include synchronized projects'
+
+assert "an owner with the member plan can write" \
+  "$(curl -s -u "vam-owner-member:$PW" -X PUT "$URL/$DB/plan:2" -H 'Content-Type: application/json' -d '{"type":"device","name":"Garage"}')" \
+  '"ok":true'
+
+assert "an invited writer without roles can still write" \
+  "$(curl -s -u "vam-writer:$PW" -X PUT "$URL/$DB/plan:3" -H 'Content-Type: application/json' -d '{"type":"device","name":"Shed"}')" \
+  '"ok":true'
+
+prev=$(curl -s -u "vam-writer:$PW" "$URL/$DB/plan:3" | grep -o '"_rev":"[^"]*"' | cut -d'"' -f4 || true)
+assert "an owner without a paying plan cannot delete" \
+  "$(curl -s -u "vam-owner-free:$PW" -X DELETE "$URL/$DB/plan:3?rev=$prev")" \
+  'does not include synchronized projects'
 
 assert "a non-member cannot read at all" \
   "$(curl -s -u "vam-outsider:$PW" "$URL/$DB/device:1")" 'not allowed to access'

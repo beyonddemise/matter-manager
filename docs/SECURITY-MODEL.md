@@ -104,7 +104,8 @@ object.
 // project_<uuid>/_security
 {
   "members": { "names": ["alice", "bob"], "roles": [] },  // read
-  "writers": { "names": ["alice"] }                        // write
+  "writers": { "names": ["alice"] },                       // write
+  "owners":  { "names": ["alice"] }                        // whose plan pays
 }
 ```
 
@@ -116,9 +117,21 @@ function (newDoc, oldDoc, userCtx, secObj) {
   if (writers.indexOf(userCtx.name) === -1) {
     throw { forbidden: 'You have read-only access to this project.' }
   }
+  var owners = (secObj && secObj.owners && secObj.owners.names) || []
+  if (owners.indexOf(userCtx.name) !== -1 &&
+      userCtx.roles.indexOf('member') === -1 && userCtx.roles.indexOf('pro') === -1) {
+    throw { forbidden: 'Your plan does not include synchronized projects.' }
+  }
   ...
 }
 ```
+
+The `owners` rule enforces the plan at the database: an owner whose roles carry neither
+`member` nor `pro` (a downgrade) cannot write, and cannot delete either, because the rule runs
+before the deletion block. It applies to owners only, since the owner's plan pays for the
+project; an invited writer is unaffected whatever their own plan. Reads are not gated:
+`members` is an OR of names and roles, so a downgraded owner keeps read access to their data.
+A `_security` with no `owners` key leaves the rule inert.
 
 The rejected alternative was a CouchDB role per project carried in the JWT. It works, but an
 installer with 200 projects would carry 200 roles in every token on every replication
