@@ -107,9 +107,14 @@ export interface ConfirmDialogOptions {
   readonly onCancel: () => void
 }
 
-/** Whether a row is a local-only database whose promotion stopped half way. */
-function promoting(row: Row): boolean {
-  return row.projectId !== undefined && isLocalOnlyDatabase(row.dbName)
+/**
+ * Whether a row is a local-only database whose promotion stopped half way, **and** the server
+ * project it was moving into is still listed — the model gives such a row a role only from the
+ * server list. Unlisted (archived, deleted, no longer the caller's), nothing on the server stays,
+ * and saying so would promise a project the reader cannot find.
+ */
+function promotingIntoListed(row: Row): boolean {
+  return row.projectId !== undefined && isLocalOnlyDatabase(row.dbName) && row.role !== undefined
 }
 
 /** The title, the explanation and the confirm button's words for each confirmation. */
@@ -157,7 +162,7 @@ function wording({ action, row }: Confirmation): {
           ${
             // A promotion that stopped half way already made the server project. Deleting this
             // database does not touch it; the page then lists it, where it can be removed.
-            promoting(row)
+            promotingIntoListed(row)
               ? html`<p data-server-stays>
                   ${msg('The project already created on the server for it stays there. You can remove it from the server afterwards.')}
                 </p>`

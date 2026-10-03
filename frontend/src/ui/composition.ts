@@ -302,13 +302,23 @@ export function projectSync(
  * Returns the cached answer immediately and corrects it when the server replies, which is what
  * keeps the first render right rather than corrected a moment later. Never throws: a profile
  * that cannot be read is a reason to keep the local preference, not a reason to fail.
+ *
+ * @param onCached called once the server's profile is in the cache, so the shell re-reads the
+ *   email and plan it shows — one `GET /profile` serves both.
  */
 export async function followProfileLocale(
   onChange: (locale: Locale) => void,
+  onCached?: () => void,
   fetchImpl: typeof fetch = fetch,
 ): Promise<Locale | undefined> {
   try {
-    return await resolveProfileLocale(profile(fetchImpl), localProfileCache(), onChange)
+    return await resolveProfileLocale(
+      profile(fetchImpl),
+      localProfileCache(),
+      onChange,
+      undefined,
+      onCached,
+    )
   } catch {
     return undefined
   }

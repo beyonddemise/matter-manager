@@ -245,9 +245,9 @@ export function replicateProject(
  * whole database is diffed against the server each time, so a refused document is refused (and
  * reported) again on every call.
  *
- * Rejects on any failure, **including a refused document** or any counted write failure: PouchDB completes a push that was
- * partly denied, and treating that as success would let the caller delete data the server never
- * accepted. `retry: false` makes an unreachable server an error here rather than a wait.
+ * Rejects on any failure, **including a refused document** or any counted write failure:
+ * PouchDB completes a push that was partly denied, and treating that as success would let the
+ * caller delete data the server never accepted. `retry: false` makes an unreachable server an error here rather than a wait.
  */
 export function pushOnce(
   local: Syncable,

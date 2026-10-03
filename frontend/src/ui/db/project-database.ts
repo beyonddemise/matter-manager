@@ -70,17 +70,6 @@ export function projectDatabase(): ProjectRepositories {
 }
 
 /**
- * The catalogue that lives only on this device, whichever project is currently open.
- *
- * Named explicitly rather than reached through {@link projectDatabase}, because the one caller
- * — moving its contents into a project (#55) — needs *both* at once, and asking for "the
- * current one" would give it the same database twice.
- */
-export function localCatalogue(): ProjectRepositories {
-  return openProject(PROJECT_DATABASE_NAME)
-}
-
-/**
  * The repositories for a named database, whichever project is currently open.
  *
  * Shares the memo with {@link projectDatabase}, so opening a project here and then switching to

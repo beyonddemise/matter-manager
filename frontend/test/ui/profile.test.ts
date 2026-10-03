@@ -154,6 +154,40 @@ describe('resolving the locale to render with', () => {
     expect(writes[0]).toMatchObject({ plan: 'pro', projectLimit: -1 })
   })
 
+  it('says when the server’s profile is in the cache, so the email and plan can be re-read', async () => {
+    const { cache, writes } = fakeCache()
+    let writtenWhenTold = -1
+    await resolveProfileLocale(
+      api(PROFILE),
+      cache,
+      () => {},
+      undefined,
+      () => {
+        writtenWhenTold = writes.length
+      },
+    )
+    await settled()
+
+    expect(writtenWhenTold).toBe(1)
+  })
+
+  it('says nothing when the server had no profile to give', async () => {
+    const { cache } = fakeCache()
+    let told = false
+    await resolveProfileLocale(
+      api(undefined),
+      cache,
+      () => {},
+      undefined,
+      () => {
+        told = true
+      },
+    )
+    await settled()
+
+    expect(told).toBe(false)
+  })
+
   it('reports a change the server knows about and the cache did not', async () => {
     // How a preference set on a phone reaches a laptop without a reload.
     const { cache } = fakeCache({ sub: 'google|1234', locale: 'en', fetchedAt: 'x' })

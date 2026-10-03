@@ -125,7 +125,7 @@ export abstract class DeviceFormView extends LitElement {
     this.resolved = undefined
     this.rooms = []
     this.error = undefined
-    window.location.hash = '#/'
+    window.location.hash = '#/devices'
   }
 
   override connectedCallback(): void {

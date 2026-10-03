@@ -61,14 +61,23 @@ export type ProjectLocalState =
  * A project as the server described it.
  *
  * Deliberately **not** the whole of `GET /projects`. This is a cache of the questions an
- * offline list has to answer — what is it called, may I write to it, which database is it —
- * and every field beyond those is a second copy of a schema to keep in step for no reader.
+ * offline list has to answer — what is it called, who is it for, may I write to it, is it put
+ * away, which database is it — and every field beyond those is a second copy of a schema to keep
+ * in step for no reader.
  */
 export interface ServerProject {
   readonly projectId: string
   readonly dbName: string
   readonly name: string
   readonly role: 'owner' | 'manage' | 'write' | 'read'
+  /** Who the project is for, when the server named one. Absent rather than empty. */
+  readonly client?: string
+  /**
+   * Whether the server has put the project away. Optional because lists cached by older builds
+   * lack it; absent reads as not archived. Cached because an offline projects page has to open
+   * an archived project's copy read-only, and must not count it.
+   */
+  readonly archived?: boolean
 }
 
 /**

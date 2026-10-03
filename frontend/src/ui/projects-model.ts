@@ -60,7 +60,18 @@ import {
   planSyncs,
 } from '../domain/plan.js'
 import type { Project } from './projects.js'
+import type { SyncableProject } from './sync/manager.js'
 import type { SyncState } from './sync/replication.js'
+
+/**
+ * A server project, as far as the page needs one: what `GET /projects` answers, less the owner,
+ * which nothing here reads. Narrow on purpose, so the last list heard — cached in `mm-local`,
+ * which keeps only these fields — is as good an input as a fresh one.
+ */
+export type ListedProject = Pick<
+  Project,
+  'projectId' | 'dbName' | 'name' | 'client' | 'role' | 'archived'
+>
 
 /**
  * Whether there is a session, and if not, why.
@@ -192,7 +203,7 @@ export interface ProjectsInput {
    * `GET /projects`, archived included — or, with {@link serverStale}, the last list heard (the
    * cached `cache:project:*` data). `undefined` when no list has ever been heard.
    */
-  readonly server: readonly Project[] | undefined
+  readonly server: readonly ListedProject[] | undefined
   /**
    * Whether `server` is a cached list rather than this session's answer. Its facts (counts, roles,
    * archived) still apply; actions that need the server are refused until a fresh one arrives.
@@ -246,7 +257,7 @@ function gate<R extends string>(...checks: readonly (readonly [boolean, R])[]): 
 /** One project before the page's vocabulary is applied: where it came from and what it is. */
 interface Source {
   readonly entry?: LocalProjectEntry
-  readonly project?: Project
+  readonly project?: ListedProject
   readonly kind: Kind
   /** The caller's role: the server list's, else the index's, else owner; absent if local-only. */
   readonly role?: Project['role']
@@ -288,7 +299,7 @@ export function projectsModel(input: ProjectsInput): ProjectsModel {
     const owner = role === undefined || role === 'owner'
     const projectId = project?.projectId ?? entry?.projectId
     // `join` gives every source an entry, a project, or both.
-    const dbName = entry?.dbName ?? (project as Project).dbName
+    const dbName = entry?.dbName ?? (project as ListedProject).dbName
     const client = project === undefined ? entry?.client : project.client
     const syncState = projectId === undefined ? undefined : input.syncStates(projectId)
     const manages = owner || role === 'manage'
@@ -377,6 +388,23 @@ export function projectsModel(input: ProjectsInput): ProjectsModel {
 }
 
 /**
+ * The projects replication should cover: every row the page shows as synchronized, which is
+ * every copy on this device of a server project that is not archived and that a fresh list
+ * still names (or that no fresh list has contradicted yet).
+ *
+ * **Never every server project.** One with no copy here is not downloaded, and handing it to
+ * replication would download it — including a copy the reader has just removed. Archived
+ * projects, orphans and half-done promotions read `local` and are left out by the same rule.
+ */
+export function synchronizedProjects(model: ProjectsModel): SyncableProject[] {
+  return [...model.owned, ...model.shared].flatMap((row) =>
+    row.location === 'synced' && row.projectId !== undefined
+      ? [{ projectId: row.projectId, dbName: row.dbName }]
+      : [],
+  )
+}
+
+/**
  * Joins the local index with the server list (fresh, stale or unheard) into sources.
  *
  * A local entry matches its server project by database name or project id. Server projects
@@ -385,10 +413,10 @@ export function projectsModel(input: ProjectsInput): ProjectsModel {
  */
 function join(
   local: readonly LocalProjectEntry[],
-  server: readonly Project[] | undefined,
+  server: readonly ListedProject[] | undefined,
   fresh: boolean,
 ): Source[] {
-  const matched = new Set<Project>()
+  const matched = new Set<ListedProject>()
   const sources: Source[] = local.map((entry) => {
     const project = server?.find(
       (candidate) =>
@@ -422,7 +450,11 @@ function join(
  * Only a **fresh** list proves a copy an orphan: a stale one may predate the project, and
  * deleting on that evidence would destroy data the server would still have taken.
  */
-function kindOf(entry: LocalProjectEntry, project: Project | undefined, fresh: boolean): Kind {
+function kindOf(
+  entry: LocalProjectEntry,
+  project: ListedProject | undefined,
+  fresh: boolean,
+): Kind {
   // Before the server project: whatever the server says, this data has not left the device.
   if (entry.projectId !== undefined && isLocalOnlyDatabase(entry.dbName)) return 'promoting'
   if (project !== undefined) return project.archived ? 'remnant' : 'synced'

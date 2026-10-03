@@ -56,6 +56,19 @@ wa-page[view="mobile"] {
   color: var(--wa-color-brand-on-quiet);
 }
 
+/* Sign out, the navigation's last item: a button, so it is not counted as a section, but laid
+   out like the links above it. */
+.app-nav-action::part(base) {
+  justify-content: flex-start;
+  padding-inline: var(--wa-space-m);
+}
+
+/* The signed-in account, top right: context, so quieter than the controls beside it. */
+.app-email {
+  color: var(--wa-color-text-quiet);
+  font-size: var(--wa-font-size-s);
+}
+
 /* The add-device form and the device list. Only what has no utility-class equivalent:
    arrangement comes from wa-stack / wa-split / wa-cluster on the elements themselves. */
 add-device-view,

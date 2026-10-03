@@ -105,6 +105,8 @@ export function cachedPlan(cached: CachedProfile | undefined): Plan {
  *
  * @param onChange called when the server's answer differs from what was cached — which is how
  *   a preference set on a phone reaches a laptop without a reload.
+ * @param onCached called once the server's answer has been written to the cache (or the write
+ *   was refused), so whatever else reads the cached profile — the email, the plan — reads again.
  * @returns what the interface should use *now*: the cached locale if there is one, so the first
  *   render is right rather than corrected a moment later.
  */
@@ -113,6 +115,7 @@ export async function resolveProfileLocale(
   cache: LocalCache,
   onChange: (locale: Locale) => void,
   now: () => string = () => new Date().toISOString(),
+  onCached?: () => void,
 ): Promise<Locale | undefined> {
   let cached: CachedProfile | undefined
   try {
@@ -152,6 +155,7 @@ export async function resolveProfileLocale(
         // A cache that will not accept a write still leaves this session correct.
       })
 
+    onCached?.()
     if (profile.locale !== (immediate ?? 'auto')) onChange(profile.locale)
   })()
 

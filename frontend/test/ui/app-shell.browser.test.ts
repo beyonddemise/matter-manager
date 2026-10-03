@@ -12,6 +12,7 @@ import '../../src/ui/app-shell.js'
 import { NAV_ROUTES } from '../../src/ui/router/routes.js'
 import { applyScheme, SCHEME_STORAGE_KEY } from '../../src/ui/scheme.js'
 import { accessToken, rememberAccessToken } from '../../src/ui/tokens.js'
+import { destroyProjectStores, isolatedProjectStore } from './support/project-store.js'
 
 /** A minimal shape for the reactive-update contract both `app-shell` and `wa-page` share. */
 interface Updatable {
@@ -35,7 +36,9 @@ const shell = async () => {
     customElements.whenDefined('wa-button'),
     customElements.whenDefined('wa-icon'),
   ])
-  const element = await fixture(html`<app-shell></app-shell>`)
+  const element = await fixture(
+    html`<app-shell .projectStore=${isolatedProjectStore()}></app-shell>`,
+  )
   const page = element.querySelector('wa-page') as (HTMLElement & Updatable) | null
   await page?.updateComplete
   return element
@@ -45,11 +48,18 @@ beforeEach(() => {
   window.location.hash = '#/'
 })
 
-afterEach(() => {
+afterEach(async () => {
   window.location.hash = ''
+  await destroyProjectStores()
 })
 
-it('renders the device list at the root path', async () => {
+it('renders the projects page at the root path', async () => {
+  const element = await shell()
+  expect(element.querySelector('projects-view')).not.toBeNull()
+})
+
+it('renders the device list at #/devices', async () => {
+  window.location.hash = '#/devices'
   const element = await shell()
   expect(element.querySelector('device-list-view')).not.toBeNull()
 })
@@ -90,7 +100,7 @@ it('changes view when the hash changes, without remounting', async () => {
   await (element as unknown as { updateComplete: Promise<unknown> }).updateComplete
 
   expect(element.querySelector('not-found-view')).not.toBeNull()
-  expect(element.querySelector('device-list-view')).toBeNull()
+  expect(element.querySelector('projects-view')).toBeNull()
   // Proves "without remounting": the same wa-page element instance survived the
   // hash-driven re-render rather than being torn down and recreated.
   expect(element.querySelector('wa-page')).toBe(pageBeforeNavigation)
@@ -235,14 +245,19 @@ async function shellWith(network: ReturnType<typeof fakeNetwork>) {
     customElements.whenDefined('wa-tag'),
     customElements.whenDefined('wa-callout'),
   ])
-  const element = await fixture(html`<app-shell .connectivity=${network}></app-shell>`)
+  const element = await fixture(
+    html`<app-shell .connectivity=${network} .projectStore=${isolatedProjectStore()}></app-shell>`,
+  )
   const page = element.querySelector('wa-page') as (HTMLElement & Updatable) | null
   await page?.updateComplete
   return element
 }
 
-it('says nothing about the network while there is one', async () => {
+it('says it is online, quietly, and not that it is offline', async () => {
+  // Always present since the projects page, whose server actions depend on it; `data-offline`
+  // stays reserved for being offline, which the offline journey counts on.
   const element = await shellWith(fakeNetwork(true))
+  expect(element.querySelector('[data-online]')).not.toBeNull()
   expect(element.querySelector('[data-offline]')).toBeNull()
 })
 
@@ -253,7 +268,8 @@ it('shows an unobtrusive indicator when the network goes', async () => {
   network.go(false)
   await (element as HTMLElement & Updatable).updateComplete
 
-  expect(element.querySelector('[data-offline]')).not.toBeNull()
+  expect(element.querySelector('[data-offline]')?.getAttribute('variant')).toBe('neutral')
+  expect(element.querySelector('[data-online]')).toBeNull()
 })
 
 it('shows the indicator on a page that was loaded offline in the first place', async () => {
@@ -267,6 +283,7 @@ it('blocks nothing while offline', async () => {
   // "No action is blocked except those genuinely requiring a server", and at M2b none do:
   // every write goes to a local database first. So the device list is still there, and so is
   // the way to add one.
+  window.location.hash = '#/devices'
   const element = await shellWith(fakeNetwork(false))
 
   expect(element.querySelector('device-list-view')).not.toBeNull()
@@ -377,9 +394,10 @@ const driven = async () => {
       }}
       .connectivity=${NETWORK}
       .followLocale=${async () => undefined}
-      .listProjects=${async () => [{ projectId: 'p1', dbName: 'project_p1' }]}
+      .listProjects=${async () => [{ projectId: 'p1', dbName: 'project_p1', name: 'Beta', role: 'owner', archived: false }]}
       .makeSync=${makeSync}
       .signOutOf=${signOutOf}
+      .projectStore=${isolatedProjectStore()}
     ></app-shell>
   `)) as HTMLElement & { updateComplete: Promise<unknown> }
   await element.updateComplete

@@ -158,10 +158,28 @@ describe('adopting the legacy catalogue', () => {
 })
 
 describe('adopting on a device with nothing to adopt', () => {
-  it('creates and indexes nothing', async () => {
+  it('adopts the empty catalogue when nothing is indexed, so the device has a project to name', async () => {
+    // Ruling C-R7: a brand-new device always has one nameable project. Without it the first
+    // run would land on a page with nothing to open and nowhere to record a device.
+    await adoptLegacyCatalogue('')
+
+    expect(await localProfileCache().readLocalProjects()).toMatchObject([
+      { dbName: PROJECT_DATABASE_NAME, name: '' },
+    ])
+    expect(await rawDatabase(PROJECT_DATABASE_NAME).get(PROJECT_DOCUMENT_ID)).toMatchObject({
+      type: 'project',
+      name: '',
+    })
+  })
+
+  it('creates and indexes nothing when another project is already indexed', async () => {
+    // A device that has projects already has somewhere to work; an empty catalogue listed
+    // beside them would be a project nobody made.
+    const other = await createLocalProject({ name: 'Elsewhere' })
+
     await adoptLegacyCatalogue('Phantom')
 
-    expect(await localProfileCache().readLocalProjects()).toEqual([])
+    expect(await localProfileCache().readLocalProjects()).toEqual([other])
     expect(await documentCount(PROJECT_DATABASE_NAME)).toBe(0)
   })
 

@@ -744,6 +744,16 @@ describe('the actions menu', () => {
     expect(dialog(view).querySelector('[data-warn]')).toBeNull()
   })
 
+  it('promises no server project when the list no longer names the recorded one', async () => {
+    // Archived, deleted or no longer the caller's: there is nothing on the server that stays.
+    const halfway = entry({ projectId: 'p1' })
+    const view = await member({ local: [halfway], server: [] })
+
+    await choose(view, 'project_local_a', 'deleteLocal')
+
+    expect(dialog(view).querySelector('[data-server-stays]')).toBeNull()
+  })
+
   it('warns that an archived project’s copy may hold changes that never left', async () => {
     const view = await member({ local: [synced], server: [project({ archived: true })] })
 

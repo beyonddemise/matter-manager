@@ -8,7 +8,8 @@
  * "destroyed": the views move off a database *before* it is copied or pushed, so this tab's
  * writes land in the survivor; and the database's `update_seq` must be the same after the
  * transfer as before it, or the transfer is repeated once and then refused (`settled`), so a
- * write from another tab or a background writer is never destroyed unsent.
+ * write that lands while the transfer runs is never destroyed unsent. Tabs are not coordinated:
+ * another tab writing in the last round trip before the destroy is the one residual risk (#220).
  *
  * Pure orchestration over injected dependencies: the server, replication, the local index and
  * databases, which project is open, and the page's refresh. The browser tests run it on real
@@ -26,6 +27,7 @@
 
 import { isLocalOnlyDatabase } from '../data/index.js'
 import { PROJECT_DOCUMENT_ID } from '../domain/documents/project.js'
+import type { CurrentTarget } from './current-project.js'
 import { PROJECT_DATABASE_NAME } from './db/project-database.js'
 import {
   destroyLocalProject,
@@ -39,7 +41,13 @@ import {
   type ProjectsApi,
   updateProject,
 } from './projects.js'
-import type { Permission, ProjectsModel, Refusal, Row } from './projects-model.js'
+import {
+  type Permission,
+  type ProjectsModel,
+  type Refusal,
+  type Row,
+  synchronizedProjects,
+} from './projects-model.js'
 import type { SyncableProject, SyncManager } from './sync/manager.js'
 
 /**
@@ -65,13 +73,7 @@ export class ProjectActionError extends Error {
 /** What the actions need of replication. */
 export type ActionSync = Pick<SyncManager, 'set' | 'pushNow' | 'suspend' | 'resume'>
 
-/** Which project to make current, and how to open it. */
-export interface CurrentTarget {
-  readonly dbName: string
-  /** What the current-project choice remembers: the project id, or the name while local-only. */
-  readonly id: string
-  readonly editable: boolean
-}
+export type { CurrentTarget }
 
 /** Everything the actions touch. */
 export interface ProjectActionDependencies {
@@ -118,11 +120,7 @@ function replicated(
   model: ProjectsModel,
   change: { readonly add?: SyncableProject; readonly drop?: string },
 ): SyncableProject[] {
-  const known = [...model.owned, ...model.shared].flatMap((row) =>
-    row.location === 'synced' && row.projectId !== undefined && row.projectId !== change.drop
-      ? [{ projectId: row.projectId, dbName: row.dbName }]
-      : [],
-  )
+  const known = synchronizedProjects(model).filter((project) => project.projectId !== change.drop)
   const { add } = change
   return add === undefined || known.some((project) => project.projectId === add.projectId)
     ? known
@@ -164,8 +162,11 @@ const TRANSFER_ATTEMPTS = 2
  * proves the transfer saw everything. A change is given one more transfer; a database still
  * being written to after that is refused, and refusing keeps it.
  *
- * The check runs immediately before the destroy its caller makes next; the window left between
- * the two is one IndexedDB round trip, with nothing of this page's able to write in it.
+ * The check runs just before the destroy its caller makes next. Between the two there is only
+ * bookkeeping that never writes the source — promoting lists the survivor in `mm-local` — so
+ * nothing of this page's can write into it there. Another tab still can: nothing coordinates
+ * tabs, so a write it lands in that window (a few IndexedDB round trips) is lost with the
+ * destroy. A known limit (ruling C-R8), tracked as #220 (Web Locks around these actions).
  */
 async function settled(source: PouchDB.Database, transfer: () => Promise<void>): Promise<void> {
   for (let attempt = 0; attempt < TRANSFER_ATTEMPTS; attempt += 1) {
@@ -268,6 +269,8 @@ export function projectActions(deps: ProjectActionDependencies): ProjectActions 
           await push(project.projectId)
         })
         // The server has everything the old database ever held. Only now is it expendable.
+        // Listed after the check, not inside the transfer: a transfer that is then refused must
+        // leave no entry for a copy that is not finished. It writes `mm-local`, not the source.
         await indexServerProject(project, local)
       } catch (error) {
         back()

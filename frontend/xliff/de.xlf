@@ -538,14 +538,6 @@
   <source>Syncing</source>
   <target>Wird abgeglichen</target>
 </trans-unit>
-<trans-unit id="s282049f502eac1de">
-  <source>Project</source>
-  <target>Projekt</target>
-</trans-unit>
-<trans-unit id="sb86e5e28f719630a">
-  <source>read-only</source>
-  <target>nur lesen</target>
-</trans-unit>
 <trans-unit id="s3bfa63c1b2dfd186">
   <source>On this device</source>
   <target>Auf diesem Gerät</target>
@@ -557,34 +549,6 @@
 <trans-unit id="s577d290a0e9134ac">
   <source>Also remove the devices stored only on this device</source>
   <target>Auch die Geräte entfernen, die nur auf diesem Gerät gespeichert sind</target>
-</trans-unit>
-<trans-unit id="s65825818fc578597">
-  <source>Devices on this device</source>
-  <target>Geräte auf diesem Gerät</target>
-</trans-unit>
-<trans-unit id="s77af04990228fa2c">
-  <source>Nothing was moved. Everything is still on this device.</source>
-  <target>Es wurde nichts verschoben. Alles ist weiterhin auf diesem Gerät.</target>
-</trans-unit>
-<trans-unit id="sf4c4e575fe36b271">
-  <source>The devices were moved into the project.</source>
-  <target>Die Geräte wurden in das Projekt verschoben.</target>
-</trans-unit>
-<trans-unit id="migration-incomplete">
-  <source>The devices were moved into the project, but they are still on this device. Try again to finish removing them from this device.</source>
-  <target>Die Geräte wurden in das Projekt verschoben, befinden sich aber weiterhin auf diesem Gerät. Versuchen Sie es erneut, um sie vollständig von diesem Gerät zu entfernen.</target>
-</trans-unit>
-<trans-unit id="s53d9e1fa72cf3752">
-  <source>These devices are stored only in this browser. Moving them into a project shares them with everyone who has access to it, and keeps them on your other devices.</source>
-  <target>Diese Geräte sind nur in diesem Browser gespeichert. Wenn Sie sie in ein Projekt verschieben, sind sie für alle sichtbar, die Zugriff darauf haben, und bleiben auch auf Ihren anderen Geräten erhalten.</target>
-</trans-unit>
-<trans-unit id="s2c862f7deaf6782c">
-  <source>Move them into</source>
-  <target>Verschieben nach</target>
-</trans-unit>
-<trans-unit id="s210d38e81911fe66">
-  <source>Move them</source>
-  <target>Verschieben</target>
 </trans-unit>
 <trans-unit id="s6464c2a7a815108b">
   <source>Rooms</source>
@@ -929,6 +893,26 @@
 <trans-unit id="s3e041dc90de07a01">
   <source>The project already created on the server for it stays there. You can remove it from the server afterwards.</source>
   <target>Das dafür bereits auf dem Server angelegte Projekt bleibt dort erhalten. Sie können es anschließend vom Server entfernen.</target>
+</trans-unit>
+<trans-unit id="sfb720fc010661f17">
+  <source>Upgrade</source>
+  <target>Upgrade</target>
+</trans-unit>
+<trans-unit id="s14e9da57eecc074a">
+  <source>It's just alpha — coming soon</source>
+  <target>Dies ist erst eine Alpha-Version — bald verfügbar</target>
+</trans-unit>
+<trans-unit id="s5e8250fb85d64c23">
+  <source>Close</source>
+  <target>Schließen</target>
+</trans-unit>
+<trans-unit id="seadeb3a807d7478a">
+  <source>Online</source>
+  <target>Online</target>
+</trans-unit>
+<trans-unit id="s5e2fdf2a8c4604db">
+  <source>Back to projects</source>
+  <target>Zurück zu den Projekten</target>
 </trans-unit>
 </body>
 </file>

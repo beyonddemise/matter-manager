@@ -232,9 +232,12 @@ export async function destroyLocalProject(
  * index was lost, the database survived) is respected over the name offered, because it is what
  * the user last saw.
  *
- * Does nothing when `project_local` holds no documents.
+ * An empty `project_local` is adopted only when **nothing** is indexed (ruling C-R7): a
+ * brand-new device then has one project, which the projects page asks the reader to name,
+ * rather than a page with nothing to open and nowhere to record a device. Beside other projects
+ * an empty catalogue would be a project nobody made, so then it is left alone.
  *
- * @param name what to call it, used only when it has no name yet
+ * @param name what to call it, used only when it has no name yet; `''` leaves it to be named
  */
 export async function adoptLegacyCatalogue(
   name: string,
@@ -245,10 +248,9 @@ export async function adoptLegacyCatalogue(
   if (indexed.some((entry) => entry.dbName === PROJECT_DATABASE_NAME)) return
 
   const database = deps.database(PROJECT_DATABASE_NAME)
-  // `rawDatabase` creates the store on open, so existence is judged by content: a fresh device
-  // (or one that never recorded anything) has no catalogue to adopt, and indexing an empty one
-  // would list a project nobody made.
-  if ((await database.info()).doc_count === 0) return
+  // `rawDatabase` creates the store on open, so existence is judged by content. An empty one is
+  // adopted only as the device's first project; see above.
+  if ((await database.info()).doc_count === 0 && indexed.length > 0) return
   const existing = await readProjectDocument(database)
   if (existing === undefined) await writeProjectDocument(database, name, undefined)
 

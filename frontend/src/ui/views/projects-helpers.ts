@@ -7,7 +7,7 @@
  */
 
 import type { Project } from '../projects.js'
-import type { ProjectsModel, Row } from '../projects-model.js'
+import { type ProjectsModel, type Row, synchronizedProjects } from '../projects-model.js'
 import type { SyncableProject } from '../sync/manager.js'
 
 /** Which column the pro table is sorted by, and which way. */
@@ -40,11 +40,7 @@ export function clearFields(container: Element | null): void {
  * already knows of, and the new one.
  */
 export function replicated(model: ProjectsModel, created: Project): SyncableProject[] {
-  const known = [...model.owned, ...model.shared].flatMap((row) =>
-    row.location === 'synced' && row.projectId !== undefined
-      ? [{ projectId: row.projectId, dbName: row.dbName }]
-      : [],
-  )
+  const known = synchronizedProjects(model)
   return known.some((project) => project.projectId === created.projectId)
     ? known
     : [...known, { projectId: created.projectId, dbName: created.dbName }]

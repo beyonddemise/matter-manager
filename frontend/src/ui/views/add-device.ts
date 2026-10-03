@@ -222,7 +222,7 @@ export class AddDeviceView extends DeviceFormView {
       this.saving = false
     }
 
-    window.location.hash = '#/'
+    window.location.hash = '#/devices'
   }
 
   override render() {
@@ -310,7 +310,7 @@ export class AddDeviceView extends DeviceFormView {
           <wa-button type="submit" variant="brand" ?disabled=${this.saving}>
             ${msg('Save device')}
           </wa-button>
-          <wa-button href="#/" appearance="plain">${msg('Cancel')}</wa-button>
+          <wa-button href="#/devices" appearance="plain">${msg('Cancel')}</wa-button>
         </div>
 
         <!-- Outside the controls it fills, and outside the submit path entirely: the dialog

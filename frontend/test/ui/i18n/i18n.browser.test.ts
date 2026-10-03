@@ -71,7 +71,7 @@ describe('activating a locale', () => {
 
 describe('German reaches the screen', () => {
   it('translates the navigation and the view', async () => {
-    const element = await shell('#/')
+    const element = await shell('#/devices')
     expect(element.textContent).toContain('Devices')
 
     await activateLocale('de')

@@ -46,6 +46,27 @@ async function recordDevice(
   await page.locator('form wa-button[type="submit"]').click()
 }
 
+test('the first run names its project, opens it, and records a device in it', async ({ page }) => {
+  // A brand-new device lands on the projects page with one project waiting for a name: the
+  // catalogue every device has (ruling C-R7).
+  await page.goto('/')
+  await expect(page.getByText('Name your project')).toBeVisible()
+
+  await page.locator('[data-name-project] [data-field="name"] input').fill('Musterstraße 12')
+  await page.locator('[data-name-project] [data-save]').click()
+
+  // Named, it is the project to continue with, and opening it goes to its devices.
+  await page.locator('[data-open]').click()
+  await expect(page).toHaveURL(/#\/devices$/)
+
+  await recordDevice(page, 'Kitchen ceiling light', 'Ground Floor/Kitchen')
+  await expect(page.getByText('Kitchen ceiling light')).toBeVisible()
+
+  // And it is in the project that was named: back on the projects page, that is the one shown.
+  await page.goto('/')
+  await expect(page.locator('[data-open]')).toContainText('Musterstraße 12')
+})
+
 test('a device that is recorded can be found again', async ({ page }) => {
   await recordDevice(page, 'Kitchen ceiling light', 'Ground Floor/Kitchen')
 

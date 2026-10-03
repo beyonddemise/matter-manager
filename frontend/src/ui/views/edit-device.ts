@@ -160,7 +160,7 @@ export class EditDeviceView extends DeviceFormView {
           <p class="app-empty">
             ${msg('There is no device with that address in this catalogue.')}
           </p>
-          <a class="app-back" href="#/">${msg('Back to devices')}</a>
+          <a class="app-back" href="#/devices">${msg('Back to devices')}</a>
         </div>
       `
     }
