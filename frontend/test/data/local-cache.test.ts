@@ -47,6 +47,14 @@ describe('caching what the server said', () => {
     expect((await cache.readProfile())?.name).toBe('Ada L')
   })
 
+  it('round-trips the plan and the limit', async () => {
+    const cache = localCache(memoryDatabase())
+
+    await cache.writeProfile({ ...PROFILE, plan: 'member', projectLimit: 5 })
+
+    expect(await cache.readProfile()).toMatchObject({ plan: 'member', projectLimit: 5 })
+  })
+
   it('keeps a profile with no locale, which means "follow the browser"', async () => {
     // Absent rather than a default written in. A stored `en` for someone who never chose one
     // is a preference they cannot tell apart from one they set.
@@ -108,11 +116,15 @@ describe('the cache is never replicated', () => {
     // Listed exactly, not counted. Every name here reads or writes plain values; the moment
     // one of them returns the database itself, this fails and says so by name.
     expect(Object.keys(cache).sort()).toEqual([
+      'addLocalProject',
       'clear',
       'markAccessRemoved',
+      'readLocalProjects',
       'readProfile',
       'readProjects',
+      'removeLocalProject',
       'setLocalState',
+      'updateLocalProject',
       'writeProfile',
       'writeProjects',
     ])
@@ -138,6 +150,63 @@ describe('the cache is never replicated', () => {
     const cache = localCache(guarded)
     await cache.writeProfile(PROFILE)
 
+    expect(await cache.readProfile()).toMatchObject(PROFILE)
+  })
+})
+
+describe('the local project index', () => {
+  const entry = (dbName: string, name: string) => ({
+    dbName,
+    name,
+    createdAt: '2026-10-03T09:00:00.000Z',
+  })
+
+  it('lists what was added, in name order', async () => {
+    const cache = localCache(memoryDatabase())
+    await cache.addLocalProject(entry('project_local_b', 'B'))
+    await cache.addLocalProject(entry('project_local_a', 'A'))
+
+    expect((await cache.readLocalProjects()).map((e) => e.dbName)).toEqual([
+      'project_local_a',
+      'project_local_b',
+    ])
+  })
+
+  it('replaces an entry added twice, and patches, and removes', async () => {
+    const cache = localCache(memoryDatabase())
+    await cache.addLocalProject(entry('project_local_a', 'A'))
+    await cache.addLocalProject(entry('project_local_a', 'A2'))
+    await cache.updateLocalProject('project_local_a', { client: 'Acme' })
+    expect(await cache.readLocalProjects()).toEqual([
+      { ...entry('project_local_a', 'A2'), client: 'Acme' },
+    ])
+
+    await cache.removeLocalProject('project_local_a')
+    await cache.removeLocalProject('project_local_a')
+    expect(await cache.readLocalProjects()).toEqual([])
+  })
+
+  it('keeps the role of a downloaded copy, and lets it change', async () => {
+    const cache = localCache(memoryDatabase())
+    const shared = { ...entry('project_s1', 'S'), projectId: 's1', role: 'write' as const }
+    await cache.addLocalProject(shared)
+    expect(await cache.readLocalProjects()).toEqual([shared])
+
+    await cache.updateLocalProject('project_s1', { role: 'read' })
+    expect(await cache.readLocalProjects()).toEqual([{ ...shared, role: 'read' }])
+  })
+
+  it('does not invent an entry when patching one that is not there', async () => {
+    const cache = localCache(memoryDatabase())
+    await cache.updateLocalProject('project_local_x', { name: 'X' })
+    expect(await cache.readLocalProjects()).toEqual([])
+  })
+
+  it('keeps the index apart from the profile and the server list', async () => {
+    const cache = localCache(memoryDatabase())
+    await cache.writeProfile(PROFILE)
+    await cache.addLocalProject(entry('project_local_a', 'A'))
+    expect(await cache.readProjects()).toEqual([])
     expect(await cache.readProfile()).toMatchObject(PROFILE)
   })
 })

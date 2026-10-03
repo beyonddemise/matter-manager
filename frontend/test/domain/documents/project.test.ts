@@ -18,6 +18,11 @@ describe('the project document', () => {
     expect(isProjectDocument({ ...valid, client: 'Acme', _rev: '2-a' })).toBe(true)
   })
 
+  it('accepts a local-only project, which has no server database yet', () => {
+    const { serverDb: _serverDb, ...local } = valid
+    expect(isProjectDocument(local)).toBe(true)
+  })
+
   it('rejects a wrong type or id', () => {
     expect(isProjectDocument({ ...valid, type: 'device' })).toBe(false)
     expect(isProjectDocument({ ...valid, _id: 'project:x' })).toBe(false)
@@ -26,6 +31,7 @@ describe('the project document', () => {
   it('rejects a missing or mistyped field', () => {
     expect(isProjectDocument({ ...valid, name: undefined })).toBe(false)
     expect(isProjectDocument({ ...valid, serverDb: 3 })).toBe(false)
+    expect(isProjectDocument({ ...valid, serverDb: undefined, client: 3 })).toBe(false)
     expect(isProjectDocument({ ...valid, client: 3 })).toBe(false)
   })
 

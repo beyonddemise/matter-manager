@@ -29,6 +29,7 @@ const RUNTIME_CHOSEN = [
   'sun',
   'moon',
   'circle-half-stroke',
+  'folder',
   'lightbulb',
   'gear',
   'play',

@@ -4,7 +4,10 @@ import {
   type NewProject,
   type Project,
   ProjectCreationError,
+  type ProjectPatch,
+  ProjectUpdateError,
   projectsApi,
+  updateProject,
 } from '../../src/ui/projects.js'
 
 const PROJECT: Project = {
@@ -25,6 +28,7 @@ function fakeApi(behaviour: { fails?: unknown } = {}) {
     attempts,
     api: {
       list: async () => [PROJECT],
+      update: async () => PROJECT,
       create: async (request: NewProject) => {
         attempts.push(request)
         if (behaviour.fails !== undefined) throw behaviour.fails
@@ -106,6 +110,80 @@ describe('creating a project needs a connection', () => {
   })
 })
 
+describe('changing a project needs a connection too', () => {
+  /** An API whose `update` records what it was asked, and can be told to fail. */
+  function updatingApi(behaviour: { fails?: unknown } = {}) {
+    const patches: [string, ProjectPatch][] = []
+    return {
+      patches,
+      api: {
+        ...fakeApi().api,
+        update: async (projectId: string, patch: ProjectPatch) => {
+          patches.push([projectId, patch])
+          if (behaviour.fails !== undefined) throw behaviour.fails
+          return { ...PROJECT, ...(patch.name === undefined ? {} : { name: patch.name }) }
+        },
+      },
+    }
+  }
+
+  const reasonOf = (error: unknown): unknown => (error as ProjectUpdateError).reason
+
+  it('sends the patch and returns the project as it now stands', async () => {
+    const { api, patches } = updatingApi()
+
+    const project = await updateProject({ api, online: () => true }, 'p1', { name: 'Neu' })
+
+    expect(project.name).toBe('Neu')
+    expect(patches).toEqual([['p1', { name: 'Neu' }]])
+  })
+
+  it('refuses offline without sending anything', async () => {
+    const { api, patches } = updatingApi()
+
+    const error = await updateProject({ api, online: () => false }, 'p1', { name: 'x' }).catch(
+      (thrown: unknown) => thrown,
+    )
+
+    expect(error).toBeInstanceOf(ProjectUpdateError)
+    expect(reasonOf(error)).toBe('offline')
+    expect(patches).toEqual([])
+  })
+
+  it('reads a request that never arrived as unreachable', async () => {
+    const { api } = updatingApi({ fails: new TypeError('Failed to fetch') })
+
+    const error = await updateProject({ api, online: () => true }, 'p1', { name: 'x' }).catch(
+      (thrown: unknown) => thrown,
+    )
+
+    expect(reasonOf(error)).toBe('unreachable')
+  })
+
+  it('keeps the reason the API gave it', async () => {
+    const { api } = updatingApi({ fails: new ProjectUpdateError('not-a-manager') })
+
+    const error = await updateProject({ api, online: () => true }, 'p1', { name: 'x' }).catch(
+      (thrown: unknown) => thrown,
+    )
+
+    expect(reasonOf(error)).toBe('not-a-manager')
+  })
+
+  it('refuses an empty patch before sending it', async () => {
+    // The contract declares `minProperties: 1`, so the server would answer 400. Asking it
+    // anyway would spend a round trip to learn what is already known.
+    const { api, patches } = updatingApi()
+
+    const error = await updateProject({ api, online: () => true }, 'p1', {}).catch(
+      (thrown: unknown) => thrown,
+    )
+
+    expect(reasonOf(error)).toBe('refused')
+    expect(patches).toEqual([])
+  })
+})
+
 describe('talking to the API', () => {
   /** A `fetch` that records its call and answers with the given status and body. */
   function stubFetch(status: number, body: unknown = {}) {
@@ -142,16 +220,16 @@ describe('talking to the API', () => {
     expect(sent?.authorization).toBeUndefined()
   })
 
-  it('posts the name and address', async () => {
+  it('posts the name and client', async () => {
     const { calls, impl } = stubFetch(201, PROJECT)
     await projectsApi('https://api.example', () => 't', impl).create({
       name: 'Musterstraße 12',
-      address: 'Berlin',
+      client: 'Meier GmbH',
     })
 
     expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({
       name: 'Musterstraße 12',
-      address: 'Berlin',
+      client: 'Meier GmbH',
     })
   })
 
@@ -175,6 +253,76 @@ describe('talking to the API', () => {
       .catch((thrown: unknown) => thrown)
 
     expect((error as ProjectCreationError).reason).toBe(reason)
+  })
+
+  /** A problem body as the API answers a refusal: RFC 9457 with a pinned `reason`. */
+  const refusal = (reason: string) => ({ title: 'Forbidden', status: 403, reason })
+
+  it.each([['plan-no-sync'], ['project-limit-reached'], ['not-a-manager']])(
+    'tells a 403 for %s apart from the others',
+    async (reason) => {
+      // The page branches on these: "upgrade", "make room" and "ask the owner" are three
+      // different next steps, and all of them used to read as `not-entitled`.
+      const api = projectsApi(
+        'https://api.example',
+        () => 't',
+        stubFetch(403, refusal(reason)).impl,
+      )
+
+      const created = await api.create({ name: 'x' }).catch((thrown: unknown) => thrown)
+      const updated = await api.update('p1', { archived: false }).catch((thrown: unknown) => thrown)
+
+      expect((created as ProjectCreationError).reason).toBe(reason)
+      expect((updated as ProjectUpdateError).reason).toBe(reason)
+    },
+  )
+
+  it.each([
+    ['an unknown reason', { reason: 'something-new' }],
+    ['no reason', { title: 'Forbidden' }],
+    ['a body that is not JSON', undefined],
+  ])('keeps not-entitled for a 403 with %s', async (_label, body) => {
+    const impl = (async () =>
+      new Response(body === undefined ? 'nope' : JSON.stringify(body), {
+        status: 403,
+      })) as unknown as typeof fetch
+
+    const error = await projectsApi('https://api.example', () => 't', impl)
+      .create({ name: 'x' })
+      .catch((thrown: unknown) => thrown)
+
+    expect((error as ProjectCreationError).reason).toBe('not-entitled')
+  })
+
+  it('patches a project with the bearer token and a JSON body', async () => {
+    const { calls, impl } = stubFetch(200, { ...PROJECT, client: 'Meier GmbH' })
+    const updated = await projectsApi('https://api.example/', () => 'a.token', impl).update(
+      PROJECT.projectId,
+      { client: null, archived: true },
+    )
+
+    expect(calls[0]?.url).toBe(`https://api.example/projects/${PROJECT.projectId}`)
+    expect(calls[0]?.init?.method).toBe('PATCH')
+    const sent = calls[0]?.init?.headers as Record<string, string>
+    expect(sent.authorization).toBe('Bearer a.token')
+    expect(sent['content-type']).toBe('application/json')
+    // `null` is how a client is cleared; absent would leave it alone.
+    expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({ client: null, archived: true })
+    expect(updated.client).toBe('Meier GmbH')
+  })
+
+  it.each([
+    [401, 'not-signed-in'],
+    [404, 'not-found'],
+    [400, 'refused'],
+    [500, 'failed'],
+  ])('reads %i from a patch as %s', async (status, reason) => {
+    const error = await projectsApi('https://api.example', () => 't', stubFetch(status).impl)
+      .update('p1', { name: 'y' })
+      .catch((thrown: unknown) => thrown)
+
+    expect(error).toBeInstanceOf(ProjectUpdateError)
+    expect((error as ProjectUpdateError).reason).toBe(reason)
   })
 
   it('lists what the server returned', async () => {

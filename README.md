@@ -42,6 +42,7 @@ Two consequences shape the whole application:
 | **PDF**           | Label sheets or a full inventory, grouped by room, all or selected devices           |
 | **Offline-first** | Everything works with no connectivity — the basement is exactly where you need this  |
 | **Projects**      | One per house or apartment, shared read-only or read-write with others               |
+| **Landing page**  | Opens on your projects: local-only or synced, with upload, download and removal       |
 | **Multilingual**  | English and German, following browser language, overridable in your profile          |
 
 ---

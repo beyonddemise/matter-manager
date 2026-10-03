@@ -175,6 +175,52 @@ Because that call needs connectivity and the application does not, the browser k
 **local-only cache** of the result in `mm-local` — never replicated, single-writer, and never
 consulted for authorisation. See [ADR 0012](adr/0012-central-project-registry.md).
 
+## The projects page
+
+The application lands on **Projects** (`/`), not on a device list: which project comes before
+what is in it. Devices are at `/devices` and show the current project. Every device has at least
+one project to open, because first run adopts the local catalogue.
+
+The page is a join of three inputs, decided by one pure module (`projects-model.ts`, no DOM,
+no PouchDB, no network): the local index in `mm-local` (what this device holds), the server list
+(`GET /projects`, fresh, stale from the `cache:project:*` copy, or unheard) and the cached plan.
+It yields, per row, a derived location (`local`, `server`, `synced`) and which actions are
+allowed or why not. The view renders those answers and the actions (`project-actions.ts`) obey
+them, so a rule is written and tested once. The plan and limit tables in `plan.ts` mirror the
+backend's `can.ts`: there is no shared package, and the limit prefers the server-reported
+`projectLimit`, so drift shows up as the server's number, not a wrong silent one.
+
+Actions that move data are **promote** (local-only to server), **download** (server to a local
+copy), **remove local copy** and **delete** (local-only, after typing the name). The order is
+what keeps data safe: nothing is destroyed until a push has resolved (`SyncManager.pushNow`, a
+`pushOnce` with `checkpoint: false` so a document the server refused counts as unpushed, which
+the live sync's checkpoint would hide), the views move off a database before it is copied, and
+the source's `update_seq` must be unchanged before the destroy. While an action runs it holds
+the **busy registry** (`project-busy.ts`); the shell still reads facts during that time but does
+not switch the project or rewrite the replication list, so a refresh cannot undo the action.
+
+A read that spans an action (begun before or during it, finished after) is dropped whole: the
+registry keeps an epoch that moves whenever an action begins or ends, and the idle refresh that
+follows the action applies fresh facts.
+
+Replication runs for **every indexed synchronized copy** and only those, handed over as a whole
+set. A refused project reports `denied`; live sync keeps running (pulls are still valid), but the
+shell shows the project as denied until a push of it succeeds or it leaves the replicated set, so
+a later `idle` cannot hide the refusal. The page shows it as "No permission to sync", or
+"Archived — read-only" for an archived project.
+
+The header bar carries the email (or Sign in), the network state, the sync summary and Upgrade;
+**Sign out** is the last item of the left navigation. Signing out first reads the index afresh
+and pushes every synchronized copy once; the dialog then names every copy that may hold changes
+the server lacks (a failed or timed-out push, everything offline, and copies of archived or
+no-longer-listed projects, which cannot be pushed) and asks a second time before going on. It holds the busy registry throughout, then
+destroys `mm-local` and the server copies, and keeps local-only projects unless "Also remove
+projects stored only on this device" is ticked (the kept index entries are re-written into the
+fresh `mm-local`). A refused refresh token ends the session without deleting anything.
+
+Known limit: tabs are not coordinated, so an edit in a second tab during the last round trip of
+a promote or removal is not protected ([#220](https://github.com/beyonddemise/matter-manager/issues/220)).
+
 ## Deployment
 
 The SPA is static and deploys to Cloudflare Pages. The droplet runs Caddy, Fastify and

@@ -21,7 +21,13 @@
  */
 
 import PouchDB from 'pouchdb-browser'
-import { localDatabase, localProfileCache, removeLocalDatabases } from './db/project-database.js'
+import {
+  localDatabase,
+  localProfileCache,
+  rawDatabase,
+  removeLocalDatabases,
+} from './db/project-database.js'
+
 import { type Locale, profileApi, resolveProfileLocale } from './profile.js'
 import { type Project, projectsApi } from './projects.js'
 import {
@@ -276,7 +282,9 @@ export function projectSync(
     // `as unknown as` because `sync/replication.ts` declares only the sliver of PouchDB it
     // uses - which is what lets its tests run without a database - and a structural match
     // against PouchDB's much larger surface is not something TypeScript will infer.
-    local: (dbName) => new PouchDB(dbName) as unknown as ReturnType<ManagerDependencies['local']>,
+    // The memoised handle, not a second `new PouchDB(dbName)`: two handles on one store fire
+    // every change feed twice.
+    local: (dbName) => rawDatabase(dbName) as unknown as ReturnType<ManagerDependencies['local']>,
     remote: (dbName) =>
       remoteProject(dbName, {
         couchUrl: COUCH_BASE,
@@ -294,13 +302,23 @@ export function projectSync(
  * Returns the cached answer immediately and corrects it when the server replies, which is what
  * keeps the first render right rather than corrected a moment later. Never throws: a profile
  * that cannot be read is a reason to keep the local preference, not a reason to fail.
+ *
+ * @param onCached called once the server's profile is in the cache, so the shell re-reads the
+ *   email and plan it shows — one `GET /profile` serves both.
  */
 export async function followProfileLocale(
   onChange: (locale: Locale) => void,
+  onCached?: () => void,
   fetchImpl: typeof fetch = fetch,
 ): Promise<Locale | undefined> {
   try {
-    return await resolveProfileLocale(profile(fetchImpl), localProfileCache(), onChange)
+    return await resolveProfileLocale(
+      profile(fetchImpl),
+      localProfileCache(),
+      onChange,
+      undefined,
+      onCached,
+    )
   } catch {
     return undefined
   }

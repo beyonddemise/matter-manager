@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { CachedProfile, LocalCache } from '../../src/data/index.js'
 import {
   cachedLocale,
+  cachedPlan,
   type Locale,
   type Profile,
   profileApi,
@@ -14,6 +15,8 @@ const PROFILE: Profile = {
   email: 'ada@example.com',
   displayName: 'Ada',
   locale: 'de',
+  plan: 'member',
+  projectLimit: 5,
 }
 
 /**
@@ -34,6 +37,18 @@ const noProjects = {
     throw new Error('the profile tests do not use the project cache')
   },
   markAccessRemoved: async (): Promise<never> => {
+    throw new Error('the profile tests do not use the project cache')
+  },
+  readLocalProjects: async (): Promise<never> => {
+    throw new Error('the profile tests do not use the project cache')
+  },
+  addLocalProject: async (): Promise<never> => {
+    throw new Error('the profile tests do not use the project cache')
+  },
+  updateLocalProject: async (): Promise<never> => {
+    throw new Error('the profile tests do not use the project cache')
+  },
+  removeLocalProject: async (): Promise<never> => {
     throw new Error('the profile tests do not use the project cache')
   },
 }
@@ -82,6 +97,23 @@ describe('the cached locale', () => {
   })
 })
 
+describe('the cached plan', () => {
+  const at = '2026-08-27T00:00:00.000Z'
+
+  it('is the one that was cached', () => {
+    expect(cachedPlan({ sub: 'x', plan: 'pro', fetchedAt: at })).toBe('pro')
+  })
+
+  it('is free on a device that never signed in', () => {
+    expect(cachedPlan(undefined)).toBe('free')
+    expect(cachedPlan({ sub: 'x', fetchedAt: at })).toBe('free')
+  })
+
+  it('is free for a plan this build does not know', () => {
+    expect(cachedPlan({ sub: 'x', plan: 'platinum', fetchedAt: at })).toBe('free')
+  })
+})
+
 describe('resolving the locale to render with', () => {
   const api = (profile: Profile | undefined) => ({
     read: async () => profile,
@@ -112,6 +144,48 @@ describe('resolving the locale to render with', () => {
     await settled()
 
     expect(writes[0]).toMatchObject({ sub: 'google|1234', locale: 'de', name: 'Ada' })
+  })
+
+  it('caches the plan and the limit the server reported', async () => {
+    const { cache, writes } = fakeCache()
+    await resolveProfileLocale(api({ ...PROFILE, plan: 'pro', projectLimit: -1 }), cache, () => {})
+    await settled()
+
+    expect(writes[0]).toMatchObject({ plan: 'pro', projectLimit: -1 })
+  })
+
+  it('says when the server’s profile is in the cache, so the email and plan can be re-read', async () => {
+    const { cache, writes } = fakeCache()
+    let writtenWhenTold = -1
+    await resolveProfileLocale(
+      api(PROFILE),
+      cache,
+      () => {},
+      undefined,
+      () => {
+        writtenWhenTold = writes.length
+      },
+    )
+    await settled()
+
+    expect(writtenWhenTold).toBe(1)
+  })
+
+  it('says nothing when the server had no profile to give', async () => {
+    const { cache } = fakeCache()
+    let told = false
+    await resolveProfileLocale(
+      api(undefined),
+      cache,
+      () => {},
+      undefined,
+      () => {
+        told = true
+      },
+    )
+    await settled()
+
+    expect(told).toBe(false)
   })
 
   it('reports a change the server knows about and the cache did not', async () => {

@@ -20,6 +20,7 @@ import '../../src/ui/styles/app.css'
 import type { DeviceListView } from '../../src/ui/views/device-list.js'
 import '../../src/ui/views/device-list.js'
 import { browserDatabase, type TestDatabase } from './support/browser-database.js'
+import { destroyProjectStores, isolatedProjectStore } from './support/project-store.js'
 
 /**
  * The print stylesheet, with the browser actually in print mode.
@@ -57,6 +58,8 @@ afterEach(async () => {
   // later test in this worker run against a stylesheet it was not written for.
   await emulate('')
   await database.destroy()
+  // The shells' own indexes: each mount adopts a first-run catalogue into one.
+  await destroyProjectStores()
 })
 
 const device = (id: string, name: string, roomId: string, extra = {}) => ({
@@ -177,7 +180,9 @@ describe('printing the device list', () => {
 describe('printing the shell', () => {
   it('leaves out the navigation and the header', async () => {
     await customElements.whenDefined('wa-page')
-    const shell = await fixture(html`<app-shell></app-shell>`)
+    const shell = await fixture(
+      html`<app-shell .projectStore=${isolatedProjectStore()}></app-shell>`,
+    )
 
     expect(hidden(shell.querySelector('[slot="navigation"]'))).toBe(true)
     expect(hidden(shell.querySelector('[slot="header"]'))).toBe(true)
@@ -188,7 +193,9 @@ describe('printing the shell', () => {
     // containing whatever was in the viewport — the classic "only the first page prints"
     // bug, which is a scrolling-container problem rather than a clipping one.
     await customElements.whenDefined('wa-page')
-    const shell = await fixture(html`<app-shell></app-shell>`)
+    const shell = await fixture(
+      html`<app-shell .projectStore=${isolatedProjectStore()}></app-shell>`,
+    )
     const page = shell.querySelector('wa-page') as Element
 
     const style = getComputedStyle(page)

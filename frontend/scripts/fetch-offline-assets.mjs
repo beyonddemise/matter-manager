@@ -65,8 +65,8 @@ const FA_FREE = join(root, 'node_modules/@fortawesome/fontawesome-free/svgs/soli
 /**
  * Every icon the application can ask for.
  *
- * Written out rather than derived from the source, because seven of them are chosen at run time
- * — the scheme toggle, the two navigation entries, and the enable/disable button — so no grep
+ * Written out rather than derived from the source, because eight of them are chosen at run time
+ * — the scheme toggle, the navigation entries, and the enable/disable button — so no grep
  * over the templates can find them. `test/ui/views/icons.browser.test.ts` asserts this
  * list and the directory agree, which is what keeps the list honest.
  */
@@ -78,6 +78,7 @@ const ICONS = [
   'circle-exclamation',
   'circle-info',
   'comment-medical',
+  'ellipsis-vertical',
   // The upload control beside the camera button on the add form, and in the scan dialog's
   // footer. Bundled like every other icon rather than fetched: an icon that 404s offline is a
   // control that looks broken in exactly the situation this application is built for.
@@ -86,6 +87,9 @@ const ICONS = [
   'file-pdf',
   'pen',
   'plus',
+  // The sort direction of the projects table's active column, in `views/projects.ts`.
+  'sort-down',
+  'sort-up',
   'tags',
   'trash',
   'triangle-exclamation',
@@ -93,11 +97,18 @@ const ICONS = [
   // uses, so neither has ever rendered. These are their free replacements.
   'video-slash',
   'plug-circle-xmark',
+  // The header's network tag while online, beside `plug-circle-xmark` for offline.
+  'plug-circle-check',
+  // Sign out, the last item of the navigation in `app-shell.ts`.
+  'right-from-bracket',
+  // The header's Upgrade button in `app-shell.ts`.
+  'rocket',
   // Chosen at run time: the colour-scheme toggle in `app-shell.ts`.
   'sun',
   'moon',
   'circle-half-stroke',
   // Chosen at run time: `NAV_ROUTES` in `router/routes.ts`.
+  'folder',
   'lightbulb',
   'gear',
   // Chosen at run time: the enable/disable button in `views/device.ts`.

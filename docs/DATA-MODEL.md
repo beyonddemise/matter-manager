@@ -156,7 +156,7 @@ project discovery in that category.
 
 ```jsonc
 {
-  "_id": "project:8f14e45f-ceea-467a-9c0e-1b2c3d4e5f60",
+  "_id": "cache:project:8f14e45f-ceea-467a-9c0e-1b2c3d4e5f60",
   "type": "cachedProject",
   "dbName": "project_8f14e45f-ceea-467a-9c0e-1b2c3d4e5f60",
   "projectName": "Musterstraße 12",
@@ -184,7 +184,70 @@ Three properties to preserve:
   already holds the data ([SECURITY.md](../SECURITY.md)) — but replication will begin
   returning `403`, and the UI must show *access removed* rather than appearing broken.
 
+**The cached list doubles as the last-known server list.** The projects page is built from what
+this device holds plus what the server said. When the server cannot be asked (offline, a failed
+request, or the token exchange not yet answered, the `checking` session) the page reads these
+`cache:project:*` documents instead and flags the list stale: counts, roles and archived state
+are taken from it, so an offline member with five server projects still cannot create a sixth,
+but every act that needs the server is refused. The list can be up to a session old.
+
 Cleared on sign-out, along with the project replicas.
+
+### The local index: `local:project:<dbName>`
+
+Also in `mm-local`, also never replicated: one document per project database **this device
+holds**, whether local-only or a downloaded copy of a server project. IndexedDB cannot be
+enumerated everywhere (`indexedDB.databases()` is missing from Firefox before 126), so what the
+browser holds has to be written down. Addressed by database name, so the index is a listable key
+range and one database has exactly one entry (`LocalProjectEntry`, `frontend/src/data/local-cache.ts`).
+
+```jsonc
+{
+  "_id": "local:project:project_local_5b1c0c9e-3a52-4f0e-9b5b-6f0f6e1d2a77",
+  "dbName": "project_local_5b1c0c9e-3a52-4f0e-9b5b-6f0f6e1d2a77",
+  "name": "Musterstraße 12",
+  "client": "Familie Muster",     // absent rather than empty
+  "projectId": "8f14e45f-...",    // the server's id; absent while local-only
+  "role": "owner",                // owner | manage | write | read; meaningless while local-only
+  "createdAt": "2026-10-03T08:00:00.000Z"
+}
+```
+
+- **A project's location is derived, never stored:** in the index only is `local`, in the server
+  list only is `server`, in both is `synced`. An archived project's copy reads `local` (it can no
+  longer be written), as does a copy the fresh list no longer names (an orphan).
+- **`role` is recorded on download and promote** so an offline device can tell a downloaded
+  *shared* project from an owned one: owned ones count against the plan limit. Missing on an
+  entry with a `projectId` reads as owner, because miscounting a project as owned can only
+  refuse a create that would have fitted.
+- **The index is not authority for "is the data elsewhere".** A promotion records `projectId` on
+  the local entry the moment `POST /projects` answers, before any data has moved, so the
+  *database name* decides (`isLocalOnlyDatabase`): `project_local` and `project_local_<uuid>`
+  are local-only whatever the entry says.
+- Rewritten by the same revision-retry loop as the rest of `mm-local`. On sign-out the index is
+  destroyed with `mm-local`, and the entries of the local-only projects that were kept are
+  written again into the fresh one.
+
+### Database naming on the device
+
+| Name | What it is |
+|---|---|
+| `project_<uuid>` | A synchronized project. **The local name equals the server's `dbName`**, so replication pairs the two by name. Downloading creates it; promoting copies into it. |
+| `project_local_<uuid>` | A local-only project created on this device (`createLocalProject`). |
+| `project_local` | The first-run catalogue from before projects had ids. Never renamed, so nothing moves; adopted into the index at first launch. |
+
+A **promote** copies `project_local_<uuid>` into `project_<id>`, pushes, and only then destroys
+the source. The destroy is guarded by the source's `update_seq` (unchanged since the copy, or the
+transfer is repeated once and then refused), so an edit that lands mid-transfer is not destroyed
+unsent. A step refused midway leaves an unindexed, partial `project_<id>` and keeps the source.
+The views wrote into the survivor from the moment the copy began, so before they move back the
+survivor is replicated into the source (without its `project` document): an edit made during a
+refused promote is in the source, not stranded in the unindexed copy. If only the source's
+destroy fails, both entries carry the project id and the page shows the server-named copy alone.
+
+**First run adopts `project_local` only on a device that never knew a project:** nothing indexed
+and no server list ever remembered. Then every device has one project to name ("Name your
+project"). A device that once knew projects and has none left shows the create prompt instead.
 
 ## `project_<uuid>` — one per project
 
@@ -198,7 +261,11 @@ The unit of sharing. See [ADR 0003](adr/0003-database-per-project.md).
 ```
 
 Replicated to every device with the data, so a replica can name and locate itself without asking
-the registry. Fixed `_id` (`PROJECT_DOCUMENT_ID`). `client` is absent when the project has none.
+the registry. **On a device it is also the truth for local-only projects:** the frontend writes it into
+`project_local_<uuid>` (without `serverDb`), and the `mm-local` index entry mirrors its name so a
+list renders without opening a database per row. Every rename writes the document first, then the
+entry, so a failure between the two leaves the truth ahead. On a server database only the service
+writes it. Fixed `_id` (`PROJECT_DOCUMENT_ID`). `client` is absent when the project has none.
 Written by the API as server admin (which bypasses the validator) at provisioning, before the
 pointer, so a half-made project is rolled back whole. **It is kept in step with the pointer by
 every `PATCH /projects/:id`**, after the pointer is written: the document is compared with

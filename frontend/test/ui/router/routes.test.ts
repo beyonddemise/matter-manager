@@ -3,8 +3,17 @@ import { matchRoute } from '../../../src/ui/router/match.js'
 import { NAV_ROUTES, ROUTES } from '../../../src/ui/router/routes.js'
 
 describe('the route registry', () => {
-  it('routes the root path to the device list', () => {
-    expect(matchRoute('#/', ROUTES)?.route.view).toBe('device-list')
+  it('routes the root path to the projects page', () => {
+    // The landing page: which project, before what is in it.
+    expect(matchRoute('#/', ROUTES)?.route.view).toBe('projects')
+  })
+
+  it('routes /devices to the device list', () => {
+    expect(matchRoute('#/devices', ROUTES)?.route.view).toBe('device-list')
+  })
+
+  it('lists Projects first and Devices second in the navigation', () => {
+    expect(NAV_ROUTES.slice(0, 2).map((route) => route.label?.())).toEqual(['Projects', 'Devices'])
   })
 
   it('routes /settings to the settings view', () => {
@@ -80,6 +89,7 @@ describe('the route registry', () => {
     // for every route — and the two together are what stop a route matching a path and then
     // failing to render, which is worse than not matching at all.
     expect(ROUTES.map((route) => route.view)).toEqual([
+      'projects',
       'device-list',
       'add-device',
       'device',

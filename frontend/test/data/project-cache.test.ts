@@ -51,6 +51,20 @@ describe('the project list survives going offline', () => {
     ])
   })
 
+  it('keeps the client and the archive, which an offline projects page needs', async () => {
+    await cache.writeProjects([{ ...HOUSE, client: 'Acme', archived: true }], FETCHED)
+
+    expect((await cache.readProjects())[0]).toMatchObject({ client: 'Acme', archived: true })
+  })
+
+  it('forgets a client the next list no longer names', async () => {
+    await cache.writeProjects([{ ...HOUSE, client: 'Acme' }], FETCHED)
+    await cache.writeProjects([HOUSE], LATER)
+
+    const [stored] = await cache.readProjects()
+    expect(stored !== undefined && 'client' in stored).toBe(false)
+  })
+
   it('starts every project as not-downloaded', async () => {
     // Appearing in the server's list says the user *may* open it, which is not the same as
     // having it. Assuming otherwise would offer a project that opens to nothing.

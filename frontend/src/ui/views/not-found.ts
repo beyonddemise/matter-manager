@@ -19,7 +19,7 @@ export class NotFoundView extends LitElement {
       <div class="wa-stack wa-gap-m">
         <h1>${msg('Page not found')}</h1>
         <p>${msg('That address does not match anything in this application.')}</p>
-        <a class="app-back" href="#/">${msg('Back to devices')}</a>
+        <a class="app-back" href="#/">${msg('Back to projects')}</a>
       </div>
     `
   }

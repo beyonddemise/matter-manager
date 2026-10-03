@@ -538,14 +538,6 @@
   <source>Syncing</source>
   <target>Wird abgeglichen</target>
 </trans-unit>
-<trans-unit id="s282049f502eac1de">
-  <source>Project</source>
-  <target>Projekt</target>
-</trans-unit>
-<trans-unit id="sb86e5e28f719630a">
-  <source>read-only</source>
-  <target>nur lesen</target>
-</trans-unit>
 <trans-unit id="s3bfa63c1b2dfd186">
   <source>On this device</source>
   <target>Auf diesem Gerät</target>
@@ -553,38 +545,6 @@
 <trans-unit id="s21fe63f6e181184e">
   <source>Everything this account put on this browser will be removed.</source>
   <target>Alles, was dieses Konto in diesem Browser abgelegt hat, wird entfernt.</target>
-</trans-unit>
-<trans-unit id="s577d290a0e9134ac">
-  <source>Also remove the devices stored only on this device</source>
-  <target>Auch die Geräte entfernen, die nur auf diesem Gerät gespeichert sind</target>
-</trans-unit>
-<trans-unit id="s65825818fc578597">
-  <source>Devices on this device</source>
-  <target>Geräte auf diesem Gerät</target>
-</trans-unit>
-<trans-unit id="s77af04990228fa2c">
-  <source>Nothing was moved. Everything is still on this device.</source>
-  <target>Es wurde nichts verschoben. Alles ist weiterhin auf diesem Gerät.</target>
-</trans-unit>
-<trans-unit id="sf4c4e575fe36b271">
-  <source>The devices were moved into the project.</source>
-  <target>Die Geräte wurden in das Projekt verschoben.</target>
-</trans-unit>
-<trans-unit id="migration-incomplete">
-  <source>The devices were moved into the project, but they are still on this device. Try again to finish removing them from this device.</source>
-  <target>Die Geräte wurden in das Projekt verschoben, befinden sich aber weiterhin auf diesem Gerät. Versuchen Sie es erneut, um sie vollständig von diesem Gerät zu entfernen.</target>
-</trans-unit>
-<trans-unit id="s53d9e1fa72cf3752">
-  <source>These devices are stored only in this browser. Moving them into a project shares them with everyone who has access to it, and keeps them on your other devices.</source>
-  <target>Diese Geräte sind nur in diesem Browser gespeichert. Wenn Sie sie in ein Projekt verschieben, sind sie für alle sichtbar, die Zugriff darauf haben, und bleiben auch auf Ihren anderen Geräten erhalten.</target>
-</trans-unit>
-<trans-unit id="s2c862f7deaf6782c">
-  <source>Move them into</source>
-  <target>Verschieben nach</target>
-</trans-unit>
-<trans-unit id="s210d38e81911fe66">
-  <source>Move them</source>
-  <target>Verschieben</target>
 </trans-unit>
 <trans-unit id="s6464c2a7a815108b">
   <source>Rooms</source>
@@ -693,6 +653,286 @@
 <trans-unit id="s12d6dde9b30c3093">
   <source>Dismiss</source>
   <target>Schließen</target>
+</trans-unit>
+<trans-unit id="s8046acaa9bfd4751">
+  <source>No permission to sync</source>
+  <target>Keine Berechtigung zum Synchronisieren</target>
+</trans-unit>
+<trans-unit id="s566d8645a79e1253">
+  <source>Sign in to sync</source>
+  <target>Melden Sie sich an, um zu synchronisieren</target>
+</trans-unit>
+<trans-unit id="s3ad60fb9299b0c7f">
+  <source>Needs a connection</source>
+  <target>Benötigt eine Verbindung</target>
+</trans-unit>
+<trans-unit id="s8e7345541678ac43">
+  <source>Waiting for the project list</source>
+  <target>Wartet auf die Projektliste</target>
+</trans-unit>
+<trans-unit id="sdefccbd893205167">
+  <source>Your plan does not include synchronized projects</source>
+  <target>Ihr Tarif umfasst keine synchronisierten Projekte</target>
+</trans-unit>
+<trans-unit id="se350bbf7a2d3698a">
+  <source>Your plan has no room for another project</source>
+  <target>Ihr Tarif lässt kein weiteres Projekt zu</target>
+</trans-unit>
+<trans-unit id="s0921904a26cb7e76">
+  <source>Only the owner or a manager can change this</source>
+  <target>Nur der Eigentümer oder ein Verwalter kann das ändern</target>
+</trans-unit>
+<trans-unit id="sc70cb5a0fb8377ea">
+  <source>Read-only</source>
+  <target>Nur lesbar</target>
+</trans-unit>
+<trans-unit id="s1c5e4b31f51478ba">
+  <source>The server could not be reached</source>
+  <target>Der Server war nicht erreichbar</target>
+</trans-unit>
+<trans-unit id="s6a28accdb1d59c53">
+  <source>The server did not accept this</source>
+  <target>Der Server hat das nicht angenommen</target>
+</trans-unit>
+<trans-unit id="s3d917f624d8a82a3">
+  <source>Something went wrong on the server</source>
+  <target>Auf dem Server ist etwas schiefgegangen</target>
+</trans-unit>
+<trans-unit id="sfbd747a1d61ef2ed">
+  <source>This project is no longer on the server</source>
+  <target>Dieses Projekt ist nicht mehr auf dem Server</target>
+</trans-unit>
+<trans-unit id="s3340b8b54f1707be">
+  <source>Not available offline</source>
+  <target>Offline nicht verfügbar</target>
+</trans-unit>
+<trans-unit id="s60f8a9487f3f1996">
+  <source>On the server</source>
+  <target>Auf dem Server</target>
+</trans-unit>
+<trans-unit id="s399650f9a8c247db">
+  <source>Synchronized</source>
+  <target>Synchronisiert</target>
+</trans-unit>
+<trans-unit id="s18059d87aa01352e">
+  <source>That did not work. Please try again.</source>
+  <target>Das hat nicht geklappt. Bitte versuchen Sie es erneut.</target>
+</trans-unit>
+<trans-unit id="s08d66fafa85262c2">
+  <source>Give the project a name.</source>
+  <target>Geben Sie dem Projekt einen Namen.</target>
+</trans-unit>
+<trans-unit id="s199f5853f4e718f7">
+  <source>Projects</source>
+  <target>Projekte</target>
+</trans-unit>
+<trans-unit id="sf73d7490e3579772">
+  <source>Shared with me</source>
+  <target>Mit mir geteilt</target>
+</trans-unit>
+<trans-unit id="s7f0c66f43666be59">
+  <source>Offline: new projects stay on this device for now.</source>
+  <target>Offline: Neue Projekte bleiben vorerst auf diesem Gerät.</target>
+</trans-unit>
+<trans-unit id="sba9cf1a192309c34">
+  <source>Upgrade to keep your projects in sync across devices, and to have more than one.</source>
+  <target>Mit einem Upgrade bleiben Ihre Projekte auf allen Geräten synchron, und Sie können mehr als eines haben.</target>
+</trans-unit>
+<trans-unit id="sf6843c35304c4791">
+  <source>Create your project</source>
+  <target>Erstellen Sie Ihr Projekt</target>
+</trans-unit>
+<trans-unit id="s382a2aa3984474dd">
+  <source>Create</source>
+  <target>Erstellen</target>
+</trans-unit>
+<trans-unit id="sba3dfed50cb0be74">
+  <source>Name your project</source>
+  <target>Benennen Sie Ihr Projekt</target>
+</trans-unit>
+<trans-unit id="s8a5fa5ad06a2e960">
+  <source>Everything recorded on this device so far is in it.</source>
+  <target>Alles, was Sie bisher auf diesem Gerät erfasst haben, ist darin.</target>
+</trans-unit>
+<trans-unit id="s33f85f24c0f5f008">
+  <source>Save</source>
+  <target>Speichern</target>
+</trans-unit>
+<trans-unit id="s821edf5cd7d9bb15">
+  <source>Continue with “<x id="0" equiv-text="${row.name}"/>”</source>
+  <target>Weiter mit „<x id="0" equiv-text="${row.name}"/>“</target>
+</trans-unit>
+<trans-unit id="sf28d171a302d2b60">
+  <source>New project</source>
+  <target>Neues Projekt</target>
+</trans-unit>
+<trans-unit id="s5a16cd0c7f4bfd03">
+  <source>New project name</source>
+  <target>Name des neuen Projekts</target>
+</trans-unit>
+<trans-unit id="s6d93642611649cb1">
+  <source>Add project</source>
+  <target>Projekt hinzufügen</target>
+</trans-unit>
+<trans-unit id="sace77a5253c259be">
+  <source>Client</source>
+  <target>Kunde</target>
+</trans-unit>
+<trans-unit id="see2fcaedf9743ec6">
+  <source>Location</source>
+  <target>Speicherort</target>
+</trans-unit>
+<trans-unit id="s05073d2537b45d1a">
+  <source>Sync</source>
+  <target>Abgleich</target>
+</trans-unit>
+<trans-unit id="s8af61807443f32a4">
+  <source>Actions</source>
+  <target>Aktionen</target>
+</trans-unit>
+<trans-unit id="se6fbf859804f5e3d">
+  <source>Client (optional)</source>
+  <target>Kunde (optional)</target>
+</trans-unit>
+<trans-unit id="s9c7c7681d3953216">
+  <source>Unnamed project</source>
+  <target>Unbenanntes Projekt</target>
+</trans-unit>
+<trans-unit id="s1f7698c061c208c9">
+  <source>Open</source>
+  <target>Öffnen</target>
+</trans-unit>
+<trans-unit id="s564d1648b1ceee9f">
+  <source>Up to date</source>
+  <target>Aktuell</target>
+</trans-unit>
+<trans-unit id="s5e41479bb0f6d1e3">
+  <source>Not syncing</source>
+  <target>Kein Abgleich</target>
+</trans-unit>
+<trans-unit id="scd63c970601a5baa">
+  <source>Archived — read-only</source>
+  <target>Archiviert — nur lesbar</target>
+</trans-unit>
+<trans-unit id="sc6f37e089e93f72d">
+  <source>Projects your plan allows: <x id="0" equiv-text="${limit}"/>. Projects you own: <x id="1" equiv-text="${owned}"/>. Everything stays usable, but no new project can be created.</source>
+  <target>Projekte, die Ihr Tarif erlaubt: <x id="0" equiv-text="${limit}"/>. Projekte, die Ihnen gehören: <x id="1" equiv-text="${owned}"/>. Alles bleibt nutzbar, aber neue Projekte können nicht angelegt werden.</target>
+</trans-unit>
+<trans-unit id="s9e9324100c6d35d1">
+  <source>Project actions</source>
+  <target>Projektaktionen</target>
+</trans-unit>
+<trans-unit id="s1e86539302492dfb">
+  <source>Remove the local copy?</source>
+  <target>Lokale Kopie entfernen?</target>
+</trans-unit>
+<trans-unit id="s6890d3681a918304">
+  <source>The server keeps it. Changes not yet uploaded are uploaded first.</source>
+  <target>Der Server behält das Projekt. Noch nicht hochgeladene Änderungen werden zuerst hochgeladen.</target>
+</trans-unit>
+<trans-unit id="s2d7d8669a523601c">
+  <source>Remove from the server?</source>
+  <target>Vom Server entfernen?</target>
+</trans-unit>
+<trans-unit id="sd1fc9a3e720ca9b5">
+  <source>Collaborators lose access. Deleted permanently after 90 days.</source>
+  <target>Mitwirkende verlieren den Zugriff. Nach 90 Tagen wird das Projekt endgültig gelöscht.</target>
+</trans-unit>
+<trans-unit id="s5d6f2b65f6de0341">
+  <source>Delete from this device?</source>
+  <target>Von diesem Gerät löschen?</target>
+</trans-unit>
+<trans-unit id="s2d21e03305254dd8">
+  <source>“<x id="0" equiv-text="${row.name}"/>” and everything in it is deleted from this device. This cannot be undone.</source>
+  <target>„<x id="0" equiv-text="${row.name}"/>“ wird mit allem, was es enthält, von diesem Gerät gelöscht. Das lässt sich nicht rückgängig machen.</target>
+</trans-unit>
+<trans-unit id="s52b43872b9427298">
+  <source>This project is no longer on the server. Changes not yet uploaded will be lost.</source>
+  <target>Dieses Projekt ist nicht mehr auf dem Server. Noch nicht hochgeladene Änderungen gehen verloren.</target>
+</trans-unit>
+<trans-unit id="sb981951451a1b92f">
+  <source>Type the project name to confirm</source>
+  <target>Geben Sie zur Bestätigung den Projektnamen ein</target>
+</trans-unit>
+<trans-unit id="s03daa792818ba91c">
+  <source>Not everything could be uploaded, so the local copy was kept. Please try again.</source>
+  <target>Nicht alles konnte hochgeladen werden, daher wurde die lokale Kopie behalten. Bitte versuchen Sie es erneut.</target>
+</trans-unit>
+<trans-unit id="s033f47026d02c003">
+  <source>Type the project name exactly to delete it</source>
+  <target>Geben Sie den Projektnamen genau ein, um es zu löschen</target>
+</trans-unit>
+<trans-unit id="s076c0c69ea9cfd5d">
+  <source>Synchronize</source>
+  <target>Synchronisieren</target>
+</trans-unit>
+<trans-unit id="sd3386a2ef42e80b9">
+  <source>Download</source>
+  <target>Herunterladen</target>
+</trans-unit>
+<trans-unit id="sd6890563b2bf597f">
+  <source>Remove local copy</source>
+  <target>Lokale Kopie entfernen</target>
+</trans-unit>
+<trans-unit id="s7cf69b5464066504">
+  <source>Delete from this device</source>
+  <target>Von diesem Gerät löschen</target>
+</trans-unit>
+<trans-unit id="s5f4a46b486085426">
+  <source>Remove from server</source>
+  <target>Vom Server entfernen</target>
+</trans-unit>
+<trans-unit id="sa800af59002e0f02">
+  <source>This project was removed from the server. Changes not yet uploaded will be lost.</source>
+  <target>Dieses Projekt wurde vom Server entfernt. Noch nicht hochgeladene Änderungen gehen verloren.</target>
+</trans-unit>
+<trans-unit id="s3e041dc90de07a01">
+  <source>The project already created on the server for it stays there. You can remove it from the server afterwards.</source>
+  <target>Das dafür bereits auf dem Server angelegte Projekt bleibt dort erhalten. Sie können es anschließend vom Server entfernen.</target>
+</trans-unit>
+<trans-unit id="sfb720fc010661f17">
+  <source>Upgrade</source>
+  <target>Upgrade</target>
+</trans-unit>
+<trans-unit id="s14e9da57eecc074a">
+  <source>It's just alpha — coming soon</source>
+  <target>Dies ist erst eine Alpha-Version — bald verfügbar</target>
+</trans-unit>
+<trans-unit id="s5e8250fb85d64c23">
+  <source>Close</source>
+  <target>Schließen</target>
+</trans-unit>
+<trans-unit id="seadeb3a807d7478a">
+  <source>Online</source>
+  <target>Online</target>
+</trans-unit>
+<trans-unit id="s5e2fdf2a8c4604db">
+  <source>Back to projects</source>
+  <target>Zurück zu den Projekten</target>
+</trans-unit>
+<trans-unit id="se54a478afde28a31">
+  <source>Sign out anyway</source>
+  <target>Trotzdem abmelden</target>
+</trans-unit>
+<trans-unit id="se3776cafec73ec12">
+  <source>Also remove projects stored only on this device</source>
+  <target>Auch Projekte entfernen, die nur auf diesem Gerät gespeichert sind</target>
+</trans-unit>
+<trans-unit id="s655406defe2cb0cf">
+  <source>Only the owner can remove this from the server</source>
+  <target>Nur der Eigentümer kann dies vom Server entfernen</target>
+</trans-unit>
+<trans-unit id="se69e1c39eae660c9">
+  <source>This project changed — try again</source>
+  <target>Dieses Projekt hat sich geändert – bitte versuchen Sie es erneut</target>
+</trans-unit>
+<trans-unit id="s012da7dfcc47a657">
+  <source>These projects may have changes that are not on the server. Signing out removes them from this device.</source>
+  <target>Diese Projekte haben möglicherweise Änderungen, die nicht auf dem Server sind. Wenn Sie sich abmelden, werden sie von diesem Gerät entfernt.</target>
+</trans-unit>
+<trans-unit id="s211581895248b54f">
+  <source>The projects on this device could not be checked.</source>
+  <target>Die Projekte auf diesem Gerät konnten nicht geprüft werden.</target>
 </trans-unit>
 </body>
 </file>

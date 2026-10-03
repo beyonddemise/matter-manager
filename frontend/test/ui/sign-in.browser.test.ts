@@ -2,10 +2,13 @@ import '@awesome.me/webawesome-pro/dist/components/button/button.js'
 import '@awesome.me/webawesome-pro/dist/components/checkbox/checkbox.js'
 import '@awesome.me/webawesome-pro/dist/components/dialog/dialog.js'
 import { fixture, html, waitUntil } from '@open-wc/testing-helpers'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { SessionState } from '../../src/ui/session.js'
 import '../../src/ui/app-shell.js'
+import type { LocalProjectEntry } from '../../src/data/index.js'
+import type { LocalProjectDependencies } from '../../src/ui/local-projects.js'
 import { refresherNeverAnswering, refresherReporting } from './refresher-stub.js'
+import { destroyProjectStores, isolatedProjectStore } from './support/project-store.js'
 
 /**
  * #120's last acceptance line: signing in and out is reachable from the interface.
@@ -44,6 +47,28 @@ async function signOut(
   await waitUntil(() => element.querySelector('[data-sign-in]') !== null, 'still signed in')
 }
 
+afterEach(async () => {
+  await destroyProjectStores()
+})
+
+/** A store whose index already lists `entries`. */
+async function storeListing(
+  ...entries: readonly LocalProjectEntry[]
+): Promise<LocalProjectDependencies> {
+  const store = isolatedProjectStore()
+  for (const entry of entries) await store.cache().addLocalProject(entry)
+  return store
+}
+
+/** A downloaded copy of the server project `p1`. */
+const COPY: LocalProjectEntry = {
+  dbName: 'project_p1',
+  name: 'Beta',
+  projectId: 'p1',
+  role: 'owner',
+  createdAt: '2026-10-01T00:00:00.000Z',
+}
+
 const shell = async (session: SessionState, overrides: Record<string, unknown> = {}) => {
   const element = (await fixture(html`
     <app-shell
@@ -51,10 +76,19 @@ const shell = async (session: SessionState, overrides: Record<string, unknown> =
       .signIn=${overrides.signIn ?? (() => {})}
       .signOutOf=${overrides.signOutOf ?? (async () => [])}
       .connectivity=${{ addEventListener: () => {}, removeEventListener: () => {}, onLine: true }}
+      .projectStore=${isolatedProjectStore()}
     ></app-shell>
   `)) as HTMLElement & { updateComplete: Promise<unknown> }
   await element.updateComplete
   return element
+}
+
+/** What a stub replication manager was asked. */
+interface Recorded {
+  set?: unknown[]
+  stopped?: boolean
+  /** Whether it was handed a list after it was stopped: a replication outliving its session. */
+  setAfterStop?: boolean
 }
 
 describe('the sign-in control', () => {
@@ -85,6 +119,7 @@ describe('the sign-in control', () => {
       <app-shell
         .refresher=${refresherNeverAnswering}
         .connectivity=${{ addEventListener: () => {}, removeEventListener: () => {}, onLine: true }}
+        .projectStore=${isolatedProjectStore()}
       ></app-shell>
     `)) as HTMLElement
     expect(element.querySelector('[data-sign-in]')).toBeNull()
@@ -118,6 +153,7 @@ describe('what happens once there is a session', () => {
       <app-shell
         .refresher=${refresherReporting('signed-in')}
         .connectivity=${{ addEventListener: () => {}, removeEventListener: () => {}, onLine: true }}
+        .projectStore=${overrides.store ?? isolatedProjectStore()}
         .followLocale=${overrides.followLocale ?? (async () => undefined)}
         .listProjects=${overrides.listProjects ?? (async () => [])}
         .makeSync=${overrides.makeSync ?? (() => stubSync())}
@@ -127,68 +163,72 @@ describe('what happens once there is a session', () => {
     return element
   }
 
-  const stubSync = (record?: { set?: unknown[]; stopped?: boolean }) => ({
+  const stubSync = (record?: Recorded) => ({
     set: (projects: unknown[]) => {
-      if (record) record.set = projects
+      if (!record) return
+      record.set = projects
+      if (record.stopped) record.setAfterStop = true
     },
     running: () => [],
     stateOf: () => undefined,
+    stop: () => {},
+    pushNow: async () => {},
+    suspend: () => {},
+    resume: () => {},
     stopAll: () => {
       if (record) record.stopped = true
     },
   })
 
-  it('replicates the projects the account has', async () => {
-    const record: { set?: unknown[]; stopped?: boolean } = {}
+  it('replicates the copies of the account’s projects that are on this device', async () => {
+    const record: Recorded = {}
     await wired({
-      listProjects: async () => [{ projectId: 'p1', dbName: 'project_p1' }],
+      store: await storeListing(COPY),
+      listProjects: async () => [
+        { projectId: 'p1', dbName: 'project_p1', name: 'Beta', role: 'owner', archived: false },
+        { projectId: 'p2', dbName: 'project_p2', name: 'Gamma', role: 'owner', archived: false },
+      ],
       makeSync: () => stubSync(record),
     })
-    await waitUntil(() => record.set !== undefined, 'replication never started')
+    await waitUntil(() => (record.set?.length ?? 0) > 0, 'replication never started')
+    // Not p2: listed, but not downloaded here, and replicating it would download it.
     expect(record.set).toEqual([{ projectId: 'p1', dbName: 'project_p1' }])
   })
 
-  it('starts nothing when the account has no projects', async () => {
-    // Not an error and not a state worth showing. A manager with an empty list is a manager
-    // doing nothing, and constructing one to do nothing is just something else to stop.
-    let made = false
-    await wired({
-      listProjects: async () => [],
-      makeSync: () => {
-        made = true
-        return stubSync()
-      },
-    })
-    expect(made).toBe(false)
+  it('replicates nothing when nothing of the account is on this device', async () => {
+    // The manager is built all the same: the projects page needs it to push while promoting.
+    const record: Recorded = {}
+    await wired({ listProjects: async () => [], makeSync: () => stubSync(record) })
+    await waitUntil(() => record.set !== undefined, 'replication never set')
+    expect(record.set).toEqual([])
   })
 
   it('does not start replication when the project list arrives after sign-out', async () => {
-    let resolveProjects:
-      | ((projects: readonly { projectId: string; dbName: string }[]) => void)
-      | undefined
-    const projects = new Promise<readonly { projectId: string; dbName: string }[]>((resolve) => {
+    let resolveProjects: ((projects: readonly unknown[]) => void) | undefined
+    const projects = new Promise<readonly unknown[]>((resolve) => {
       resolveProjects = resolve
     })
-    let made = false
+    const record: Recorded = {}
     const element = (await fixture(html`
       <app-shell
         .refresher=${refresherReporting('signed-in')}
         .connectivity=${{ addEventListener: () => {}, removeEventListener: () => {}, onLine: true }}
+        .projectStore=${isolatedProjectStore()}
         .followLocale=${async () => undefined}
         .listProjects=${() => projects}
-        .makeSync=${() => {
-          made = true
-          return stubSync()
-        }}
+        .makeSync=${() => stubSync(record)}
         .signOutOf=${async () => []}
       ></app-shell>
     `)) as HTMLElement
 
     await signOut(element)
-    resolveProjects?.([{ projectId: 'p1', dbName: 'project_p1' }])
-    await Promise.resolve()
+    resolveProjects?.([
+      { projectId: 'p1', dbName: 'project_p1', name: 'Beta', role: 'owner', archived: false },
+    ])
+    await new Promise((resolve) => setTimeout(resolve, 20))
 
-    expect(made).toBe(false)
+    expect(record.stopped).toBe(true)
+    expect(record.setAfterStop).toBeUndefined()
   })
 
   it('carries on when the project list cannot be fetched', async () => {
@@ -207,8 +247,8 @@ describe('what happens once there is a session', () => {
     // be reassuring and wrong.
     const element = await wired({
       listProjects: async () => [
-        { projectId: 'p1', dbName: 'a' },
-        { projectId: 'p2', dbName: 'b' },
+        { projectId: 'p1', dbName: 'a', name: 'Beta', role: 'owner', archived: false },
+        { projectId: 'p2', dbName: 'b', name: 'Beta', role: 'owner', archived: false },
       ],
       makeSync: (onState: (id: string, state: string) => void) => {
         queueMicrotask(() => {
@@ -226,7 +266,9 @@ describe('what happens once there is a session', () => {
     // The steady state is everything being fine, and a badge that is always there says nothing
     // when it matters.
     const element = await wired({
-      listProjects: async () => [{ projectId: 'p1', dbName: 'a' }],
+      listProjects: async () => [
+        { projectId: 'p1', dbName: 'a', name: 'Beta', role: 'owner', archived: false },
+      ],
       makeSync: (onState: (id: string, state: string) => void) => {
         queueMicrotask(() => onState('p1', 'idle'))
         return stubSync()
@@ -239,14 +281,15 @@ describe('what happens once there is a session', () => {
   it('stops replicating before signing out, not after', async () => {
     // Replication holds an access token and a live connection to a database this browser is
     // about to be told it may not read.
-    const record: { set?: unknown[]; stopped?: boolean } = {}
+    const record: Recorded = {}
     let stoppedBeforeSignOut = false
     const element = (await fixture(html`
       <app-shell
         .refresher=${refresherReporting('signed-in')}
         .connectivity=${{ addEventListener: () => {}, removeEventListener: () => {}, onLine: true }}
+        .projectStore=${isolatedProjectStore()}
         .followLocale=${async () => undefined}
-        .listProjects=${async () => [{ projectId: 'p1', dbName: 'a' }]}
+        .listProjects=${async () => [{ projectId: 'p1', dbName: 'a', name: 'Beta', role: 'owner', archived: false }]}
         .makeSync=${() => stubSync(record)}
         .signOutOf=${async () => {
           stoppedBeforeSignOut = record.stopped === true
@@ -260,12 +303,18 @@ describe('what happens once there is a session', () => {
 })
 
 describe('a session that ends while startup is still in flight', () => {
-  const stubSync = (record?: { set?: unknown[]; stopped?: boolean }) => ({
+  const stubSync = (record?: Recorded) => ({
     set: (projects: unknown[]) => {
-      if (record) record.set = projects
+      if (!record) return
+      record.set = projects
+      if (record.stopped) record.setAfterStop = true
     },
     running: () => [],
     stateOf: () => undefined,
+    stop: () => {},
+    pushNow: async () => {},
+    suspend: () => {},
+    resume: () => {},
     stopAll: () => {
       if (record) record.stopped = true
     },
@@ -277,12 +326,13 @@ describe('a session that ends while startup is still in flight', () => {
     // that stopped the previous one - replicating with a token that has been forgotten, against
     // a database this browser has just been told it may not read.
     let release: (projects: readonly unknown[]) => void = () => {}
-    const record: { set?: unknown[]; stopped?: boolean } = {}
+    const record: Recorded = {}
 
     const element = (await fixture(html`
       <app-shell
         .refresher=${refresherReporting('signed-in')}
         .connectivity=${{ addEventListener: () => {}, removeEventListener: () => {}, onLine: true }}
+        .projectStore=${isolatedProjectStore()}
         .followLocale=${async () => undefined}
         .listProjects=${() =>
           new Promise((resolve) => {
@@ -296,10 +346,11 @@ describe('a session that ends while startup is still in flight', () => {
     await signOut(element)
 
     // The project list arrives only now, after the sign-out has completed.
-    release([{ projectId: 'p1', dbName: 'a' }])
+    release([{ projectId: 'p1', dbName: 'a', name: 'Beta', role: 'owner', archived: false }])
     await new Promise((resolve) => setTimeout(resolve, 20))
 
-    expect(record.set).toBeUndefined()
+    expect(record.stopped).toBe(true)
+    expect(record.setAfterStop).toBeUndefined()
   })
 
   it('ignores a locale the account it belonged to has left', async () => {
@@ -312,6 +363,7 @@ describe('a session that ends while startup is still in flight', () => {
       <app-shell
         .refresher=${refresherReporting('signed-in')}
         .connectivity=${{ addEventListener: () => {}, removeEventListener: () => {}, onLine: true }}
+        .projectStore=${isolatedProjectStore()}
         .followLocale=${async (onChange: (locale: string) => void) => {
           applyLocale = (locale) => {
             applied = true

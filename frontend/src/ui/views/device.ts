@@ -422,7 +422,7 @@ export class DeviceView extends LitElement {
     if (token !== this.request) return
     this.confirmingDelete = false
     this.failure = undefined
-    window.location.hash = '#/'
+    window.location.hash = '#/devices'
   }
 
   /**
@@ -708,7 +708,7 @@ export class DeviceView extends LitElement {
           <p class="app-empty" data-read-failed>
             ${msg('Your devices could not be read from this browser’s storage. Nothing has been lost — reload to try again.')}
           </p>
-          <a class="app-back" href="#/">${msg('Back to devices')}</a>
+          <a class="app-back" href="#/devices">${msg('Back to devices')}</a>
         </div>
       `
     }
@@ -723,7 +723,7 @@ export class DeviceView extends LitElement {
           <p class="app-empty">
             ${msg('There is no device with that address in this catalogue.')}
           </p>
-          <a class="app-back" href="#/">${msg('Back to devices')}</a>
+          <a class="app-back" href="#/devices">${msg('Back to devices')}</a>
         </div>
       `
     }
@@ -738,7 +738,7 @@ export class DeviceView extends LitElement {
         ${this.renderCode(device)} ${this.renderActions(device)} ${this.renderDetails(device)}
         ${this.renderRemarks(device)}
 
-        <a class="app-back" href="#/">${msg('Back to devices')}</a>
+        <a class="app-back" href="#/devices">${msg('Back to devices')}</a>
 
         ${this.renderDeleteDialog(device)}
 

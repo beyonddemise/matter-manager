@@ -15,7 +15,11 @@ import { msg } from '@lit/localize'
 import type { Route } from './match.js'
 
 export const ROUTES: readonly Route[] = [
-  { path: '/', view: 'device-list', label: () => msg('Devices'), icon: 'lightbulb' },
+  // The landing page: which project, before what is in it. Every device has one (the first-run
+  // catalogue), so the page always has something to open.
+  { path: '/', view: 'projects', label: () => msg('Projects'), icon: 'folder' },
+  // The current project's devices. Every "back to the list" in the device views points here.
+  { path: '/devices', view: 'device-list', label: () => msg('Devices'), icon: 'lightbulb' },
   // No label, so it stays out of the navigation: it is reached from the button on the device
   // list, and a permanent "Add a device" nav entry beside "Devices" would be one section for
   // what is one section's action.

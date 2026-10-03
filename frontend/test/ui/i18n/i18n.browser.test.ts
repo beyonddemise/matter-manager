@@ -9,6 +9,7 @@ import '../../../src/ui/app-shell.js'
 import { targetLocales } from '../../../src/ui/generated/locale-codes.js'
 import { LOCALE_STORAGE_KEY, SOURCE_LOCALE } from '../../../src/ui/i18n/locale.js'
 import { activateLocale, getLocale, LOCALE_LOADERS } from '../../../src/ui/i18n/localization.js'
+import { destroyProjectStores, isolatedProjectStore } from '../support/project-store.js'
 
 interface Updatable {
   updateComplete?: Promise<unknown>
@@ -21,7 +22,11 @@ const shell = async (hash: string) => {
     customElements.whenDefined('wa-page'),
     customElements.whenDefined('wa-radio-group'),
   ])
-  const element = await fixture(html`<app-shell></app-shell>`)
+  const element = await fixture(
+    // An index of its own: the shell adopts the first-run catalogue on mount, and in the real
+    // `mm-local` that entry would surface in another file's assertions about the index.
+    html`<app-shell .projectStore=${isolatedProjectStore()}></app-shell>`,
+  )
   await (element.querySelector('wa-page') as (HTMLElement & Updatable) | null)?.updateComplete
   return element
 }
@@ -38,6 +43,7 @@ afterEach(async () => {
   document.documentElement.lang = originalLang
   window.location.hash = ''
   localStorage.removeItem(LOCALE_STORAGE_KEY)
+  await destroyProjectStores()
 })
 
 describe('activating a locale', () => {
@@ -71,7 +77,7 @@ describe('activating a locale', () => {
 
 describe('German reaches the screen', () => {
   it('translates the navigation and the view', async () => {
-    const element = await shell('#/')
+    const element = await shell('#/devices')
     expect(element.textContent).toContain('Devices')
 
     await activateLocale('de')
