@@ -43,6 +43,13 @@ export default defineConfig({
         },
       },
       {
+        // Lit's package exports ship a `development` build that Vite selects by default under
+        // `vitest`. It prints "Lit is in dev mode" once per module instance and, far worse for a
+        // test log, emits dev-only diagnostics (change-in-update) that the production build never
+        // does. Naming the conditions explicitly (Vite's defaults minus `development`, plus
+        // `production`) makes the browser tests run against the build that actually ships, so
+        // anything still printed is a real problem rather than noise.
+        resolve: { conditions: ['module', 'browser', 'production'] },
         test: {
           name: 'ui',
           include: ['test/ui/**/*.browser.test.ts'],
