@@ -47,6 +47,8 @@ export interface ProvisionDependencies {
 export interface NewProject {
   readonly name: string
   readonly address?: string | undefined
+  /** Who the project is for. Trimmed, at most {@link MAX_NAME} characters, blank means none. */
+  readonly client?: string | undefined
 }
 
 /** A project as the contract describes it (`ProjectSummary`). */
@@ -56,6 +58,8 @@ export interface ProjectSummary {
   readonly name: string
   /** The building's street address, when there is one. Absent rather than empty. */
   readonly address?: string
+  /** Who the project is for, when it says. Absent rather than empty. */
+  readonly client?: string
   readonly role: Participant['role']
   readonly owner: Owner
   /**
@@ -65,6 +69,8 @@ export interface ProjectSummary {
    * client cannot accidentally treat "not stated" as "archived".
    */
   readonly archived: boolean
+  /** Seconds since the epoch at which it was archived. Absent unless it is archived now. */
+  readonly archivedAt?: number
 }
 
 /**
@@ -106,6 +112,8 @@ interface CheckedRequest {
   readonly name: string
   /** Absent rather than empty: an empty address is a value every reader has to special-case. */
   readonly address?: string
+  /** Absent rather than empty, for the same reason as the address. */
+  readonly client?: string
 }
 
 /**
@@ -128,7 +136,16 @@ function checkRequest(request: NewProject, owner: string): CheckedRequest {
     throw new ProvisioningError(`An address may be at most ${MAX_ADDRESS} characters.`)
   }
 
-  return { name, ...(address === '' ? {} : { address }) }
+  const client = (request.client ?? '').trim()
+  if (client.length > MAX_NAME) {
+    throw new ProvisioningError(`A client may be at most ${MAX_NAME} characters.`)
+  }
+
+  return {
+    name,
+    ...(address === '' ? {} : { address }),
+    ...(client === '' ? {} : { client }),
+  }
 }
 
 /**
@@ -143,7 +160,7 @@ export async function provisionProject(
   request: NewProject,
   owner: string,
 ): Promise<ProjectSummary> {
-  const { name, address } = checkRequest(request, owner)
+  const { name, address, client } = checkRequest(request, owner)
   const newId = deps.newId ?? (() => crypto.randomUUID())
   const now = deps.now ?? (() => new Date().toISOString())
 
@@ -179,6 +196,7 @@ export async function provisionProject(
       dbName,
       projectName: name,
       ...(address === undefined ? {} : { address }),
+      ...(client === undefined ? {} : { client }),
       participants: [{ role: 'owner', userid: owner }],
       addedAt: now(),
     })
@@ -192,6 +210,7 @@ export async function provisionProject(
     dbName,
     name,
     ...(address === undefined ? {} : { address }),
+    ...(client === undefined ? {} : { client }),
     // A project nobody has archived yet. Stated rather than left absent, because the contract
     // answers the question and a client should never have to read an absence as a `false`.
     archived: false,

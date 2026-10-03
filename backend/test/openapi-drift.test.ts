@@ -350,6 +350,8 @@ describe('every implemented route answers what the contract declares', () => {
           dbName: `project_owned_${index}`,
           projectName: `Project ${index}`,
           address: null,
+          client: null,
+          archivedAt: null,
           role: 'owner',
           archived: false,
           ownerId: sub,

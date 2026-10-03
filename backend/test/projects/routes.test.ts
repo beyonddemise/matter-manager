@@ -228,6 +228,17 @@ describe('creating a project', () => {
     })
   })
 
+  it('echoes a client given at creation, and refuses one over 200 characters', async () => {
+    const { app: built } = server()
+
+    const created = await create(built, { name: 'Musterstraße 12', client: '  Acme  ' })
+    expect(created.statusCode).toBe(201)
+    expect(created.json()).toMatchObject({ client: 'Acme' })
+
+    const refused = await create(built, { name: 'Musterstraße 12', client: 'x'.repeat(201) })
+    expect(refused.statusCode).toBe(400)
+  })
+
   it('answers the shape the contract declares', async () => {
     // Against the contract's own schema rather than a hand-written shape, so this endpoint and
     // `openapi.yaml` cannot drift apart quietly (ADR 0015).
@@ -619,6 +630,32 @@ describe('listing projects', () => {
     expect(response.json()[0]).toMatchObject({ address: 'Musterstraße 12, 10115 Berlin' })
   })
 
+  it('carries the client and the archive time, and drops the nulls the view emits', async () => {
+    const { app: built, couch: fake } = server()
+    const row = {
+      projectId: PROJECT_ID,
+      dbName: DATABASE,
+      projectName: 'Musterstraße 12',
+      address: null,
+      role: 'owner',
+      ownerId: OWNER,
+    }
+    fake.rows = [
+      { value: { ...row, client: 'Acme', archived: true, archivedAt: 1_700_000_000 } },
+      { value: { ...row, client: null, archived: false, archivedAt: null } },
+    ]
+
+    const response = await built.inject({
+      method: 'GET',
+      url: '/projects',
+      headers: { authorization: `Bearer ${tokenFor(OWNER)}` },
+    })
+
+    expect(response.json()[0]).toMatchObject({ client: 'Acme', archivedAt: 1_700_000_000 })
+    expect(response.json()[1]).not.toHaveProperty('client')
+    expect(response.json()[1]).not.toHaveProperty('archivedAt')
+  })
+
   it('leaves the address out when the project has none', async () => {
     // `address: null`, because that is what the view emits — the map function names the field
     // whatever the pointer holds, and CouchDB renders a missing one as null rather than
@@ -769,6 +806,34 @@ describe('changing a project settings', () => {
     await create(built, { name: 'Musterstraße 12' })
 
     expect((await patch(built, { address: 42 })).statusCode).toBe(400)
+  })
+
+  it('sets, trims and clears the client', async () => {
+    const { app: built } = server()
+    await create(built, { name: 'Musterstraße 12' })
+
+    expect((await patch(built, { client: '  Acme  ' })).json()).toMatchObject({ client: 'Acme' })
+    expect((await patch(built, { client: null })).json()).not.toHaveProperty('client')
+    await patch(built, { client: 'Acme' })
+    expect((await patch(built, { client: '   ' })).json()).not.toHaveProperty('client')
+  })
+
+  it('refuses a client that is neither text nor null, or is too long', async () => {
+    const { app: built } = server()
+    await create(built, { name: 'Musterstraße 12' })
+
+    expect((await patch(built, { client: 5 })).statusCode).toBe(400)
+    expect((await patch(built, { client: 'x'.repeat(201) })).statusCode).toBe(400)
+  })
+
+  it('stamps archivedAt on archive and removes it on unarchive', async () => {
+    const { app: built } = server()
+    await create(built, { name: 'Musterstraße 12' })
+
+    const archived = await patch(built, { archived: true })
+    expect(archived.json().archivedAt).toEqual(expect.any(Number))
+
+    expect((await patch(built, { archived: false })).json()).not.toHaveProperty('archivedAt')
   })
 
   it('refuses a body that changes nothing', async () => {

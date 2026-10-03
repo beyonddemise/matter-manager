@@ -27,8 +27,12 @@ const OWNER_ONLY: readonly Participant[] = [{ role: 'owner', userid: ADA }]
 function project(
   participants: readonly Participant[] = OWNER_ONLY,
   address?: string,
+  extra: Record<string, unknown> = {},
 ): {
-  readonly deps: { readonly couch: ReturnType<typeof fakeCouch>['couch'] }
+  readonly deps: {
+    readonly couch: ReturnType<typeof fakeCouch>['couch']
+    readonly now: () => number
+  }
   readonly pointerNow: () => Record<string, unknown>
 } {
   const fake = fakeCouch({
@@ -43,17 +47,22 @@ function project(
         participants: [...participants],
         addedAt: '2026-08-27T09:00:00.000Z',
         ...(address === undefined ? {} : { address }),
+        ...extra,
       },
     },
   })
 
   return {
-    deps: { couch: fake.couch },
+    deps: { couch: fake.couch, now: () => clock },
     pointerNow: () => fake.documents.get(POINTER) as Record<string, unknown>,
   }
 }
 
+/** The settings clock, in seconds. A test moves it to prove which reading was stored. */
+let clock = 1_700_000_000
+
 beforeEach(() => {
+  clock = 1_700_000_000
   forgetRegistry()
 })
 
@@ -368,5 +377,106 @@ describe('archiving a project', () => {
         archived: 'yes' as unknown as boolean,
       }),
     ).rejects.toBeInstanceOf(SettingsRefused)
+  })
+})
+
+describe('the client a project is for', () => {
+  it('stores it trimmed and reports it back', async () => {
+    const { deps, pointerNow } = project()
+
+    const summary = await updateProjectSettings(deps, PROJECT_ID, ADA, { client: '  Acme  ' })
+
+    expect(summary.client).toBe('Acme')
+    expect(pointerNow().client).toBe('Acme')
+  })
+
+  it.each([null, '   '])('clears it on %j, leaving no key behind', async (value) => {
+    const { deps, pointerNow } = project(OWNER_ONLY, undefined, { client: 'Acme' })
+
+    const summary = await updateProjectSettings(deps, PROJECT_ID, ADA, { client: value })
+
+    expect(summary).not.toHaveProperty('client')
+    expect(pointerNow()).not.toHaveProperty('client')
+  })
+
+  it('leaves it alone when the change does not mention it', async () => {
+    const { deps, pointerNow } = project(OWNER_ONLY, undefined, { client: 'Acme' })
+
+    await updateProjectSettings(deps, PROJECT_ID, ADA, { name: 'Altbau' })
+
+    expect(pointerNow().client).toBe('Acme')
+  })
+
+  it('refuses more than 200 characters and writes nothing', async () => {
+    const { deps, pointerNow } = project()
+
+    await expect(
+      updateProjectSettings(deps, PROJECT_ID, ADA, { client: 'x'.repeat(201) }),
+    ).rejects.toMatchObject({ status: 400 })
+    expect(pointerNow()).not.toHaveProperty('client')
+  })
+
+  it('counts as something to change', async () => {
+    const { deps } = project()
+
+    await expect(
+      updateProjectSettings(deps, PROJECT_ID, ADA, { client: 'Acme' }),
+    ).resolves.toBeDefined()
+  })
+
+  it('may be changed by a manager and not by a reader', async () => {
+    const { deps } = project([
+      { role: 'owner', userid: ADA },
+      { role: 'manage', userid: GRACE },
+      { role: 'read', userid: STRANGER },
+    ])
+
+    await expect(
+      updateProjectSettings(deps, PROJECT_ID, GRACE, { client: 'Acme' }),
+    ).resolves.toMatchObject({ client: 'Acme' })
+    await expect(
+      updateProjectSettings(deps, PROJECT_ID, STRANGER, { client: 'Evil' }),
+    ).rejects.toMatchObject({ status: 403 })
+  })
+})
+
+describe('when a project was archived', () => {
+  it('stamps archivedAt from the clock, in seconds', async () => {
+    const { deps, pointerNow } = project()
+
+    const summary = await updateProjectSettings(deps, PROJECT_ID, ADA, { archived: true })
+
+    expect(summary.archivedAt).toBe(1_700_000_000)
+    expect(pointerNow().archivedAt).toBe(1_700_000_000)
+  })
+
+  it('keeps the first stamp when it is archived again', async () => {
+    const { deps, pointerNow } = project()
+    await updateProjectSettings(deps, PROJECT_ID, ADA, { archived: true })
+
+    clock += 500
+    const summary = await updateProjectSettings(deps, PROJECT_ID, ADA, { archived: true })
+
+    expect(summary.archivedAt).toBe(1_700_000_000)
+    expect(pointerNow().archivedAt).toBe(1_700_000_000)
+  })
+
+  it('keeps the stamp through a change that does not mention archiving', async () => {
+    const { deps, pointerNow } = project(OWNER_ONLY, undefined, { archived: true, archivedAt: 42 })
+
+    const summary = await updateProjectSettings(deps, PROJECT_ID, ADA, { name: 'Altbau' })
+
+    expect(summary.archivedAt).toBe(42)
+    expect(pointerNow().archivedAt).toBe(42)
+  })
+
+  it('removes it on unarchive, leaving no key behind', async () => {
+    const { deps, pointerNow } = project()
+    await updateProjectSettings(deps, PROJECT_ID, ADA, { archived: true })
+
+    const summary = await updateProjectSettings(deps, PROJECT_ID, ADA, { archived: false })
+
+    expect(summary).not.toHaveProperty('archivedAt')
+    expect(pointerNow()).not.toHaveProperty('archivedAt')
   })
 })

@@ -345,6 +345,7 @@ paths:
               properties:
                 name: { type: string, minLength: 1, maxLength: 200 }
                 address: { type: string, maxLength: 500 }
+                client: { type: string, maxLength: 200 }
       responses:
         '201':
           description: Project created and its database provisioned
@@ -424,6 +425,12 @@ paths:
                 address:
                   type: [string, 'null']
                   maxLength: 500
+                client:
+                  type: [string, 'null']
+                  maxLength: 200
+                  description: |
+                    Who the project is for. Trimmed; `null` or a blank string removes it, and
+                    absent leaves it alone, for the reason `address` is spelled the same way.
                 archived:
                   type: boolean
                   description: |
@@ -695,8 +702,16 @@ components:
             Accepted by `POST /projects` since M5-1 and, until #128, silently discarded: the
             length was checked and the value went no further. For a catalogue whose purpose is
             finding a device in a building years later, this is not decoration.
+        client:
+          type: string
+          description: Who the project is for. Optional, and absent rather than empty when none.
         role: { $ref: '#/components/schemas/Role' }
         owner: { $ref: '#/components/schemas/Principal' }
+        archivedAt:
+          type: integer
+          description: |
+            When the project was archived, in seconds since the epoch. Present only while it is
+            archived: stamped by the first archive, kept by repeats, removed by an unarchive.
         archived:
           type: boolean
           description: |

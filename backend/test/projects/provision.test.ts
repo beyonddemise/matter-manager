@@ -14,7 +14,7 @@ const DATABASE = `project_${PROJECT_ID}`
 /** Provisioning against a fake, with an operation optionally made to fail. */
 function provisioning(fails: CouchFailures = {}, databases: readonly string[] = []) {
   const fake = fakeCouch({ fails, databases })
-  const run = (name = 'Musterstraße 12', address?: string) =>
+  const run = (name = 'Musterstraße 12', address?: string, client?: string) =>
     provisionProject(
       {
         couch: fake.couch,
@@ -22,7 +22,7 @@ function provisioning(fails: CouchFailures = {}, databases: readonly string[] = 
         newId: () => PROJECT_ID,
         now: () => '2026-08-27T09:00:00.000Z',
       },
-      { name, address },
+      { name, address, client },
       OWNER,
     )
   return { fake, run }
@@ -96,6 +96,32 @@ describe('creating a project', () => {
     expect(fake.documents.get(`${REGISTRY_DATABASE}/${pointerId(PROJECT_ID)}`)).not.toHaveProperty(
       'address',
     )
+  })
+
+  it('stores the client, trimmed, and reports it', async () => {
+    const { fake, run } = provisioning()
+    const summary = await run('Musterstraße 12', undefined, '  Acme  ')
+
+    expect(summary.client).toBe('Acme')
+    expect(fake.documents.get(`${REGISTRY_DATABASE}/${pointerId(PROJECT_ID)}`)).toMatchObject({
+      client: 'Acme',
+    })
+  })
+
+  it('leaves the client off when it is blank', async () => {
+    const { fake, run } = provisioning()
+    const summary = await run('Musterstraße 12', undefined, '   ')
+
+    expect(summary).not.toHaveProperty('client')
+    expect(fake.documents.get(`${REGISTRY_DATABASE}/${pointerId(PROJECT_ID)}`)).not.toHaveProperty(
+      'client',
+    )
+  })
+
+  it('refuses a client longer than 200 characters', async () => {
+    const { run } = provisioning()
+
+    await expect(run('Musterstraße 12', undefined, 'x'.repeat(201))).rejects.toThrow(/200/)
   })
 
   it('answers with what the caller needs to start replicating', async () => {

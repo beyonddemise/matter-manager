@@ -253,6 +253,29 @@ describe('the projects somebody can see', () => {
     ])
   })
 
+  it('normalizes CouchDB null for an absent client and archive time', async () => {
+    const fake = fakeCouch()
+    fake.rows = [
+      {
+        value: {
+          projectId: PROJECT_ID,
+          dbName: `project_${PROJECT_ID}`,
+          projectName: 'Musterstraße 12',
+          address: null,
+          client: null,
+          archivedAt: null,
+          role: 'owner',
+          archived: false,
+          ownerId: 'google|1234',
+        },
+      },
+    ]
+
+    const [row] = await projectsFor(fake.couch, 'google|1234')
+    expect(row).not.toHaveProperty('client')
+    expect(row).not.toHaveProperty('archivedAt')
+  })
+
   it('normalizes CouchDB null for an absent address', async () => {
     const fake = fakeCouch()
     fake.rows = [

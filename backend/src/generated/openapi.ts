@@ -491,6 +491,7 @@ export interface paths {
                     "application/json": {
                         name: string;
                         address?: string;
+                        client?: string;
                     };
                 };
             };
@@ -587,6 +588,11 @@ export interface paths {
                     "application/json": {
                         name?: string;
                         address?: string | null;
+                        /**
+                         * @description Who the project is for. Trimmed; `null` or a blank string removes it, and
+                         *     absent leaves it alone, for the reason `address` is spelled the same way.
+                         */
+                        client?: string | null;
                         /**
                          * @description Put the project away, or bring it back. A state rather than an event, so
                          *     it can be undone — a project that could be archived and not unarchived
@@ -938,8 +944,15 @@ export interface components {
              *     finding a device in a building years later, this is not decoration.
              */
             address?: string;
+            /** @description Who the project is for. Optional, and absent rather than empty when none. */
+            client?: string;
             role: components["schemas"]["Role"];
             owner: components["schemas"]["Principal"];
+            /**
+             * @description When the project was archived, in seconds since the epoch. Present only while it is
+             *     archived: stamped by the first archive, kept by repeats, removed by an unarchive.
+             */
+            archivedAt?: number;
             /**
              * @description Whether the project has been put away (#55).
              *

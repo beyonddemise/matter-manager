@@ -143,6 +143,7 @@ const ROLES = new Set(['manage', 'write', 'read'])
 interface CreateBody {
   readonly name?: unknown
   readonly address?: unknown
+  readonly client?: unknown
 }
 
 /**
@@ -272,6 +273,7 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDepende
       return problem(reply, { title: 'A project needs a name.', status: 400 })
     }
     const address = typeof body.address === 'string' ? body.address : undefined
+    const client = typeof body.client === 'string' ? body.client : undefined
 
     let project: ProjectSummary
     try {
@@ -282,7 +284,7 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDepende
           newId: deps.newId,
           now: deps.clock,
         },
-        { name: body.name, address },
+        { name: body.name, address, client },
         sub,
       )
     } catch (error) {
@@ -332,6 +334,8 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDepende
           ...(typeof row.address === 'string' && row.address !== ''
             ? { address: row.address }
             : {}),
+          ...(typeof row.client === 'string' ? { client: row.client } : {}),
+          ...(typeof row.archivedAt === 'number' ? { archivedAt: row.archivedAt } : {}),
           role: row.role,
           // Every project is listed, archived or not. Filtering here would leave a client no
           // way to show what it has put away and therefore no way to bring it back - which
@@ -376,7 +380,12 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDepende
     if (sub === undefined) return problem(reply, { title: 'Not signed in', status: 401 })
 
     const { projectId } = request.params as { projectId: string }
-    const body = (request.body ?? {}) as { name?: unknown; address?: unknown; archived?: unknown }
+    const body = (request.body ?? {}) as {
+      name?: unknown
+      address?: unknown
+      client?: unknown
+      archived?: unknown
+    }
 
     // Read as three states, not two: absent leaves the field alone, `null` clears it, and a
     // string sets it. Collapsing absent and null would make a body that forgot the address
@@ -387,15 +396,19 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDepende
     if (body.address !== undefined && body.address !== null && typeof body.address !== 'string') {
       return problem(reply, { title: 'An address is text, or null to remove it.', status: 400 })
     }
+    if (body.client !== undefined && body.client !== null && typeof body.client !== 'string') {
+      return problem(reply, { title: 'A client is text, or null to remove it.', status: 400 })
+    }
 
     if (body.archived !== undefined && typeof body.archived !== 'boolean') {
       return problem(reply, { title: 'Archiving a project is true or false.', status: 400 })
     }
 
     try {
-      const summary = await updateProjectSettings({ couch: deps.couch }, projectId, sub, {
+      const summary = await updateProjectSettings({ couch: deps.couch, now }, projectId, sub, {
         ...(body.name === undefined ? {} : { name: body.name }),
         ...(body.address === undefined ? {} : { address: body.address }),
+        ...(body.client === undefined ? {} : { client: body.client }),
         ...(body.archived === undefined ? {} : { archived: body.archived }),
       })
       return reply.code(200).send(summary)
