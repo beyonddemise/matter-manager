@@ -10,11 +10,13 @@
  * So the seam exists now and the provider does not. Every gated action asks {@link can} from
  * the first day it is written.
  *
- * **The seam is no longer hypothetical.** `project.create` is a real policy: it compares what
- * the principal already owns against {@link PROJECT_LIMITS} for their plan, and refuses. The
- * other four actions are still {@link ALLOW}, which is why the call sites exist and are
- * exercised — the point was always that the day a policy became real should be a change to
- * this table rather than an audit of every handler, and that day has now happened once.
+ * **The seam is no longer hypothetical.** Two policies are real. `project.sync` asks whether
+ * the plan owns server projects at all ({@link SYNCED_PLANS}: the free plan keeps its projects
+ * on the device), and `project.create` compares what the principal already owns against
+ * {@link PROJECT_LIMITS} for their plan. The other four actions are still {@link ALLOW}, which
+ * is why the call sites exist and are exercised — the point was always that the day a policy
+ * became real should be a change to this table rather than an audit of every handler, and that
+ * day has now happened twice.
  *
  * **This is deliberately not a permissions system.** Who may read or write a project is
  * decided by CouchDB per ADR 0003, and duplicating that here would create two answers to one
@@ -36,6 +38,7 @@
  */
 export const ACTIONS = [
   'project.create',
+  'project.sync',
   'project.invite',
   'device.create',
   'device.attachPhoto',
@@ -78,6 +81,21 @@ export const PROJECT_LIMITS: Readonly<Record<Plan, number>> = Object.freeze({
    */
   pro: -1,
 } satisfies Record<Plan, number>)
+
+/**
+ * Whether each plan may own a server project at all.
+ *
+ * A table for the reason {@link PROJECT_LIMITS} is one: ADR 0009 forbids `plan === 'free'`
+ * outside this file, and a lookup keyed by {@link Plan} stops compiling the day a fourth plan
+ * is added until somebody decides what it includes. This is a different question from the
+ * limit — the free plan's {@link PROJECT_LIMITS} entry counts local projects the page enforces,
+ * while this decides whether the *server* is involved in any of them.
+ */
+export const SYNCED_PLANS: Readonly<Record<Plan, boolean>> = Object.freeze({
+  free: false,
+  member: true,
+  pro: true,
+} satisfies Record<Plan, boolean>)
 
 /**
  * Whether one more project is allowed.
@@ -124,10 +142,10 @@ export type Policy = (principal: Principal, project?: ProjectRef) => boolean
 /**
  * Permits the action.
  *
- * Four of the five policies are this one; `project.create` is not, and has not been since
- * capacity became real. Named rather than written as `() => true` at each entry, so the table
- * below reads as a list of decisions — and so the one entry that is *not* this is visible at a
- * glance rather than having to be spotted among four identical lambdas.
+ * Four of the six policies are this one; `project.create` and `project.sync` are not. Named
+ * rather than written as `() => true` at each entry, so the table below reads as a list of
+ * decisions — and so the one entry that is *not* this is visible at a glance rather than having
+ * to be spotted among four identical lambdas.
  */
 export const ALLOW: Policy = () => true
 
@@ -147,6 +165,7 @@ export const ALLOW: Policy = () => true
 export const POLICIES: Readonly<Record<Action, Policy>> = Object.freeze({
   'project.create': (principal) =>
     withinLimit(principal.ownedProjects, PROJECT_LIMITS[principal.plan]),
+  'project.sync': (principal) => SYNCED_PLANS[principal.plan],
   'project.invite': ALLOW,
   'device.create': ALLOW,
   'device.attachPhoto': ALLOW,

@@ -11,7 +11,7 @@
  * @module
  */
 
-import type { FastifyInstance } from 'fastify'
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { bearerClaims, bearerSubject } from '../auth/bearer.js'
 import type { DenyList } from '../auth/deny-list.js'
 import type { SigningKey } from '../auth/jwt.js'
@@ -74,8 +74,8 @@ export interface ProjectDependencies {
   /**
    * Creates or completes a user's record, moving their in-memory refresh entries onto it.
    *
-   * Called when somebody accepts a transfer: an owner has to be resolvable, and the recipient may
-   * have no record, or one without a `sub`. **Required**, and the same instance the profile and
+   * Called when somebody accepts a transfer or creates a project: an owner has to be resolvable,
+   * and the recipient may have no record, or one without a `sub`. **Required**, and the same instance the profile and
    * sign-in paths use, so the refresh entries it moves are the ones the auth routes wrote.
    */
   readonly ensureRecord: EnsureRecord
@@ -122,7 +122,18 @@ export interface ProjectDependencies {
 
 /** The actions these routes are gated by. Named so the routes and the map cannot drift. */
 const CREATE: Action = 'project.create'
+const SYNC: Action = 'project.sync'
 const INVITE: Action = 'project.invite'
+
+/**
+ * A principal could not be built because CouchDB could not be read. Carries nothing: the cause
+ * was logged where it happened, and what a route answers is its own scrubbed 500. A class rather
+ * than the `CouchError` itself so a route can tell "the plan could not be read" from any other
+ * failure inside the same call.
+ */
+class PrincipalUnavailable extends Error {
+  override readonly name = 'PrincipalUnavailable'
+}
 
 /**
  * The roles this route may grant, checked before anything is written.
@@ -142,6 +153,7 @@ const ROLES = new Set(['manage', 'write', 'read'])
 interface CreateBody {
   readonly name?: unknown
   readonly address?: unknown
+  readonly client?: unknown
 }
 
 /**
@@ -173,6 +185,14 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDepende
   ): { readonly sub: string; readonly email?: string; readonly name?: string } | undefined =>
     bearerClaims(request, deps.key, now, deps.deny)
 
+  /** What `sub` owns that is not archived, for the plan limit. See {@link principalFor}. */
+  const ownedActive = async (sub: string): Promise<number> => {
+    await ensureRegistry(deps.couch)
+    return (await projectsFor(deps.couch, sub)).filter(
+      (row) => row.role === 'owner' && !row.archived,
+    ).length
+  }
+
   /**
    * Who is asking, and what they already have.
    *
@@ -182,9 +202,11 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDepende
    *
    * `role === 'owner'` rather than the row's presence: the view emits one row **per
    * participant**, so a project somebody shared with this user is theirs to open and not theirs
-   * to count. Archived ones do count, because archiving is not deletion (#55) — the database
-   * still exists — and the alternative lets a free account accumulate databases without limit
-   * by archiving each one.
+   * to count. Archived ones do not: archiving is how a project is put away, and a plan's
+   * allowance is for the projects somebody is working on. This reverses #55, which counted them
+   * because the database still exists. Accepted, because the other reading made archiving a
+   * dead end — a member at the limit could not make room without deleting — and the free plan,
+   * the one that could have accumulated databases that way, now owns none (`project.sync`).
    *
    * `ensureRegistry` first, for the reason `provisionProject` gives for doing it as its own
    * step 1: a registry that cannot be reached costs nothing at this point. Without it the
@@ -193,19 +215,20 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDepende
    * provisioning to have created the thing it counts. It is remembered per process, so every
    * later call is free.
    *
-   * **Two requests racing at the limit can both pass**: each counts before the gate and nothing
-   * holds a lock. Accepted rather than solved. The cost is one project over on a race nobody is
-   * trying to win, against a serialisation point on project creation for every account — and a
-   * limit that is one out under concurrency is a different thing from a limit that is not
-   * enforced.
+   * **Requests racing at the limit can all pass**: each counts before the gate and nothing
+   * holds a lock. That holds for every path that activates a project - creating one,
+   * unarchiving one and accepting a transfer of an active one - and in any mix of them.
+   * Accepted rather than solved. The overshoot is up to the number of concurrent requests, on
+   * a race nobody is trying to win, against a serialisation point on project activation for
+   * every account — and a limit that can be overshot under concurrency is a different thing
+   * from a limit that is not enforced.
    */
   const principalFor = async (caller: {
     readonly sub: string
     readonly email?: string
   }): Promise<Principal> => {
     const { sub } = caller
-    await ensureRegistry(deps.couch)
-    const owned = (await projectsFor(deps.couch, sub)).filter((row) => row.role === 'owner').length
+    const owned = await ownedActive(sub)
     // By the address on the token, which is what the record is keyed by and what `/auth/token`
     // and `/profile` read — so all three agree on the plan. See `callerOf` for why not by `sub`.
     // Every token `/auth/token` mints carries an address; one without is answered as `free`.
@@ -214,6 +237,75 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDepende
     // because a subject with no record has no plan to read rather than a cheap one. `planOf`
     // owns that default, and the one for a plan this build does not know.
     return { sub, plan: planOf(record), ownedProjects: owned }
+  }
+
+  /**
+   * The principal for somebody who is **not** the caller: a project's owner, found by subject.
+   *
+   * Unlike {@link principalFor} there is no token to read an address off, so the record is found
+   * through `readBySub`; a subject with no record is `free`, which `planOf` answers.
+   */
+  const principalOfOwner = async (sub: string): Promise<Principal> => ({
+    sub,
+    plan: planOf(await deps.records.readBySub(sub)),
+    ownedProjects: await ownedActive(sub),
+  })
+
+  /**
+   * Builds somebody's principal for a route that asks the seam about a person it does not
+   * otherwise read, so the I/O in it cannot escape as a raw Fastify 500.
+   *
+   * `principalFor` and `principalOfOwner` each do registry and user-record reads, and any can raise
+   * `CouchError`. `POST /projects` answers that as a scrubbed problem+json 500; the unarchive
+   * and accept-transfer paths ask the same questions and have to fail the same way. The detail goes
+   * to the log, where somebody can act on it, and the caller gets
+   * {@link PrincipalUnavailable} to turn into their route's own 500. Only the building is wrapped:
+   * the gate's refusal is an answer, not a failure, and passes through untouched.
+   */
+  const principalLogged = async (
+    request: FastifyRequest,
+    what: string,
+    build: () => Promise<Principal>,
+  ): Promise<Principal> => {
+    try {
+      return await build()
+    } catch (error) {
+      request.log.error({ err: error }, what)
+      throw new PrincipalUnavailable()
+    }
+  }
+
+  /**
+   * Turns the seam's refusal into the named 403 the page branches on.
+   *
+   * Shared by `POST /projects`, the unarchive path of `PATCH /projects/:projectId` and acceptance
+   * of a transfer, because all three ask the same two questions of a plan and must not word the
+   * answers differently.
+   */
+  const refuseEntitlement = (reply: FastifyReply, error: NotEntitledError) => {
+    // Named, not empty. `reply.code(403).send()` told the page nothing, so it could not tell
+    // a capacity refusal from a permission one — and only one of those is fixed by upgrading.
+    if (error.action === SYNC) {
+      return problem(reply, {
+        title: 'This plan does not include synchronized projects.',
+        status: 403,
+        reason: 'plan-no-sync',
+      })
+    }
+    return problem(reply, {
+      title: 'This plan has no room for another project.',
+      status: 403,
+      reason: 'project-limit-reached',
+    })
+  }
+
+  /**
+   * The two questions a plan answers before a project becomes active, in the order the page
+   * hears them: sync before capacity, so a free account is told to upgrade rather than to archive.
+   */
+  const gateActivation = (principal: Principal): void => {
+    gate(principal, SYNC)
+    gate(principal, CREATE)
   }
 
   app.post('/projects', async (request, reply) => {
@@ -240,16 +332,12 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDepende
     }
 
     try {
-      gate(principal, CREATE)
+      // Sync before capacity: a free account has no server projects to run out of, so telling
+      // it "no room" would send it to archive things when the fix is a plan that syncs.
+      gateActivation(principal)
     } catch (error) {
       if (!(error instanceof NotEntitledError)) throw error
-      // Named, not empty. `reply.code(403).send()` told the page nothing, so it could not tell
-      // a capacity refusal from a permission one — and only one of those is fixed by upgrading.
-      return problem(reply, {
-        title: 'This plan has no room for another project.',
-        status: 403,
-        reason: 'project-limit-reached',
-      })
+      return refuseEntitlement(reply, error)
     }
 
     const body = (request.body ?? {}) as CreateBody
@@ -257,6 +345,31 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDepende
       return problem(reply, { title: 'A project needs a name.', status: 400 })
     }
     const address = typeof body.address === 'string' ? body.address : undefined
+    const client = typeof body.client === 'string' ? body.client : undefined
+
+    // The creator becomes an owner, and an owner has to be resolvable by subject: unarchiving
+    // asks the owner's plan through `readBySub`, whoever is asking. A record an operator created
+    // by address (`PUT /customer`) has no `sub` until something fills it in, so without this a
+    // paying owner read as `free` there and was refused their own unarchive as `plan-no-sync`.
+    //
+    // **Before provisioning, not after.** A failure then leaves nothing behind and is answered
+    // as the scrubbed 500 every other deployment failure here gets; after, it would leave a
+    // project whose owner cannot be resolved - the very state this exists to prevent - behind a
+    // 201. And it creates nothing from nothing: the gate has passed, which only a record by this
+    // address can make happen, so this fills in `sub` and moves refresh entries, as accepting a
+    // transfer does. Where the record already carries the subject it writes nothing.
+    if (caller.email !== undefined) {
+      try {
+        await deps.ensureRecord({
+          email: caller.email,
+          sub,
+          ...(caller.name === undefined ? {} : { name: caller.name }),
+        })
+      } catch (error) {
+        request.log.error({ err: error }, 'could not complete the creator record')
+        return problem(reply, { title: 'That project could not be created.', status: 500 })
+      }
+    }
 
     let project: ProjectSummary
     try {
@@ -267,7 +380,7 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDepende
           newId: deps.newId,
           now: deps.clock,
         },
-        { name: body.name, address },
+        { name: body.name, address, client },
         sub,
       )
     } catch (error) {
@@ -317,6 +430,8 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDepende
           ...(typeof row.address === 'string' && row.address !== ''
             ? { address: row.address }
             : {}),
+          ...(typeof row.client === 'string' ? { client: row.client } : {}),
+          ...(typeof row.archivedAt === 'number' ? { archivedAt: row.archivedAt } : {}),
           role: row.role,
           // Every project is listed, archived or not. Filtering here would leave a client no
           // way to show what it has put away and therefore no way to bring it back - which
@@ -361,7 +476,12 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDepende
     if (sub === undefined) return problem(reply, { title: 'Not signed in', status: 401 })
 
     const { projectId } = request.params as { projectId: string }
-    const body = (request.body ?? {}) as { name?: unknown; address?: unknown; archived?: unknown }
+    const body = (request.body ?? {}) as {
+      name?: unknown
+      address?: unknown
+      client?: unknown
+      archived?: unknown
+    }
 
     // Read as three states, not two: absent leaves the field alone, `null` clears it, and a
     // string sets it. Collapsing absent and null would make a body that forgot the address
@@ -372,21 +492,53 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDepende
     if (body.address !== undefined && body.address !== null && typeof body.address !== 'string') {
       return problem(reply, { title: 'An address is text, or null to remove it.', status: 400 })
     }
+    if (body.client !== undefined && body.client !== null && typeof body.client !== 'string') {
+      return problem(reply, { title: 'A client is text, or null to remove it.', status: 400 })
+    }
 
     if (body.archived !== undefined && typeof body.archived !== 'boolean') {
       return problem(reply, { title: 'Archiving a project is true or false.', status: 400 })
     }
 
     try {
-      const summary = await updateProjectSettings({ couch: deps.couch }, projectId, sub, {
-        ...(body.name === undefined ? {} : { name: body.name }),
-        ...(body.address === undefined ? {} : { address: body.address }),
-        ...(body.archived === undefined ? {} : { archived: body.archived }),
-      })
+      const summary = await updateProjectSettings(
+        {
+          couch: deps.couch,
+          now,
+          authoriseUnarchive: async (owner) =>
+            gateActivation(
+              await principalLogged(
+                request,
+                'could not read the owner principal for an unarchive',
+                () => principalOfOwner(owner),
+              ),
+            ),
+        },
+        projectId,
+        sub,
+        {
+          ...(body.name === undefined ? {} : { name: body.name }),
+          ...(body.address === undefined ? {} : { address: body.address }),
+          ...(body.client === undefined ? {} : { client: body.client }),
+          ...(body.archived === undefined ? {} : { archived: body.archived }),
+        },
+      )
       return reply.code(200).send(summary)
     } catch (error) {
+      // The owner's plan refused an unarchive: answered exactly as `POST /projects` answers it.
+      if (error instanceof NotEntitledError) return refuseEntitlement(reply, error)
+      // Already logged where it happened; the body says nothing a caller could act on.
+      if (error instanceof PrincipalUnavailable) {
+        return problem(reply, { title: 'That project could not be changed.', status: 500 })
+      }
       if (error instanceof SettingsRefused) {
-        return problem(reply, { title: error.message, status: error.status })
+        // A role refusal carries its name so a client can tell it from the plan refusals above,
+        // which share its status and are fixed differently.
+        return problem(reply, {
+          title: error.message,
+          status: error.status,
+          ...(error.reason === undefined ? {} : { reason: error.reason }),
+        })
       }
       throw error
     }
@@ -586,12 +738,30 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDepende
 
     try {
       await acceptTransfer(
-        { couch: deps.couch, ensureRecord: deps.ensureRecord },
+        {
+          couch: deps.couch,
+          ensureRecord: deps.ensureRecord,
+          // The recipient's own plan, as `POST /projects` reads the creator's: accepting makes
+          // them the owner of an active project, which is a creation as far as a plan goes.
+          authoriseAccept: async () =>
+            gateActivation(
+              await principalLogged(
+                request,
+                'could not read the recipient principal for a transfer',
+                () => principalFor(caller),
+              ),
+            ),
+        },
         projectId,
         identity,
         millis,
       )
     } catch (error) {
+      // Refused by the recipient's plan: the offer stays pending and nothing was written.
+      if (error instanceof NotEntitledError) return refuseEntitlement(reply, error)
+      if (error instanceof PrincipalUnavailable) {
+        return problem(reply, { title: 'That transfer could not be accepted.', status: 500 })
+      }
       if (error instanceof MembershipRefused) {
         return problem(reply, { title: error.message, status: error.status })
       }

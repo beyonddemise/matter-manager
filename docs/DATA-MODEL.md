@@ -89,6 +89,9 @@ not a lower-case v4 uuid.
   "projectId": "8f14e45f-ceea-467a-9c0e-1b2c3d4e5f60",
   "dbName": "project_8f14e45f-ceea-467a-9c0e-1b2c3d4e5f60",
   "projectName": "Musterstraße 12",
+  "client": "Familie Muster",       // optional free text, at most 200 characters; absent when none
+  "archived": false,                // absent reads as false
+  "archivedAt": 1790000000,         // seconds since the epoch; present only while archived
   "participants": [
     // role: owner | manage | write | read
     { "role": "owner", "userid": "auth0|abc123" },
@@ -97,6 +100,13 @@ not a lower-case v4 uuid.
   "addedAt": "2026-08-19T08:00:00.000Z"
 }
 ```
+
+`client` is who the project is for, in the owner's words: trimmed, bounded like a name, absent
+rather than empty. It is accepted by `POST /projects` and `PATCH /projects/:id`, and a `null` on
+PATCH removes it. `archivedAt` is stamped once by the `archived: true` event (a repeat does not
+move it), removed by `archived: false`, and is what the 90-day hard delete (#208) will read.
+`ProjectSummary` carries `client` when present and `archivedAt` when archived, and always
+carries `archived`. Archived projects do not count toward the plan limit.
 
 ### Listing a user's projects needs a view
 
@@ -179,6 +189,47 @@ Cleared on sign-out, along with the project replicas.
 ## `project_<uuid>` — one per project
 
 The unit of sharing. See [ADR 0003](adr/0003-database-per-project.md).
+
+### `project` — the database describes itself
+
+```jsonc
+{ "_id": "project", "type": "project", "name": "Musterstraße 12", "client": "Familie Muster",
+  "serverDb": "project_8f14e45f-ceea-467a-9c0e-1b2c3d4e5f60" }
+```
+
+Replicated to every device with the data, so a replica can name and locate itself without asking
+the registry. Fixed `_id` (`PROJECT_DOCUMENT_ID`). `client` is absent when the project has none.
+Written by the API as server admin (which bypasses the validator) at provisioning, before the
+pointer, so a half-made project is rolled back whole. **It is kept in step with the pointer by
+every `PATCH /projects/:id`**, after the pointer is written: the document is compared with
+itself, not with the pointer, so a repeated PATCH heals one whose earlier write failed, and a
+database provisioned before the document existed gets one. A failed sync is a 500 rather than
+swallowed, and the pointer stays the source of truth for listing. A document with the right
+name but a wrong or missing `type` counts as stale and is rewritten too. **Only the service may
+write it:** `_design/access` refuses any non-admin create, update or deletion of `_id: "project"`,
+so a participant cannot rename the project on every replica behind the registry's back.
+
+### `_security` — who the database lets in
+
+Built only by `securityFor` (`backend/src/domain/membership.ts`), from the pointer's
+participants:
+
+```jsonc
+{ "members": { "names": ["<everybody>"], "roles": [] },
+  "writers": { "names": ["<owner, manage, write>"] },
+  "owners":  { "names": ["<owner>"] },
+  "archived": true }                // only while the pointer says archived; absent otherwise
+```
+
+`writers`, `owners` and `archived` are custom keys CouchDB preserves and `_design/access` reads.
+`owners` lets the validator refuse writes from an owner whose plan has neither the `member` nor
+the `pro` role (see SECURITY-MODEL.md); it moves with every membership change and transfer in the
+same write. `archived` makes an archived project read-only for everybody but the server admin.
+`securityFor(participants, { archived })` takes the pointer's archived state as a required
+argument, so every writer (provisioning, membership changes, accepting a transfer, archiving and
+unarchiving) carries it through: a membership change or transfer of an archived project keeps it
+archived. A `PATCH` that names `archived` writes `_security` — before the pointer when archiving,
+after it when unarchiving (the `narrowsAccess` rule) — and a repeated PATCH heals a failed write.
 
 ### `meta:project`
 

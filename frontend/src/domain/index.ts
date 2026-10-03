@@ -51,6 +51,11 @@ export {
   planNewDevice,
 } from './documents/new-device.js'
 export {
+  isProjectDocument,
+  PROJECT_DOCUMENT_ID,
+  type ProjectDocument,
+} from './documents/project.js'
+export {
   addRemark,
   type RemarkAuthor,
   remarksNewestFirst,

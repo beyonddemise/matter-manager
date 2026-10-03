@@ -28,6 +28,22 @@
  * before M5 builds on it. If CouchDB strips the `writers` key, fall back to
  * per-sync-session scoped JWT roles. See docs/adr/0003-database-per-project.md.
  *
+ * PLAN ENFORCEMENT
+ * ----------------
+ * A project's OWNER pays for it. When `_security.owners` names the caller and the caller's
+ * roles carry neither `member` nor `pro`, every write is refused - deletions included, so a
+ * downgraded owner cannot keep using the database by trimming it. Invited writers are not
+ * checked: the owner's plan covers them, and their own plan is irrelevant. Reads are not
+ * gated (`members` is an OR of names and roles), so a downgraded owner still sees the data.
+ * The rule sits before the `_deleted` block precisely so deletions fall under it. A
+ * `_security` without `owners` leaves the rule inert. ES5 only: CouchDB's JS engine.
+ *
+ * SERVICE-OWNED STATE
+ * -------------------
+ * Two rules come before every other, right after the admin bypass: the `project` document is
+ * written by the service alone, and a `_security` carrying `archived: true` refuses every
+ * write, deletions included. Both are things the registry decides and the database mirrors.
+ *
  * @param {object}  newDoc  the document being written
  * @param {object=} oldDoc  the current revision, absent on create
  * @param {object}  userCtx { name, roles } derived from the validated JWT
@@ -40,9 +56,32 @@ function (newDoc, oldDoc, userCtx, secObj) {
     return
   }
 
+  // The `project` document says what this database is - its name, its client, the server
+  // database it mirrors - and the service keeps it in step with the registry pointer. A
+  // participant who could write it could rename the project on every replica while the
+  // registry said otherwise, so only the server admin may create, change or delete it. Both
+  // ids are checked so the rule does not depend on what a deletion happens to carry.
+  if (newDoc._id === 'project' || (oldDoc && oldDoc._id === 'project')) {
+    throw { forbidden: 'Only the service may change the project document.' }
+  }
+
+  // An archived project is put away, not deleted: everybody keeps reading it and nobody
+  // writes it until it is brought back. The service sets `archived` in `_security` (another
+  // custom key, like `writers`) while the registry says the project is archived, so a replica
+  // that keeps syncing cannot go on changing it. Strictly `true`, so nothing else locks it.
+  if (secObj && secObj.archived === true) {
+    throw { forbidden: 'This project is archived.' }
+  }
+
   var writers = (secObj && secObj.writers && secObj.writers.names) || []
   if (writers.indexOf(userCtx.name) === -1) {
     throw { forbidden: 'You have read-only access to this project.' }
+  }
+
+  var owners = (secObj && secObj.owners && secObj.owners.names) || []
+  if (owners.indexOf(userCtx.name) !== -1 &&
+      userCtx.roles.indexOf('member') === -1 && userCtx.roles.indexOf('pro') === -1) {
+    throw { forbidden: 'Your plan does not include synchronized projects.' }
   }
 
   // A deletion is `{_id, _rev, _deleted: true}` and carries NO other fields - so the

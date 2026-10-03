@@ -40,6 +40,11 @@ export interface ProjectPointer {
    */
   readonly address?: string
   /**
+   * Who the project is for, in the owner's own words. Optional, trimmed, at most 200 characters,
+   * and absent rather than empty when there is none.
+   */
+  readonly client?: string
+  /**
    * Whether the project has been put away.
    *
    * Absent means no, so every project written before #55 reads correctly without a migration -
@@ -51,6 +56,14 @@ export interface ProjectPointer {
    * stops listing it, which is what "stops syncing and is hidden, but is not deleted" means.
    */
   readonly archived?: boolean
+  /**
+   * When the project was archived, in seconds since the epoch.
+   *
+   * Stamped by the first archive and removed by an unarchive, so it always answers "how long has
+   * this been put away" and never "when was it last touched". Absent on a project that is not
+   * archived, and on one archived before this field existed - no migration, no live data.
+   */
+  readonly archivedAt?: number
   readonly participants: readonly Participant[]
   readonly addedAt: string
 }
@@ -62,6 +75,10 @@ export interface ProjectRow {
   readonly projectName: string
   /** Absent when the project has none; see {@link ProjectPointer.address}. */
   readonly address?: string
+  /** Absent when the project has none; see {@link ProjectPointer.client}. */
+  readonly client?: string
+  /** Absent unless archived; see {@link ProjectPointer.archivedAt}. */
+  readonly archivedAt?: number
   readonly role: Participant['role']
   /**
    * Whether the project is archived.
@@ -81,9 +98,11 @@ export interface ProjectRow {
   readonly ownerId: string | null
 }
 
-/** The serialized view value. CouchDB turns the map function's missing address into `null`. */
-interface ProjectViewRow extends Omit<ProjectRow, 'address'> {
+/** The serialized view value. CouchDB turns the map function's missing optionals into `null`. */
+interface ProjectViewRow extends Omit<ProjectRow, 'address' | 'client' | 'archivedAt'> {
   readonly address: string | null
+  readonly client?: string | null
+  readonly archivedAt?: number | null
 }
 
 /** The document id for a project. Predictable, so a project can be found without a view. */
@@ -107,6 +126,7 @@ const BY_USER_MAP = `function (doc) {
     doc.participants.forEach(function (p) {
       emit(p.userid, { projectId: doc.projectId, dbName: doc.dbName,
                        projectName: doc.projectName, address: doc.address,
+                       client: doc.client, archivedAt: doc.archivedAt,
                        role: p.role, ownerId: ownerId,
                        archived: doc.archived === true })
     })
@@ -172,7 +192,12 @@ export async function projectsFor(couch: CouchClient, sub: string): Promise<read
     BY_USER_VIEW,
     { key: sub },
   )
-  return result.rows.map(({ value: { address, ...row } }) =>
-    address === null ? row : { ...row, address },
-  )
+  // The optional fields come back as `null` (or missing) when the pointer has none. Each is
+  // dropped here so a `ProjectRow` never carries a value a reader has to special-case.
+  return result.rows.map(({ value: { address, client, archivedAt, ...row } }) => ({
+    ...row,
+    ...(address === null ? {} : { address }),
+    ...(typeof client === 'string' ? { client } : {}),
+    ...(typeof archivedAt === 'number' ? { archivedAt } : {}),
+  }))
 }

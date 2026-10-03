@@ -15,9 +15,9 @@
  * @module
  */
 
-import type { CouchClient } from '../couch/client.js'
-import { canManageMembers, type Owner, roleOf } from '../domain/index.js'
-import { MAX_ADDRESS, MAX_NAME, type ProjectSummary } from './provision.js'
+import { type CouchClient, CouchError } from '../couch/client.js'
+import { canManageMembers, type Owner, roleOf, securityFor } from '../domain/index.js'
+import { MAX_ADDRESS, MAX_NAME, PROJECT_DOCUMENT_ID, type ProjectSummary } from './provision.js'
 import { type ProjectPointer, pointerId, REGISTRY_DATABASE, writePointer } from './registry.js'
 
 /** What a caller asked to change. Both optional and independent; at least one is required. */
@@ -32,6 +32,13 @@ export interface SettingsChange {
    * are indistinguishable once "missing" is allowed to mean "remove".
    */
   readonly address?: string | null
+  /**
+   * Who the project is for, or `null` to remove it.
+   *
+   * Spelled like `address`, for the same reason: a body that forgot the client must not erase
+   * the one that is stored. A blank string clears it too, since whitespace says nothing.
+   */
+  readonly client?: string | null
   /**
    * Whether to put the project away, or bring it back.
    *
@@ -56,21 +63,47 @@ export interface SettingsChange {
  */
 export type SettingsRefusalStatus = 400 | 403 | 404
 
+/**
+ * The refusals a client branches on, named. Only the role refusal has one: the others are
+ * answered by their status and message alone. It is a name rather than "status is 403" because
+ * 403 is shared with the plan refusals the route adds, and a route that inferred the name from
+ * the status would label the next 403 somebody throws here as a role refusal.
+ */
+export type SettingsRefusalReason = 'not-a-manager'
+
 /** A settings change that will not happen, carrying the status the route should answer with. */
 export class SettingsRefused extends Error {
   override readonly name = 'SettingsRefused'
   /** What the caller should be told, as an HTTP status. See {@link SettingsRefusalStatus}. */
   readonly status: SettingsRefusalStatus
+  /** The name a client branches on, when the refusal has one. See {@link SettingsRefusalReason}. */
+  readonly reason?: SettingsRefusalReason
 
-  constructor(status: SettingsRefusalStatus, message: string) {
+  constructor(status: SettingsRefusalStatus, message: string, reason?: SettingsRefusalReason) {
     super(message)
     this.status = status
+    if (reason !== undefined) this.reason = reason
   }
 }
 
 /** What this module needs. */
 export interface SettingsDependencies {
   readonly couch: CouchClient
+  /** The clock in seconds since the epoch, which is what `archivedAt` records. */
+  readonly now: () => number
+  /**
+   * Whether the project's **owner** may have one more active project, asked only when an archived
+   * project is being brought back.
+   *
+   * Injected rather than decided here because the answer is a plan lookup and a gate, which
+   * belong to the route's entitlement seam (ADR 0009) and not to a module about names. It runs
+   * after the pointer has been read and the caller's role checked, and before anything is
+   * written, so a refusal leaves the stored project exactly as it was. Rejects (with the seam's
+   * own `NotEntitledError`) to refuse; the route maps that to its named 403.
+   *
+   * @param owner the OIDC subject of the project's owner, whose plan pays whoever is asking
+   */
+  readonly authoriseUnarchive: (owner: string) => Promise<void>
 }
 
 /** Trims, and refuses a name that says nothing or is longer than the contract allows. */
@@ -100,6 +133,75 @@ function readAddress(value: string | null): string | undefined {
   return address === '' ? undefined : address
 }
 
+/** The client as it should be stored: trimmed, and nothing at all when blank or `null`. */
+function readClient(value: string | null): string | undefined {
+  if (value === null) return undefined
+  const client = value.trim()
+  if (client.length > MAX_NAME) {
+    throw new SettingsRefused(400, `A client may be at most ${MAX_NAME} characters.`)
+  }
+  return client === '' ? undefined : client
+}
+
+/** How many times the `project` document write is retried on a conflict. As `transfers.ts`. */
+const DOCUMENT_ATTEMPTS = 3
+
+/**
+ * Keeps the `project` document in the project's own database in step with the pointer.
+ *
+ * A get-modify-put, so `serverDb` and any field a later phase adds survive. A missing document
+ * is created, which makes this total for a database provisioned before the document existed.
+ * Written as the server admin, which bypasses the validator.
+ *
+ * @throws {CouchError} when the write fails, or keeps conflicting
+ */
+async function syncProjectDocument(
+  couch: CouchClient,
+  dbName: string,
+  name: string,
+  client: string | undefined,
+): Promise<void> {
+  for (let attempt = 1; ; attempt += 1) {
+    const existing = await couch.getDoc<{ _id: string; _rev?: string }>(dbName, PROJECT_DOCUMENT_ID)
+    // Already right: nothing to write. Comparing against the document itself, not the pointer,
+    // is what lets a repeated PATCH heal a document whose earlier write failed.
+    if (existing !== undefined) {
+      const current = existing as {
+        type?: unknown
+        name?: unknown
+        client?: unknown
+        serverDb?: unknown
+      }
+      // `type` too: a replica recognises the document by it, so a wrong or missing one is as
+      // stale as a wrong name, and is repaired by the same write.
+      if (
+        current.type === 'project' &&
+        current.name === name &&
+        current.client === client &&
+        current.serverDb === dbName
+      ) {
+        return
+      }
+    }
+    const { client: _client, name: _name, ...rest } = (existing ?? {}) as Record<string, unknown>
+    try {
+      await couch.putDoc(dbName, {
+        ...rest,
+        _id: PROJECT_DOCUMENT_ID,
+        type: 'project',
+        name,
+        ...(client === undefined ? {} : { client }),
+        serverDb: dbName,
+      } as unknown as { _id: string })
+      return
+    } catch (error) {
+      if (!(error instanceof CouchError && error.status === 409 && attempt < DOCUMENT_ATTEMPTS)) {
+        throw error
+      }
+    }
+  }
+}
+
 /** The project's owner, as `ProjectSummary` requires it. */
 function ownerOf(pointer: ProjectPointer): Owner {
   const owner = pointer.participants.find((participant) => participant.role === 'owner')
@@ -112,7 +214,7 @@ function ownerOf(pointer: ProjectPointer): Owner {
 }
 
 /**
- * Changes a project's name, its address, or both.
+ * Changes a project's name, address, client or archived state, in any combination.
  *
  * @param projectId the project to change
  * @param caller the OIDC subject of whoever is asking
@@ -129,7 +231,12 @@ export async function updateProjectSettings(
   caller: string,
   change: SettingsChange,
 ): Promise<ProjectSummary> {
-  if (change.name === undefined && change.address === undefined && change.archived === undefined) {
+  if (
+    change.name === undefined &&
+    change.address === undefined &&
+    change.client === undefined &&
+    change.archived === undefined
+  ) {
     // A client bug rather than a request. Writing a revision for it would replicate a document
     // to every device to announce that nothing happened.
     throw new SettingsRefused(400, 'Nothing to change.')
@@ -141,13 +248,18 @@ export async function updateProjectSettings(
   const role = roleOf(pointer.participants, caller)
   if (role === undefined) throw new SettingsRefused(404, 'No such project.')
   if (!canManageMembers(role)) {
-    throw new SettingsRefused(403, 'Only an owner or a manager can change project settings.')
+    throw new SettingsRefused(
+      403,
+      'Only an owner or a manager can change project settings.',
+      'not-a-manager',
+    )
   }
 
   // Validated before anything is written, so a refusal leaves the stored project exactly as it
   // was. A validation that ran after the write would report the opposite of what happened.
   const name = change.name === undefined ? pointer.projectName : readName(change.name)
   const address = change.address === undefined ? pointer.address : readAddress(change.address)
+  const client = change.client === undefined ? pointer.client : readClient(change.client)
 
   // Checked here as well as at the route, because this function is the one with the invariant.
   // A route is one caller; the next one would have to remember, and forgetting would write a
@@ -157,10 +269,46 @@ export async function updateProjectSettings(
   }
   const archived = change.archived ?? pointer.archived ?? false
 
+  // Archived projects do not count toward the plan limit, so bringing one back is the moment it
+  // starts counting again: without this, archive-create-unarchive walks past the limit. The
+  // owner's plan is asked, not the caller's, because the owner pays — a manager may unarchive,
+  // and a manager on a better plan than the owner must not lend it. Only the archived-to-active
+  // transition is gated; archiving and every other edit never is.
+  if (change.archived === false && pointer.archived === true) {
+    await deps.authoriseUnarchive(ownerOf(pointer).ownerId)
+  }
+
+  // Stamped only by the `archived: true` event, and then once. A second `archived: true` is a
+  // client repeating itself, and moving the stamp would make "how long has this been put away"
+  // depend on how often somebody pressed the button. A rename of a pointer archived before the
+  // stamp existed must not invent one, so every other change carries the stored value through.
+  const archivedAt =
+    change.archived === true
+      ? (pointer.archivedAt ?? deps.now())
+      : change.archived === false
+        ? undefined
+        : pointer.archivedAt
+
+  // `_security.archived` is what makes an archived project read-only in CouchDB, so a change
+  // that names `archived` writes it, rebuilt from the pointer's participants by `securityFor`
+  // like every other writer of `_security`. On every such change, not only on a transition: a
+  // repeated PATCH then heals a `_security` write that failed after the pointer was written,
+  // the way the project document below is healed. A change that does not name `archived`
+  // leaves `_security` alone.
+  //
+  // The order is `narrowsAccess`'s rule. Archiving takes write access away, so `_security`
+  // goes first and the moment between the writes is one where the project is already locked
+  // and still listed as active. Unarchiving gives it back, so the pointer goes first and the
+  // moment between is one where a project listed as active is still locked.
+  const writeSecurity = async (): Promise<void> => {
+    await deps.couch.putSecurity(pointer.dbName, securityFor(pointer.participants, { archived }))
+  }
+  if (change.archived === true) await writeSecurity()
+
   // Spread from the pointer that was read, never rebuilt from arguments. `participants` is in
   // this document, and a rename that reconstructed it would drop every member of the project
   // with nothing to show for it.
-  const { address: _previous, ...rest } = pointer
+  const { address: _address, client: _client, archivedAt: _archivedAt, ...rest } = pointer
   await writePointer(deps.couch, {
     ...rest,
     projectName: name,
@@ -168,7 +316,18 @@ export async function updateProjectSettings(
     // Absent rather than `undefined`: an explicit `address: undefined` serialises to a key
     // CouchDB stores as null, which reads back as a value where there should be none.
     ...(address === undefined ? {} : { address }),
+    ...(client === undefined ? {} : { client }),
+    ...(archivedAt === undefined ? {} : { archivedAt }),
   })
+
+  if (change.archived === false) await writeSecurity()
+
+  // After the pointer, deliberately: the pointer is the source of truth for listing, so a
+  // failure here leaves the list right and the replicated copy stale. It is not swallowed — it
+  // propagates as a 500 so the client knows the rename is half done. Repeating the PATCH heals
+  // it, because the document is compared with itself and not with the pointer, which already
+  // holds the new values; every PATCH therefore converges the document, at the cost of one read.
+  await syncProjectDocument(deps.couch, pointer.dbName, name, client)
 
   return {
     projectId: pointer.projectId,
@@ -179,5 +338,7 @@ export async function updateProjectSettings(
     owner: ownerOf(pointer),
     archived,
     ...(address === undefined ? {} : { address }),
+    ...(client === undefined ? {} : { client }),
+    ...(archivedAt === undefined ? {} : { archivedAt }),
   }
 }
