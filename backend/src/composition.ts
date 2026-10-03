@@ -187,7 +187,7 @@ export function serverOptions(env: Environment = process.env): ServerOptions {
 
   const sessionKey = sessionKeyFrom(env, key)
   const clock = () => Math.floor(Date.now() / 1000)
-  const records = userRecords(couch)
+  const records = userRecords(couch, clock)
   // One of each per process: the refresh store and the deny list are in memory, and `/profile`
   // must see the same entries and the same signed-out tokens that the auth routes write.
   const refresh = refreshStore(records, clock)

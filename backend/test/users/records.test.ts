@@ -13,12 +13,12 @@ beforeEach(() => forgetUsersDatabase())
 describe('userRecords', () => {
   it('reads nothing for an address that has no record', async () => {
     const { couch } = fakeCouch()
-    expect(await userRecords(couch).read('nobody@example.com')).toBeUndefined()
+    expect(await userRecords(couch, () => 0).read('nobody@example.com')).toBeUndefined()
   })
 
   it('creates a record on ensure, with sub, address and display name', async () => {
     const { couch, documents } = fakeCouch()
-    await userRecords(couch).ensure(ADA)
+    await userRecords(couch, () => 0).ensure(ADA)
     expect(documents.get(at(ADA.email))).toMatchObject({
       type: 'user',
       sub: 'google|1',
@@ -29,13 +29,13 @@ describe('userRecords', () => {
 
   it('finds the record however the address was typed', async () => {
     const { couch } = fakeCouch()
-    await userRecords(couch).ensure(ADA)
-    expect(await userRecords(couch).read(' ADA@example.com ')).toBeDefined()
+    await userRecords(couch, () => 0).ensure(ADA)
+    expect(await userRecords(couch, () => 0).read(' ADA@example.com ')).toBeDefined()
   })
 
   it('fills in the subject of a record an operator created by address', async () => {
     const { couch } = fakeCouch()
-    const records = userRecords(couch)
+    const records = userRecords(couch, () => 0)
     await records.setPlan(ADA.email, 'pro')
     const filled = await records.ensure(ADA)
     expect(filled).toMatchObject({ sub: 'google|1', plan: 'pro' })
@@ -43,7 +43,7 @@ describe('userRecords', () => {
 
   it('never takes roles, plan or refresh tokens from an update', async () => {
     const { couch, documents } = fakeCouch()
-    const records = userRecords(couch)
+    const records = userRecords(couch, () => 0)
     await records.ensure(ADA)
     await records.update(ADA.email, {
       locale: 'de',
@@ -60,29 +60,29 @@ describe('userRecords', () => {
 
   it('adopts refresh entries handed to ensure', async () => {
     const { couch } = fakeCouch()
-    const records = userRecords(couch)
+    const records = userRecords(couch, () => 0)
     await records.ensure(ADA, [{ hash: 'h1', exp: 100, createdAt: 1 }])
     expect(await records.hasRefresh(ADA.email, 'h1', 50)).toBe(true)
   })
 
   it('answers undefined, not false, for refresh checks without a record', async () => {
     const { couch } = fakeCouch()
-    expect(await userRecords(couch).hasRefresh(ADA.email, 'h', 0)).toBeUndefined()
+    expect(await userRecords(couch, () => 0).hasRefresh(ADA.email, 'h', 0)).toBeUndefined()
     expect(
-      await userRecords(couch).addRefresh(ADA.email, { hash: 'h', exp: 1, createdAt: 0 }),
+      await userRecords(couch, () => 0).addRefresh(ADA.email, { hash: 'h', exp: 1, createdAt: 0 }),
     ).toBe(false)
   })
 
   it('treats an expired refresh entry as absent', async () => {
     const { couch } = fakeCouch()
-    const records = userRecords(couch)
+    const records = userRecords(couch, () => 0)
     await records.ensure(ADA, [{ hash: 'h1', exp: 100, createdAt: 1 }])
     expect(await records.hasRefresh(ADA.email, 'h1', 100)).toBe(false)
   })
 
   it('removes one refresh entry and keeps the others', async () => {
     const { couch } = fakeCouch()
-    const records = userRecords(couch)
+    const records = userRecords(couch, () => 0)
     await records.ensure(ADA, [
       { hash: 'phone', exp: 100, createdAt: 1 },
       { hash: 'laptop', exp: 100, createdAt: 1 },
@@ -94,7 +94,7 @@ describe('userRecords', () => {
 
   it('retries a write that lost a race, so two devices refreshing at once both stay signed in', async () => {
     const fake = fakeCouch()
-    const records = userRecords(fake.couch)
+    const records = userRecords(fake.couch, () => 0)
     await records.ensure(ADA)
     const original = fake.couch.putDoc.bind(fake.couch)
     let first = true
@@ -109,9 +109,36 @@ describe('userRecords', () => {
     expect(await records.hasRefresh(ADA.email, 'h', 0)).toBe(true)
   })
 
+  it('prunes expired refresh entries in the write that appends one', async () => {
+    let t = 100
+    const { couch, documents } = fakeCouch()
+    const records = userRecords(couch, () => t)
+    await records.ensure(ADA)
+    await records.addRefresh(ADA.email, { hash: 'old', exp: 150, createdAt: 100 })
+    await records.addRefresh(ADA.email, { hash: 'keep', exp: 900, createdAt: 100 })
+    t = 150
+    await records.addRefresh(ADA.email, { hash: 'new', exp: 1000, createdAt: 150 })
+    const stored = documents.get(at(ADA.email)) as { refreshTokens: { hash: string }[] }
+    expect(stored.refreshTokens.map((e) => e.hash)).toEqual(['keep', 'new'])
+  })
+
+  it('prunes expired entries, stored and adopted, when ensure writes', async () => {
+    let t = 100
+    const { couch, documents } = fakeCouch()
+    const records = userRecords(couch, () => t)
+    await records.ensure(ADA, [{ hash: 'old', exp: 150, createdAt: 100 }])
+    t = 150
+    await records.ensure(ADA, [
+      { hash: 'dead', exp: 120, createdAt: 100 },
+      { hash: 'live', exp: 500, createdAt: 150 },
+    ])
+    const stored = documents.get(at(ADA.email)) as { refreshTokens: { hash: string }[] }
+    expect(stored.refreshTokens.map((e) => e.hash)).toEqual(['live'])
+  })
+
   it('reads a record by subject through the view', async () => {
     const fake = fakeCouch()
-    const records = userRecords(fake.couch)
+    const records = userRecords(fake.couch, () => 0)
     await records.ensure(ADA)
     // The fake ignores view parameters, so the key is asserted on the call: the real client
     // JSON-encodes it, and a pre-encoded key would arrive double-quoted.

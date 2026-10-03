@@ -14,7 +14,7 @@ beforeEach(() => forgetUsersDatabase())
 describe('recordEnsurer', () => {
   it('moves in-memory refresh entries onto the new record, so creating it signs nobody out', async () => {
     const { couch } = fakeCouch()
-    const records = userRecords(couch)
+    const records = userRecords(couch, () => 0)
     const refresh = refreshStore(records, () => 0)
     await refresh.remember(ADA.email, { hash: 'h', exp: 99, createdAt: 0 })
 
@@ -30,7 +30,7 @@ describe('recordEnsurer', () => {
     // restore writes to CouchDB too), lost every entry after the first and replaced this error.
     const fails: { getDoc?: string } = {}
     const { couch } = fakeCouch({ fails })
-    const records = userRecords(couch)
+    const records = userRecords(couch, () => 0)
     const refresh = refreshStore(records, () => 0)
     await refresh.remember(ADA.email, { hash: 'a', exp: 99, createdAt: 0 })
     await refresh.remember(ADA.email, { hash: 'b', exp: 99, createdAt: 0 })
@@ -48,7 +48,7 @@ describe('recordEnsurer', () => {
   it('keeps the entries when only the write fails', async () => {
     const fails: { putDoc?: string } = {}
     const { couch } = fakeCouch({ fails })
-    const records = userRecords(couch)
+    const records = userRecords(couch, () => 0)
     const refresh = refreshStore(records, () => 0)
     await refresh.remember(ADA.email, { hash: 'a', exp: 99, createdAt: 0 })
     fails.putDoc = USERS_DB
@@ -59,7 +59,7 @@ describe('recordEnsurer', () => {
 
   it('never lets a hash look revoked while the record is being written', async () => {
     const { couch } = fakeCouch()
-    const records = userRecords(couch)
+    const records = userRecords(couch, () => 0)
     const refresh = refreshStore(records, () => 0)
     await refresh.remember(ADA.email, { hash: 'h', exp: 99, createdAt: 0 })
     const original = couch.putDoc.bind(couch)

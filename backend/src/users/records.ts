@@ -178,12 +178,23 @@ const WRITE_ATTEMPTS = 3
 /**
  * Creates the store.
  *
+ * `now` (epoch seconds) decides which refresh entries have expired when one is appended.
+ *
  * Writes go through `mutate`, which re-reads and re-applies on a 409. Refresh entries are
  * written by every device of a user, and two devices refreshing in the same second is ordinary.
  * Without the retry, one of them would lose its entry and be signed out at its next refresh,
  * for no reason it could see.
  */
-export function userRecords(couch: CouchClient): UserRecords {
+export function userRecords(
+  couch: CouchClient,
+  now: () => number = () => Math.floor(Date.now() / 1000),
+): UserRecords {
+  // Dropped in the same write that appends, so the record's list is bounded by the live devices
+  // rather than growing by one entry per sign-in for as long as the account exists. `hasRefresh`
+  // already refuses these; keeping them is only weight on every read and write.
+  const unexpired = (entries: readonly RefreshEntry[] | undefined): RefreshEntry[] =>
+    (entries ?? []).filter((e) => e.exp > now())
+
   const get = async (email: string): Promise<UserRecord | undefined> => {
     await ensureUsersDatabase(couch)
     return couch.getDoc<UserRecord>(USERS_DB, userDocId(email))
@@ -223,7 +234,7 @@ export function userRecords(couch: CouchClient): UserRecords {
 
     async ensure(seed, adopt = []) {
       const written = await mutate(seed.email, (existing) => {
-        const tokens = [...(existing?.refreshTokens ?? []), ...adopt]
+        const tokens = [...unexpired(existing?.refreshTokens), ...unexpired(adopt)]
         if (existing !== undefined && existing.sub === seed.sub && adopt.length === 0) {
           return undefined
         }
@@ -272,7 +283,7 @@ export function userRecords(couch: CouchClient): UserRecords {
           return undefined
         }
         held = true
-        return { ...existing, refreshTokens: [...(existing.refreshTokens ?? []), entry] }
+        return { ...existing, refreshTokens: [...unexpired(existing.refreshTokens), entry] }
       })
       return held
     },
