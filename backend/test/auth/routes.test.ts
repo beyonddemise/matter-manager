@@ -460,6 +460,54 @@ describe('POST /auth/token', () => {
     expect(again.statusCode).toBe(401)
   })
 
+  it('refuses a refresh token whose own expiry has passed, though its hash is still stored', async () => {
+    // The signature check and the store check are separate gates. Here the store would say yes,
+    // so only the token's `exp` can be what refuses it.
+    const server = signInServer()
+    const expired = mintToken(server.sessionKey, {
+      purpose: 'refresh',
+      sub: 'google|1234',
+      email: 'ada@example.com',
+      jti: 'expired-claim',
+      iat: T0 - 7200,
+      exp: T0 - 1,
+    })
+    await server.records.ensure({ email: 'ada@example.com', sub: 'google|1234' }, [
+      { hash: hashJti('expired-claim'), exp: T0 + 3600, createdAt: T0 - 7200 },
+    ])
+
+    const reply = await server.app.inject({
+      method: 'POST',
+      url: '/auth/token',
+      payload: { refreshToken: expired },
+    })
+    expect(reply.statusCode).toBe(401)
+  })
+
+  it('refuses a valid refresh token whose stored entry on the record has expired', async () => {
+    // The other way round: the token verifies, and the record still lists its hash, but the
+    // entry's own `exp` has passed. An entry is honoured only while it is unexpired.
+    const server = signInServer()
+    const live = mintToken(server.sessionKey, {
+      purpose: 'refresh',
+      sub: 'google|1234',
+      email: 'ada@example.com',
+      jti: 'expired-entry',
+      iat: T0 - 7200,
+      exp: T0 + 3600,
+    })
+    await server.records.ensure({ email: 'ada@example.com', sub: 'google|1234' }, [
+      { hash: hashJti('expired-entry'), exp: T0 - 1, createdAt: T0 - 7200 },
+    ])
+
+    const reply = await server.app.inject({
+      method: 'POST',
+      url: '/auth/token',
+      payload: { refreshToken: live },
+    })
+    expect(reply.statusCode).toBe(401)
+  })
+
   it('refuses an access token presented as a refresh token', async () => {
     // The access token is handed to page scripts on purpose. If it also worked as a refresh
     // token, exfiltrating one would mint fresh access tokens for as long as the thief asked.
@@ -751,6 +799,33 @@ describe('POST /auth/signout', () => {
     expect(again.statusCode).toBe(401)
     const { jti } = verifyToken(tokens.accessToken, server.key.publicKey, 'access', at)
     expect(server.deny.denied(String(jti))).toBe(true)
+  })
+
+  it('revokes a refresh token whose hash is held on the record, not only in memory', async () => {
+    // A record holds the hashes of somebody who has one, and memory is drained into it. A
+    // sign-out that cleared only memory would leave this thirty-day credential live.
+    const server = signInServer()
+    const tokens = await tokensFor(server)
+    await server.records.ensure(
+      { email: 'ada@example.com', sub: 'google|1234' },
+      server.refresh.drain('ada@example.com'),
+    )
+    expect((await server.records.read('ada@example.com'))?.refreshTokens).toHaveLength(1)
+
+    const out = await server.app.inject({
+      method: 'POST',
+      url: '/auth/signout',
+      payload: { refreshToken: tokens.refreshToken },
+    })
+    expect(out.statusCode).toBe(204)
+    expect((await server.records.read('ada@example.com'))?.refreshTokens ?? []).toEqual([])
+
+    const again = await server.app.inject({
+      method: 'POST',
+      url: '/auth/token',
+      payload: { refreshToken: tokens.refreshToken },
+    })
+    expect(again.statusCode).toBe(401)
   })
 
   it('does not claim success when the refresh token could not be revoked', async () => {
