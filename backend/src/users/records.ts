@@ -1,7 +1,7 @@
 /**
  * User records in `matter_manager`: profile, plan, operator roles and refresh-token hashes.
  *
- * Replaces the `_users` document entirely (see the spec, "What moves off `_users`"). A record
+ * Replaces the old CouchDB user-database document entirely (see the spec, "What moves off _users"). A record
  * exists only once something needed one. A user without a record is `free`, and their profile is
  * built from their token's claims by {@link profileOf}.
  *
@@ -183,12 +183,7 @@ const WRITE_ATTEMPTS = 3
  * Without the retry, one of them would lose its entry and be signed out at its next refresh,
  * for no reason it could see.
  */
-export function userRecords(
-  couch: CouchClient,
-  // Part of the contract so callers wire one reporter through; the store itself never narrows a
-  // plan, `planOf` does.
-  _report: UnknownPlanReporter = reportToStderr,
-): UserRecords {
+export function userRecords(couch: CouchClient): UserRecords {
   const get = async (email: string): Promise<UserRecord | undefined> => {
     await ensureUsersDatabase(couch)
     return couch.getDoc<UserRecord>(USERS_DB, userDocId(email))

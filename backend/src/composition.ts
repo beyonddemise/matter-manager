@@ -25,7 +25,7 @@ import { acceptInvitationsOnSignIn } from './projects/invitations.js'
 import { findUser } from './projects/users.js'
 import { originsFromEnv } from './security/config.js'
 import type { ServerOptions } from './server.js'
-import { recordEnsurer } from './users/ensure.js'
+import { type EnsureRecord, recordEnsurer } from './users/ensure.js'
 import { type UserRecords, userRecords } from './users/records.js'
 
 /** The environment, as far as this module is concerned. */
@@ -131,6 +131,7 @@ function authFrom(
     readonly records: UserRecords
     readonly refresh: RefreshStore
     readonly deny: DenyList
+    readonly ensureRecord: EnsureRecord
   },
 ): AuthDependencies | undefined {
   const provider = providerFrom(env)
@@ -150,13 +151,15 @@ function authFrom(
     sessionKey,
     verifyIdToken: (idToken: string) => verifyGoogleIdToken(provider, idToken, keys),
     appOrigin,
-    ...tokens,
+    records: tokens.records,
+    refresh: tokens.refresh,
+    deny: tokens.deny,
     // Redemption needs only to resolve addresses and subjects, which is `findUser` over the
     // records; `invite` is for sharing with an unknown address and plays no part in it.
     signIn: acceptInvitationsOnSignIn(
       { couch, findUser: (value) => findUser(tokens.records, value) },
       tokens.records,
-      recordEnsurer(tokens.records, tokens.refresh),
+      tokens.ensureRecord,
     ),
   }
 }
@@ -189,21 +192,17 @@ export function serverOptions(env: Environment = process.env): ServerOptions {
   // must see the same entries and the same signed-out tokens that the auth routes write.
   const refresh = refreshStore(records, clock)
   const deny = denyList(clock)
-  const auth = authFrom(env, couch, key, sessionKey, { records, refresh, deny })
+  const ensureRecord = recordEnsurer(records, refresh)
+  const auth = authFrom(env, couch, key, sessionKey, { records, refresh, deny, ensureRecord })
 
   return {
     security,
     // The same records the profile routes use, and the same deny list the auth routes write: a
     // plan an operator sets is the plan the gate sees, and a signed-out token is refused here too.
     projects: { couch, key, records, deny },
-    // Verifies the **access** token, so it takes the key CouchDB validates. Present only when
-    // there is a session key all the same: without one there is no sign-in, nobody can obtain an
-    // access token, and a route that can never authenticate anybody is not a route.
-    ...(sessionKey === undefined
-      ? {}
-      : {
-          profile: { records, ensureRecord: recordEnsurer(records, refresh), key, deny },
-        }),
+    // Verifies the **access** token, so it takes the key CouchDB validates and needs no session
+    // key: the profile is served whenever CouchDB and that key are present.
+    profile: { records, ensureRecord, key, deny },
     ...(auth === undefined ? {} : { auth }),
   }
 }

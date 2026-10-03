@@ -150,4 +150,22 @@ describe('planOf and profileOf', () => {
       projectLimit: 1,
     })
   })
+
+  it('reports an unknown plan to stderr when nobody wires another reporter', () => {
+    // The default, asserted rather than assumed: a no-op default is the silence the warning
+    // exists to end, and production runs the default.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    try {
+      planOf({ _id: 'u', type: 'user', email: 'a@b.c', plan: 'Pro' })
+
+      expect(warn).toHaveBeenCalledTimes(1)
+      expect(JSON.parse(String(warn.mock.calls[0]?.[0]))).toMatchObject({
+        level: 'warn',
+        email: 'a@b.c',
+        plan: 'Pro',
+      })
+    } finally {
+      warn.mockRestore()
+    }
+  })
 })

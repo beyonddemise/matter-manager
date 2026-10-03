@@ -121,7 +121,7 @@ function serverWithGatedRoutes() {
   // Inert today, because nothing here seeds anything. It stops being inert the moment a test
   // states a plan the way `projects/routes.test.ts` does — by seeding the user record an
   // operator would have edited. Seeded through another instance, that document
-  // would be invisible to the routes' instance: `principalFor` would read no profile, fall back
+  // would be invisible to the routes' instance: `principalFor` would read no user record, fall back
   // to `free`, and the test would pass or fail for a reason unrelated to what it asserted. One
   // instance means the server behaves like a deployment, where there is one database.
   const couch = fakeCouch().couch

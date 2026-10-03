@@ -63,7 +63,7 @@ export interface ProjectDependencies {
    * Where a subject's plan is read from, and where an address or subject is resolved to an
    * account.
    *
-   * **Required, not optional.** An absent store would have to mean something, and the only
+   * **Required, not optional.** An absent record store would have to mean something, and the only
    * thing it could mean is `free` for everybody — which is a deployment that silently stops
    * charging, looks exactly like one that works, and is found by an invoice rather than by a
    * test. A missing wire is a compile error instead.
@@ -192,7 +192,7 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDepende
       principal = await principalFor(sub)
     } catch (error) {
       // `principalFor` does three pieces of I/O — `ensureRegistry`, the owned-projects view and
-      // the profile read — and any of them can raise `CouchError`. Unwrapped, that escaped as a
+      // the user-record read — and any of them can raise `CouchError`. Unwrapped, that escaped as a
       // raw Fastify 500 carrying CouchDB's own message, on the one route whose every other
       // failure is deliberately mapped and scrubbed: there is a test in this file named "says
       // nothing about CouchDB", and this path walked straight past it.
@@ -398,7 +398,7 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDepende
       principal = await principalFor(sub)
     } catch (error) {
       // The same three pieces of I/O `POST /projects` wraps for the same reason —
-      // `ensureRegistry`, the owned-projects view and the profile read — any of which can raise
+      // `ensureRegistry`, the owned-projects view and the user-record read — any of which can raise
       // `CouchError`. Unwrapped, that escaped as a raw Fastify 500 carrying CouchDB's own
       // message, on a route that otherwise maps and scrubs every failure. Before this route
       // counted the caller's owned projects it built the principal from literal values and did

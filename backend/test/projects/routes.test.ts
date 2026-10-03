@@ -1,6 +1,8 @@
 import { generateKeyPairSync } from 'node:crypto'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { mintToken, type SigningKey } from '../../src/auth/jwt.js'
+import type { DenyList } from '../../src/auth/deny-list.js'
+import { denyList } from '../../src/auth/deny-list.js'
+import { mintToken, type SigningKey, verifyToken } from '../../src/auth/jwt.js'
 import { type CouchClient, CouchError } from '../../src/couch/client.js'
 import type { Action, Plan, Principal } from '../../src/domain/index.js'
 import { NotEntitledError, gate as realGate } from '../../src/entitlements/gate.js'
@@ -93,7 +95,15 @@ let couch: FakeCouch
 
 /** A server with the project routes wired to a fake CouchDB and a watchable gate. */
 function server(
-  options: { fails?: CouchFailures; gateRefuses?: boolean; registryConflicts?: boolean } = {},
+  options: {
+    fails?: CouchFailures
+    gateRefuses?: boolean
+    registryConflicts?: boolean
+    /** Signed-out access tokens, as the auth routes would write them. */
+    deny?: DenyList
+    /** Leave `identityOf` to its default, the user record, instead of the stub below. */
+    recordIdentity?: boolean
+  } = {},
 ) {
   forgetUsersDatabase()
   couch = fakeCouch(options.fails === undefined ? {} : { fails: options.fails })
@@ -128,10 +138,15 @@ function server(
           : value === OWNER
             ? { sub: OWNER, email: 'ada@example.test' }
             : undefined,
-      identityOf: async (sub: string) =>
-        sub === 'google|grace'
-          ? { sub, email: 'grace@example.test', emailVerified: true }
-          : { sub, email: 'ada@example.test', emailVerified: true },
+      ...(options.deny === undefined ? {} : { deny: options.deny }),
+      ...(options.recordIdentity === true
+        ? {}
+        : {
+            identityOf: async (sub: string) =>
+              sub === 'google|grace'
+                ? { sub, email: 'grace@example.test', emailVerified: true }
+                : { sub, email: 'ada@example.test', emailVerified: true },
+          }),
       millis: () => Date.parse('2026-08-27T09:00:00.000Z'),
     },
   })
@@ -421,6 +436,34 @@ describe('when provisioning fails', () => {
     const response = await create(built, { name: 'Musterstraße 12' })
 
     expect(response.body).not.toContain(DATABASE)
+  })
+})
+
+describe('a signed-out access token', () => {
+  it('is refused by the project routes with 401', async () => {
+    // The deny list protects this API, not CouchDB. A route that forgot to hand it to
+    // `bearerSubject` would go on honouring a token the user had signed out.
+    const deny = denyList(() => Math.floor(Date.now() / 1000))
+    const { app: built } = server({ deny })
+    const token = mintToken(KEY, {
+      purpose: 'access',
+      sub: OWNER,
+      jti: 'signed-out-jti',
+      exp: Math.floor(Date.now() / 1000) + 3600,
+    })
+    const request = () =>
+      built.inject({
+        method: 'GET',
+        url: '/projects',
+        headers: { authorization: `Bearer ${token}` },
+      })
+
+    expect((await request()).statusCode).toBe(200)
+
+    const { exp } = verifyToken(token, KEY.publicKey, 'access')
+    deny.deny('signed-out-jti', exp)
+
+    expect((await request()).statusCode).toBe(401)
   })
 })
 
@@ -1160,6 +1203,51 @@ describe('handing a project to somebody else', () => {
       { role: 'read', userid: OWNER },
       { role: 'owner', userid: 'google|grace' },
     ])
+  })
+
+  describe('with the identity read from the user record', () => {
+    /** Grace's record, with or without the subject sign-in would have written. */
+    const withGraceRecord = (built: ReturnType<typeof server>, sub?: string) => {
+      built.couch.documents.set(`${USERS_DB}/${userDocId('grace@example.test')}`, {
+        _id: userDocId('grace@example.test'),
+        type: 'user',
+        email: 'grace@example.test',
+        ...(sub === undefined ? {} : { sub }),
+      })
+      built.couch.rowsByDesign.by_sub = [
+        { id: userDocId('grace@example.test'), key: 'google|grace', value: null },
+      ]
+      return built
+    }
+
+    const accept = (built: ReturnType<typeof server>) =>
+      built.app.inject({
+        method: 'POST',
+        url: `/transfers/${PROJECT_ID}`,
+        headers: { authorization: `Bearer ${tokenFor('google|grace')}` },
+      })
+
+    it('accepts for a record that carries a subject', async () => {
+      const built = withGraceRecord(seedProject(server({ recordIdentity: true })), 'google|grace')
+      await transfer(built.app, { toEmail: 'grace@example.test' })
+
+      expect((await accept(built)).statusCode).toBe(204)
+    })
+
+    it('answers as for no offer when the record has no subject yet', async () => {
+      // A record an operator created by address has no `sub` until the person signs in, so it
+      // cannot say whose verified address this is, and acceptance is decided by that address.
+      const built = withGraceRecord(seedProject(server({ recordIdentity: true })))
+      await transfer(built.app, { toEmail: 'grace@example.test' })
+
+      const response = await accept(built)
+
+      expect(response.statusCode).toBe(404)
+      expect(
+        (built.couch.documents.get(`projects/project:${PROJECT_ID}`) as { participants: unknown[] })
+          .participants,
+      ).toEqual([{ role: 'owner', userid: OWNER }])
+    })
   })
 
   it('is 404 when somebody else tries to accept', async () => {
