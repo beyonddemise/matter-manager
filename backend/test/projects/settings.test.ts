@@ -625,6 +625,21 @@ describe('the project document follows the pointer', () => {
     ).toBe(false)
   })
 
+  it.each([
+    ['a wrong type', { type: 'matter' }],
+    ['no type', { type: undefined }],
+  ])('repairs a document with %s, even when every other field matches', async (_label, broken) => {
+    // `type` is what a replica recognises the document by, so a document with the right name
+    // and the wrong type is as stale as one with the wrong name.
+    const { deps, fake } = project(OWNER_ONLY, undefined, { client: 'Old' })
+    const { type: _type, ...rest } = SEEDED
+    fake.documents.set(DOCUMENT, { ...rest, ...(broken.type === undefined ? {} : broken) })
+
+    await updateProjectSettings(deps, PROJECT_ID, ADA, { archived: true })
+
+    expect(fake.documents.get(DOCUMENT)).toMatchObject({ type: 'project', name: 'Musterstraße 12' })
+  })
+
   it('is created when it is missing', async () => {
     const { deps, fake } = project()
 

@@ -166,8 +166,22 @@ async function syncProjectDocument(
     // Already right: nothing to write. Comparing against the document itself, not the pointer,
     // is what lets a repeated PATCH heal a document whose earlier write failed.
     if (existing !== undefined) {
-      const current = existing as { name?: unknown; client?: unknown; serverDb?: unknown }
-      if (current.name === name && current.client === client && current.serverDb === dbName) return
+      const current = existing as {
+        type?: unknown
+        name?: unknown
+        client?: unknown
+        serverDb?: unknown
+      }
+      // `type` too: a replica recognises the document by it, so a wrong or missing one is as
+      // stale as a wrong name, and is repaired by the same write.
+      if (
+        current.type === 'project' &&
+        current.name === name &&
+        current.client === client &&
+        current.serverDb === dbName
+      ) {
+        return
+      }
     }
     const { client: _client, name: _name, ...rest } = (existing ?? {}) as Record<string, unknown>
     try {

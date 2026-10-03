@@ -7,7 +7,8 @@
 # Project sharing rests on two CouchDB behaviours that are not prominently documented
 # and are not covered by any test we own:
 #
-#   1. `_security` preserves keys CouchDB does not itself interpret (we add `writers`).
+#   1. `_security` preserves keys CouchDB does not itself interpret (we add `writers`
+#      and `owners`).
 #   2. `validate_doc_update` receives the whole `_security` object as its 4th argument.
 #
 # If either stops being true after a CouchDB upgrade, read-only project access silently
@@ -151,6 +152,17 @@ prev=$(curl -s -u "vam-writer:$PW" "$URL/$DB/plan:3" | grep -o '"_rev":"[^"]*"' 
 assert "an owner without a paying plan cannot delete" \
   "$(curl -s -u "vam-owner-free:$PW" -X DELETE "$URL/$DB/plan:3?rev=$prev")" \
   'does not include synchronized projects'
+
+# Plan enforcement gates writes only. `members` is still an OR of names, so a downgraded owner
+# keeps reading what they wrote - the promise SECURITY-MODEL.md makes and this proves.
+assert "an owner without a paying plan CAN still read" \
+  "$(curl -s -u "vam-owner-free:$PW" "$URL/$DB/plan:2")" '"name":"Garage"'
+
+# The service keeps the `project` document in step with the registry, as the server admin. A
+# participant who could write it could rename the project on every replica.
+assert "a writer cannot write the project document" \
+  "$(curl -s -u "vam-writer:$PW" -X PUT "$URL/$DB/project" -H 'Content-Type: application/json' -d '{"type":"project","name":"Renamed","serverDb":"elsewhere"}')" \
+  'Only the service may change the project document'
 
 assert "a non-member cannot read at all" \
   "$(curl -s -u "vam-outsider:$PW" "$URL/$DB/device:1")" 'not allowed to access'

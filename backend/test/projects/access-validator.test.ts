@@ -64,3 +64,55 @@ describe('the access validator and the owner plan rule', () => {
     expect(attempt(doc, 'olga', [], withoutOwners)).toBeUndefined()
   })
 })
+
+/** As {@link attempt}, for a write that replaces or deletes an existing revision. */
+function attemptOver(
+  newDoc: Record<string, unknown>,
+  oldDoc: Record<string, unknown>,
+  name: string,
+  roles: string[],
+  sec: Record<string, unknown> = secObj,
+): unknown {
+  try {
+    validate(newDoc, oldDoc, { name, roles }, sec)
+    return undefined
+  } catch (thrown) {
+    return thrown
+  }
+}
+
+describe('the access validator and the project document', () => {
+  const SERVICE_ONLY = 'Only the service may change the project document.'
+  const projectDoc = { _id: 'project', type: 'project', name: 'Home', serverDb: 'project_x' }
+  const stored = { ...projectDoc, _rev: '1-a' }
+
+  it.each([
+    ['an owner with a paying plan', 'olga', ['member']],
+    ['an invited writer', 'wanda', []],
+  ])('refuses %s creating it', (_label, name, roles) => {
+    expect(attempt(projectDoc, name, roles)).toEqual({ forbidden: SERVICE_ONLY })
+  })
+
+  it('refuses an owner with a paying plan renaming it', () => {
+    expect(attemptOver({ ...stored, name: 'Elsewhere' }, stored, 'olga', ['member'])).toEqual({
+      forbidden: SERVICE_ONLY,
+    })
+  })
+
+  it('refuses an owner with a paying plan deleting it', () => {
+    // A deletion carries `_id`, so the id alone would catch it; the old revision is checked as
+    // well so the rule does not depend on what a deletion happens to carry.
+    const remove = { _id: 'project', _rev: '1-a', _deleted: true }
+    expect(attemptOver(remove, stored, 'olga', ['member'])).toEqual({ forbidden: SERVICE_ONLY })
+  })
+
+  it('lets the server admin write it', () => {
+    expect(
+      attemptOver({ ...stored, name: 'Elsewhere' }, stored, 'olga', ['_admin']),
+    ).toBeUndefined()
+  })
+
+  it('leaves every other document to the other rules', () => {
+    expect(attempt({ _id: 'matter:1', type: 'matter' }, 'olga', ['member'])).toBeUndefined()
+  })
+})

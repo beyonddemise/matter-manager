@@ -38,6 +38,11 @@
  * The rule sits before the `_deleted` block precisely so deletions fall under it. A
  * `_security` without `owners` leaves the rule inert. ES5 only: CouchDB's JS engine.
  *
+ * SERVICE-OWNED STATE
+ * -------------------
+ * One rule comes before every other, right after the admin bypass: the `project` document is
+ * written by the service alone. It is something the registry decides and the database mirrors.
+ *
  * @param {object}  newDoc  the document being written
  * @param {object=} oldDoc  the current revision, absent on create
  * @param {object}  userCtx { name, roles } derived from the validated JWT
@@ -48,6 +53,15 @@ function (newDoc, oldDoc, userCtx, secObj) {
   // projects and repairs data.
   if (userCtx.roles.indexOf('_admin') !== -1) {
     return
+  }
+
+  // The `project` document says what this database is - its name, its client, the server
+  // database it mirrors - and the service keeps it in step with the registry pointer. A
+  // participant who could write it could rename the project on every replica while the
+  // registry said otherwise, so only the server admin may create, change or delete it. Both
+  // ids are checked so the rule does not depend on what a deletion happens to carry.
+  if (newDoc._id === 'project' || (oldDoc && oldDoc._id === 'project')) {
+    throw { forbidden: 'Only the service may change the project document.' }
   }
 
   var writers = (secObj && secObj.writers && secObj.writers.names) || []
