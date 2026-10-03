@@ -289,8 +289,8 @@ export interface paths {
          *     nothing at all means "leave it alone".
          *
          *     `plan` is the exception to "about themselves": it may be sent only by an account holding
-         *     the `customerservice` role on its user record, and anybody else is answered 403 rather than having the field
-         *     quietly dropped. CouchDB's `_admin` is not accepted — see the `admin` tag for why that
+         *     the `customerservice` role on its user record, and anybody else is answered 403 rather than
+         *     having the field quietly dropped. CouchDB's `_admin` is not accepted — see the `admin` tag for why that
          *     role is excluded rather than merely unnecessary. See ADR 0009 — what a plan then permits
          *     is decided by the policy table, never by a comparison against a tier.
          */
@@ -416,7 +416,8 @@ export interface paths {
                  *
                  *     Answered **before** the body is validated, so it precedes any 400 and is
                  *     byte-for-byte the answer a non-operator gets whatever the body says and whether or not
-                 *     the account named by address has a record. See this operation's description for why that ordering is a requirement.
+                 *     the account named by address has a record.
+                 *     See this operation's description for why that ordering is a requirement.
                  */
                 403: {
                     headers: {

@@ -48,9 +48,7 @@ afterEach(async () => {
  * like coverage and was a second copy of the anonymous pass.
  */
 const SIGNING: SigningKey = (() => {
-  const { privateKey, publicKey } = generateKeyPairSync('ec', {
-    namedCurve: 'prime256v1',
-  })
+  const { privateKey, publicKey } = generateKeyPairSync('ec', { namedCurve: 'prime256v1' })
   return { kid: 'drift', privateKey, publicKey }
 })()
 
@@ -109,11 +107,7 @@ const server = (): Server => {
       },
       key,
       sessionKey: key,
-      verifyIdToken: async () => ({
-        sub: 'google|1234',
-        email: 'ada@example.test',
-        name: 'Ada',
-      }),
+      verifyIdToken: async () => ({ sub: 'google|1234', email: 'ada@example.test', name: 'Ada' }),
       appOrigin: 'https://app.test',
       records,
       refresh,
@@ -242,22 +236,19 @@ describe('every implemented route answers what the contract declares', () => {
    * verifier do their real work, and a route that stopped accepting a valid token would show up
    * here as a 401 where the contract declares a 200.
    *
-   * Both passes send `{}`. A body with nothing in it is the shortest route to each operation's
-   * own validation, and every operation here reports a missing field rather than crashing on
-   * one — which is itself worth pinning.
+   * The first two passes send `{}`. A body with nothing in it is the shortest route to each
+   * operation's own validation, and every operation here reports a missing field rather than
+   * crashing on one — which is itself worth pinning. A third kind of request, from
+   * `extraRequests` below, carries a real body and an **expected status**, so the success paths
+   * that an empty body cannot reach (the refresh-body token, signout with a body, the
+   * operator's `PUT /customer`) are asserted to succeed rather than merely to answer
+   * something declared.
    */
   const credentials = () => {
-    const claims = {
-      sub: 'drift-user',
-      exp: Math.floor(Date.now() / 1000) + 3600,
-    }
+    const claims = { sub: 'drift-user', exp: Math.floor(Date.now() / 1000) + 3600 }
     // `email` on the access token because `/profile` and `/customer` look the caller's record up
     // by address; without it every bearer route answered 401 and the pass reached no 200.
-    const access = mintToken(SIGNING, {
-      purpose: 'access',
-      ...claims,
-      email: CALLER_EMAIL,
-    })
+    const access = mintToken(SIGNING, { purpose: 'access', ...claims, email: CALLER_EMAIL })
     // A fresh `jti` per request, because a handoff is single use and each operation's pass
     // should reach `POST /auth/token`'s 200 rather than a 401 for a handoff already spent.
     const handoff = mintToken(SIGNING, {
@@ -284,11 +275,17 @@ describe('every implemented route answers what the contract declares', () => {
    *
    * Async because the refresh token is a real one, issued by this same server.
    */
+  type ExtraRequest = {
+    headers: Record<string, string>
+    payload: object
+    /** The status this request must get; anything else means the setup silently degraded. */
+    expected: number
+  }
   const extraRequests = async (
     instance: Server,
     method: string,
     path: string,
-  ): Promise<{ headers: Record<string, string>; payload: object }[]> => {
+  ): Promise<ExtraRequest[]> => {
     const refreshToken = async (): Promise<string> => {
       const issued = await instance.inject({
         method: 'POST',
@@ -296,6 +293,9 @@ describe('every implemented route answers what the contract declares', () => {
         payload: {},
         headers: credentials(),
       })
+      // Loud here: an issuance that failed would hand back `undefined`, and the refresh-body and
+      // signout passes would then degrade to a declared 401 and a no-body 204 and stay green.
+      expect(issued.statusCode, 'the drift fixture could not obtain a refresh token').toBe(200)
       return (issued.json() as { refreshToken: string }).refreshToken
     }
     const route = `${method} ${path}`
@@ -304,6 +304,7 @@ describe('every implemented route answers what the contract declares', () => {
         {
           headers: { 'content-type': 'application/json' },
           payload: { refreshToken: await refreshToken() },
+          expected: 200,
         },
       ]
     }
@@ -312,6 +313,7 @@ describe('every implemented route answers what the contract declares', () => {
         {
           headers: credentials(),
           payload: { refreshToken: await refreshToken() },
+          expected: 204,
         },
       ]
     }
@@ -320,6 +322,7 @@ describe('every implemented route answers what the contract declares', () => {
         {
           headers: credentials(),
           payload: { email: 'someone@example.test', plan: 'member' },
+          expected: 200,
         },
       ]
     }
@@ -356,12 +359,12 @@ describe('every implemented route answers what the contract declares', () => {
       // way this file's predecessor passed while checking nothing.
       expect(operation, `the contract lost ${method} ${path} between two reads`).toBeDefined()
 
-      const requests = [
+      const requests: (Omit<ExtraRequest, 'expected'> & { expected?: number })[] = [
         { headers: {}, payload: {} },
         { headers: credentials(), payload: {} },
         ...(await extraRequests(instance, method, path)),
       ]
-      for (const { headers, payload } of requests) {
+      for (const { headers, payload, expected } of requests) {
         const response = await instance.inject({
           method: method as 'GET',
           url: urlFor(path),
@@ -370,6 +373,11 @@ describe('every implemented route answers what the contract declares', () => {
         })
         const status = String(response.statusCode)
         const where = `${method} ${path} answered ${status}`
+        if (expected !== undefined) {
+          expect(response.statusCode, `${where}, expected the success path ${expected}`).toBe(
+            expected,
+          )
+        }
 
         // First: is this status described at all? `responses` is keyed only by the statuses
         // that declare a body, so asking it alone cannot tell an undeclared 401 from a
