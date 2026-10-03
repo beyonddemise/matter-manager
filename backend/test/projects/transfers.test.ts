@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest'
+import type { Identity } from '../../src/auth/oidc.js'
 import type { Participant } from '../../src/domain/index.js'
 import { MembershipRefused } from '../../src/projects/members.js'
 import { forgetRegistry, pointerId, REGISTRY_DATABASE } from '../../src/projects/registry.js'
@@ -63,10 +64,14 @@ function registry(
 let ensured: Seed[] = []
 
 /** Dependencies whose record ensurer records what it was asked for. */
-function deps(fake: FakeCouch) {
+function deps(
+  fake: FakeCouch,
+  authoriseAccept: (recipient: Identity) => Promise<void> = async () => {},
+) {
   ensured = []
   return {
     couch: fake.couch,
+    authoriseAccept,
     ensureRecord: async (seed: Seed) => {
       ensured.push(seed)
       return { _id: 'user:x', type: 'user' as const, ...seed }
@@ -316,5 +321,81 @@ describe('accepting an offer', () => {
     ).catch(() => undefined)
 
     expect(operations(fake)).not.toContain('putSecurity')
+  })
+})
+
+describe("accepting an active project is the recipient's plan to authorise", () => {
+  /** The pointer, archived or not, so a test states the one fact the hook is asked about. */
+  const archive = (fake: FakeCouch, archived: boolean) => {
+    const id = `${REGISTRY_DATABASE}/${pointerId(PROJECT_ID)}`
+    fake.documents.set(id, { ...(fake.documents.get(id) as object), archived } as never)
+  }
+
+  it('asks before anything is written, and a refusal leaves the project and the offer alone', async () => {
+    const fake = registry(undefined, offer())
+    const refusal = new Error('no room')
+
+    await expect(
+      acceptTransfer(
+        deps(fake, async () => {
+          throw refusal
+        }),
+        PROJECT_ID,
+        homeowner,
+        clock(),
+      ),
+    ).rejects.toBe(refusal)
+
+    expect(participantsIn(fake)).toEqual([{ role: 'owner', userid: INSTALLER }])
+    expect(operations(fake)).not.toContain('putSecurity')
+    expect(operations(fake)).not.toContain('putDoc')
+    expect(ensured).toEqual([])
+  })
+
+  it('asks about the recipient', async () => {
+    const fake = registry(undefined, offer())
+    const asked: Identity[] = []
+
+    await acceptTransfer(
+      deps(fake, async (recipient) => {
+        asked.push(recipient)
+      }),
+      PROJECT_ID,
+      homeowner,
+      clock(),
+    )
+
+    expect(asked).toEqual([homeowner])
+  })
+
+  it('does not ask for an archived project, whose unarchiving is gated instead', async () => {
+    const fake = registry(undefined, offer())
+    archive(fake, true)
+
+    await acceptTransfer(
+      deps(fake, async () => {
+        throw new Error('must not be asked')
+      }),
+      PROJECT_ID,
+      homeowner,
+      clock(),
+    )
+
+    expect(participantsIn(fake)).toEqual([{ role: 'owner', userid: HOMEOWNER }])
+  })
+
+  it("does not ask about an offer that is not the recipient's to accept", async () => {
+    const fake = registry(undefined, offer())
+
+    await expect(
+      acceptTransfer(
+        deps(fake, async () => {
+          throw new Error('must not be asked')
+        }),
+        PROJECT_ID,
+        { ...homeowner, emailVerified: false },
+        clock(),
+      ),
+    ).rejects.toBeInstanceOf(MembershipRefused)
   })
 })

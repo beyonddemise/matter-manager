@@ -632,6 +632,15 @@ export interface paths {
                     };
                 };
                 404: components["responses"]["NotFound"];
+                /** @description The change could not be made, for a reason the caller cannot act on */
+                500: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
             };
         };
         trace?: never;
@@ -865,8 +874,33 @@ export interface paths {
                 };
                 400: components["responses"]["BadRequest"];
                 401: components["responses"]["Unauthorized"];
+                /**
+                 * @description Refused by the RECIPIENT's plan, for one of two reasons a client branches on.
+                 *     Accepting makes the caller the owner of an active project, so their plan must
+                 *     include synchronized projects (`plan-no-sync`) and have room among the projects
+                 *     they own that are not archived (`project-limit-reached`). An archived project is
+                 *     not asked about; unarchiving it is. Nothing is written and the offer stays pending,
+                 *     so the recipient can accept after changing plan or archiving something.
+                 */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["PlanHasNoSync"] | components["schemas"]["ProjectLimitReached"];
+                    };
+                };
                 404: components["responses"]["NotFound"];
                 409: components["responses"]["Conflict"];
+                /** @description The transfer could not be accepted, for a reason the caller cannot act on */
+                500: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
             };
         };
         /** Decline an offer of ownership */
@@ -1040,8 +1074,8 @@ export interface components {
             reason: "not-a-manager";
         };
         /**
-         * @description Creating a project was refused: this plan does not include synchronized projects
-         *     (ADR 0009). The free plan keeps its projects on the device, so there is no server
+         * @description Creating a project, unarchiving one or accepting a transfer of one was refused: this
+         *     plan does not include synchronized projects (ADR 0009). The free plan keeps its projects on the device, so there is no server
          *     project to count - upgrading is the fix, not archiving.
          */
         PlanHasNoSync: {
@@ -1057,7 +1091,8 @@ export interface components {
             reason: "plan-no-sync";
         };
         /**
-         * @description Creating a project was refused: this plan has no room for another one (ADR 0009). The
+         * @description Creating a project, unarchiving one or accepting a transfer of one was refused: this
+         *     plan has no room for another one (ADR 0009). The
          *     count is of projects that are not archived; an archived project keeps its database but
          *     no longer takes a slot.
          */

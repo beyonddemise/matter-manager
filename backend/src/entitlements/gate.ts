@@ -55,6 +55,9 @@ export const ENFORCEMENT: Readonly<Record<Action, Enforcement>> = Object.freeze(
       // Unarchiving, judged by the OWNER's plan: archived projects do not count toward the
       // limit, so bringing one back is where the limit has to bite.
       { method: 'PATCH', path: '/projects/:projectId' },
+      // Accepting an offer of an active project makes the caller its owner, judged by the
+      // RECIPIENT's plan: otherwise a free account could be handed a server project.
+      { method: 'POST', path: '/transfers/:projectId' },
     ],
   },
   // The same routes as `project.create`, asked first: whether the plan has a server project at
@@ -64,6 +67,7 @@ export const ENFORCEMENT: Readonly<Record<Action, Enforcement>> = Object.freeze(
     routes: [
       { method: 'POST', path: '/projects' },
       { method: 'PATCH', path: '/projects/:projectId' },
+      { method: 'POST', path: '/transfers/:projectId' },
     ],
   },
   'project.invite': {

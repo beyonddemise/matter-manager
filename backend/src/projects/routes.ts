@@ -11,7 +11,7 @@
  * @module
  */
 
-import type { FastifyInstance, FastifyReply } from 'fastify'
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { bearerClaims, bearerSubject } from '../auth/bearer.js'
 import type { DenyList } from '../auth/deny-list.js'
 import type { SigningKey } from '../auth/jwt.js'
@@ -124,6 +124,16 @@ export interface ProjectDependencies {
 const CREATE: Action = 'project.create'
 const SYNC: Action = 'project.sync'
 const INVITE: Action = 'project.invite'
+
+/**
+ * A principal could not be built because CouchDB could not be read. Carries nothing: the cause
+ * was logged where it happened, and what a route answers is its own scrubbed 500. A class rather
+ * than the `CouchError` itself so a route can tell "the plan could not be read" from any other
+ * failure inside the same call.
+ */
+class PrincipalUnavailable extends Error {
+  override readonly name = 'PrincipalUnavailable'
+}
 
 /**
  * The roles this route may grant, checked before anything is written.
@@ -240,10 +250,35 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDepende
   })
 
   /**
+   * Builds somebody's principal for a route that asks the seam about a person it does not
+   * otherwise read, so the I/O in it cannot escape as a raw Fastify 500.
+   *
+   * `principalFor` and `principalOfOwner` each do registry and user-record reads, and any can raise
+   * `CouchError`. `POST /projects` answers that as a scrubbed problem+json 500; the unarchive
+   * and accept-transfer paths ask the same questions and have to fail the same way. The detail goes
+   * to the log, where somebody can act on it, and the caller gets
+   * {@link PrincipalUnavailable} to turn into their route's own 500. Only the building is wrapped:
+   * the gate's refusal is an answer, not a failure, and passes through untouched.
+   */
+  const principalLogged = async (
+    request: FastifyRequest,
+    what: string,
+    build: () => Promise<Principal>,
+  ): Promise<Principal> => {
+    try {
+      return await build()
+    } catch (error) {
+      request.log.error({ err: error }, what)
+      throw new PrincipalUnavailable()
+    }
+  }
+
+  /**
    * Turns the seam's refusal into the named 403 the page branches on.
    *
-   * Shared by `POST /projects` and the unarchive path of `PATCH /projects/:projectId`, because
-   * both ask the same two questions of a plan and must not word the answers differently.
+   * Shared by `POST /projects`, the unarchive path of `PATCH /projects/:projectId` and acceptance
+   * of a transfer, because all three ask the same two questions of a plan and must not word the
+   * answers differently.
    */
   const refuseEntitlement = (reply: FastifyReply, error: NotEntitledError) => {
     // Named, not empty. `reply.code(403).send()` told the page nothing, so it could not tell
@@ -444,7 +479,14 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDepende
         {
           couch: deps.couch,
           now,
-          authoriseUnarchive: async (owner) => gateActivation(await principalOfOwner(owner)),
+          authoriseUnarchive: async (owner) =>
+            gateActivation(
+              await principalLogged(
+                request,
+                'could not read the owner principal for an unarchive',
+                () => principalOfOwner(owner),
+              ),
+            ),
         },
         projectId,
         sub,
@@ -459,13 +501,17 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDepende
     } catch (error) {
       // The owner's plan refused an unarchive: answered exactly as `POST /projects` answers it.
       if (error instanceof NotEntitledError) return refuseEntitlement(reply, error)
+      // Already logged where it happened; the body says nothing a caller could act on.
+      if (error instanceof PrincipalUnavailable) {
+        return problem(reply, { title: 'That project could not be changed.', status: 500 })
+      }
       if (error instanceof SettingsRefused) {
-        // A role refusal is named so a client can tell it from the plan refusals above, which
-        // share its status and are fixed differently.
+        // A role refusal carries its name so a client can tell it from the plan refusals above,
+        // which share its status and are fixed differently.
         return problem(reply, {
           title: error.message,
           status: error.status,
-          ...(error.status === 403 ? { reason: 'not-a-manager' } : {}),
+          ...(error.reason === undefined ? {} : { reason: error.reason }),
         })
       }
       throw error
@@ -666,12 +712,30 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDepende
 
     try {
       await acceptTransfer(
-        { couch: deps.couch, ensureRecord: deps.ensureRecord },
+        {
+          couch: deps.couch,
+          ensureRecord: deps.ensureRecord,
+          // The recipient's own plan, as `POST /projects` reads the creator's: accepting makes
+          // them the owner of an active project, which is a creation as far as a plan goes.
+          authoriseAccept: async () =>
+            gateActivation(
+              await principalLogged(
+                request,
+                'could not read the recipient principal for a transfer',
+                () => principalFor(caller),
+              ),
+            ),
+        },
         projectId,
         identity,
         millis,
       )
     } catch (error) {
+      // Refused by the recipient's plan: the offer stays pending and nothing was written.
+      if (error instanceof NotEntitledError) return refuseEntitlement(reply, error)
+      if (error instanceof PrincipalUnavailable) {
+        return problem(reply, { title: 'That transfer could not be accepted.', status: 500 })
+      }
       if (error instanceof MembershipRefused) {
         return problem(reply, { title: error.message, status: error.status })
       }

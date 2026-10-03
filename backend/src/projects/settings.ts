@@ -63,15 +63,26 @@ export interface SettingsChange {
  */
 export type SettingsRefusalStatus = 400 | 403 | 404
 
+/**
+ * The refusals a client branches on, named. Only the role refusal has one: the others are
+ * answered by their status and message alone. It is a name rather than "status is 403" because
+ * 403 is shared with the plan refusals the route adds, and a route that inferred the name from
+ * the status would label the next 403 somebody throws here as a role refusal.
+ */
+export type SettingsRefusalReason = 'not-a-manager'
+
 /** A settings change that will not happen, carrying the status the route should answer with. */
 export class SettingsRefused extends Error {
   override readonly name = 'SettingsRefused'
   /** What the caller should be told, as an HTTP status. See {@link SettingsRefusalStatus}. */
   readonly status: SettingsRefusalStatus
+  /** The name a client branches on, when the refusal has one. See {@link SettingsRefusalReason}. */
+  readonly reason?: SettingsRefusalReason
 
-  constructor(status: SettingsRefusalStatus, message: string) {
+  constructor(status: SettingsRefusalStatus, message: string, reason?: SettingsRefusalReason) {
     super(message)
     this.status = status
+    if (reason !== undefined) this.reason = reason
   }
 }
 
@@ -178,7 +189,11 @@ export async function updateProjectSettings(
   const role = roleOf(pointer.participants, caller)
   if (role === undefined) throw new SettingsRefused(404, 'No such project.')
   if (!canManageMembers(role)) {
-    throw new SettingsRefused(403, 'Only an owner or a manager can change project settings.')
+    throw new SettingsRefused(
+      403,
+      'Only an owner or a manager can change project settings.',
+      'not-a-manager',
+    )
   }
 
   // Validated before anything is written, so a refusal leaves the stored project exactly as it

@@ -214,7 +214,7 @@ describe('who may change settings', () => {
 
     await expect(
       updateProjectSettings(deps, PROJECT_ID, GRACE, { name: 'Renamed' }),
-    ).rejects.toMatchObject({ status: 403 })
+    ).rejects.toMatchObject({ status: 403, reason: 'not-a-manager' })
     expect(pointerNow().projectName).toBe('Musterstraße 12')
   })
 

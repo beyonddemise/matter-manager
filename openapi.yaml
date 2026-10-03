@@ -468,6 +468,13 @@ paths:
                   - $ref: '#/components/schemas/PlanHasNoSync'
                   - $ref: '#/components/schemas/ProjectLimitReached'
         '404': { $ref: '#/components/responses/NotFound' }
+        # The owner's plan or project count could not be read while unarchiving. Scrubbed, as
+        # `POST /projects`'s 500 is.
+        '500':
+          description: The change could not be made, for a reason the caller cannot act on
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
 
   /projects/{projectId}/members:
     parameters:
@@ -622,12 +629,33 @@ paths:
         '204': { description: Accepted; ownership has moved }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: |
+            Refused by the RECIPIENT's plan, for one of two reasons a client branches on.
+            Accepting makes the caller the owner of an active project, so their plan must
+            include synchronized projects (`plan-no-sync`) and have room among the projects
+            they own that are not archived (`project-limit-reached`). An archived project is
+            not asked about; unarchiving it is. Nothing is written and the offer stays pending,
+            so the recipient can accept after changing plan or archiving something.
+          content:
+            application/problem+json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/PlanHasNoSync'
+                  - $ref: '#/components/schemas/ProjectLimitReached'
         '404': { $ref: '#/components/responses/NotFound' }
         # `acceptTransfer` re-reads and retries a conflicting registry write three times and then
         # refuses, because a conflict that keeps happening is something the recipient should hear
         # about rather than wait through. The one status `MembershipRefused` can carry that this
         # operation did not declare.
         '409': { $ref: '#/components/responses/Conflict' }
+        # The recipient's plan or project count could not be read. The body says nothing about
+        # CouchDB; that goes to the log.
+        '500':
+          description: The transfer could not be accepted, for a reason the caller cannot act on
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
     delete:
       tags: [projects]
       summary: Decline an offer of ownership
@@ -818,8 +846,8 @@ components:
     PlanHasNoSync:
       type: object
       description: |
-        Creating a project was refused: this plan does not include synchronized projects
-        (ADR 0009). The free plan keeps its projects on the device, so there is no server
+        Creating a project, unarchiving one or accepting a transfer of one was refused: this
+        plan does not include synchronized projects (ADR 0009). The free plan keeps its projects on the device, so there is no server
         project to count - upgrading is the fix, not archiving.
       required: [title, status, reason]
       properties:
@@ -837,7 +865,8 @@ components:
     ProjectLimitReached:
       type: object
       description: |
-        Creating a project was refused: this plan has no room for another one (ADR 0009). The
+        Creating a project, unarchiving one or accepting a transfer of one was refused: this
+        plan has no room for another one (ADR 0009). The
         count is of projects that are not archived; an archived project keeps its database but
         no longer takes a slot.
       required: [title, status, reason]

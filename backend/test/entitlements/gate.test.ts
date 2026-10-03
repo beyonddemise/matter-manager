@@ -5,11 +5,13 @@ import { refreshStore } from '../../src/auth/refresh-store.js'
 import { ACTIONS, type Action, PROJECT_LIMITS, type Principal } from '../../src/domain/index.js'
 import { ENFORCEMENT, gate, gatedRoutes, NotEntitledError } from '../../src/entitlements/gate.js'
 import { forgetRegistry, pointerId, REGISTRY_DATABASE } from '../../src/projects/registry.js'
+import { transferId } from '../../src/projects/transfers.js'
 import { buildServer, type Server } from '../../src/server.js'
 import { forgetUsersDatabase } from '../../src/users/database.js'
 import { recordEnsurer } from '../../src/users/ensure.js'
 import { userRecords } from '../../src/users/records.js'
-import { fakeCouch } from '../support/couch.js'
+import { type FakeCouch, fakeCouch } from '../support/couch.js'
+import { accessTokenFor } from '../support/tokens.js'
 
 /**
  * Somebody who has used nothing yet.
@@ -77,6 +79,12 @@ describe('the seam itself', () => {
   })
 })
 
+/** Who the transfer driver accepts as: the recipient, whose plan the route asks about. */
+const GRACE = { sub: 'google|grace', email: 'grace@example.test' }
+
+/** The active project offered to {@link GRACE}; seeded by {@link serverWithGatedRoutes}. */
+const TRANSFERRED_PROJECT = '5d7f1a2e-7c41-4a52-9b38-0e6f1d2c3a4b'
+
 /** The project the PATCH driver unarchives; seeded by {@link serverWithGatedRoutes}. */
 const ARCHIVED_PROJECT = '3b241101-e2bb-4255-8caf-4136c566a962'
 
@@ -87,7 +95,9 @@ const ARCHIVED_PROJECT = '3b241101-e2bb-4255-8caf-4136c566a962'
  * here fails loudly below — which is the point: the next one to be implemented (M5-3's
  * membership endpoint) cannot be added without somebody arriving at this file.
  */
-const DRIVERS: Readonly<Record<string, (built: Server, key: SigningKey) => Promise<unknown>>> = {
+const DRIVERS: Readonly<
+  Record<string, (built: Server, key: SigningKey, couch: FakeCouch) => Promise<unknown>>
+> = {
   'POST /projects': (built, key) =>
     built.inject({
       method: 'POST',
@@ -121,6 +131,18 @@ const DRIVERS: Readonly<Record<string, (built: Server, key: SigningKey) => Promi
     await patch(true)
     return patch(false)
   },
+  // Accepts an offer of an active project to a recipient the gate is called for. The offer is
+  // seeded in the registry below, for the same address the token carries.
+  'POST /transfers/:projectId': (built, key, couch) => {
+    for (const [id, document] of Object.entries(offeredProject())) couch.documents.set(id, document)
+    return built.inject({
+      method: 'POST',
+      url: `/transfers/${TRANSFERRED_PROJECT}`,
+      headers: {
+        authorization: `Bearer ${accessTokenFor(key, { sub: GRACE.sub, email: GRACE.email })}`,
+      },
+    })
+  },
   'PUT /projects/:projectId/members': (built, key) =>
     built.inject({
       method: 'PUT',
@@ -134,6 +156,39 @@ const DRIVERS: Readonly<Record<string, (built: Server, key: SigningKey) => Promi
       },
       payload: { email: 'grace@example.test', role: 'read' },
     }),
+}
+
+/**
+ * The registry documents for {@link TRANSFERRED_PROJECT} and its pending offer to {@link GRACE}.
+ *
+ * A function, because accepting consumes both: the enumeration drives this route once per action
+ * it is gated by, so the driver puts them back each time rather than let the second visit meet
+ * an offer that no longer exists and never reach the gate.
+ */
+function offeredProject(): Record<string, Record<string, unknown>> {
+  return {
+    [`${REGISTRY_DATABASE}/${pointerId(TRANSFERRED_PROJECT)}`]: {
+      _id: pointerId(TRANSFERRED_PROJECT),
+      _rev: '1-a',
+      type: 'projectPointer',
+      projectId: TRANSFERRED_PROJECT,
+      dbName: `project_${TRANSFERRED_PROJECT}`,
+      projectName: 'Offered',
+      participants: [{ role: 'owner', userid: ADA.sub }],
+      addedAt: '2026-08-27T09:00:00.000Z',
+    },
+    [`${REGISTRY_DATABASE}/${transferId(TRANSFERRED_PROJECT)}`]: {
+      _id: transferId(TRANSFERRED_PROJECT),
+      _rev: '1-a',
+      type: 'transfer',
+      projectId: TRANSFERRED_PROJECT,
+      toEmail: GRACE.email,
+      fromSub: ADA.sub,
+      retainAccess: 'none',
+      createdAt: '2026-08-27T09:00:00.000Z',
+      expiresAt: '2999-01-01T00:00:00.000Z',
+    },
+  }
 }
 
 /** A server with every gated route wired, and a gate that records what it was asked. */
@@ -152,7 +207,7 @@ function serverWithGatedRoutes() {
   // would be invisible to the routes' instance: `principalFor` would read no user record, fall back
   // to `free`, and the test would pass or fail for a reason unrelated to what it asserted. One
   // instance means the server behaves like a deployment, where there is one database.
-  const couch = fakeCouch({
+  const fake = fakeCouch({
     seed: {
       [`${REGISTRY_DATABASE}/${pointerId(ARCHIVED_PROJECT)}`]: {
         _id: pointerId(ARCHIVED_PROJECT),
@@ -166,8 +221,10 @@ function serverWithGatedRoutes() {
         archived: true,
         archivedAt: 1_700_000_000,
       },
+      ...offeredProject(),
     },
-  }).couch
+  })
+  const couch = fake.couch
   const records = userRecords(couch)
   app = buildServer({
     logger: false,
@@ -186,7 +243,7 @@ function serverWithGatedRoutes() {
     },
   })
 
-  return { built: app, key, calls }
+  return { built: app, key, calls, fake }
 }
 
 describe('the enumeration that makes the seam real', () => {
@@ -212,8 +269,10 @@ describe('the enumeration that makes the seam real', () => {
     expect(gatedRoutes().map((entry) => `${entry.method} ${entry.path}`)).toEqual([
       'POST /projects',
       'PATCH /projects/:projectId',
+      'POST /transfers/:projectId',
       'POST /projects',
       'PATCH /projects/:projectId',
+      'POST /transfers/:projectId',
       'PUT /projects/:projectId/members',
     ])
   })
@@ -231,13 +290,15 @@ describe('the enumeration that makes the seam real', () => {
       .map((entry) => `${entry.method} ${entry.path}`)
       .filter((route) => registered.has(route))
 
-    // `POST /projects` and `PATCH /projects/:projectId` each twice: they ask `project.sync` and
+    // `POST /projects`, `PATCH /projects/:projectId` and `POST /transfers/:projectId` each twice: they ask `project.sync` and
     // then `project.create`.
     expect(implemented).toEqual([
       'POST /projects',
       'PATCH /projects/:projectId',
+      'POST /transfers/:projectId',
       'POST /projects',
       'PATCH /projects/:projectId',
+      'POST /transfers/:projectId',
       'PUT /projects/:projectId/members',
     ])
   })
@@ -246,7 +307,7 @@ describe('the enumeration that makes the seam real', () => {
     // Not "a gate is available" — that a request through this route reaches it. A handler that
     // forgot the call would answer 201 and provision a database, which is indistinguishable
     // from correct behaviour in every other test.
-    const { built, key, calls } = serverWithGatedRoutes()
+    const { built, key, calls, fake } = serverWithGatedRoutes()
     const registered = new Set(
       built.registeredRoutes().map((route) => `${route.method} ${route.url}`),
     )
@@ -266,7 +327,7 @@ describe('the enumeration that makes the seam real', () => {
       }
 
       calls.length = 0
-      await drive(built, key)
+      await drive(built, key, fake)
       expect(calls, `${route} did not call the gate`).toContain(entry.action)
     }
   })
@@ -275,14 +336,20 @@ describe('the enumeration that makes the seam real', () => {
     // Order is behaviour: a free account over its (zero) server allowance must hear
     // `plan-no-sync`, not `project-limit-reached`, because only one of those is fixed by
     // upgrading to a plan that syncs at all.
-    const { built, key, calls } = serverWithGatedRoutes()
-    await DRIVERS['POST /projects']?.(built, key)
+    const { built, key, calls, fake } = serverWithGatedRoutes()
+    await DRIVERS['POST /projects']?.(built, key, fake)
     expect(calls).toEqual(['project.sync', 'project.create'])
   })
 
   it('asks the same way when unarchiving, with the owner as the principal', async () => {
-    const { built, key, calls } = serverWithGatedRoutes()
-    await DRIVERS['PATCH /projects/:projectId']?.(built, key)
+    const { built, key, calls, fake } = serverWithGatedRoutes()
+    await DRIVERS['PATCH /projects/:projectId']?.(built, key, fake)
+    expect(calls).toEqual(['project.sync', 'project.create'])
+  })
+
+  it('asks the same way when accepting a transfer, with the recipient as the principal', async () => {
+    const { built, key, calls, fake } = serverWithGatedRoutes()
+    await DRIVERS['POST /transfers/:projectId']?.(built, key, fake)
     expect(calls).toEqual(['project.sync', 'project.create'])
   })
 
@@ -290,8 +357,8 @@ describe('the enumeration that makes the seam real', () => {
     // The positive control. Without it, the assertion above passes just as happily when
     // `calls` is never written to — and a suite of "the gate was called" assertions that all
     // pass against a gate nobody wired up reads exactly like a suite that works.
-    const { built, key, calls } = serverWithGatedRoutes()
-    await DRIVERS['POST /projects']?.(built, key)
+    const { built, key, calls, fake } = serverWithGatedRoutes()
+    await DRIVERS['POST /projects']?.(built, key, fake)
     expect(calls).toContain('project.create')
 
     calls.length = 0
