@@ -19,6 +19,7 @@ import {
 } from '../../../src/ui/db/project-database.js'
 import { activateLocale } from '../../../src/ui/i18n/localization.js'
 import { ProjectActionError, type ProjectActions } from '../../../src/ui/project-actions.js'
+import { projectActionRunning } from '../../../src/ui/project-busy.js'
 import {
   type NewProject,
   type Project,
@@ -69,6 +70,8 @@ interface Recorded {
   readonly renamed: [string, string][]
   readonly clients: [string, string | undefined][]
   readonly indexed: Pick<Project, 'projectId' | 'dbName' | 'name'>[]
+  /** Whether a project action was held while each server project was indexed. */
+  readonly indexedWhileBusy: boolean[]
   readonly navigated: string[]
   /** Every project action the page asked for: which, on which database, and any typed name. */
   readonly acted: [string, string, string?][]
@@ -116,6 +119,7 @@ beforeEach(() => {
     renamed: [],
     clients: [],
     indexed: [],
+    indexedWhileBusy: [],
     navigated: [],
     acted: [],
     refreshed: 0,
@@ -176,6 +180,7 @@ async function page(input: Partial<ProjectsInput> = {}): Promise<ProjectsView> {
         },
         indexServerProject: async (indexed: Project) => {
           recorded.indexed.push(indexed)
+          recorded.indexedWhileBusy.push(projectActionRunning())
         },
       }}
       .navigate=${(hash: string) => recorded.navigated.push(hash)}
@@ -375,6 +380,10 @@ describe('the member plan', () => {
     ])
     expect(recorded.localCreated).toEqual([])
     expect(recorded.refreshed).toBe(1)
+    // Indexed and handed to replication as a project action: a shell refresh in between would
+    // hand replication a list without the new copy.
+    expect(recorded.indexedWhileBusy).toEqual([true])
+    expect(projectActionRunning()).toBe(false)
     // The slot is reused for the next render; it must not still hold the name just created.
     expect(fieldOf(find(view, '[data-slot-empty]'), 'name')).toBe('')
   })
@@ -553,6 +562,20 @@ describe('the pro plan', () => {
 })
 
 describe('every plan', () => {
+  it('limits names and clients to the contract’s 200 characters', async () => {
+    const fields = (view: Element) => [
+      ...view.querySelectorAll('[data-field="name"], [data-field="client"]'),
+    ]
+    const free = await page()
+    const member = await page({ plan: 'member', reportedLimit: 3 })
+    const pro = await page({ plan: 'pro', reportedLimit: -1, local: [entry()] })
+    await click(pro, '[data-rename]', find(pro, '[data-row="project_local_a"]'))
+
+    const all = [...fields(free), ...fields(member), ...fields(pro)]
+    expect(all.length).toBeGreaterThanOrEqual(6)
+    for (const field of all) expect(field.getAttribute('maxlength')).toBe('200')
+  })
+
   it('lists projects shared with the reader separately', async () => {
     const view = await page({
       plan: 'member',
@@ -802,11 +825,38 @@ describe('the actions menu', () => {
     expect(item(view, 'project_local_a', 'promote').disabled).toBe(false)
   })
 
-  it('offers the free plan’s card a menu too, with sync refused by the plan', async () => {
+  it('gives the free plan’s card no sync controls: the upgrade hint covers them', async () => {
+    // Ruling C-R14.
     const view = await page({ local: [entry()] })
 
-    expect(item(view, 'project_local_a', 'promote').disabled).toBe(true)
+    expect(view.querySelector('[data-row="project_local_a"] [data-action="promote"]')).toBeNull()
+    expect(view.querySelector('[data-row="project_local_a"] [data-action="download"]')).toBeNull()
     expect(item(view, 'project_local_a', 'deleteLocal').disabled).toBe(false)
+    expect(view.querySelector('[data-upgrade-hint]')).not.toBeNull()
+  })
+
+  it('says only the owner can remove a shared project from the server', async () => {
+    // Ruling C-R13: a manager may rename, but not remove.
+    const shared = project({ role: 'manage', owner: { ownerType: 'user', ownerId: 'them' } })
+    const view = await member({ server: [shared] })
+
+    expect(item(view, 'project_p1', 'removeServer').disabled).toBe(true)
+    expect(text(item(view, 'project_p1', 'removeServer'))).toContain(
+      'Only the owner can remove this from the server',
+    )
+  })
+
+  it('says the project changed when its row is gone by the time it is confirmed', async () => {
+    const view = await member({ local: [synced], server: [project()] })
+    await choose(view, 'project_p1', 'removeLocal')
+
+    view.input = { ...view.input, local: [], server: [] }
+    await view.updateComplete
+    await click(view, '[data-confirm]', dialog(view))
+    await settled(view)
+
+    expect(recorded.acted).toEqual([])
+    expect(text(find(view, '[data-error]'))).toContain('This project changed — try again')
   })
 
   it('speaks German in its confirmations', async () => {

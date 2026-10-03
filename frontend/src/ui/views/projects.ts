@@ -19,6 +19,7 @@ import {
   type ProjectActions,
   projectActions,
 } from '../project-actions.js'
+import { beginProjectAction } from '../project-busy.js'
 import {
   createProject,
   type NewProject,
@@ -69,6 +70,12 @@ import {
  *
  * @module
  */
+
+/**
+ * The longest name or client the contract accepts (`openapi.yaml`, `maxLength: 200`). Enforced
+ * by the fields, so a local-only project cannot hold a name its promotion would be refused for.
+ */
+const TEXT_MAX_LENGTH = 200
 
 /** The local-only project operations the page performs. Injectable so a test owns no database. */
 export interface LocalProjects {
@@ -243,8 +250,15 @@ export class ProjectsView extends LitElement {
           { api: this.api ?? projects(), online: () => this.input.online },
           request,
         )
-        await this.locals().indexServerProject(project)
-        this.sync?.set(replicated(model, project))
+        // Held as a project action (`project-busy.ts`): a shell refresh between the two would
+        // hand replication a list read before the copy was indexed, stopping the new copy.
+        const end = beginProjectAction()
+        try {
+          await this.locals().indexServerProject(project)
+          this.sync?.set(replicated(model, project))
+        } finally {
+          end()
+        }
       } else {
         await this.locals().create(request)
       }
@@ -338,7 +352,9 @@ export class ProjectsView extends LitElement {
   /**
    * Runs the removal being confirmed, against the row as the page shows it **now**: the inputs
    * may have changed while the dialog was open, and the model is the authority, not the dialog.
-   * The dialog closes once it is done, so a failure is read on the page.
+   * A row that is gone by then (removed, promoted, archived elsewhere) is said to have changed,
+   * rather than the dialog closing as if it had worked. The dialog closes once it is done, so a
+   * failure is read on the page.
    */
   private async confirm(): Promise<void> {
     const asked = this.confirming
@@ -346,8 +362,12 @@ export class ProjectsView extends LitElement {
     const model = this.model()
     const row = [...model.owned, ...model.shared].find((r) => r.key === asked.row.key)
     const actions = this.projectActions()
+    if (row === undefined) {
+      this.error = msg('This project changed — try again')
+      this.confirming = undefined
+      return
+    }
     await this.run(async () => {
-      if (row === undefined) return
       if (asked.action === 'removeLocal') await actions.removeLocalCopy(model, row)
       else if (asked.action === 'removeServer') await actions.removeFromServer(model, row)
       else await actions.deleteLocalProject(model, row, this.typed)
@@ -498,7 +518,7 @@ export class ProjectsView extends LitElement {
       <wa-card data-create-card class="app-form">
         <div class="wa-stack wa-gap-m">
           <h2>${msg('Create your project')}</h2>
-          <wa-input data-field="name" label=${msg('Name')}></wa-input>
+          <wa-input data-field="name" maxlength=${TEXT_MAX_LENGTH} label=${msg('Name')}></wa-input>
           ${this.renderCreateReason(model)}
           <wa-button
             data-create
@@ -520,7 +540,7 @@ export class ProjectsView extends LitElement {
         <div class="wa-stack wa-gap-m">
           <h2>${msg('Name your project')}</h2>
           <p>${msg('Everything recorded on this device so far is in it.')}</p>
-          <wa-input data-field="name" label=${msg('Name')}></wa-input>
+          <wa-input data-field="name" maxlength=${TEXT_MAX_LENGTH} label=${msg('Name')}></wa-input>
           <wa-button
             data-save
             variant="brand"
@@ -552,7 +572,10 @@ export class ProjectsView extends LitElement {
                   </wa-button>`
                 : nothing
             }
-            ${this.renderMenu(row)}
+            ${renderActionsMenu(row, this.busy, (action) => this.choose(row, action), [
+              'promote',
+              'download',
+            ])}
           </div>
           ${this.renderRowNote(row)}
         </div>
@@ -581,6 +604,7 @@ export class ProjectsView extends LitElement {
       <li data-slot-empty class="wa-cluster wa-gap-s app-project-slot">
         <wa-input
           data-field="name"
+          maxlength=${TEXT_MAX_LENGTH}
           label=${msg('New project')}
           with-label="false"
           placeholder=${msg('New project name')}
@@ -712,8 +736,8 @@ export class ProjectsView extends LitElement {
         }}
       >
         <div class="wa-stack wa-gap-m">
-          <wa-input data-field="name" label=${msg('Name')}></wa-input>
-          <wa-input data-field="client" label=${msg('Client (optional)')}></wa-input>
+          <wa-input data-field="name" maxlength=${TEXT_MAX_LENGTH} label=${msg('Name')}></wa-input>
+          <wa-input data-field="client" maxlength=${TEXT_MAX_LENGTH} label=${msg('Client (optional)')}></wa-input>
           ${this.renderCreateReason(model)}
         </div>
         <wa-button slot="footer" data-cancel @click=${() => {
@@ -746,11 +770,12 @@ export class ProjectsView extends LitElement {
     if (this.editing === row.key) {
       return html`
         <div data-rename-form class="wa-cluster wa-gap-xs">
-          <wa-input data-field="name" label=${msg('Name')} value=${row.name}></wa-input>
+          <wa-input data-field="name" maxlength=${TEXT_MAX_LENGTH} label=${msg('Name')} value=${row.name}></wa-input>
           ${
             withClient
               ? html`<wa-input
                   data-field="client"
+                  maxlength=${TEXT_MAX_LENGTH}
                   label=${msg('Client')}
                   value=${row.client ?? ''}
                 ></wa-input>`

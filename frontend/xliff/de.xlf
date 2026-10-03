@@ -922,6 +922,14 @@
   <source>Also remove projects stored only on this device</source>
   <target>Auch Projekte entfernen, die nur auf diesem Gerät gespeichert sind</target>
 </trans-unit>
+<trans-unit id="s655406defe2cb0cf">
+  <source>Only the owner can remove this from the server</source>
+  <target>Nur der Eigentümer kann dies vom Server entfernen</target>
+</trans-unit>
+<trans-unit id="se69e1c39eae660c9">
+  <source>This project changed — try again</source>
+  <target>Dieses Projekt hat sich geändert – bitte versuchen Sie es erneut</target>
+</trans-unit>
 </body>
 </file>
 </xliff>

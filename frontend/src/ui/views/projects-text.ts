@@ -63,6 +63,18 @@ export function reasonText(reason: Reason): string {
   }
 }
 
+/**
+ * Why a menu action is refused, beside it. The reason's own sentence, except where the action
+ * changes what the reader can do about it: removing from the server is the owner's alone (ruling
+ * C-R13), so "the owner or a manager" — right for renaming — would send a manager to try.
+ */
+export function menuReasonText(action: MenuAction, reason: Refusal): string {
+  if (action === 'removeServer' && reason === 'role') {
+    return msg('Only the owner can remove this from the server')
+  }
+  return reasonText(reason)
+}
+
 /** The actions the menu offers: every row action except opening and renaming, in menu order. */
 export type MenuAction = Exclude<keyof RowActions, 'open' | 'rename'>
 

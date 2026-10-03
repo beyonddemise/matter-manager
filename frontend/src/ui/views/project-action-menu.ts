@@ -17,7 +17,7 @@ import { msg, str } from '@lit/localize'
 import { html, nothing, type TemplateResult } from 'lit'
 import { isLocalOnlyDatabase } from '../../data/index.js'
 import type { Row } from '../projects-model.js'
-import { actionText, type MenuAction, reasonText } from './projects-text.js'
+import { actionText, type MenuAction, menuReasonText } from './projects-text.js'
 
 /** The menu's actions, in the order offered. */
 const MENU_ACTIONS: readonly MenuAction[] = [
@@ -56,13 +56,19 @@ export function nameConfirmed(row: Row, typed: string): boolean {
  * A row's actions menu: every action that applies to it, refused ones disabled with their
  * reason beside them, so the reader learns what would make them possible. Nothing at all when
  * no action applies.
+ *
+ * @param hidden actions the layout leaves out even when they apply: the free plan's card offers
+ *   no sync controls, since its upgrade hint already says what syncing takes (ruling C-R14)
  */
 export function renderActionsMenu(
   row: Row,
   busy: boolean,
   choose: (action: MenuAction) => void,
+  hidden: readonly MenuAction[] = [],
 ): TemplateResult | typeof nothing {
-  const offered = MENU_ACTIONS.filter((action) => row.actions[action].reason !== 'not-applicable')
+  const offered = MENU_ACTIONS.filter(
+    (action) => row.actions[action].reason !== 'not-applicable' && !hidden.includes(action),
+  )
   if (offered.length === 0) return nothing
   return html`
     <wa-dropdown
@@ -88,7 +94,7 @@ export function renderActionsMenu(
             ${
               reason === undefined
                 ? nothing
-                : html`<span slot="details" class="app-empty">${reasonText(reason)}</span>`
+                : html`<span slot="details" class="app-empty">${menuReasonText(action, reason)}</span>`
             }
           </wa-dropdown-item>
         `
