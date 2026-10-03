@@ -115,7 +115,7 @@ already has a record from the operator who gave them the plan.
 
 Without a record, a user is `free` by definition, and `GET /profile` answers from the token's
 claims (`sub`, `email`, `name`) with defaults for the rest. All record writes go through one
-`ensureRecord(email, sub, name)` so the four triggers cannot create records four ways.
+`ensureRecord(email, sub, name)` so the triggers cannot each create records their own way.
 
 **Sign-ins are logged**, for now as one structured `console.log` line per successful sign-in:
 `{ msg: 'sign-in', at, sub, email, provider, hasRecord }`. It goes to stdout like the backend's
