@@ -281,7 +281,7 @@ describe('the page', () => {
   it('offers a way back', async () => {
     await seed()
     const element = await page()
-    expect(element.querySelector('a[href="#/"]')).not.toBeNull()
+    expect(element.querySelector('a[href="#/devices"]')).not.toBeNull()
   })
 })
 
@@ -401,7 +401,7 @@ describe('an address that names no device', () => {
 
     expect(element.querySelector('wa-qr-code')).toBeNull()
     expect(element.textContent).toContain('not found')
-    expect(element.querySelector('a[href="#/"]')).not.toBeNull()
+    expect(element.querySelector('a[href="#/devices"]')).not.toBeNull()
   })
 
   it('treats a hand-mangled uuid as "no such device" rather than failing to render', async () => {

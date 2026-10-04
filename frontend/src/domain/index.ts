@@ -44,7 +44,6 @@ export {
 // are how `planNewDevice` and `planDeviceEdit` agree with each other, not an API for callers:
 // a view that validated a name itself would be a second answer to a question `core` already
 // answers, which is the whole failure this module was extracted to prevent.
-export { type MigrationPlan, planMigration } from './documents/migrate.js'
 export {
   type DeviceCreation,
   type DeviceDraft,
@@ -119,6 +118,19 @@ export {
   type ExportSelection,
   selectForExport,
 } from './pdf/selection.js'
+export {
+  canOwnAnother,
+  isPlan,
+  LAYOUTS,
+  limitFor,
+  type Plan,
+  PROJECT_LIMITS,
+  planOf,
+  planSyncs,
+  SYNCED_PLANS,
+  showsUpgrade,
+  withinLimit,
+} from './plan.js'
 export type { ProjectRole } from './role.js'
 export {
   devicesInRoom,

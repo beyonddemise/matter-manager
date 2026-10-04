@@ -1,41 +1,26 @@
 /**
- * Which project the interface is showing, and which ones it can show.
+ * Which project the interface is showing.
  *
- * Until #55 there was one catalogue, `project_local`, and no question to answer. Now an account
- * can have several, so something has to remember which one is open and hand the views the right
- * database.
+ * Every device holds one or more project databases, listed in the local index; the projects page
+ * is where one is chosen (Open), and this module remembers the choice and, given the page's
+ * model, says which database the views open and whether it may be written to.
  *
  * @module
  */
 
-import type { ProjectRole } from '../domain/index.js'
+import { isLocalOnlyDatabase } from '../data/index.js'
 import { writeStoredPreference } from './preferences.js'
-
-/** One project the switcher can offer. */
-export interface SwitchableProject {
-  readonly projectId: string
-  readonly dbName: string
-  readonly name: string
-  readonly role: ProjectRole
-  readonly archived: boolean
-}
+import type { ProjectsModel } from './projects-model.js'
 
 /**
- * The catalogue that lives only here.
+ * The choice stored before projects had ids of their own on every device: today's catalogue.
  *
- * It predates accounts, and everything anybody recorded before signing in is in it. Keeping it
- * in the list is the difference between "your devices are under *On this device*" and their
- * having silently vanished the moment somebody signed in — which for an application whose whole
- * promise is not losing a code would be the worst possible first impression of having an
- * account.
- *
- * `owner`, because it is theirs and nobody else's; `archived: false`, because there is nowhere
- * to archive it to. Its name is not stored here — it is a user-visible string and belongs with
- * the translations.
+ * Still the default when nothing is stored, and still matched, because browsers that used the
+ * header switcher hold it. It means {@link LOCAL_DATABASE_NAME}.
  */
 export const LOCAL_PROJECT_ID = 'local'
 
-/** The database that catalogue has always lived in. Unchanged, so nothing has to be moved. */
+/** The database the first-run catalogue has always lived in. Unchanged, so nothing moves. */
 export const LOCAL_DATABASE_NAME = 'project_local'
 
 export const CURRENT_PROJECT_KEY = 'matter-manager.project'
@@ -49,37 +34,17 @@ export const CURRENT_PROJECT_KEY = 'matter-manager.project'
  */
 export const PROJECT_CHANGED = 'matter-manager:project-changed'
 
-/**
- * Which projects the switcher offers, the local catalogue first.
- *
- * Archived projects are left out — that is what archiving is for — but they are still *listed*
- * by the API, so somewhere else can offer to bring one back. Filtering here rather than at the
- * source is what keeps both possible.
- *
- * @param name what to call the local catalogue, in the reader's language
- */
-export function switchableProjects(
-  serverProjects: readonly SwitchableProject[],
-  name: string,
-): readonly SwitchableProject[] {
-  const local: SwitchableProject = {
-    projectId: LOCAL_PROJECT_ID,
-    dbName: LOCAL_DATABASE_NAME,
-    name,
-    role: 'owner',
-    archived: false,
-  }
-  return [local, ...serverProjects.filter((project) => !project.archived)]
+/** Which project to make current, and how to open it. */
+export interface CurrentTarget {
+  readonly dbName: string
+  /** What the current-project choice remembers: the project id, or the name while local-only. */
+  readonly id: string
+  readonly editable: boolean
 }
 
 /**
  * The project id currently open, defaulting to the local catalogue.
  *
- * The default matters more than it looks. Somebody who has never signed in, somebody signed out,
- * and somebody whose stored choice names a project they have since lost access to all arrive
- * here — and for all three the honest answer is the catalogue that is definitely on this device.
- */
-/*
  * Read by hand rather than through `readStoredPreference`, which takes the set of permitted
  * values: a project id is a uuid from the server, so there is no closed set to check against.
  * The guard around the supplier is the part that matters and is kept.
@@ -103,23 +68,35 @@ export function writeCurrentProjectId(
 }
 
 /**
- * The database for the open project, given what is available.
+ * The project the views open, given the stored choice and the page's model.
  *
- * Falls back to the local catalogue whenever the stored choice is not among the projects on
- * offer: access revoked, project archived, signed out, or a stored id from a build that named
- * them differently. **Never an empty result and never a guess** — a view handed no database
- * shows an empty catalogue, which is indistinguishable from having lost everything.
+ * The choice is matched by **database name, then project id**, because Open stores
+ * `projectId ?? dbName`: a local-only project has only its name, and a project promoted since it
+ * was chosen keeps its old name in storage. A promotion's source never matches by id. The legacy
+ * {@link LOCAL_PROJECT_ID} means the first-run catalogue. Only projects with a database on this
+ * device are candidates.
+ *
+ * When nothing matches — a copy removed, signed out, a stale id — it falls back to the first
+ * local-only project (always editable), then to any copy, then to the first-run catalogue.
+ * **Never an empty answer**: a view handed no database shows an empty catalogue, which looks
+ * exactly like having lost everything.
+ *
+ * `editable` is the model's: that is how a lapsed owner's server project, or an archived one's
+ * copy, comes to open read-only.
  */
-export function currentDatabaseName(
-  available: readonly SwitchableProject[],
-  currentId: string,
-): string {
-  return available.find((project) => project.projectId === currentId)?.dbName ?? LOCAL_DATABASE_NAME
-}
-
-/** Whether the open project may be edited. Read-only projects hide their controls entirely. */
-export function canEdit(available: readonly SwitchableProject[], currentId: string): boolean {
-  const project = available.find((candidate) => candidate.projectId === currentId)
-  // Absent means the local catalogue, which is always the reader's own.
-  return project === undefined || project.role !== 'read'
+export function resolveCurrentProject(storedId: string, model: ProjectsModel): CurrentTarget {
+  const onDevice = [...model.owned, ...model.shared].filter((row) => row.location !== 'server')
+  const wanted = storedId === LOCAL_PROJECT_ID ? LOCAL_DATABASE_NAME : storedId
+  const chosen =
+    // The database named first: it is the exact choice, and for a local-only project the only one.
+    onDevice.find((row) => row.dbName === wanted) ??
+    // Then the project id — never on a promotion's source, which records the id before its data
+    // has moved: the choice then means the survivor, and the source is about to be destroyed.
+    onDevice.find((row) => row.projectId === wanted && !isLocalOnlyDatabase(row.dbName)) ??
+    onDevice.find((row) => row.projectId === undefined) ??
+    onDevice[0]
+  if (chosen === undefined) {
+    return { dbName: LOCAL_DATABASE_NAME, id: LOCAL_DATABASE_NAME, editable: true }
+  }
+  return { dbName: chosen.dbName, id: chosen.projectId ?? chosen.dbName, editable: chosen.editable }
 }

@@ -21,7 +21,20 @@
 /** What the caller wants to create. */
 export interface NewProject {
   readonly name: string
-  readonly address?: string
+  /** Who the project is for. Optional, as the contract has it. */
+  readonly client?: string
+}
+
+/**
+ * What the caller wants to change. Every field is optional and independent, but at least one
+ * must be present — the contract declares `minProperties: 1`, so an empty patch is a 400.
+ */
+export interface ProjectPatch {
+  readonly name?: string
+  /** `null` clears the client; absent leaves it alone. There is no third spelling. */
+  readonly client?: string | null
+  /** Absent leaves the state alone: archiving and unarchiving are both explicit. */
+  readonly archived?: boolean
 }
 
 /** A project, as `GET /projects` and `POST /projects` both return it. */
@@ -29,6 +42,8 @@ export interface Project {
   readonly projectId: string
   readonly dbName: string
   readonly name: string
+  /** Who the project is for, when it was given one. */
+  readonly client?: string
   readonly role: 'owner' | 'manage' | 'write' | 'read'
   readonly owner: { readonly ownerType: 'user' | 'org'; readonly ownerId: string }
   /**
@@ -40,6 +55,11 @@ export interface Project {
    * not bring it back.
    */
   readonly archived: boolean
+  /**
+   * When it was put away, in seconds since the epoch, as the contract declares. Absent while
+   * active.
+   */
+  readonly archivedAt?: number
 }
 
 /** Why creating a project did not work. The view turns each of these into a sentence. */
@@ -50,8 +70,14 @@ export type CreateFailure =
   | 'unreachable'
   /** Not signed in, or the token has expired. */
   | 'not-signed-in'
-  /** The plan does not include this (ADR 0009). */
+  /** The plan does not include this (ADR 0009), and the server named no more specific reason. */
   | 'not-entitled'
+  /** The owner's plan has no synchronized projects (`403`, reason `plan-no-sync`). */
+  | 'plan-no-sync'
+  /** The owner's plan has no room for another active project (`403`, `project-limit-reached`). */
+  | 'project-limit-reached'
+  /** The caller's role may not change settings (`403`, `not-a-manager`): ask the owner. */
+  | 'not-a-manager'
   /** The server would not accept the request — a name too long, say. */
   | 'refused'
   /** Something went wrong at the other end. */
@@ -68,10 +94,29 @@ export class ProjectCreationError extends Error {
   }
 }
 
+/** Why changing a project did not work: everything creating can fail with, and a 404. */
+export type UpdateFailure =
+  | CreateFailure
+  /** No such project, or the caller is not a participant — the API answers both the same. */
+  | 'not-found'
+
+/** Changing a project did not work, and nothing was changed. */
+export class ProjectUpdateError extends Error {
+  override readonly name = 'ProjectUpdateError'
+  readonly reason: UpdateFailure
+
+  constructor(reason: UpdateFailure) {
+    super(`A project could not be changed: ${reason}.`)
+    this.reason = reason
+  }
+}
+
 /** How projects are reached. Injected so a view can be tested without a server. */
 export interface ProjectsApi {
   list(): Promise<readonly Project[]>
   create(request: NewProject): Promise<Project>
+  /** Changes a project's name, client or archived state, and returns it as it now stands. */
+  update(projectId: string, patch: ProjectPatch): Promise<Project>
 }
 
 /** What `createProject` needs besides the API. */
@@ -88,12 +133,40 @@ export interface CreateDependencies {
   readonly online: () => boolean
 }
 
-/** Maps an HTTP status onto a reason. */
-function reasonFor(status: number): CreateFailure {
+/** The 403 reasons the contract pins, which a client branches on. */
+const FORBIDDEN_REASONS: readonly CreateFailure[] = [
+  'plan-no-sync',
+  'project-limit-reached',
+  'not-a-manager',
+]
+
+/**
+ * Maps a refused response onto a reason.
+ *
+ * A 403 is read for its body's `reason`, because "upgrade", "make room" and "ask the owner" are
+ * different next steps. A body that is missing, is not JSON or names a reason this client does
+ * not know falls back to `not-entitled` rather than throwing: the status alone was the answer
+ * before the reasons existed, and a newer server must not turn a refusal into a crash.
+ */
+async function reasonFor(response: Response): Promise<UpdateFailure> {
+  const { status } = response
   if (status === 401) return 'not-signed-in'
-  if (status === 403) return 'not-entitled'
+  if (status === 403) {
+    const body = (await response.json().catch(() => undefined)) as { reason?: unknown } | undefined
+    return FORBIDDEN_REASONS.find((known) => known === body?.reason) ?? 'not-entitled'
+  }
+  if (status === 404) return 'not-found'
   if (status >= 400 && status < 500) return 'refused'
   return 'failed'
+}
+
+/**
+ * Creating has no 404 of its own, so a stray one is a plain refusal there; the narrower type
+ * keeps `not-found` out of what the page has to handle for creation.
+ */
+async function creationReasonFor(response: Response): Promise<CreateFailure> {
+  const reason = await reasonFor(response)
+  return reason === 'not-found' ? 'refused' : reason
 }
 
 /**
@@ -122,7 +195,7 @@ export function projectsApi(
   return {
     async list(): Promise<readonly Project[]> {
       const response = await fetchImpl(`${base}/projects`, { headers: headers() })
-      if (!response.ok) throw new ProjectCreationError(reasonFor(response.status))
+      if (!response.ok) throw new ProjectCreationError(await creationReasonFor(response))
       return (await response.json()) as Project[]
     },
 
@@ -132,7 +205,17 @@ export function projectsApi(
         headers: { ...headers(), 'content-type': 'application/json' },
         body: JSON.stringify(request),
       })
-      if (!response.ok) throw new ProjectCreationError(reasonFor(response.status))
+      if (!response.ok) throw new ProjectCreationError(await creationReasonFor(response))
+      return (await response.json()) as Project
+    },
+
+    async update(projectId: string, patch: ProjectPatch): Promise<Project> {
+      const response = await fetchImpl(`${base}/projects/${encodeURIComponent(projectId)}`, {
+        method: 'PATCH',
+        headers: { ...headers(), 'content-type': 'application/json' },
+        body: JSON.stringify(patch),
+      })
+      if (!response.ok) throw new ProjectUpdateError(await reasonFor(response))
       return (await response.json()) as Project
     },
   }
@@ -164,5 +247,33 @@ export async function createProject(
     // "you are offline" because the user may well believe they are online, and be right about
     // the wifi and wrong about the internet.
     throw new ProjectCreationError('unreachable')
+  }
+}
+
+/**
+ * Changes a project's name, client or archived state, or says why it could not.
+ *
+ * The same discipline as {@link createProject}: one attempt, never queued, offline refused
+ * before anything is sent. A rename waiting for the network would be a name the user sees on
+ * one device and nobody else ever does.
+ *
+ * @throws {ProjectUpdateError} with a reason the interface can turn into a sentence
+ */
+export async function updateProject(
+  deps: CreateDependencies,
+  projectId: string,
+  patch: ProjectPatch,
+): Promise<Project> {
+  // `refused`, because that is what the server would answer: the contract declares
+  // `minProperties: 1`, so an empty patch is a 400. Known here, so not worth a round trip.
+  if (Object.keys(patch).length === 0) throw new ProjectUpdateError('refused')
+  if (!deps.online()) throw new ProjectUpdateError('offline')
+
+  try {
+    return await deps.api.update(projectId, patch)
+  } catch (error) {
+    if (error instanceof ProjectUpdateError) throw error
+    // A `TypeError` from `fetch`: see `createProject` on why this is not `offline`.
+    throw new ProjectUpdateError('unreachable')
   }
 }

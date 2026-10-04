@@ -12,6 +12,7 @@ import '../../src/ui/app-shell.js'
 import { NAV_ROUTES } from '../../src/ui/router/routes.js'
 import { applyScheme, SCHEME_STORAGE_KEY } from '../../src/ui/scheme.js'
 import { accessToken, rememberAccessToken } from '../../src/ui/tokens.js'
+import { destroyProjectStores, isolatedProjectStore } from './support/project-store.js'
 
 /** A minimal shape for the reactive-update contract both `app-shell` and `wa-page` share. */
 interface Updatable {
@@ -35,7 +36,9 @@ const shell = async () => {
     customElements.whenDefined('wa-button'),
     customElements.whenDefined('wa-icon'),
   ])
-  const element = await fixture(html`<app-shell></app-shell>`)
+  const element = await fixture(
+    html`<app-shell .projectStore=${isolatedProjectStore()}></app-shell>`,
+  )
   const page = element.querySelector('wa-page') as (HTMLElement & Updatable) | null
   await page?.updateComplete
   return element
@@ -45,11 +48,18 @@ beforeEach(() => {
   window.location.hash = '#/'
 })
 
-afterEach(() => {
+afterEach(async () => {
   window.location.hash = ''
+  await destroyProjectStores()
 })
 
-it('renders the device list at the root path', async () => {
+it('renders the projects page at the root path', async () => {
+  const element = await shell()
+  expect(element.querySelector('projects-view')).not.toBeNull()
+})
+
+it('renders the device list at #/devices', async () => {
+  window.location.hash = '#/devices'
   const element = await shell()
   expect(element.querySelector('device-list-view')).not.toBeNull()
 })
@@ -90,7 +100,7 @@ it('changes view when the hash changes, without remounting', async () => {
   await (element as unknown as { updateComplete: Promise<unknown> }).updateComplete
 
   expect(element.querySelector('not-found-view')).not.toBeNull()
-  expect(element.querySelector('device-list-view')).toBeNull()
+  expect(element.querySelector('projects-view')).toBeNull()
   // Proves "without remounting": the same wa-page element instance survived the
   // hash-driven re-render rather than being torn down and recreated.
   expect(element.querySelector('wa-page')).toBe(pageBeforeNavigation)
@@ -235,14 +245,19 @@ async function shellWith(network: ReturnType<typeof fakeNetwork>) {
     customElements.whenDefined('wa-tag'),
     customElements.whenDefined('wa-callout'),
   ])
-  const element = await fixture(html`<app-shell .connectivity=${network}></app-shell>`)
+  const element = await fixture(
+    html`<app-shell .connectivity=${network} .projectStore=${isolatedProjectStore()}></app-shell>`,
+  )
   const page = element.querySelector('wa-page') as (HTMLElement & Updatable) | null
   await page?.updateComplete
   return element
 }
 
-it('says nothing about the network while there is one', async () => {
+it('says it is online, quietly, and not that it is offline', async () => {
+  // Always present since the projects page, whose server actions depend on it; `data-offline`
+  // stays reserved for being offline, which the offline journey counts on.
   const element = await shellWith(fakeNetwork(true))
+  expect(element.querySelector('[data-online]')).not.toBeNull()
   expect(element.querySelector('[data-offline]')).toBeNull()
 })
 
@@ -253,7 +268,8 @@ it('shows an unobtrusive indicator when the network goes', async () => {
   network.go(false)
   await (element as HTMLElement & Updatable).updateComplete
 
-  expect(element.querySelector('[data-offline]')).not.toBeNull()
+  expect(element.querySelector('[data-offline]')?.getAttribute('variant')).toBe('neutral')
+  expect(element.querySelector('[data-online]')).toBeNull()
 })
 
 it('shows the indicator on a page that was loaded offline in the first place', async () => {
@@ -267,6 +283,7 @@ it('blocks nothing while offline', async () => {
   // "No action is blocked except those genuinely requiring a server", and at M2b none do:
   // every write goes to a local database first. So the device list is still there, and so is
   // the way to add one.
+  window.location.hash = '#/devices'
   const element = await shellWith(fakeNetwork(false))
 
   expect(element.querySelector('device-list-view')).not.toBeNull()
@@ -355,6 +372,18 @@ const NETWORK = { addEventListener: () => {}, removeEventListener: () => {}, onL
  *   shell did about it
  */
 const driven = async () => {
+  // Two downloaded copies, so the projects the tests report states for are ones replication is
+  // handed: states of anything else are forgotten at the next refresh.
+  const store = isolatedProjectStore()
+  for (const projectId of ['p1', 'p2']) {
+    await store.cache().addLocalProject({
+      dbName: `project_${projectId}`,
+      name: projectId,
+      projectId,
+      role: 'owner',
+      createdAt: '2026-10-01T00:00:00.000Z',
+    })
+  }
   const report: { current?: (outcome: TokenOutcome) => void } = {}
   const stop = vi.fn()
   const stopAll = vi.fn()
@@ -362,6 +391,10 @@ const driven = async () => {
     set: () => {},
     running: () => [],
     stateOf: () => undefined,
+    stop: () => {},
+    pushNow: async () => {},
+    suspend: () => {},
+    resume: () => {},
     stopAll,
   }))
   const signOutOf = vi.fn(async () => [])
@@ -373,9 +406,17 @@ const driven = async () => {
       }}
       .connectivity=${NETWORK}
       .followLocale=${async () => undefined}
-      .listProjects=${async () => [{ projectId: 'p1', dbName: 'project_p1' }]}
+      .listProjects=${async () =>
+        ['p1', 'p2'].map((projectId) => ({
+          projectId,
+          dbName: `project_${projectId}`,
+          name: projectId,
+          role: 'owner',
+          archived: false,
+        }))}
       .makeSync=${makeSync}
       .signOutOf=${signOutOf}
+      .projectStore=${store}
     ></app-shell>
   `)) as HTMLElement & { updateComplete: Promise<unknown> }
   await element.updateComplete
@@ -475,4 +516,28 @@ it('stops the refresher when the shell is removed', async () => {
   const { element, stop } = await driven()
   element.remove()
   expect(stop).toHaveBeenCalledOnce()
+})
+
+it('shows "No permission to sync" when any project is denied, ranking it worse than offline', async () => {
+  const { element, play, makeSync } = await driven()
+  await play({ kind: 'refreshed', expiresIn: 300 })
+  await waitUntil(() => makeSync.mock.calls.length > 0, 'replication never started')
+  const report = (makeSync.mock.calls[0] as unknown as [(id: string, state: string) => void])[0]
+  const tag = () => element.querySelector('[data-syncing]')?.textContent?.trim() ?? ''
+
+  report('p1', 'offline')
+  report('p2', 'denied')
+  await waitUntil(() => tag().includes('No permission to sync'), 'denied was not shown')
+
+  // A later `idle` does not clear it (ruling C-R12): the server may still refuse every write.
+  report('p2', 'idle')
+  await element.updateComplete
+  expect(tag()).toContain('No permission to sync')
+
+  // A push the server took does: the worse of what is left is offline.
+  const page = element.querySelector('projects-view') as {
+    sync?: { pushNow(id: string): Promise<void> }
+  }
+  await page.sync?.pushNow('p2')
+  await waitUntil(() => tag().includes('Waiting to sync'), 'offline was not shown')
 })

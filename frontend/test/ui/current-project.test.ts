@@ -1,22 +1,23 @@
 import { describe, expect, it } from 'vitest'
+import type { LocalProjectEntry } from '../../src/data/index.js'
 import {
   CURRENT_PROJECT_KEY,
-  canEdit,
-  currentDatabaseName,
   LOCAL_DATABASE_NAME,
   LOCAL_PROJECT_ID,
   readCurrentProjectId,
-  type SwitchableProject,
-  switchableProjects,
+  resolveCurrentProject,
   writeCurrentProjectId,
 } from '../../src/ui/current-project.js'
+import type { Project } from '../../src/ui/projects.js'
+import { type ProjectsInput, projectsModel } from '../../src/ui/projects-model.js'
 
 /**
- * #55: moving between projects, with the current one remembered.
+ * Which project is open: the stored choice, matched against what this device holds.
  *
  * The decisions worth pinning here are all about what happens when the stored choice and the
- * available projects disagree — which is the ordinary case, not an edge one: access is revoked,
- * a project is archived, somebody signs out, or a build renames things.
+ * projects on this device disagree — which is the ordinary case, not an edge one: a copy is
+ * removed, a project is archived, somebody signs out, or an older build stored another kind of
+ * id.
  */
 
 const storage = (seed: Record<string, string> = {}) => {
@@ -28,47 +29,38 @@ const storage = (seed: Record<string, string> = {}) => {
   }
 }
 
-const project = (over: Partial<SwitchableProject> = {}): SwitchableProject => ({
+const entry = (over: Partial<LocalProjectEntry> = {}): LocalProjectEntry => ({
+  dbName: 'project_local_a',
+  name: 'Alpha',
+  createdAt: '2026-10-01T00:00:00.000Z',
+  ...over,
+})
+
+const project = (over: Partial<Project> = {}): Project => ({
   projectId: 'p1',
   dbName: 'project_p1',
   name: 'Musterstraße 12',
   role: 'owner',
+  owner: { ownerType: 'user', ownerId: 'u1' },
   archived: false,
   ...over,
 })
 
-describe('what the switcher offers', () => {
-  it('always offers the catalogue that is on this device', () => {
-    // It predates accounts, and everything recorded before signing in is in it. Leaving it out
-    // would make somebody's devices vanish the moment they signed in.
-    const offered = switchableProjects([], 'On this device')
-    expect(offered).toHaveLength(1)
-    expect(offered[0]?.projectId).toBe(LOCAL_PROJECT_ID)
+const model = (over: Partial<ProjectsInput> = {}) =>
+  projectsModel({
+    local: [],
+    server: undefined,
+    plan: 'member',
+    session: 'signed-in',
+    online: true,
+    syncStates: () => undefined,
+    ...over,
   })
 
-  it('puts the local catalogue first', () => {
-    const offered = switchableProjects([project()], 'On this device')
-    expect(offered[0]?.projectId).toBe(LOCAL_PROJECT_ID)
-  })
-
-  it('leaves out an archived project, which is what archiving is for', () => {
-    const offered = switchableProjects([project({ archived: true })], 'On this device')
-    expect(offered.map((p) => p.projectId)).toEqual([LOCAL_PROJECT_ID])
-  })
-
-  it('keeps the rest when one is archived', () => {
-    const offered = switchableProjects(
-      [project(), project({ projectId: 'p2', dbName: 'project_p2', archived: true })],
-      'On this device',
-    )
-    expect(offered.map((p) => p.projectId)).toEqual([LOCAL_PROJECT_ID, 'p1'])
-  })
-})
+const synced = entry({ dbName: 'project_p1', name: 'Musterstraße 12', projectId: 'p1' })
 
 describe('remembering which one is open', () => {
   it('starts on the local catalogue', () => {
-    // Somebody who has never signed in arrives here, and the honest answer is the catalogue
-    // that is definitely on this device.
     expect(readCurrentProjectId(() => storage())).toBe(LOCAL_PROJECT_ID)
   })
 
@@ -85,46 +77,105 @@ describe('remembering which one is open', () => {
       }),
     ).toBe(LOCAL_PROJECT_ID)
   })
+
+  it('stores under the key the page and the shell share', () => {
+    const local = storage()
+    writeCurrentProjectId(() => local, 'project_local_a')
+    expect(local.held.get(CURRENT_PROJECT_KEY)).toBe('project_local_a')
+  })
 })
 
-describe('which database the views open', () => {
-  it('opens the project that is chosen', () => {
-    expect(currentDatabaseName(switchableProjects([project()], 'x'), 'p1')).toBe('project_p1')
+describe('which project the views open', () => {
+  it('opens a synchronized project stored by its project id', () => {
+    const current = resolveCurrentProject('p1', model({ local: [entry(), synced] }))
+    expect(current).toEqual({ dbName: 'project_p1', id: 'p1', editable: true })
   })
 
-  it('falls back when the choice is no longer on offer', () => {
-    // Access revoked, project archived, or signed out. A view handed no database shows an
-    // empty catalogue, which is indistinguishable from having lost everything - so there is
-    // always an answer, and it is the one that is definitely here.
-    const stored = storage({ [CURRENT_PROJECT_KEY]: 'gone' })
-    const current = readCurrentProjectId(() => stored)
-    expect(currentDatabaseName(switchableProjects([project()], 'x'), current)).toBe(
-      LOCAL_DATABASE_NAME,
+  it('opens a local-only project stored by its database name', () => {
+    // Open remembers `projectId ?? dbName`: a local-only project has no other name.
+    const current = resolveCurrentProject('project_local_a', model({ local: [entry(), synced] }))
+    expect(current).toEqual({ dbName: 'project_local_a', id: 'project_local_a', editable: true })
+  })
+
+  it('finds a promoted project stored by the database name it had before', () => {
+    // Stored while local-only, then promoted on another tab: the name has gone, the id has not.
+    const current = resolveCurrentProject('project_p1', model({ local: [synced] }))
+    expect(current.dbName).toBe('project_p1')
+  })
+
+  it('never reopens the source of a promotion by its new project id', () => {
+    // Mid-promotion the source is a local-only database whose entry already records the server
+    // id, and the stored choice is that id (the views were moved to the survivor). Matching the
+    // source by id would put this tab's next write into a database about to be destroyed.
+    const source = entry({ projectId: 'p1' })
+    const current = resolveCurrentProject('p1', model({ local: [source, synced] }))
+    expect(current.dbName).toBe('project_p1')
+  })
+
+  it('prefers the database named over a project id that happens to match it', () => {
+    // Mid-promotion: only the source is indexed, and it records the new id.
+    const source = entry({ projectId: 'p1' })
+    const current = resolveCurrentProject('project_local_a', model({ local: [source] }))
+    expect(current.dbName).toBe('project_local_a')
+  })
+
+  it('opens the copy, not the leftover source, of a promotion whose last destroy failed', () => {
+    // Both are indexed under one id; the model shows only the copy, so the source is no
+    // candidate even when the choice still names it.
+    const source = entry({ projectId: 'p1' })
+    const current = resolveCurrentProject('project_local_a', model({ local: [source, synced] }))
+    expect(current.dbName).toBe('project_p1')
+  })
+
+  it('reads the legacy "local" choice as the first-run catalogue', () => {
+    const legacy = entry({ dbName: LOCAL_DATABASE_NAME, name: 'Home' })
+    const current = resolveCurrentProject(LOCAL_PROJECT_ID, model({ local: [synced, legacy] }))
+    expect(current.dbName).toBe(LOCAL_DATABASE_NAME)
+  })
+
+  it('falls back to the first local project when the choice is not on this device', () => {
+    // A copy removed, signed out, or an id from a build that named them differently. A view
+    // handed no database shows an empty catalogue, which looks exactly like losing everything.
+    const current = resolveCurrentProject(
+      'gone',
+      model({ local: [synced, entry({ dbName: 'project_local_b', name: 'Beta' })] }),
     )
+    expect(current).toEqual({ dbName: 'project_local_b', id: 'project_local_b', editable: true })
   })
 
-  it('falls back when the chosen project has been archived', () => {
-    const offered = switchableProjects([project({ archived: true })], 'x')
-    expect(currentDatabaseName(offered, 'p1')).toBe(LOCAL_DATABASE_NAME)
-  })
-})
-
-describe('whether the open project may be edited', () => {
-  it('allows the local catalogue, which is the reader’s own', () => {
-    expect(canEdit(switchableProjects([], 'x'), LOCAL_PROJECT_ID)).toBe(true)
+  it('falls back to a copy when there is no local-only project', () => {
+    const current = resolveCurrentProject('gone', model({ local: [synced] }))
+    expect(current.dbName).toBe('project_p1')
   })
 
-  it.each(['owner', 'manage', 'write'] as const)('allows %s', (role) => {
-    expect(canEdit(switchableProjects([project({ role })], 'x'), 'p1')).toBe(true)
+  it('never opens a project that is only on the server', () => {
+    // A server-only row has no database here; opening it would show an empty catalogue.
+    const current = resolveCurrentProject('p1', model({ local: [entry()], server: [project()] }))
+    expect(current.dbName).toBe('project_local_a')
   })
 
-  it('refuses read', () => {
-    expect(canEdit(switchableProjects([project({ role: 'read' })], 'x'), 'p1')).toBe(false)
+  it('opens the first-run catalogue when nothing is indexed at all', () => {
+    expect(resolveCurrentProject('gone', model())).toEqual({
+      dbName: LOCAL_DATABASE_NAME,
+      id: LOCAL_DATABASE_NAME,
+      editable: true,
+    })
   })
 
-  it('allows a project it has never heard of, because that is the local catalogue', () => {
-    // The fallback above sends an unknown id to the local database, so the two answers have to
-    // agree: a view showing the local catalogue must not have its editing controls removed.
-    expect(canEdit(switchableProjects([], 'x'), 'gone')).toBe(true)
+  it('opens a lapsed owner’s server project read-only', () => {
+    // The plan no longer syncs, so CouchDB would refuse the writes; the model says so.
+    const current = resolveCurrentProject(
+      'p1',
+      model({ plan: 'free', local: [synced], server: [project()] }),
+    )
+    expect(current).toEqual({ dbName: 'project_p1', id: 'p1', editable: false })
+  })
+
+  it('opens an archived project’s copy read-only', () => {
+    const current = resolveCurrentProject(
+      'p1',
+      model({ local: [synced], server: [project({ archived: true })] }),
+    )
+    expect(current.editable).toBe(false)
   })
 })

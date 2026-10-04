@@ -1486,3 +1486,9 @@ quiet: six `!important` declarations overriding a component library are not a mi
 removing them to reach zero would trade a warning for a rendering bug. And an unused variable in
 a test is usually evidence that an assertion was dropped — deleting it reaches zero while
 throwing away the thing the warning was pointing at.
+
+## CI is green only when every check is green, and local verify must enforce what CI enforces
+
+PR #221 was reported green after reading `gh pr checks 221 | tail -6`. The tail cut off the one failing row: Frontend, where `npm run test:coverage` failed a 90% branch threshold on `src/data/**`. That gate had never run locally, because `frontend` and `backend` `verify` ran `npm run test` while CI ran coverage. Two rules:
+- Judge a PR by the full `gh pr checks` output, or by its exit status. Never by a slice of it.
+- When CI runs a stricter command than `verify`, change `verify`, so the two cannot disagree. Both `verify` scripts now run `test:coverage`.

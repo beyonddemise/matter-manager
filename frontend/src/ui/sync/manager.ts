@@ -10,7 +10,7 @@
  * @module
  */
 
-import { replicateProject, type SyncHandle, type SyncState } from './replication.js'
+import { pushOnce, replicateProject, type SyncHandle, type SyncState } from './replication.js'
 
 /** The projects to replicate, as `GET /projects` describes them. */
 export interface SyncableProject {
@@ -44,6 +44,29 @@ export interface SyncManager {
   running(): readonly string[]
   /** What one project's replication is doing, or `undefined` if it is not running. */
   stateOf(projectId: string): SyncState | undefined
+  /** Stops one project's replication, if it is running. The others are untouched. */
+  stop(projectId: string): void
+  /**
+   * Stops one project's replication and keeps it stopped, whatever later {@link set} calls
+   * list, until {@link resume}. It can still be pushed with {@link pushNow}.
+   *
+   * For removing a local copy: the shell re-sends the whole list on every reconnection, and a
+   * replication restarted under a destroy would recreate the database, or fight the destroy for
+   * it. A plain {@link stop} cannot promise that; this can.
+   */
+  suspend(projectId: string): void
+  /**
+   * Lifts a {@link suspend}. The project replicates again if the last {@link set} listed it;
+   * if a later list dropped it, it stays stopped. Does nothing for a project not suspended.
+   */
+  resume(projectId: string): void
+  /**
+   * Pushes one project's pending changes once and resolves when nothing is pending.
+   *
+   * Rejects when the server is unreachable, when it refuses a document, or when the project is
+   * not one this manager was given - never resolves on a guess. The optional signal cancels it.
+   */
+  pushNow(projectId: string, options?: { signal?: AbortSignal }): Promise<void>
   /** Stops everything. For signing out, and for a page being torn down. */
   stopAll(): void
 }
@@ -52,6 +75,10 @@ export interface SyncManager {
 export function syncManager(deps: ManagerDependencies): SyncManager {
   const handles = new Map<string, SyncHandle>()
   const states = new Map<string, SyncState>()
+  // Remembered past `stop`: a project whose live sync was stopped can still be pushed once.
+  const known = new Map<string, SyncableProject>()
+  // Held still by `suspend`: listed (and so known, and pushable) but never started by `set`.
+  const suspended = new Set<string>()
 
   const startOne = (project: SyncableProject): void => {
     const handle = replicateProject(deps.local(project.dbName), deps.remote(project.dbName), {
@@ -62,6 +89,7 @@ export function syncManager(deps: ManagerDependencies): SyncManager {
       onIncoming: () => deps.onIncoming?.(project.projectId),
     })
     handles.set(project.projectId, handle)
+    known.set(project.projectId, project)
   }
 
   const stopOne = (projectId: string): void => {
@@ -80,12 +108,20 @@ export function syncManager(deps: ManagerDependencies): SyncManager {
       for (const projectId of [...handles.keys()]) {
         if (!wanted.has(projectId)) stopOne(projectId)
       }
+      for (const projectId of [...known.keys()]) {
+        if (!wanted.has(projectId)) known.delete(projectId)
+      }
 
       for (const [projectId, project] of wanted) {
         // Already running: left alone, rather than restarted. Restarting would discard the
         // checkpoint and re-scan the whole database — on every reconnection, which is exactly
         // when the connection is worst.
         if (handles.has(projectId)) continue
+        if (suspended.has(projectId)) {
+          // Known, so the push that a removal waits on still finds it; not started.
+          known.set(projectId, project)
+          continue
+        }
         startOne(project)
       }
     },
@@ -94,8 +130,31 @@ export function syncManager(deps: ManagerDependencies): SyncManager {
 
     stateOf: (projectId) => states.get(projectId),
 
+    stop: stopOne,
+
+    suspend(projectId: string): void {
+      suspended.add(projectId)
+      stopOne(projectId)
+    },
+
+    resume(projectId: string): void {
+      if (!suspended.delete(projectId)) return
+      const project = known.get(projectId)
+      if (project !== undefined && !handles.has(projectId)) startOne(project)
+    },
+
+    async pushNow(projectId: string, options?: { signal?: AbortSignal }): Promise<void> {
+      const project = known.get(projectId)
+      if (project === undefined) throw new Error(`Project ${projectId} is not being synchronized`)
+      // The same factories the live sync uses: the local handle is the shared memoised one, and
+      // the remote is a lightweight HTTP client with nothing to close.
+      await pushOnce(deps.local(project.dbName), deps.remote(project.dbName), options)
+    },
+
     stopAll(): void {
       for (const projectId of [...handles.keys()]) stopOne(projectId)
+      known.clear()
+      suspended.clear()
     },
   }
 }
