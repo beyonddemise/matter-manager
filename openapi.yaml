@@ -41,9 +41,9 @@ tags:
       Operator endpoints. Reached only by an account holding the `customerservice` role, and
       the only operations in this contract that name a subject other than the caller.
 
-      The role is granted by editing the account's `_users` document in CouchDB and cannot be
-      granted through this API at all. CouchDB's own `_admin` role is **not** accepted here: it
-      carries an unconditional bypass of every project database's write rules, so accepting it
+      The role is granted by editing the `roles` of the account's user record in the
+      `matter_manager` database and cannot be granted through this API at all.
+      CouchDB's own `_admin` role is **not** accepted here: it carries an unconditional bypass of every project database's write rules, so accepting it
       would make "may change a plan" inseparable from "may write anything belonging to anyone".
 
 security:
@@ -86,31 +86,58 @@ paths:
         - { name: state, in: query, required: true, schema: { type: string } }
       responses:
         '302':
-          description: Redirect to the web app with a session established
+          description: |
+            Redirect to the web app with a two-minute, single-use, `HttpOnly` `mm_handoff`
+            cookie set, which authorises the first `POST /auth/token`. On failure, including an
+            address the provider has not verified, the redirect carries `?signin=failed` and no
+            handoff.
 
   /auth/token:
     post:
       tags: [auth]
-      summary: Issue a CouchDB-validatable access token
+      summary: Issue an access token, and a refresh token
       description: |
-        Returns a short-lived ES256 (EC P-256) JWT whose `sub` is the CouchDB username. PouchDB sends
-        it as a bearer token on replication requests; CouchDB validates it with the public
-        key without consulting this API.
+        Returns a five-minute ES256 (EC P-256) access token whose `sub` is the CouchDB username
+        and whose `_couchdb.roles` carry the plan, read from the user record on every call, so a
+        plan change reaches CouchDB within five minutes. PouchDB sends it as a
+        bearer token on replication requests; CouchDB validates it with the public key without
+        consulting this API.
 
-        Called on sign-in and again whenever replication receives a 401. Offline clients
-        never call it - local writes must never block on token freshness.
+        Accepts either credential:
+
+        - the `mm_handoff` cookie set by the sign-in callback (first call after sign-in). It is
+          single use; this call mints the refresh token and clears the cookie;
+        - a `refreshToken` in the body (every later call). It must still be stored; signing
+          out, or deleting its hash from the user record, revokes it. The same refresh token is
+          returned, not rotated.
+
+        When both are sent, a handoff cookie that verifies wins: it means a sign-in has just
+        finished, which is newer than any refresh token the page kept. The page then stores the
+        refresh token returned, replacing its old one. A handoff that does not verify is ignored,
+        and a `refreshToken` that is present but not a valid, stored token is then a 401.
+
+        Offline clients never call it - local writes must never block on token freshness.
       security: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                refreshToken: { type: string }
       responses:
         '200':
-          description: A new access token
+          description: A new access token, and the refresh token to present next time
           content:
             application/json:
               schema:
                 type: object
-                required: [accessToken, expiresIn]
+                required: [accessToken, expiresIn, refreshToken]
                 properties:
                   accessToken: { type: string }
                   expiresIn: { type: integer, description: Seconds until expiry }
+                  refreshToken: { type: string }
         '401': { $ref: '#/components/responses/Unauthorized' }
 
   /auth/signout:
@@ -118,15 +145,32 @@ paths:
       tags: [auth]
       summary: End the session
       description: |
-        Clears the session cookie. Necessary as a server operation because that cookie is
-        `HttpOnly` — the page cannot remove it, and a page that merely forgot its own token
-        would still be signed in on the next request.
+        Revokes the presented refresh token, refuses the presented bearer access token on this
+        API until its expiry, and clears the sign-in cookies. CouchDB validates access tokens
+        itself, so a copy already taken replicates until it expires; the five-minute lifetime
+        bounds that.
 
         Removing local databases is the browser's half and is not undone by this.
       security: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                refreshToken: { type: string }
       responses:
         '204':
-          description: Signed out. Also the answer when there was no session to end.
+          description: Signed out. Also the answer when there was nothing to sign out of.
+        # A presented refresh token whose stored hash could not be removed is still a live
+        # credential, so this is never reported as a 204. The access token is denied and the
+        # cookies cleared regardless; the body says nothing about CouchDB.
+        '500':
+          description: The refresh token could not be revoked; it remains valid
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
 
   /profile:
     get:
@@ -153,8 +197,8 @@ paths:
         nothing at all means "leave it alone".
 
         `plan` is the exception to "about themselves": it may be sent only by an account holding
-        the `customerservice` role, and anybody else is answered 403 rather than having the field
-        quietly dropped. CouchDB's `_admin` is not accepted — see the `admin` tag for why that
+        the `customerservice` role on its user record, and anybody else is answered 403 rather than
+        having the field quietly dropped. CouchDB's `_admin` is not accepted — see the `admin` tag for why that
         role is excluded rather than merely unnecessary. See ADR 0009 — what a plan then permits
         is decided by the policy table, never by a comparison against a tier.
       requestBody:
@@ -174,7 +218,7 @@ paths:
                 displayName: { type: string }
                 plan:
                   type: string
-                  enum: [free, user, pro]
+                  enum: [free, member, pro]
       responses:
         '200':
           description: The updated profile
@@ -205,21 +249,25 @@ paths:
       summary: Set another account's plan
       description: |
         The operator counterpart to `PATCH /profile`. That operation takes its subject from the
-        session and never from the body - a profile endpoint accepting an arbitrary `sub` would
+        token and never from the body - a profile endpoint accepting an arbitrary identity would
         be an account-takeover primitive - so it can only ever reach the caller, and an operator
         who can upgrade themselves and nobody else is not an operator tool. This operation names
-        a subject, and being a separate operation is what lets `/profile` keep that rule.
+        an account, and being a separate operation is what lets `/profile` keep that rule.
 
-        Reached only by an account holding the `customerservice` role — and deliberately not
-        CouchDB's `_admin`, for the reason the `admin` tag gives. **The role is checked
-        before the body is validated and before the subject is looked up**, so the answer to a
-        caller without the role is 403 whether or not the named account exists, and is identical
-        in both cases: answering 404 or 400 first would make this an oracle telling any
-        signed-in user which accounts exist.
+        **The account is named by email address**, which is what a user record is keyed by. If it
+        has no record yet - somebody who has only ever signed in, or never has - the record is
+        created with this plan, and their `sub` is filled in at their next sign-in. That is why
+        there is no 404.
 
-        Only `plan` is applied. `name`, `roles` and `type` are CouchDB's own and are written
-        back unchanged - an operator who could set `roles` could mint more operators, and the
-        role check above would then mean nothing.
+        Reached only by an account whose record holds the `customerservice` role - and
+        deliberately not CouchDB's `_admin`, for the reason the `admin` tag gives. **The role is
+        checked before the body is validated**, so the answer to a caller without the role is 403
+        whatever the body says and whether or not the named account exists, and is identical in
+        every case: answering 400 first would make this an oracle telling any signed-in user what
+        the operation accepts and which accounts exist.
+
+        Only `plan` is applied. `roles` and `type` in the body are ignored - an operator who could
+        set `roles` could mint more operators, and the role check above would then mean nothing.
 
         What a plan then permits is decided by the policy table, never by a comparison against a
         tier (ADR 0009).
@@ -229,16 +277,17 @@ paths:
           application/json:
             schema:
               type: object
-              required: [sub, plan]
+              required: [email, plan]
               properties:
-                sub:
+                email:
                   type: string
+                  format: email
                   description: |
-                    The account to change; also the CouchDB username. Not the caller - that is
-                    the whole point of this operation.
+                    The account to change, by address. Not the caller - that is the whole point
+                    of this operation. Matched without regard to case or surrounding space.
                 plan:
                   type: string
-                  enum: [free, user, pro]
+                  enum: [free, member, pro]
       responses:
         '200':
           description: The named account's profile, as stored
@@ -255,21 +304,13 @@ paths:
           description: |
             The caller does not hold the `customerservice` role.
 
-            Answered **before** the body is validated and before the named subject is looked up,
-            so it is byte-for-byte the answer a non-operator gets whether or not that account
-            exists. See this operation's description for why that ordering is a requirement.
+            Answered **before** the body is validated, so it precedes any 400 and is
+            byte-for-byte the answer a non-operator gets whatever the body says and whether or not
+            the account named by address has a record.
+            See this operation's description for why that ordering is a requirement.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/NotAnOperator' }
-        '404':
-          description: |
-            No `_users` document for that subject - an account that has never signed in. Distinct
-            from 403 because "you may not" and "there is no such account" send an operator to
-            different places, and reached only *after* the role check, so it says that to an
-            operator and to nobody else.
-          content:
-            application/problem+json:
-              schema: { $ref: '#/components/schemas/Problem' }
 
   /projects:
     get:
@@ -612,10 +653,10 @@ components:
           description: '`auto` follows the browser; anything else overrides it.'
         plan:
           type: string
-          enum: [free, user, pro]
+          enum: [free, member, pro]
           description: |
             Set by an operator through `PUT /customer`, or by an operator's own
-            `PATCH /profile`; never by the account itself.
+            `PATCH /profile`; never by the account itself. Stored on the user record.
 
             A stored value this build does not know - an operator's typo, or a tier from a
             later version - reads as `free` rather than as an error, so the enum here is what

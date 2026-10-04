@@ -100,10 +100,9 @@ function reasonFor(status: number): CreateFailure {
  * The API client.
  *
  * The access token goes in an `Authorization` header, which is what the contract declares and
- * what the API's `auth/bearer.ts` reads. Not `credentials: 'include'`: the session cookie is
- * `SameSite=Lax`, so it would not be sent to an API on another site at all — and a request that
- * silently arrives unauthenticated answers 401, which reads as "signed out" on a page that is
- * signed in.
+ * what the API's `auth/bearer.ts` reads. There is no cookie that authenticates these routes:
+ * the only one the API sets after sign-in is the handoff, which authorises a single
+ * `POST /auth/token` and nothing else.
  */
 export function projectsApi(
   baseUrl: string,

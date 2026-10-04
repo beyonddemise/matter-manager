@@ -100,7 +100,12 @@ export interface paths {
             };
             requestBody?: never;
             responses: {
-                /** @description Redirect to the web app with a session established */
+                /**
+                 * @description Redirect to the web app with a two-minute, single-use, `HttpOnly` `mm_handoff`
+                 *     cookie set, which authorises the first `POST /auth/token`. On failure, including an
+                 *     address the provider has not verified, the redirect carries `?signin=failed` and no
+                 *     handoff.
+                 */
                 302: {
                     headers: {
                         [name: string]: unknown;
@@ -127,13 +132,27 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Issue a CouchDB-validatable access token
-         * @description Returns a short-lived ES256 (EC P-256) JWT whose `sub` is the CouchDB username. PouchDB sends
-         *     it as a bearer token on replication requests; CouchDB validates it with the public
-         *     key without consulting this API.
+         * Issue an access token, and a refresh token
+         * @description Returns a five-minute ES256 (EC P-256) access token whose `sub` is the CouchDB username
+         *     and whose `_couchdb.roles` carry the plan, read from the user record on every call, so a
+         *     plan change reaches CouchDB within five minutes. PouchDB sends it as a
+         *     bearer token on replication requests; CouchDB validates it with the public key without
+         *     consulting this API.
          *
-         *     Called on sign-in and again whenever replication receives a 401. Offline clients
-         *     never call it - local writes must never block on token freshness.
+         *     Accepts either credential:
+         *
+         *     - the `mm_handoff` cookie set by the sign-in callback (first call after sign-in). It is
+         *       single use; this call mints the refresh token and clears the cookie;
+         *     - a `refreshToken` in the body (every later call). It must still be stored; signing
+         *       out, or deleting its hash from the user record, revokes it. The same refresh token is
+         *       returned, not rotated.
+         *
+         *     When both are sent, a handoff cookie that verifies wins: it means a sign-in has just
+         *     finished, which is newer than any refresh token the page kept. The page then stores the
+         *     refresh token returned, replacing its old one. A handoff that does not verify is ignored,
+         *     and a `refreshToken` that is present but not a valid, stored token is then a 401.
+         *
+         *     Offline clients never call it - local writes must never block on token freshness.
          */
         post: {
             parameters: {
@@ -142,9 +161,15 @@ export interface paths {
                 path?: never;
                 cookie?: never;
             };
-            requestBody?: never;
+            requestBody?: {
+                content: {
+                    "application/json": {
+                        refreshToken?: string;
+                    };
+                };
+            };
             responses: {
-                /** @description A new access token */
+                /** @description A new access token, and the refresh token to present next time */
                 200: {
                     headers: {
                         [name: string]: unknown;
@@ -154,6 +179,7 @@ export interface paths {
                             accessToken: string;
                             /** @description Seconds until expiry */
                             expiresIn: number;
+                            refreshToken: string;
                         };
                     };
                 };
@@ -177,9 +203,10 @@ export interface paths {
         put?: never;
         /**
          * End the session
-         * @description Clears the session cookie. Necessary as a server operation because that cookie is
-         *     `HttpOnly` — the page cannot remove it, and a page that merely forgot its own token
-         *     would still be signed in on the next request.
+         * @description Revokes the presented refresh token, refuses the presented bearer access token on this
+         *     API until its expiry, and clears the sign-in cookies. CouchDB validates access tokens
+         *     itself, so a copy already taken replicates until it expires; the five-minute lifetime
+         *     bounds that.
          *
          *     Removing local databases is the browser's half and is not undone by this.
          */
@@ -190,14 +217,29 @@ export interface paths {
                 path?: never;
                 cookie?: never;
             };
-            requestBody?: never;
+            requestBody?: {
+                content: {
+                    "application/json": {
+                        refreshToken?: string;
+                    };
+                };
+            };
             responses: {
-                /** @description Signed out. Also the answer when there was no session to end. */
+                /** @description Signed out. Also the answer when there was nothing to sign out of. */
                 204: {
                     headers: {
                         [name: string]: unknown;
                     };
                     content?: never;
+                };
+                /** @description The refresh token could not be revoked; it remains valid */
+                500: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
                 };
             };
         };
@@ -252,8 +294,8 @@ export interface paths {
          *     nothing at all means "leave it alone".
          *
          *     `plan` is the exception to "about themselves": it may be sent only by an account holding
-         *     the `customerservice` role, and anybody else is answered 403 rather than having the field
-         *     quietly dropped. CouchDB's `_admin` is not accepted — see the `admin` tag for why that
+         *     the `customerservice` role on its user record, and anybody else is answered 403 rather than
+         *     having the field quietly dropped. CouchDB's `_admin` is not accepted — see the `admin` tag for why that
          *     role is excluded rather than merely unnecessary. See ADR 0009 — what a plan then permits
          *     is decided by the policy table, never by a comparison against a tier.
          */
@@ -271,7 +313,7 @@ export interface paths {
                         locale?: "auto" | "en" | "de";
                         displayName?: string;
                         /** @enum {string} */
-                        plan?: "free" | "user" | "pro";
+                        plan?: "free" | "member" | "pro";
                     };
                 };
             };
@@ -318,21 +360,25 @@ export interface paths {
         /**
          * Set another account's plan
          * @description The operator counterpart to `PATCH /profile`. That operation takes its subject from the
-         *     session and never from the body - a profile endpoint accepting an arbitrary `sub` would
+         *     token and never from the body - a profile endpoint accepting an arbitrary identity would
          *     be an account-takeover primitive - so it can only ever reach the caller, and an operator
          *     who can upgrade themselves and nobody else is not an operator tool. This operation names
-         *     a subject, and being a separate operation is what lets `/profile` keep that rule.
+         *     an account, and being a separate operation is what lets `/profile` keep that rule.
          *
-         *     Reached only by an account holding the `customerservice` role — and deliberately not
-         *     CouchDB's `_admin`, for the reason the `admin` tag gives. **The role is checked
-         *     before the body is validated and before the subject is looked up**, so the answer to a
-         *     caller without the role is 403 whether or not the named account exists, and is identical
-         *     in both cases: answering 404 or 400 first would make this an oracle telling any
-         *     signed-in user which accounts exist.
+         *     **The account is named by email address**, which is what a user record is keyed by. If it
+         *     has no record yet - somebody who has only ever signed in, or never has - the record is
+         *     created with this plan, and their `sub` is filled in at their next sign-in. That is why
+         *     there is no 404.
          *
-         *     Only `plan` is applied. `name`, `roles` and `type` are CouchDB's own and are written
-         *     back unchanged - an operator who could set `roles` could mint more operators, and the
-         *     role check above would then mean nothing.
+         *     Reached only by an account whose record holds the `customerservice` role - and
+         *     deliberately not CouchDB's `_admin`, for the reason the `admin` tag gives. **The role is
+         *     checked before the body is validated**, so the answer to a caller without the role is 403
+         *     whatever the body says and whether or not the named account exists, and is identical in
+         *     every case: answering 400 first would make this an oracle telling any signed-in user what
+         *     the operation accepts and which accounts exist.
+         *
+         *     Only `plan` is applied. `roles` and `type` in the body are ignored - an operator who could
+         *     set `roles` could mint more operators, and the role check above would then mean nothing.
          *
          *     What a plan then permits is decided by the policy table, never by a comparison against a
          *     tier (ADR 0009).
@@ -348,12 +394,13 @@ export interface paths {
                 content: {
                     "application/json": {
                         /**
-                         * @description The account to change; also the CouchDB username. Not the caller - that is
-                         *     the whole point of this operation.
+                         * Format: email
+                         * @description The account to change, by address. Not the caller - that is the whole point
+                         *     of this operation. Matched without regard to case or surrounding space.
                          */
-                        sub: string;
+                        email: string;
                         /** @enum {string} */
-                        plan: "free" | "user" | "pro";
+                        plan: "free" | "member" | "pro";
                     };
                 };
             };
@@ -372,9 +419,10 @@ export interface paths {
                 /**
                  * @description The caller does not hold the `customerservice` role.
                  *
-                 *     Answered **before** the body is validated and before the named subject is looked up,
-                 *     so it is byte-for-byte the answer a non-operator gets whether or not that account
-                 *     exists. See this operation's description for why that ordering is a requirement.
+                 *     Answered **before** the body is validated, so it precedes any 400 and is
+                 *     byte-for-byte the answer a non-operator gets whatever the body says and whether or not
+                 *     the account named by address has a record.
+                 *     See this operation's description for why that ordering is a requirement.
                  */
                 403: {
                     headers: {
@@ -382,20 +430,6 @@ export interface paths {
                     };
                     content: {
                         "application/problem+json": components["schemas"]["NotAnOperator"];
-                    };
-                };
-                /**
-                 * @description No `_users` document for that subject - an account that has never signed in. Distinct
-                 *     from 403 because "you may not" and "there is no such account" send an operator to
-                 *     different places, and reached only *after* the role check, so it says that to an
-                 *     operator and to nobody else.
-                 */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/problem+json": components["schemas"]["Problem"];
                     };
                 };
             };
@@ -872,14 +906,14 @@ export interface components {
             locale: "auto" | "en" | "de";
             /**
              * @description Set by an operator through `PUT /customer`, or by an operator's own
-             *     `PATCH /profile`; never by the account itself.
+             *     `PATCH /profile`; never by the account itself. Stored on the user record.
              *
              *     A stored value this build does not know - an operator's typo, or a tier from a
              *     later version - reads as `free` rather than as an error, so the enum here is what
              *     a client will actually receive and not merely what CouchDB may hold.
              * @enum {string}
              */
-            plan: "free" | "user" | "pro";
+            plan: "free" | "member" | "pro";
             /**
              * @description How many projects this plan may own. **`-1` means unlimited** and must be tested before it is compared - `owned >= limit` is true for every count when the limit is `-1`, so a client that compares directly refuses every project on the one plan that has no limit.
              *     A number rather than a null or an absence, so one fact arrives in one shape. Reported at all so a page can say "3 of 5 used" without a second copy of the policy table, which is the duplication ADR 0009 exists to prevent.

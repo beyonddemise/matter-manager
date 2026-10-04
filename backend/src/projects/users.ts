@@ -1,72 +1,25 @@
 /**
- * Finding a user by email address, or by subject.
+ * Finding a user by email address, or by subject, among user records.
  *
- * `_users` holds one document per account (`docs/DATA-MODEL.md`), keyed by
- * `org.couchdb.user:<sub>`. Looking somebody up by their **address** therefore needs an index,
- * because the alternative is reading every account in the deployment to answer one invitation.
+ * Only records with a `sub` are found: a record an operator created by address names somebody
+ * who has not signed in yet, and there is no account to add to a project until they do.
  *
- * **Addresses are compared case-insensitively, and the view is what makes that true.** The local
- * part of an address is case-sensitive by the letter of RFC 5321 and case-insensitive at every
- * provider anybody uses; somebody typing `Ada@Example.test` to share their house means the
- * person they know as `ada@example.test`, and telling them that person has no account would be
- * wrong in the only way that matters.
+ * **Addresses are compared case-insensitively, and the record key is what makes that true.**
+ * The local part of an address is case-sensitive by the letter of RFC 5321 and case-insensitive
+ * at every provider anybody uses; somebody typing `Ada@Example.test` to share their house means
+ * the person they know as `ada@example.test`. `userKey` folds the address, so the lookup is one
+ * keyed read and needs no index.
  *
  * @module
  */
 
-import type { CouchClient } from '../couch/client.js'
-import { installDesign, once } from '../couch/design.js'
-import { userDocumentId } from '../profile/store.js'
-
-/** CouchDB's own account database. */
-export const USERS_DATABASE = '_users'
-
-/** The design document holding the address index. */
-export const BY_EMAIL_DESIGN = 'by_email'
-
-/** The view within it. */
-export const BY_EMAIL_VIEW = 'by_email'
-
-/**
- * The map function, emitting a folded address.
- *
- * `toLowerCase()` in the view rather than at the call site, so the *index* is folded and a
- * lookup is one keyed read. Folding only the query would mean scanning to find a match, which
- * is the thing the view exists to avoid.
- */
-const BY_EMAIL_MAP = `function (doc) {
-  if (doc.type === 'user' && doc.email) {
-    emit(doc.email.toLowerCase(), { sub: doc.name, email: doc.email })
-  }
-}`
+import type { UserRecords } from '../users/records.js'
 
 /** What a lookup answers with. */
 export interface FoundUser {
   readonly sub: string
-  /** As the user gave it, not as it was folded for the index. */
+  /** As the user gave it, not as it was folded for the key. */
   readonly email: string
-}
-
-const index = once(async (couch: CouchClient) => {
-  await installDesign(couch, USERS_DATABASE, `_design/${BY_EMAIL_DESIGN}`, {
-    [BY_EMAIL_VIEW]: { map: BY_EMAIL_MAP },
-  })
-})
-
-/** Forgets that the index was established. For tests. */
-export function forgetUserIndex(): void {
-  index.forget()
-}
-
-/**
- * Installs the address index if it is not already there.
- *
- * Lazy, and remembered only on success, for the same reasons as `ensureRegistry`. Shared while
- * in flight, because `findUser` awaits this on the path of every invitation — two people
- * sharing a project at the same moment is enough to reach the race.
- */
-export async function ensureUserIndex(couch: CouchClient): Promise<void> {
-  return index.ensure(couch)
 }
 
 /**
@@ -74,36 +27,19 @@ export async function ensureUserIndex(couch: CouchClient): Promise<void> {
  *
  * Accepts both because the two callers want different things from one function: an invitation
  * arrives as an address, and rendering a member list starts from a subject. Which one it is
- * given is decided by shape — a subject is `provider|id` and never contains an `@`.
+ * given is decided by shape - a subject is `provider|id` and never contains an `@`. An address
+ * resolves by direct read, a subject through the `by_sub` view.
  *
- * @returns the user, or `undefined` if there is no account. Not an error: "nobody has that
- *   address yet" is an ordinary answer, and M5-4 turns it into an invitation.
+ * @returns the user, or `undefined` if there is no signed-in account. Not an error: "nobody has
+ *   that address yet" is an ordinary answer, and M5-4 turns it into an invitation.
  */
 export async function findUser(
-  couch: CouchClient,
+  records: UserRecords,
   emailOrSub: string,
 ): Promise<FoundUser | undefined> {
   const value = emailOrSub.trim()
   if (value === '') return undefined
 
-  if (!value.includes('@')) {
-    const user = await couch.getDoc<{ _id: string; name: string; email?: string }>(
-      USERS_DATABASE,
-      userDocumentId(value),
-    )
-    return user === undefined ? undefined : { sub: user.name, email: user.email ?? '' }
-  }
-
-  await ensureUserIndex(couch)
-  const result = await couch.view<{ value: FoundUser }>(
-    USERS_DATABASE,
-    BY_EMAIL_DESIGN,
-    BY_EMAIL_VIEW,
-    { key: value.toLowerCase() },
-  )
-
-  // The first, when two accounts somehow share an address. That should not happen — sign-in
-  // creates one account per subject and providers do not reuse addresses — but a deployment is
-  // not a proof, and throwing here would make sharing impossible rather than merely ambiguous.
-  return result.rows[0]?.value
+  const record = value.includes('@') ? await records.read(value) : await records.readBySub(value)
+  return record?.sub === undefined ? undefined : { sub: record.sub, email: record.email }
 }

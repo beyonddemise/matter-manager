@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { ensureInvitationIndex, forgetInvitationIndex } from '../../src/projects/invitations.js'
 import { ensureRegistry, forgetRegistry, REGISTRY_DATABASE } from '../../src/projects/registry.js'
 import { ensureTransferIndex, forgetTransferIndex } from '../../src/projects/transfers.js'
-import { ensureUserIndex, forgetUserIndex } from '../../src/projects/users.js'
 import { fakeCouch } from '../support/couch.js'
 
 /**
@@ -39,12 +38,6 @@ const HELPERS = [
     ensure: ensureTransferIndex,
     forget: forgetTransferIndex,
     breaks: 'accepting an ownership transfer',
-  },
-  {
-    what: 'the user address index',
-    ensure: ensureUserIndex,
-    forget: forgetUserIndex,
-    breaks: 'finding anybody by email, so sharing and inviting',
   },
 ] as const
 
@@ -197,7 +190,5 @@ function designLocation(what: (typeof HELPERS)[number]['what']): [string, string
       return [REGISTRY_DATABASE, '_design/by_invitee']
     case 'the transfer index':
       return [REGISTRY_DATABASE, '_design/by_recipient']
-    case 'the user address index':
-      return ['_users', '_design/by_email']
   }
 }

@@ -21,25 +21,26 @@
  */
 
 import PouchDB from 'pouchdb-browser'
-import { localProfileCache, removeLocalDatabases } from './db/project-database.js'
+import { localDatabase, localProfileCache, removeLocalDatabases } from './db/project-database.js'
 import { type Locale, profileApi, resolveProfileLocale } from './profile.js'
 import { type Project, projectsApi } from './projects.js'
 import {
   endServerSessionVia,
   isSessionEnded,
   type SessionDependencies,
-  type SessionState,
   signOut,
 } from './session.js'
 import { type ManagerDependencies, type SyncManager, syncManager } from './sync/manager.js'
 import { remoteProject } from './sync/remote.js'
 import type { SyncState } from './sync/replication.js'
 import {
-  type AccessTokenResponse,
   accessToken,
   EXPIRY_MARGIN_SECONDS,
   forgetTokens,
+  pouchRefreshTokenStore,
+  type RefreshTokenStore,
   rememberAccessToken,
+  type TokenResponse,
 } from './tokens.js'
 
 /** The API, behind the application's own origin. See the module note. */
@@ -56,80 +57,138 @@ export const COUCH_BASE = '/db'
  * hold the *policy* and none of the PouchDB.
  */
 export function sessionDependencies(
-  fetchImpl: typeof fetch = fetch,
-  includeLocalCatalogue = false,
+  fetchImpl: typeof fetch,
+  includeLocalCatalogue: boolean,
+  store: RefreshTokenStore,
+  held: HeldCredentials,
 ): SessionDependencies {
   return {
-    endServerSession: endServerSessionVia(API_BASE, fetchImpl),
+    endServerSession: endServerSessionVia(
+      API_BASE,
+      fetchImpl,
+      { read: async () => held.refreshToken, write: async () => {}, clear: async () => {} },
+      () => held.bearer,
+    ),
     // The catalogue on this device predates accounts and holds whatever was recorded before
     // signing in, so it is kept unless the reader asked otherwise. On a shared machine somebody
     // may well want it gone, which is why the sign-out control asks rather than this deciding
     // (#55). Everything the *account* put on this browser goes either way.
     removeLocalData: () => removeLocalDatabases({ includeLocalCatalogue }),
     forgetTokens,
+    forgetRefreshToken: () => store.clear(),
   }
 }
 
 /**
- * Asks the server whether this browser has a session, and keeps the token if it does.
+ * The credentials the server has to be shown to revoke them.
  *
- * There is no "am I signed in" endpoint and there does not need to be: the session is an
- * httpOnly cookie the page cannot read, so the only way to find out is to try to exchange it,
- * and the exchange is a thing worth doing anyway. Asking and getting are one request.
- *
- * A 401 means signed out. Anything else — offline, a proxy in the way, the API not running —
- * is **not** an answer, and is reported as `signed-out` without discarding anything, because
- * this application works offline and being unable to reach the server is its ordinary state
- * rather than a session ending.
+ * Captured by {@link endSession} before `signOut` starts, because `signOut` discards both
+ * locally first (the steps that cannot fail), after which there would be nothing left to send.
  */
-export async function readSessionState(fetchImpl: typeof fetch = fetch): Promise<SessionState> {
+export interface HeldCredentials {
+  readonly refreshToken?: string | undefined
+  readonly bearer?: string | undefined
+}
+
+/** What {@link requestTokens} found out. */
+export type TokenOutcome =
+  | { readonly kind: 'refreshed'; readonly expiresIn: number }
+  /** Never signed in on this device, or the handoff was refused. */
+  | { readonly kind: 'signed-out' }
+  /** A stored refresh token was refused: an authentication failure, not a choice. */
+  | { readonly kind: 'ended' }
+  /** Network error, timeout, 5xx or an unusable answer. Nothing was discarded. */
+  | { readonly kind: 'unreachable' }
+
+/**
+ * Gets an access token, and keeps the refresh token that comes with it.
+ *
+ * There is no "am I signed in" endpoint and there does not need to be: the exchange is the
+ * question. The first call after sign-in has no stored token and authenticates with the httpOnly
+ * handoff cookie, which is why `credentials: 'include'` stays; every later call sends the stored
+ * refresh token in the body. The server does **not** rotate it (#209), so ordinarily the same
+ * token comes back. It differs after a fresh sign-in: a handoff that verifies wins over the body
+ * token on the server, and the new refresh token it returns replaces the stored one — which is
+ * why the answer is written back whenever it differs.
+ *
+ * Only a 401 ends anything. Offline, a proxy in the way or a 5xx is **not** an answer and
+ * reports `unreachable` without discarding the stored token, because this application works
+ * offline and an unwell server must not sign anybody out.
+ *
+ * @param signal aborted when nobody wants the answer any more (the refresher was stopped, which
+ *   is what signing out does). Checked before every side effect, not only passed to `fetch`:
+ *   a response already received would otherwise still remember the access token and write the
+ *   returned refresh token *after* sign-out cleared both, re-arming a signed-out browser. An
+ *   aborted request reports `unreachable` and changes nothing.
+ */
+export async function requestTokens(
+  store: RefreshTokenStore,
+  fetchImpl: typeof fetch = fetch,
+  signal?: AbortSignal,
+): Promise<TokenOutcome> {
+  // A function, not repeated property reads: TypeScript would narrow `signal.aborted` after the
+  // first check and call the later ones impossible, though it can change across every `await`.
+  const aborted = (): boolean => signal?.aborted === true
+  const stored = await store.read()
+  if (aborted()) return { kind: 'unreachable' }
   let response: Response
   try {
     response = await fetchImpl(`${API_BASE}/auth/token`, {
       method: 'POST',
-      // The session is an httpOnly cookie: without this it is not sent, and the request would
-      // report "not signed in" for somebody who is.
+      // The handoff cookie is httpOnly and must be sent on the first call after sign-in.
       credentials: 'include',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(stored === undefined ? {} : { refreshToken: stored }),
+      ...(signal === undefined ? {} : { signal }),
     })
   } catch {
-    return 'signed-out'
+    return { kind: 'unreachable' }
   }
+  if (aborted()) return { kind: 'unreachable' }
 
-  if (isSessionEnded(response.status)) return 'signed-out'
-  if (!response.ok) return 'signed-out'
+  if (isSessionEnded(response.status)) {
+    if (stored === undefined) return { kind: 'signed-out' }
+    await store.clear()
+    return { kind: 'ended' }
+  }
+  if (!response.ok) return { kind: 'unreachable' }
 
   let body: unknown
   try {
     body = await response.json()
   } catch {
-    return 'signed-out'
+    return { kind: 'unreachable' }
   }
+  // Again after the body: reading it is asynchronous too, and this is the last point before the
+  // state changes.
+  if (aborted()) return { kind: 'unreachable' }
 
-  // A 200 whose body is not a token is a server fault, not a session. Reporting `signed-in` on
-  // the strength of a status code would leave the application making requests with no token and
-  // blaming the user's session for the 401s that follow.
+  // A 200 whose body is not a token pair is a server fault, not a session, so it is
+  // `unreachable` rather than `signed-out`: the server being unwell must not sign anybody out.
   //
-  // Checked by shape, not merely by parsing. The first version guarded only against JSON that
-  // would not parse, which `{}` does perfectly well - and `rememberAccessToken({})` then stores
-  // an undefined token with an expiry of `NaN`, so `accessToken()` reports none while this
-  // function reports `signed-in`. The comment above described that guarantee; the code made a
-  // weaker one, and the test picked the case the code happened to cover.
-  if (!isAccessToken(body)) return 'signed-out'
+  // Checked by shape, not merely by parsing. Guarding only against JSON that will not parse lets
+  // `{}` through, and `rememberAccessToken({})` then stores an undefined token with an expiry of
+  // `NaN`, so `accessToken()` reports none while this function reports success.
+  if (!isTokenResponse(body)) return { kind: 'unreachable' }
 
   rememberAccessToken(body)
-  return 'signed-in'
+  if (body.refreshToken !== stored) await store.write(body.refreshToken)
+  return { kind: 'refreshed', expiresIn: body.expiresIn }
 }
 
 /**
- * Whether a parsed response really is an access token.
+ * Whether a parsed response really is a token pair: an access token and a refresh token.
  *
  * Here rather than in `tokens.ts` because this is the trust boundary: `tokens.ts` holds a token
  * for the rest of the application and is entitled to assume it was given one. Something has to
  * make that true, and the place where a response becomes a value is it.
  */
-function isAccessToken(body: unknown): body is AccessTokenResponse {
+function isTokenResponse(body: unknown): body is TokenResponse {
   if (typeof body !== 'object' || body === null) return false
-  const { accessToken: token, expiresIn } = body as Partial<AccessTokenResponse>
+  const { accessToken: token, expiresIn, refreshToken } = body as Partial<TokenResponse>
+
+  // Likewise for the refresh token: without one the next reload could not sign in again.
+  if (typeof refreshToken !== 'string' || refreshToken === '') return false
 
   // An empty token is not a token: it would be sent as `Authorization: Bearer `, refused, and
   // reported as an expiry - sending the user round a sign-in loop that cannot help them.
@@ -174,15 +233,23 @@ export function beginSignIn(
 export async function endSession(
   includeLocalCatalogue = false,
   fetchImpl: typeof fetch = fetch,
+  store: RefreshTokenStore = pouchRefreshTokenStore(localDatabase()),
 ): Promise<readonly string[]> {
-  return signOut(sessionDependencies(fetchImpl, includeLocalCatalogue))
+  // Awaited here, before `signOut`, so the order is explicit: `signOut` clears the stored
+  // refresh token and the in-memory access token before it asks the server to revoke them. A
+  // store that cannot be read means there is nothing to revoke, not a reason to stay signed in.
+  const held: HeldCredentials = {
+    refreshToken: await store.read().catch(() => undefined),
+    bearer: accessToken(),
+  }
+  return signOut(sessionDependencies(fetchImpl, includeLocalCatalogue, store, held))
 }
 
 /**
  * The projects this account has, from the API.
  *
- * The access token goes in an `Authorization` header rather than as a cookie, which is what the
- * contract declares — see `projects.ts` for why the session cookie would not be sent here at all.
+ * The access token goes in an `Authorization` header, which is what the contract declares — see
+ * `projects.ts` for why no cookie authenticates these routes.
  */
 export function projects(fetchImpl: typeof fetch = fetch): ReturnType<typeof projectsApi> {
   return projectsApi(API_BASE, accessToken, fetchImpl)

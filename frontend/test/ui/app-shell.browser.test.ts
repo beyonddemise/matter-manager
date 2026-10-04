@@ -1,13 +1,17 @@
 import '@awesome.me/webawesome-pro/dist/components/page/page.js'
 import '@awesome.me/webawesome-pro/dist/components/button/button.js'
 import '@awesome.me/webawesome-pro/dist/components/callout/callout.js'
+import '@awesome.me/webawesome-pro/dist/components/checkbox/checkbox.js'
+import '@awesome.me/webawesome-pro/dist/components/dialog/dialog.js'
 import '@awesome.me/webawesome-pro/dist/components/icon/icon.js'
 import '@awesome.me/webawesome-pro/dist/components/tag/tag.js'
-import { fixture, html } from '@open-wc/testing-helpers'
-import { afterEach, beforeEach, expect, it } from 'vitest'
+import { fixture, html, waitUntil } from '@open-wc/testing-helpers'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import type { TokenOutcome } from '../../src/ui/composition.js'
 import '../../src/ui/app-shell.js'
 import { NAV_ROUTES } from '../../src/ui/router/routes.js'
 import { applyScheme, SCHEME_STORAGE_KEY } from '../../src/ui/scheme.js'
+import { accessToken, rememberAccessToken } from '../../src/ui/tokens.js'
 
 /** A minimal shape for the reactive-update contract both `app-shell` and `wa-page` share. */
 interface Updatable {
@@ -339,4 +343,136 @@ it('links the public website, privacy notice and terms from a footer on every vi
   const page = element.querySelector('wa-page')
   const slot = page?.shadowRoot?.querySelector('slot[name="footer"]') as HTMLSlotElement | null
   expect(slot?.assignedElements()).toContain(footer)
+})
+
+/** The network as a test controls it: always there, and never changing. */
+const NETWORK = { addEventListener: () => {}, removeEventListener: () => {}, onLine: true }
+
+/**
+ * A shell whose refresher the test drives by hand.
+ *
+ * @returns the element, the `report` that plays an outcome into it, and the spies for what the
+ *   shell did about it
+ */
+const driven = async () => {
+  const report: { current?: (outcome: TokenOutcome) => void } = {}
+  const stop = vi.fn()
+  const stopAll = vi.fn()
+  const makeSync = vi.fn(() => ({
+    set: () => {},
+    running: () => [],
+    stateOf: () => undefined,
+    stopAll,
+  }))
+  const signOutOf = vi.fn(async () => [])
+  const element = (await fixture(html`
+    <app-shell
+      .refresher=${(onOutcome: (outcome: TokenOutcome) => void) => {
+        report.current = onOutcome
+        return { stop }
+      }}
+      .connectivity=${NETWORK}
+      .followLocale=${async () => undefined}
+      .listProjects=${async () => [{ projectId: 'p1', dbName: 'project_p1' }]}
+      .makeSync=${makeSync}
+      .signOutOf=${signOutOf}
+    ></app-shell>
+  `)) as HTMLElement & { updateComplete: Promise<unknown> }
+  await element.updateComplete
+  const play = async (outcome: TokenOutcome) => {
+    report.current?.(outcome)
+    await element.updateComplete
+  }
+  return { element, play, stop, stopAll, makeSync, signOutOf }
+}
+
+it('says the session has ended, offers sign-in, and removes no local data', async () => {
+  const { element, play, signOutOf } = await driven()
+  await play({ kind: 'ended' })
+  await waitUntil(() => element.querySelector('[data-session-ended]') !== null, 'no notice')
+  expect(element.querySelector('[data-session-ended]')?.textContent).toContain(
+    'Your session has ended. Please sign in again.',
+  )
+  expect(element.querySelector('[data-sign-in]')).not.toBeNull()
+  // Local data is the point: a session that lapsed offline must not cost unsynced work.
+  expect(signOutOf).not.toHaveBeenCalled()
+})
+
+it('stops replicating once the session has ended', async () => {
+  const { element, play, stopAll, makeSync } = await driven()
+  await play({ kind: 'refreshed', expiresIn: 300 })
+  await waitUntil(() => makeSync.mock.calls.length > 0, 'replication never started')
+  await play({ kind: 'ended' })
+  await element.updateComplete
+  expect(stopAll).toHaveBeenCalled()
+})
+
+it('treats signed-out after signed-in as a sign-out of this tab, keeping local data', async () => {
+  // Another tab signed out and removed the stored refresh token, so this tab's next exchange had
+  // nothing to send and was answered 401. Leaving replication running here would keep pushing
+  // with an access token nobody can renew, and keeping that token in memory would let this tab
+  // go on presenting a session the user ended.
+  const { element, play, stopAll, makeSync, signOutOf } = await driven()
+  await play({ kind: 'refreshed', expiresIn: 300 })
+  await waitUntil(() => makeSync.mock.calls.length > 0, 'replication never started')
+  rememberAccessToken({ accessToken: 'a', expiresIn: 300 })
+
+  await play({ kind: 'signed-out' })
+  await element.updateComplete
+
+  expect(stopAll).toHaveBeenCalled()
+  expect(accessToken()).toBeUndefined()
+  // Not the "session ended" notice: nothing was refused, the user signed out elsewhere.
+  expect(element.querySelector('[data-session-ended]')).toBeNull()
+  expect(element.querySelector('[data-sign-in]')).not.toBeNull()
+  // Local data is not this tab's to remove; the sign-out that happened elsewhere decided that.
+  expect(signOutOf).not.toHaveBeenCalled()
+})
+
+it('starts replication once however many times the token is refreshed', async () => {
+  const { element, play, makeSync } = await driven()
+  await play({ kind: 'refreshed', expiresIn: 300 })
+  await waitUntil(() => makeSync.mock.calls.length > 0, 'replication never started')
+  await play({ kind: 'refreshed', expiresIn: 300 })
+  await play({ kind: 'refreshed', expiresIn: 300 })
+  await new Promise((r) => setTimeout(r, 20))
+  await element.updateComplete
+  expect(makeSync).toHaveBeenCalledOnce()
+})
+
+it('dismisses the notice', async () => {
+  const { element, play } = await driven()
+  await play({ kind: 'ended' })
+  await waitUntil(() => element.querySelector('[data-session-ended]') !== null, 'no notice')
+  ;(element.querySelector('[data-session-ended] wa-button') as HTMLElement).click()
+  await waitUntil(() => element.querySelector('[data-session-ended]') === null, 'still shown')
+})
+
+it('keeps showing the signed-in state while the network is unreachable', async () => {
+  const { element, play } = await driven()
+  await play({ kind: 'refreshed', expiresIn: 300 })
+  await play({ kind: 'unreachable' })
+  await waitUntil(() => element.querySelector('[data-sign-out]') !== null, 'signed out')
+  expect(element.querySelector('[data-session-ended]')).toBeNull()
+})
+
+it('stops the refresher when the user signs out, before the sign-out runs', async () => {
+  const { element, play, stop, signOutOf } = await driven()
+  await play({ kind: 'refreshed', expiresIn: 300 })
+  await waitUntil(() => element.querySelector('[data-sign-out]') !== null, 'not signed in')
+  stop.mockImplementation(() => {
+    // The order is the point: a refresh landing between sign-out and stop would re-store a token.
+    expect(signOutOf).not.toHaveBeenCalled()
+  })
+  ;(element.querySelector('[data-sign-out]') as HTMLElement).click()
+  await waitUntil(() => element.querySelector('[data-confirm-sign-out]') !== null, 'no dialog')
+  ;(element.querySelector('[data-confirm-sign-out]') as HTMLElement).click()
+  await waitUntil(() => signOutOf.mock.calls.length > 0, 'never signed out')
+  expect(stop).toHaveBeenCalledOnce()
+})
+
+it('stops the refresher when the shell is removed', async () => {
+  const { element, stop } = await driven()
+  element.remove()
+  expect(stop).toHaveBeenCalledOnce()
 })

@@ -1,5 +1,17 @@
+import { generateKeyPairSync } from 'node:crypto'
+import type { FastifyRequest } from 'fastify'
 import { describe, expect, it } from 'vitest'
-import { bearerToken } from '../../src/auth/bearer.js'
+import { bearerClaims, bearerSubject, bearerToken } from '../../src/auth/bearer.js'
+import { denyList } from '../../src/auth/deny-list.js'
+import { mintToken, signingKeyFromPem } from '../../src/auth/jwt.js'
+
+function newKey(kid = 'ec-test') {
+  const { privateKey } = generateKeyPairSync('ec', { namedCurve: 'prime256v1' })
+  return signingKeyFromPem(kid, privateKey.export({ type: 'pkcs8', format: 'pem' }).toString())
+}
+
+const requestWith = (token: string) =>
+  ({ headers: { authorization: `Bearer ${token}` } }) as FastifyRequest
 
 describe('reading a bearer token', () => {
   it('reads the token after the scheme', () => {
@@ -52,5 +64,54 @@ describe('reading a bearer token', () => {
     // silently repaired. A parser that repairs input is a parser with opinions about what the
     // client meant.
     expect(bearerToken('Bearer  a.b.c')).toBeUndefined()
+  })
+})
+
+describe('reading the caller from an access token', () => {
+  it('returns the subject, address and name', () => {
+    const key = newKey()
+    const token = mintToken(key, {
+      purpose: 'access',
+      sub: 's',
+      email: 'ada@example.com',
+      name: 'Ada',
+      jti: 'j1',
+      exp: 100,
+    })
+    expect(bearerClaims(requestWith(token), key, () => 0)).toEqual({
+      sub: 's',
+      email: 'ada@example.com',
+      name: 'Ada',
+    })
+  })
+
+  it('omits what the token does not carry', () => {
+    const key = newKey()
+    const token = mintToken(key, { purpose: 'access', sub: 's', exp: 100 })
+    expect(bearerClaims(requestWith(token), key, () => 0)).toEqual({ sub: 's' })
+  })
+
+  it('refuses a denied access token', () => {
+    const key = newKey()
+    const deny = denyList(() => 0)
+    const token = mintToken(key, { purpose: 'access', sub: 's', jti: 'j1', exp: 100 })
+    deny.deny('j1', 100)
+    const request = { headers: { authorization: `Bearer ${token}` } } as FastifyRequest
+    expect(bearerClaims(request, key, () => 0, deny)).toBeUndefined()
+    expect(bearerSubject(request, key, () => 0, deny)).toBeUndefined()
+  })
+
+  it('accepts a token the deny list does not name', () => {
+    const key = newKey()
+    const deny = denyList(() => 0)
+    deny.deny('someone-else', 100)
+    const token = mintToken(key, { purpose: 'access', sub: 's', jti: 'j1', exp: 100 })
+    expect(bearerSubject(requestWith(token), key, () => 0, deny)).toBe('s')
+  })
+
+  it('refuses a refresh token presented as a bearer', () => {
+    const key = newKey()
+    const token = mintToken(key, { purpose: 'refresh', sub: 's', jti: 'j1', exp: 100 })
+    expect(bearerClaims(requestWith(token), key, () => 0)).toBeUndefined()
   })
 })

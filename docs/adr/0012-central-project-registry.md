@@ -39,6 +39,10 @@ and `GET /profile`, and reads it when offline.
 Profiles move to CouchDB's built-in `_users`, used purely as a profile store — see
 [DATA-MODEL.md](../DATA-MODEL.md).
 
+> **Superseded in part (phase A, 2026-10).** Profiles now live in user records in the admin-only
+> `matter_manager` database, created on demand; `_users` is no longer used. The registry decision
+> below is unchanged.
+
 ## Why `projects` must never be client-readable
 
 CouchDB has no row-level read permission. That single fact is why ADR 0003 exists, and it

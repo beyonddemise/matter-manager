@@ -1,8 +1,13 @@
-import { generateKeyPairSync } from 'node:crypto'
+import { generateKeyPairSync, randomUUID } from 'node:crypto'
 import { afterEach, describe, expect, it } from 'vitest'
+import { denyList } from '../src/auth/deny-list.js'
 import { mintToken, type SigningKey } from '../src/auth/jwt.js'
-import { profileStore } from '../src/profile/store.js'
+import { refreshStore } from '../src/auth/refresh-store.js'
 import { buildServer, type Server } from '../src/server.js'
+import { forgetUsersDatabase, USERS_DB } from '../src/users/database.js'
+import { recordEnsurer } from '../src/users/ensure.js'
+import { userDocId } from '../src/users/key.js'
+import { userRecords } from '../src/users/records.js'
 import {
   loadContract,
   operationsOf,
@@ -56,18 +61,36 @@ const SIGNING: SigningKey = (() => {
  * list of things nobody has written. The two are indistinguishable from the outside, which is
  * exactly the kind of check that reads as thorough and is not.
  */
+const CALLER_EMAIL = 'drift@example.test'
+
 const server = (): Server => {
-  // **One** CouchDB, wired to both the profile store and the project routes.
+  // **One** CouchDB, wired to both the user records and the project routes.
   //
   // They were two separate `fakeCouch()` instances, which is inert only for as long as no test
-  // writes anything: the two stores share no documents, so a later test that seeded a `_users`
+  // writes anything: the two stores share no documents, so a later test that seeded a user
   // document through the profile side and then asked `POST /projects` for the subject's plan
   // would read an empty store, get `free`, and pass for a reason that has nothing to do with
   // what it was asserting. One instance means the server behaves like a deployment, where there
   // is one database behind both.
-  const couch = fakeCouch().couch
-  const store = profileStore(couch)
+  forgetUsersDatabase()
+  const fake = fakeCouch()
+  const couch = fake.couch
+  // The credentialed caller is an operator, written into the record directly (the Fauxton
+  // equivalent: roles are never granted through the API), so `PUT /customer` can reach its 200
+  // rather than only the 403 every other caller gets.
+  fake.documents.set(`${USERS_DB}/${userDocId(CALLER_EMAIL)}`, {
+    _id: userDocId(CALLER_EMAIL),
+    _rev: '1-a',
+    type: 'user',
+    sub: 'drift-user',
+    email: CALLER_EMAIL,
+    roles: ['customerservice'],
+  })
+  const records = userRecords(couch)
+  const clock = () => Math.floor(Date.now() / 1000)
   const key = SIGNING
+  const refresh = refreshStore(records, clock)
+  const deny = denyList(clock)
 
   app = buildServer({
     logger: false,
@@ -86,36 +109,24 @@ const server = (): Server => {
       sessionKey: key,
       verifyIdToken: async () => ({ sub: 'google|1234', email: 'ada@example.test', name: 'Ada' }),
       appOrigin: 'https://app.test',
-      rememberUser: async () => undefined,
+      records,
+      refresh,
+      deny,
+      signIn: async () => ({ hasRecord: false }),
+      logSignIn: () => undefined,
     },
     profile: {
-      // The **real** store over the fake CouchDB, and deliberately not a hand-written stub.
-      //
-      // It was `{ read, write, rememberUser } as unknown as ProfileDependencies['store']` — three
-      // methods, one of which (`write`) the interface does not even have, and missing `rolesOf`
-      // and `setPlan`. The cast is what allowed that: it told the compiler to stop checking the
-      // one thing it was in a position to check. `registerCustomerRoutes` is wired to this
-      // store, so the first request that reached `PUT /customer` past the session check would
-      // have called `rolesOf` on `undefined` and thrown a TypeError — a 500 from the test
-      // harness, on a route whose refusals this file now validates.
-      //
-      // Using `profileStore` instead means there is no interface to keep in step by hand: a
-      // method added to `ProfileStore` is implemented once, in the real implementation, and this
-      // server gets it. That is the compile-time guarantee the rest of the branch leans on, and
-      // a cast here is exactly the hole in it.
-      store,
-      sessionKey: key,
+      records,
+      ensureRecord: recordEnsurer(records, refresh),
+      key,
+      deny,
     },
     projects: {
       couch,
       key,
-      profiles: store,
+      records,
+      ensureRecord: recordEnsurer(records, refresh),
       validator: () => 'function (doc) { return doc }',
-      identityOf: async (sub: string) => ({
-        sub,
-        email: 'drift@example.test',
-        emailVerified: true,
-      }),
     },
   })
   return app
@@ -217,23 +228,104 @@ describe('every implemented route answers what the contract declares', () => {
    *
    * Credentialed reaches past that, to the 200s, 400s, 403s and 404s a route answers when it
    * has a subject and an empty body to complain about. The credentials are minted from this
-   * server's own key, so they are genuine rather than mocked: `bearerSubject` and the session
+   * server's own key, so they are genuine rather than mocked: `bearerSubject` and the handoff
    * verifier do their real work, and a route that stopped accepting a valid token would show up
    * here as a 401 where the contract declares a 200.
    *
-   * Both passes send `{}`. A body with nothing in it is the shortest route to each operation's
-   * own validation, and every operation here reports a missing field rather than crashing on
-   * one — which is itself worth pinning.
+   * The first two passes send `{}`. A body with nothing in it is the shortest route to each
+   * operation's own validation, and every operation here reports a missing field rather than
+   * crashing on one — which is itself worth pinning. A third kind of request, from
+   * `extraRequests` below, carries a real body and an **expected status**, so the success paths
+   * that an empty body cannot reach (the refresh-body token, signout with a body, the
+   * operator's `PUT /customer`) are asserted to succeed rather than merely to answer
+   * something declared.
    */
   const credentials = () => {
     const claims = { sub: 'drift-user', exp: Math.floor(Date.now() / 1000) + 3600 }
-    const access = mintToken(SIGNING, { purpose: 'access', ...claims })
-    const session = mintToken(SIGNING, { purpose: 'session', ...claims })
+    // `email` on the access token because `/profile` and `/customer` look the caller's record up
+    // by address; without it every bearer route answered 401 and the pass reached no 200.
+    const access = mintToken(SIGNING, { purpose: 'access', ...claims, email: CALLER_EMAIL })
+    // A fresh `jti` per request, because a handoff is single use and each operation's pass
+    // should reach `POST /auth/token`'s 200 rather than a 401 for a handoff already spent.
+    const handoff = mintToken(SIGNING, {
+      purpose: 'handoff',
+      ...claims,
+      email: CALLER_EMAIL,
+      jti: randomUUID(),
+      // The API refuses a handoff without an `iat`, or one minted to outlive its two minutes.
+      iat: Math.floor(Date.now() / 1000),
+      exp: Math.floor(Date.now() / 1000) + 120,
+    })
     return {
       'content-type': 'application/json',
       authorization: `Bearer ${access}`,
-      cookie: `mm_session=${encodeURIComponent(session)}`,
+      cookie: `mm_handoff=${encodeURIComponent(handoff)}`,
     }
+  }
+
+  /**
+   * The extra requests an operation needs beyond the two empty-body passes, because its
+   * interesting answers hang on a body those passes do not send.
+   *
+   * - `POST /auth/token` by a **refresh body**: the first pass spends a handoff cookie and gets
+   *   a refresh token back, which is then presented the way every later call does.
+   * - `POST /auth/signout` **with a body**, so the revoke path runs and not only the no-body one.
+   * - `PUT /customer` **with an `email`**, which reaches the operator's 200.
+   *
+   * Async because the refresh token is a real one, issued by this same server.
+   */
+  type ExtraRequest = {
+    headers: Record<string, string>
+    payload: object
+    /** The status this request must get; anything else means the setup silently degraded. */
+    expected: number
+  }
+  const extraRequests = async (
+    instance: Server,
+    method: string,
+    path: string,
+  ): Promise<ExtraRequest[]> => {
+    const refreshToken = async (): Promise<string> => {
+      const issued = await instance.inject({
+        method: 'POST',
+        url: '/auth/token',
+        payload: {},
+        headers: credentials(),
+      })
+      // Loud here: an issuance that failed would hand back `undefined`, and the refresh-body and
+      // signout passes would then degrade to a declared 401 and a no-body 204 and stay green.
+      expect(issued.statusCode, 'the drift fixture could not obtain a refresh token').toBe(200)
+      return (issued.json() as { refreshToken: string }).refreshToken
+    }
+    const route = `${method} ${path}`
+    if (route === 'POST /auth/token') {
+      return [
+        {
+          headers: { 'content-type': 'application/json' },
+          payload: { refreshToken: await refreshToken() },
+          expected: 200,
+        },
+      ]
+    }
+    if (route === 'POST /auth/signout') {
+      return [
+        {
+          headers: credentials(),
+          payload: { refreshToken: await refreshToken() },
+          expected: 204,
+        },
+      ]
+    }
+    if (route === 'PUT /customer') {
+      return [
+        {
+          headers: credentials(),
+          payload: { email: 'someone@example.test', plan: 'member' },
+          expected: 200,
+        },
+      ]
+    }
+    return []
   }
 
   /**
@@ -266,15 +358,25 @@ describe('every implemented route answers what the contract declares', () => {
       // way this file's predecessor passed while checking nothing.
       expect(operation, `the contract lost ${method} ${path} between two reads`).toBeDefined()
 
-      for (const headers of [{}, credentials()]) {
+      const requests: (Omit<ExtraRequest, 'expected'> & { expected?: number })[] = [
+        { headers: {}, payload: {} },
+        { headers: credentials(), payload: {} },
+        ...(await extraRequests(instance, method, path)),
+      ]
+      for (const { headers, payload, expected } of requests) {
         const response = await instance.inject({
           method: method as 'GET',
           url: urlFor(path),
-          payload: {},
+          payload,
           headers: { 'content-type': 'application/json', ...headers },
         })
         const status = String(response.statusCode)
         const where = `${method} ${path} answered ${status}`
+        if (expected !== undefined) {
+          expect(response.statusCode, `${where}, expected the success path ${expected}`).toBe(
+            expected,
+          )
+        }
 
         // First: is this status described at all? `responses` is keyed only by the statuses
         // that declare a body, so asking it alone cannot tell an undeclared 401 from a
@@ -401,7 +503,11 @@ describe('the check catches drift it was built to catch', () => {
     const schema = {
       type: 'object',
       required: ['a', 'b'],
-      properties: { a: { type: 'string' }, b: { type: 'string' }, c: { type: 'integer' } },
+      properties: {
+        a: { type: 'string' },
+        b: { type: 'string' },
+        c: { type: 'integer' },
+      },
     }
 
     expect(validate({ c: 1.5 }, schema)).toHaveLength(3)

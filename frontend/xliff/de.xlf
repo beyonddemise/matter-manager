@@ -686,6 +686,14 @@
   <source>Terms</source>
   <target>Nutzungsbedingungen</target>
 </trans-unit>
+<trans-unit id="sacca379ae305294c">
+  <source>Your session has ended. Please sign in again.</source>
+  <target>Ihre Sitzung ist abgelaufen. Bitte melden Sie sich erneut an.</target>
+</trans-unit>
+<trans-unit id="s12d6dde9b30c3093">
+  <source>Dismiss</source>
+  <target>Schließen</target>
+</trans-unit>
 </body>
 </file>
 </xliff>

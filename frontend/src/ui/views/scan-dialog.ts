@@ -91,6 +91,21 @@ export class ScanDialog extends LitElement {
     return this.resolved
   }
 
+  /**
+   * Clears the last attempt's failures as the dialog opens.
+   *
+   * Here rather than at the top of `start()`, which `updated()` calls: assigning reactive state
+   * after an update has completed schedules a second render for what is one logical change
+   * (Lit's dev build warns about exactly that). In `willUpdate` the assignment folds into the
+   * render already under way.
+   */
+  protected override willUpdate(changed: PropertyValues<this>): void {
+    if (changed.has('open') && this.open) {
+      this.cameraFailure = undefined
+      this.codeFailure = undefined
+    }
+  }
+
   protected override updated(changed: PropertyValues<this>): void {
     if (!changed.has('open')) return
     if (this.open) void this.start()
@@ -105,8 +120,6 @@ export class ScanDialog extends LitElement {
 
   private async start(): Promise<void> {
     if (this.scanning) return
-    this.cameraFailure = undefined
-    this.codeFailure = undefined
 
     let stream: MediaStream
     try {

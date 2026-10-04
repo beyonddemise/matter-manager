@@ -79,6 +79,8 @@ export type SignInProblem =
   | 'exchange'
   /** The provider's answer was not something this service can read. */
   | 'identity'
+  /** The provider did not vouch for the address, and records are keyed by it. */
+  | 'unverified'
 
 export class SignInError extends Error {
   override readonly name = 'SignInError'
