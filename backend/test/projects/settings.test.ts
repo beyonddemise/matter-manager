@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest'
+import { CouchError } from '../../src/couch/client.js'
 import type { Participant } from '../../src/domain/index.js'
 import { forgetRegistry, pointerId, REGISTRY_DATABASE } from '../../src/projects/registry.js'
 import { SettingsRefused, updateProjectSettings } from '../../src/projects/settings.js'
@@ -27,9 +28,15 @@ const OWNER_ONLY: readonly Participant[] = [{ role: 'owner', userid: ADA }]
 function project(
   participants: readonly Participant[] = OWNER_ONLY,
   address?: string,
+  extra: Record<string, unknown> = {},
 ): {
-  readonly deps: { readonly couch: ReturnType<typeof fakeCouch>['couch'] }
+  readonly deps: {
+    readonly couch: ReturnType<typeof fakeCouch>['couch']
+    readonly now: () => number
+    readonly authoriseUnarchive: (owner: string) => Promise<void>
+  }
   readonly pointerNow: () => Record<string, unknown>
+  readonly fake: ReturnType<typeof fakeCouch>
 } {
   const fake = fakeCouch({
     seed: {
@@ -43,17 +50,27 @@ function project(
         participants: [...participants],
         addedAt: '2026-08-27T09:00:00.000Z',
         ...(address === undefined ? {} : { address }),
+        ...extra,
       },
     },
   })
 
   return {
-    deps: { couch: fake.couch },
+    deps: {
+      couch: fake.couch,
+      now: () => clock,
+      authoriseUnarchive: async () => {},
+    },
     pointerNow: () => fake.documents.get(POINTER) as Record<string, unknown>,
+    fake,
   }
 }
 
+/** The settings clock, in seconds. A test moves it to prove which reading was stored. */
+let clock = 1_700_000_000
+
 beforeEach(() => {
+  clock = 1_700_000_000
   forgetRegistry()
 })
 
@@ -200,7 +217,7 @@ describe('who may change settings', () => {
 
     await expect(
       updateProjectSettings(deps, PROJECT_ID, GRACE, { name: 'Renamed' }),
-    ).rejects.toMatchObject({ status: 403 })
+    ).rejects.toMatchObject({ status: 403, reason: 'not-a-manager' })
     expect(pointerNow().projectName).toBe('Musterstraße 12')
   })
 
@@ -368,5 +385,449 @@ describe('archiving a project', () => {
         archived: 'yes' as unknown as boolean,
       }),
     ).rejects.toBeInstanceOf(SettingsRefused)
+  })
+})
+
+describe('the client a project is for', () => {
+  it('stores it trimmed and reports it back', async () => {
+    const { deps, pointerNow } = project()
+
+    const summary = await updateProjectSettings(deps, PROJECT_ID, ADA, { client: '  Acme  ' })
+
+    expect(summary.client).toBe('Acme')
+    expect(pointerNow().client).toBe('Acme')
+  })
+
+  it.each([null, '   '])('clears it on %j, leaving no key behind', async (value) => {
+    const { deps, pointerNow } = project(OWNER_ONLY, undefined, { client: 'Acme' })
+
+    const summary = await updateProjectSettings(deps, PROJECT_ID, ADA, { client: value })
+
+    expect(summary).not.toHaveProperty('client')
+    expect(pointerNow()).not.toHaveProperty('client')
+  })
+
+  it('leaves it alone when the change does not mention it', async () => {
+    const { deps, pointerNow } = project(OWNER_ONLY, undefined, { client: 'Acme' })
+
+    await updateProjectSettings(deps, PROJECT_ID, ADA, { name: 'Altbau' })
+
+    expect(pointerNow().client).toBe('Acme')
+  })
+
+  it('refuses more than 200 characters and writes nothing', async () => {
+    const { deps, pointerNow } = project()
+
+    await expect(
+      updateProjectSettings(deps, PROJECT_ID, ADA, { client: 'x'.repeat(201) }),
+    ).rejects.toMatchObject({ status: 400 })
+    expect(pointerNow()).not.toHaveProperty('client')
+  })
+
+  it('counts as something to change', async () => {
+    const { deps } = project()
+
+    await expect(
+      updateProjectSettings(deps, PROJECT_ID, ADA, { client: 'Acme' }),
+    ).resolves.toBeDefined()
+  })
+
+  it('may be changed by a manager and not by a reader', async () => {
+    const { deps } = project([
+      { role: 'owner', userid: ADA },
+      { role: 'manage', userid: GRACE },
+      { role: 'read', userid: STRANGER },
+    ])
+
+    await expect(
+      updateProjectSettings(deps, PROJECT_ID, GRACE, { client: 'Acme' }),
+    ).resolves.toMatchObject({ client: 'Acme' })
+    await expect(
+      updateProjectSettings(deps, PROJECT_ID, STRANGER, { client: 'Evil' }),
+    ).rejects.toMatchObject({ status: 403 })
+  })
+})
+
+describe('when a project was archived', () => {
+  it('stamps archivedAt from the clock, in seconds', async () => {
+    const { deps, pointerNow } = project()
+
+    const summary = await updateProjectSettings(deps, PROJECT_ID, ADA, { archived: true })
+
+    expect(summary.archivedAt).toBe(1_700_000_000)
+    expect(pointerNow().archivedAt).toBe(1_700_000_000)
+  })
+
+  it('keeps the first stamp when it is archived again', async () => {
+    const { deps, pointerNow } = project()
+    await updateProjectSettings(deps, PROJECT_ID, ADA, { archived: true })
+
+    clock += 500
+    const summary = await updateProjectSettings(deps, PROJECT_ID, ADA, { archived: true })
+
+    expect(summary.archivedAt).toBe(1_700_000_000)
+    expect(pointerNow().archivedAt).toBe(1_700_000_000)
+  })
+
+  it('keeps the stamp through a change that does not mention archiving', async () => {
+    const { deps, pointerNow } = project(OWNER_ONLY, undefined, { archived: true, archivedAt: 42 })
+
+    const summary = await updateProjectSettings(deps, PROJECT_ID, ADA, { name: 'Altbau' })
+
+    expect(summary.archivedAt).toBe(42)
+    expect(pointerNow().archivedAt).toBe(42)
+  })
+
+  it('removes it on unarchive, leaving no key behind', async () => {
+    const { deps, pointerNow } = project()
+    await updateProjectSettings(deps, PROJECT_ID, ADA, { archived: true })
+
+    const summary = await updateProjectSettings(deps, PROJECT_ID, ADA, { archived: false })
+
+    expect(summary).not.toHaveProperty('archivedAt')
+    expect(pointerNow()).not.toHaveProperty('archivedAt')
+  })
+})
+
+describe('the archive stamp', () => {
+  it('does not stamp a rename of an archived pointer that has no archivedAt', async () => {
+    // A pointer archived before the stamp existed. Only `archived: true` is the event the stamp
+    // records; a rename must not invent "archived just now" for a project put away long ago.
+    const { deps, pointerNow } = project(OWNER_ONLY, undefined, { archived: true })
+
+    const summary = await updateProjectSettings(deps, PROJECT_ID, ADA, { name: 'Renamed' })
+
+    expect(summary).not.toHaveProperty('archivedAt')
+    expect(pointerNow()).not.toHaveProperty('archivedAt')
+  })
+})
+
+describe("unarchiving asks the owner's entitlement first", () => {
+  const ARCHIVED = { archived: true, archivedAt: 42 }
+
+  it('asks with the owner, not the caller, and refuses before writing', async () => {
+    const { deps, pointerNow } = project(
+      [
+        { role: 'owner', userid: ADA },
+        { role: 'manage', userid: GRACE },
+      ],
+      undefined,
+      ARCHIVED,
+    )
+    const asked: string[] = []
+    const refusing = {
+      ...deps,
+      authoriseUnarchive: async (owner: string) => {
+        asked.push(owner)
+        throw new Error('not entitled')
+      },
+    }
+
+    await expect(
+      updateProjectSettings(refusing, PROJECT_ID, GRACE, { archived: false }),
+    ).rejects.toThrow('not entitled')
+
+    expect(asked).toEqual([ADA])
+    expect(pointerNow()).toMatchObject({ archived: true, archivedAt: 42 })
+  })
+
+  it('does not ask when archiving, renaming, or when the project is not archived', async () => {
+    const asked: string[] = []
+    const record = (extra: Record<string, unknown>) => {
+      const { deps } = project(OWNER_ONLY, undefined, extra)
+      return {
+        ...deps,
+        authoriseUnarchive: async (owner: string) => {
+          asked.push(owner)
+        },
+      }
+    }
+
+    await updateProjectSettings(record({}), PROJECT_ID, ADA, { archived: true })
+    await updateProjectSettings(record(ARCHIVED), PROJECT_ID, ADA, { name: 'Renamed' })
+    await updateProjectSettings(record({ archived: false }), PROJECT_ID, ADA, { archived: false })
+
+    expect(asked).toEqual([])
+  })
+
+  it('does not ask a caller who may not change settings, or who is a stranger', async () => {
+    const asked: string[] = []
+    const { deps } = project(
+      [
+        { role: 'owner', userid: ADA },
+        { role: 'read', userid: GRACE },
+      ],
+      undefined,
+      ARCHIVED,
+    )
+    const watching = {
+      ...deps,
+      authoriseUnarchive: async (owner: string) => {
+        asked.push(owner)
+      },
+    }
+
+    await expect(
+      updateProjectSettings(watching, PROJECT_ID, GRACE, { archived: false }),
+    ).rejects.toThrow(SettingsRefused)
+    await expect(
+      updateProjectSettings(watching, PROJECT_ID, STRANGER, { archived: false }),
+    ).rejects.toThrow(SettingsRefused)
+
+    expect(asked).toEqual([])
+  })
+})
+
+describe('the project document follows the pointer', () => {
+  const DOCUMENT = `${DATABASE}/project`
+  const SEEDED = {
+    _id: 'project',
+    _rev: '1-a',
+    type: 'project',
+    name: 'Musterstraße 12',
+    client: 'Old',
+    serverDb: DATABASE,
+  }
+
+  it('takes the new name and client and leaves serverDb alone', async () => {
+    const { deps, fake } = project()
+    fake.documents.set(DOCUMENT, { ...SEEDED })
+
+    await updateProjectSettings(deps, PROJECT_ID, ADA, { name: 'Altbau', client: 'Acme' })
+
+    expect(fake.documents.get(DOCUMENT)).toMatchObject({
+      _id: 'project',
+      type: 'project',
+      name: 'Altbau',
+      client: 'Acme',
+      serverDb: DATABASE,
+    })
+  })
+
+  it('drops the client when it is cleared', async () => {
+    const { deps, fake } = project(OWNER_ONLY, undefined, { client: 'Old' })
+    fake.documents.set(DOCUMENT, { ...SEEDED })
+
+    await updateProjectSettings(deps, PROJECT_ID, ADA, { client: null })
+
+    expect(fake.documents.get(DOCUMENT)).not.toHaveProperty('client')
+  })
+
+  it('is not written when it already matches, as after a change that is neither name nor client', async () => {
+    const { deps, fake } = project(OWNER_ONLY, undefined, { client: 'Old' })
+    fake.documents.set(DOCUMENT, { ...SEEDED })
+
+    await updateProjectSettings(deps, PROJECT_ID, ADA, { archived: true })
+
+    expect(fake.documents.get(DOCUMENT)).toMatchObject({ _rev: '1-a' })
+    expect(
+      fake.calls.some((call) => call.database === DATABASE && call.operation === 'putDoc'),
+    ).toBe(false)
+  })
+
+  it.each([
+    ['a wrong type', { type: 'matter' }],
+    ['no type', { type: undefined }],
+  ])('repairs a document with %s, even when every other field matches', async (_label, broken) => {
+    // `type` is what a replica recognises the document by, so a document with the right name
+    // and the wrong type is as stale as one with the wrong name.
+    const { deps, fake } = project(OWNER_ONLY, undefined, { client: 'Old' })
+    const { type: _type, ...rest } = SEEDED
+    fake.documents.set(DOCUMENT, { ...rest, ...(broken.type === undefined ? {} : broken) })
+
+    await updateProjectSettings(deps, PROJECT_ID, ADA, { archived: true })
+
+    expect(fake.documents.get(DOCUMENT)).toMatchObject({ type: 'project', name: 'Musterstraße 12' })
+  })
+
+  it('is created when it is missing', async () => {
+    const { deps, fake } = project()
+
+    await updateProjectSettings(deps, PROJECT_ID, ADA, { name: 'Altbau', client: 'Acme' })
+
+    expect(fake.documents.get(DOCUMENT)).toMatchObject({
+      _id: 'project',
+      type: 'project',
+      name: 'Altbau',
+      client: 'Acme',
+      serverDb: DATABASE,
+    })
+  })
+
+  it('retries a conflicting write', async () => {
+    const { deps, fake } = project()
+    fake.documents.set(DOCUMENT, { ...SEEDED })
+    let conflicts = 1
+    const couch = {
+      ...fake.couch,
+      putDoc: async (database: string, document: { _id: string }) => {
+        if (document._id === 'project' && conflicts > 0) {
+          conflicts -= 1
+          throw new CouchError(409, 'conflict', 'Document update conflict')
+        }
+        return fake.couch.putDoc(database, document)
+      },
+    } as typeof fake.couch
+
+    await updateProjectSettings({ ...deps, couch }, PROJECT_ID, ADA, { name: 'Altbau' })
+
+    expect(fake.documents.get(DOCUMENT)).toMatchObject({ name: 'Altbau' })
+  })
+
+  it('heals the document when the same PATCH is repeated after a failed write', async () => {
+    const { deps, fake } = project()
+    fake.documents.set(DOCUMENT, { ...SEEDED })
+    let failing = true
+    const couch = {
+      ...fake.couch,
+      putDoc: async (database: string, document: { _id: string }) => {
+        if (document._id === 'project' && failing) throw new CouchError(500, 'boom', 'boom')
+        return fake.couch.putDoc(database, document)
+      },
+    } as typeof fake.couch
+
+    await expect(
+      updateProjectSettings({ ...deps, couch }, PROJECT_ID, ADA, { name: 'Altbau' }),
+    ).rejects.toThrow(CouchError)
+    failing = false
+    await expect(
+      updateProjectSettings({ ...deps, couch }, PROJECT_ID, ADA, { name: 'Altbau' }),
+    ).resolves.toMatchObject({ name: 'Altbau' })
+
+    expect(fake.documents.get(DOCUMENT)).toMatchObject({ name: 'Altbau' })
+  })
+
+  it('gives up when the document write conflicts three times', async () => {
+    const { deps, fake } = project()
+    fake.documents.set(DOCUMENT, { ...SEEDED })
+    let attempts = 0
+    const couch = {
+      ...fake.couch,
+      putDoc: async (database: string, document: { _id: string }) => {
+        if (document._id === 'project') {
+          attempts += 1
+          throw new CouchError(409, 'conflict', 'Document update conflict')
+        }
+        return fake.couch.putDoc(database, document)
+      },
+    } as typeof fake.couch
+
+    await expect(
+      updateProjectSettings({ ...deps, couch }, PROJECT_ID, ADA, { name: 'Altbau' }),
+    ).rejects.toMatchObject({ status: 409 })
+    expect(attempts).toBe(3)
+  })
+
+  it('surfaces a failure after the pointer, which is the source of truth, was written', async () => {
+    const { deps, fake, pointerNow } = project()
+    const couch = {
+      ...fake.couch,
+      putDoc: async (database: string, document: { _id: string }) => {
+        if (document._id === 'project') throw new CouchError(500, 'boom', 'boom')
+        return fake.couch.putDoc(database, document)
+      },
+    } as typeof fake.couch
+
+    await expect(
+      updateProjectSettings({ ...deps, couch }, PROJECT_ID, ADA, { name: 'Altbau' }),
+    ).rejects.toThrow(CouchError)
+    expect(pointerNow().projectName).toBe('Altbau')
+  })
+})
+
+describe('archiving reaches CouchDB', () => {
+  // The registry decides that a project is archived; `_security.archived` is what makes the
+  // database itself refuse writes, so a device that keeps syncing cannot go on changing it.
+  const TEAM: readonly Participant[] = [
+    { role: 'owner', userid: ADA },
+    { role: 'write', userid: GRACE },
+  ]
+
+  it('marks _security archived, keeping every participant', async () => {
+    const { deps, fake } = project(TEAM)
+
+    await updateProjectSettings(deps, PROJECT_ID, ADA, { archived: true })
+
+    expect(fake.security.get(DATABASE)).toEqual({
+      members: { names: [ADA, GRACE], roles: [] },
+      writers: { names: [ADA, GRACE] },
+      owners: { names: [ADA] },
+      archived: true,
+    })
+  })
+
+  it('writes _security before the pointer, because archiving narrows access', async () => {
+    const { deps, fake } = project(TEAM)
+
+    await updateProjectSettings(deps, PROJECT_ID, ADA, { archived: true })
+
+    const security = fake.calls.findIndex((call) => call.operation === 'putSecurity')
+    const pointer = fake.calls.findIndex(
+      (call) => call.operation === 'putDoc' && call.database === REGISTRY_DATABASE,
+    )
+    expect(security).toBeGreaterThanOrEqual(0)
+    expect(security).toBeLessThan(pointer)
+  })
+
+  it('clears the flag on unarchive, after the pointer, because unarchiving widens access', async () => {
+    const { deps, fake } = project(TEAM, undefined, { archived: true, archivedAt: 1_600_000_000 })
+
+    await updateProjectSettings(deps, PROJECT_ID, ADA, { archived: false })
+
+    expect(fake.security.get(DATABASE)).toEqual({
+      members: { names: [ADA, GRACE], roles: [] },
+      writers: { names: [ADA, GRACE] },
+      owners: { names: [ADA] },
+    })
+    const security = fake.calls.findIndex((call) => call.operation === 'putSecurity')
+    const pointer = fake.calls.findIndex(
+      (call) => call.operation === 'putDoc' && call.database === REGISTRY_DATABASE,
+    )
+    expect(pointer).toBeGreaterThanOrEqual(0)
+    expect(security).toBeGreaterThan(pointer)
+  })
+
+  it('leaves the pointer active when the _security write fails on archive', async () => {
+    // `_security` first: a failure leaves a project that is listed as active and still
+    // writable, which is where it started, rather than one listed archived that is not.
+    const { deps, fake, pointerNow } = project(TEAM)
+    const failing = {
+      ...deps,
+      couch: {
+        ...fake.couch,
+        putSecurity: async () => {
+          throw new CouchError(500, 'internal', 'down')
+        },
+      },
+    }
+
+    await expect(
+      updateProjectSettings(failing, PROJECT_ID, ADA, { archived: true }),
+    ).rejects.toBeInstanceOf(CouchError)
+    expect(pointerNow().archived).toBeUndefined()
+  })
+
+  it('heals _security when the same unarchive is repeated after a failed write', async () => {
+    // The pointer is already active by then, so the transition is not what triggers the
+    // write: every PATCH that names `archived` writes `_security` from the pointer.
+    const { deps, fake } = project(TEAM)
+    fake.security.set(DATABASE, {
+      members: { names: [ADA, GRACE], roles: [] },
+      writers: { names: [ADA, GRACE] },
+      owners: { names: [ADA] },
+      archived: true,
+    })
+
+    await updateProjectSettings(deps, PROJECT_ID, ADA, { archived: false })
+
+    expect(fake.security.get(DATABASE)).not.toHaveProperty('archived')
+  })
+
+  it('does not touch _security for a change that does not mention archiving', async () => {
+    const { deps, fake } = project(TEAM, undefined, { archived: true })
+
+    await updateProjectSettings(deps, PROJECT_ID, ADA, { name: 'Lindenstraße 4' })
+
+    expect(fake.calls.some((call) => call.operation === 'putSecurity')).toBe(false)
   })
 })

@@ -14,7 +14,7 @@ const DATABASE = `project_${PROJECT_ID}`
 /** Provisioning against a fake, with an operation optionally made to fail. */
 function provisioning(fails: CouchFailures = {}, databases: readonly string[] = []) {
   const fake = fakeCouch({ fails, databases })
-  const run = (name = 'Musterstraße 12', address?: string) =>
+  const run = (name = 'Musterstraße 12', address?: string, client?: string) =>
     provisionProject(
       {
         couch: fake.couch,
@@ -22,7 +22,7 @@ function provisioning(fails: CouchFailures = {}, databases: readonly string[] = 
         newId: () => PROJECT_ID,
         now: () => '2026-08-27T09:00:00.000Z',
       },
-      { name, address },
+      { name, address, client },
       OWNER,
     )
   return { fake, run }
@@ -49,6 +49,7 @@ describe('creating a project', () => {
     expect(fake.security.get(DATABASE)).toEqual({
       members: { names: [OWNER], roles: [] },
       writers: { names: [OWNER] },
+      owners: { names: [OWNER] },
     })
   })
 
@@ -95,6 +96,32 @@ describe('creating a project', () => {
     expect(fake.documents.get(`${REGISTRY_DATABASE}/${pointerId(PROJECT_ID)}`)).not.toHaveProperty(
       'address',
     )
+  })
+
+  it('stores the client, trimmed, and reports it', async () => {
+    const { fake, run } = provisioning()
+    const summary = await run('Musterstraße 12', undefined, '  Acme  ')
+
+    expect(summary.client).toBe('Acme')
+    expect(fake.documents.get(`${REGISTRY_DATABASE}/${pointerId(PROJECT_ID)}`)).toMatchObject({
+      client: 'Acme',
+    })
+  })
+
+  it('leaves the client off when it is blank', async () => {
+    const { fake, run } = provisioning()
+    const summary = await run('Musterstraße 12', undefined, '   ')
+
+    expect(summary).not.toHaveProperty('client')
+    expect(fake.documents.get(`${REGISTRY_DATABASE}/${pointerId(PROJECT_ID)}`)).not.toHaveProperty(
+      'client',
+    )
+  })
+
+  it('refuses a client longer than 200 characters', async () => {
+    const { run } = provisioning()
+
+    await expect(run('Musterstraße 12', undefined, 'x'.repeat(201))).rejects.toThrow(/200/)
   })
 
   it('answers with what the caller needs to start replicating', async () => {
@@ -147,6 +174,67 @@ describe('creating a project', () => {
       operation: 'putDoc',
       database: REGISTRY_DATABASE,
     })
+  })
+})
+
+describe('the project document', () => {
+  const DOCUMENT = `${DATABASE}/project`
+
+  it('describes the project, with name, client and serverDb', async () => {
+    const { fake, run } = provisioning()
+    await run('  Musterstraße 12 ', undefined, ' Acme ')
+
+    expect(fake.documents.get(DOCUMENT)).toEqual({
+      _id: 'project',
+      _rev: '1-a',
+      type: 'project',
+      name: 'Musterstraße 12',
+      client: 'Acme',
+      serverDb: DATABASE,
+    })
+  })
+
+  it('leaves the client off when there is none', async () => {
+    const { fake, run } = provisioning()
+    await run()
+
+    expect(fake.documents.get(DOCUMENT)).not.toHaveProperty('client')
+  })
+
+  it('is written after the access rules, so the validator is already in force', async () => {
+    const { fake, run } = provisioning()
+    await run()
+
+    const written = fake.calls
+      .filter((call) => call.database === DATABASE && call.operation === 'putDoc')
+      .map((call) => (call.detail as { _id: string })._id)
+    expect(written).toEqual(['_design/access', 'project'])
+  })
+
+  it('rolls the database back when it cannot be written', async () => {
+    const { fake } = provisioning()
+    const couch = {
+      ...fake.couch,
+      putDoc: async (database: string, document: { _id: string }) => {
+        if (document._id === 'project') throw new Error('refused')
+        return fake.couch.putDoc(database, document)
+      },
+    } as typeof fake.couch
+
+    await expect(
+      provisionProject(
+        {
+          couch,
+          validator: () => 'function (newDoc) { return newDoc }',
+          newId: () => PROJECT_ID,
+          now: () => '2026-08-27T09:00:00.000Z',
+        },
+        { name: 'Musterstraße 12' },
+        OWNER,
+      ),
+    ).rejects.toThrow(ProvisioningError)
+    expect(fake.databases.has(DATABASE)).toBe(false)
+    expect(fake.documents.get(`${REGISTRY_DATABASE}/${pointerId(PROJECT_ID)}`)).toBeUndefined()
   })
 })
 

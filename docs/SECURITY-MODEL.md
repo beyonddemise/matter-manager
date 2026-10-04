@@ -104,7 +104,8 @@ object.
 // project_<uuid>/_security
 {
   "members": { "names": ["alice", "bob"], "roles": [] },  // read
-  "writers": { "names": ["alice"] }                        // write
+  "writers": { "names": ["alice"] },                       // write
+  "owners":  { "names": ["alice"] }                        // whose plan pays
 }
 ```
 
@@ -116,9 +117,21 @@ function (newDoc, oldDoc, userCtx, secObj) {
   if (writers.indexOf(userCtx.name) === -1) {
     throw { forbidden: 'You have read-only access to this project.' }
   }
+  var owners = (secObj && secObj.owners && secObj.owners.names) || []
+  if (owners.indexOf(userCtx.name) !== -1 &&
+      userCtx.roles.indexOf('member') === -1 && userCtx.roles.indexOf('pro') === -1) {
+    throw { forbidden: 'Your plan does not include synchronized projects.' }
+  }
   ...
 }
 ```
+
+The `owners` rule enforces the plan at the database: an owner whose roles carry neither
+`member` nor `pro` (a downgrade) cannot write, and cannot delete either, because the rule runs
+before the deletion block. It applies to owners only, since the owner's plan pays for the
+project; an invited writer is unaffected whatever their own plan. Reads are not gated:
+`members` is an OR of names and roles, so a downgraded owner keeps read access to their data.
+A `_security` with no `owners` key leaves the rule inert.
 
 The rejected alternative was a CouchDB role per project carried in the JWT. It works, but an
 installer with 200 projects would carry 200 roles in every token on every replication
@@ -147,7 +160,8 @@ access token (`Authorization: Bearer`) and both are gated by one role.
 | `PATCH /profile` with a `plan` field | the **caller's** own plan | holds `customerservice` |
 | `PUT /customer` | the plan of **any account named by address** | holds `customerservice` |
 
-A plan decides what an account may do — today, how many projects it may own
+A plan decides what an account may do — today, whether it may own server projects at all
+(`project.sync`) and how many (`project.create`)
 ([ADR 0009](adr/0009-entitlement-seam-billing-deferred.md)). Setting one is therefore an
 entitlement change, and `PUT /customer` is the only operation in this service whose blast radius
 is somebody else's account. Everywhere else a hole in a check lets a user grant themselves
@@ -187,6 +201,81 @@ way to make an operator is `customerservice`, and there is a test in both
 `test/profile/profile.test.ts` and `test/profile/customer.test.ts` asserting that a caller whose
 only role is `_admin` is refused, so re-adding it fails the build.
 
+#### What a plan enforces on projects
+
+Two actions, both real policies in `backend/src/domain/can.ts`, both answered from tables keyed
+by plan so no tier literal appears outside that file:
+
+| Action | Rule | Refusal (403, `reason`) |
+|---|---|---|
+| `project.sync` | `SYNCED_PLANS[plan]`: `free` no, `member` and `pro` yes | `plan-no-sync` |
+| `project.create` | owned active projects within `PROJECT_LIMITS[plan]` (`free` 1, `member` 5, `pro` unlimited) | `project-limit-reached` |
+
+Sync is asked first, so a free account is told to upgrade rather than to archive something.
+
+**Archived projects do not count** toward the limit. This reverses the rule #55 introduced, which
+counted them so an account could not accumulate databases by archiving; the 90-day hard delete
+(#208, not built yet) will bound that accumulation. The server's count is necessarily looser than the page's,
+because only the page sees local-only projects.
+
+**Three routes make a project active, so three routes are gated**, each judged by the plan of
+whoever *becomes its paying owner*:
+
+| Route | Whose plan, whose count |
+|---|---|
+| `POST /projects` | the caller's |
+| `PATCH /projects/:id` unarchiving (`archived: false` on an archived project) | the **owner's**, not the caller's: a manager may unarchive, and a manager on a better plan must not lend it |
+| `POST /transfers/:id` accepting an active project | the **recipient's**: otherwise a free account could be handed a server project it could never have made |
+
+Without the second, archive-create-unarchive walks past the limit. Without the third, a transfer
+does. Accepting an *archived* project is not gated (it does not count); bringing it back is gated
+where that happens. The accept decision is made **once** per request, before the recipient's
+record is ensured or anything is written, so a refusal leaves the offer pending and the project
+untouched, and a conflict retry cannot reverse a transfer already half applied. A failure to read
+the principal is a scrubbed 500, never a refusal and never a pass.
+
+**The database refuses what the API cannot see.** `securityFor` writes a third custom key,
+`_security.owners`, beside `writers`; `infra/couchdb/design-docs/access.js` refuses **every
+write, deletions included**, from a name in `owners` whose roles carry neither `member` nor
+`pro` (the access token carries the plan as a role). The rule sits before the `_deleted` branch
+so a downgraded owner cannot keep using the database by trimming it. It is deliberately narrow:
+
+- **Invited writers are unaffected.** The owner's plan covers them and their own plan is
+  irrelevant.
+- **Reads are not gated.** `_security.members` is an OR of names and roles, so a downgraded owner
+  keeps reading their data; only writes stop. A grace period is #211.
+- A `_security` without `owners` leaves the rule inert. `securityFor` is the only builder, so a
+  membership change or transfer moves `owners` in the same write as `members` and `writers`.
+- Server admins bypass it, as they bypass the whole validator.
+- **The role is only as fresh as the access token** (at most 5 minutes). A downgraded owner keeps
+  writing until their next refresh carries the new plan.
+
+**An archived project is read-only, and the database enforces it.** While the registry pointer
+says a project is archived, `_security` carries a fourth custom key, `archived: true`, and
+`_design/access` refuses every write, deletions included, from anybody but the server admin, with
+`This project is archived.` Reads are untouched, so everybody keeps what they had to read.
+`securityFor` takes the archived state as a required argument, so a membership change or a
+transfer of an archived project keeps the flag; `PATCH /projects/:id` writes it when archiving
+(before the pointer: the gap is a locked project still listed as active) and clears it when
+unarchiving (after the pointer: the gap is an active-listed project still locked), the same
+"which half-applied state is safe" rule `narrowsAccess` applies to membership. The check runs
+right after the admin bypass, before the writer and plan checks.
+
+**The `project` document is the service's alone.** The validator refuses any non-admin write
+whose new or old `_id` is `project`, so the name and client a replica shows come only from the
+API, which keeps them in step with the registry.
+
+**The count limit has one enforcer and a known race.** The validator backs only the sync rule
+(`project.sync`, through the plan role). The count limit (`project.create`) is enforced by the API
+alone, with nothing behind it in CouchDB. Each request counts before it asks the gate and nothing
+serialises the two (the accepted race, `backend/src/projects/routes.ts` around the comment on
+`principalFor`), so concurrent requests at the limit can exceed it by up to the number of
+concurrent requests.
+
+**Settings refusals by role are named too.** `PATCH /projects/:id` by somebody who is not an
+owner or manager answers 403 with `reason: 'not-a-manager'`, sharing a status with the plan
+refusals and fixed differently.
+
 ## User records and tokens
 
 **`matter_manager` is admin-only.** It holds plans, operator roles and refresh-token hashes, so
@@ -200,7 +289,8 @@ own credentials.
 verified the address — otherwise somebody could sign in as whoever they typed and inherit that
 person's plan. A plain sign-in creates **no** record and writes one log line
 (`auth/sign-in-log.ts`; the sink is #212). A record comes into existence only through
-`ensureRecord` (a redeemable invitation at sign-in, accepting a transfer, or `PATCH /profile`)
+`ensureRecord` (a redeemable invitation at sign-in, accepting a transfer, `PATCH /profile`, or
+creating a project, which in practice only fills in the `sub` of a record that already exists)
 or `PUT /customer`,
 which sets a plan by address even before its owner has ever signed in. Such a record has no
 `sub`, which is why the `by_sub` view skips records without one — and why the caller's own

@@ -399,6 +399,55 @@ The page decides from `can()` and the reported `projectLimit`, never from a tier
 5. Refine sign-in logging: a proper sink, retention, and a PII policy for the address it records
    (today one `console.log` line per sign-in).
 
+## Phase B — as built
+
+Deviations from the phase B text above. Everything not listed was built as specified.
+
+- **Two more routes are gated, not one.** The spec gates `POST /projects` only. Security review
+  found that archive-create-unarchive and transfer-then-accept both walk past the limit and the
+  sync rule, so `project.sync` and `project.create` also gate:
+  - `PATCH /projects/:id` when it unarchives, judged by the **owner's** plan and the owner's
+    active count (a manager unarchiving must not lend a better plan);
+  - `POST /transfers/:id` when accepting an **active** project, judged by the **recipient's**
+    plan. Accepting an archived project is not gated.
+  Refusals are the same on all three: 403 with `reason: 'plan-no-sync'` or
+  `'project-limit-reached'`.
+- **Accept decides once.** The plan question is asked once per accept, after the offer is known to
+  be the caller's and before the recipient's record is ensured or anything is written; a conflict
+  retry does not ask again, so a refusal leaves the offer pending and a half-applied transfer is
+  never reversed by a second answer. A retry that was not gated before (the project was archived,
+  now it is not) is gated.
+- **New refusal reason `not-a-manager`.** A role refusal on `PATCH /projects/:id` now carries
+  `reason: 'not-a-manager'`, so a client can tell it from the plan refusals that share its 403.
+- **The `project` document self-heals.** Beyond being written at provisioning, every
+  `PATCH /projects/:id` brings it back in step (compared with itself, not with the pointer), so a
+  repeated PATCH repairs a failed earlier write. The document is
+  `{_id:'project', type:'project', name, client?, serverDb}`.
+- **`client` is accepted on `POST /projects` too**, not only on PATCH, and is written to the
+  pointer, the `project` document and `ProjectSummary`; `archivedAt` joins the pointer and
+  `ProjectSummary`.
+- **Reads stay ungated, as specified,** and the validator's owner rule also covers deletions
+  (placed before the `_deleted` branch), which the spec's snippet left implicit.
+- **Archived projects are read-only in CouchDB.** The spec archived in the registry only, which
+  left a still-syncing device free to keep writing. `_security` now carries `archived: true` while
+  the pointer is archived, and `_design/access` refuses every non-admin write (deletions included)
+  with `This project is archived.`; reads are unaffected. `securityFor(participants, { archived })`
+  takes the state as a required argument, so provisioning, membership changes and transfers carry
+  it through (a transfer or membership change of an archived project stays archived). A PATCH that
+  names `archived` writes `_security`: before the pointer when archiving, after it when
+  unarchiving (the `narrowsAccess` rule), and on every such PATCH so a repeat heals a failed write.
+- **Only the service may write the `project` document.** The validator refuses any non-admin
+  create, update or deletion of `_id: 'project'`, and the self-heal also repairs a wrong or
+  missing `type`.
+- **Creating a project completes the creator's record.** `POST /projects` calls `ensureRecord`
+  after the gate and before provisioning, so a record an operator created by address gets its
+  `sub` and the owner is resolvable by subject (unarchive reads the owner's plan through
+  `readBySub`); without it a paying owner was refused their own unarchive as `plan-no-sync`. A
+  failure is a scrubbed 500 with nothing provisioned.
+- **Known limits, unchanged:** concurrent activations at the limit (create, unarchive, accept)
+  can all pass, overshooting by up to the number of concurrent requests; no grace period (#211);
+  no hard delete yet (#208).
+
 ## Out of scope
 
 Billing and self-service plan changes; a client entity (client is free text); deleting a

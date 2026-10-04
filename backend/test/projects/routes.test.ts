@@ -8,10 +8,11 @@ import { type CouchClient, CouchError } from '../../src/couch/client.js'
 import type { Action, Plan, Principal } from '../../src/domain/index.js'
 import { NotEntitledError, gate as realGate } from '../../src/entitlements/gate.js'
 import { PROBLEM_JSON } from '../../src/problem.js'
-import { forgetRegistry, REGISTRY_DATABASE } from '../../src/projects/registry.js'
+import { forgetRegistry, pointerId, REGISTRY_DATABASE } from '../../src/projects/registry.js'
+import { transferId } from '../../src/projects/transfers.js'
 import { buildServer, type Server } from '../../src/server.js'
 import { forgetUsersDatabase, USERS_DB } from '../../src/users/database.js'
-import { recordEnsurer } from '../../src/users/ensure.js'
+import { type EnsureRecord, recordEnsurer } from '../../src/users/ensure.js'
 import { userDocId } from '../../src/users/key.js'
 import { userRecords } from '../../src/users/records.js'
 import { loadContract, operationsOf, validate } from '../support/contract.js'
@@ -117,10 +118,32 @@ function server(
     deny?: DenyList
     /** Leave `findUser` to its default, the real user records, instead of the stub below. */
     realLookups?: boolean
+    /**
+     * The plan on {@link OWNER}'s user record. `member` unless stated, because the free plan
+     * owns no server projects and most of what this file drives is a project that exists. Pass
+     * `null` for a caller with no record at all, which is answered as `free`.
+     */
+    plan?: Plan | null
+    /** The seconds clock the routes use, for tests that pin what a route stamps. */
+    now?: () => number
+    /** Replaces the real record ensurer, for a test of what happens when it fails. */
+    ensureRecord?: EnsureRecord
   } = {},
 ) {
   forgetUsersDatabase()
   couch = fakeCouch(options.fails === undefined ? {} : { fails: options.fails })
+  const plan = options.plan === undefined ? 'member' : options.plan
+  if (plan !== null) {
+    // Seeded as an operator would have edited it, by the address on the owner's token.
+    const email = EMAILS[OWNER] as string
+    couch.documents.set(`${USERS_DB}/${userDocId(email)}`, {
+      _id: userDocId(email),
+      type: 'user',
+      sub: OWNER,
+      email,
+      plan,
+    })
+  }
   const refused: string[] = []
   const client =
     options.registryConflicts === true ? conflictingRegistry(couch.couch, refused) : couch.couch
@@ -139,10 +162,12 @@ function server(
       records,
       // The real ensurer over the same records, as composition wires it, so a test sees the
       // record acceptance creates rather than a stub's account of it.
-      ensureRecord: recordEnsurer(
-        records,
-        refreshStore(records, () => Math.floor(Date.now() / 1000)),
-      ),
+      ensureRecord:
+        options.ensureRecord ??
+        recordEnsurer(
+          records,
+          refreshStore(records, () => Math.floor(Date.now() / 1000)),
+        ),
       newId: () => PROJECT_ID,
       clock: () => '2026-08-27T09:00:00.000Z',
       // A spy *over* the real gate, not a stand-in for it. A recording gate that always
@@ -165,6 +190,7 @@ function server(
           }),
       ...(options.deny === undefined ? {} : { deny: options.deny }),
       millis: () => Date.parse('2026-08-27T09:00:00.000Z'),
+      ...(options.now === undefined ? {} : { now: options.now }),
     },
   })
 
@@ -210,6 +236,17 @@ describe('creating a project', () => {
     })
   })
 
+  it('echoes a client given at creation, and refuses one over 200 characters', async () => {
+    const { app: built } = server()
+
+    const created = await create(built, { name: 'Musterstraße 12', client: '  Acme  ' })
+    expect(created.statusCode).toBe(201)
+    expect(created.json()).toMatchObject({ client: 'Acme' })
+
+    const refused = await create(built, { name: 'Musterstraße 12', client: 'x'.repeat(201) })
+    expect(refused.statusCode).toBe(400)
+  })
+
   it('answers the shape the contract declares', async () => {
     // Against the contract's own schema rather than a hand-written shape, so this endpoint and
     // `openapi.yaml` cannot drift apart quietly (ADR 0015).
@@ -233,6 +270,7 @@ describe('creating a project', () => {
     expect(fake.security.get(DATABASE)).toEqual({
       members: { names: [OWNER], roles: [] },
       writers: { names: [OWNER] },
+      owners: { names: [OWNER] },
     })
   })
 })
@@ -245,17 +283,18 @@ describe('the entitlement seam', () => {
     const { app: built, gateCalls } = server()
     await create(built, { name: 'Musterstraße 12' })
 
-    expect(gateCalls).toHaveLength(1)
+    expect(gateCalls).toHaveLength(2)
   })
 
-  it('is called with project.create and the caller', async () => {
+  it('is called with project.sync, then project.create, and the caller', async () => {
     const { app: built, gateCalls } = server()
     await create(built, { name: 'Musterstraße 12' })
 
-    expect(gateCalls[0]).toEqual({
-      principal: { sub: OWNER, plan: 'free', ownedProjects: 0 },
-      action: 'project.create',
-    })
+    const principal = { sub: OWNER, plan: 'member', ownedProjects: 0 }
+    expect(gateCalls).toEqual([
+      { principal, action: 'project.sync' },
+      { principal, action: 'project.create' },
+    ])
   })
 
   it('refusing means 403, not 401', async () => {
@@ -599,6 +638,32 @@ describe('listing projects', () => {
     expect(response.json()[0]).toMatchObject({ address: 'Musterstraße 12, 10115 Berlin' })
   })
 
+  it('carries the client and the archive time, and drops the nulls the view emits', async () => {
+    const { app: built, couch: fake } = server()
+    const row = {
+      projectId: PROJECT_ID,
+      dbName: DATABASE,
+      projectName: 'Musterstraße 12',
+      address: null,
+      role: 'owner',
+      ownerId: OWNER,
+    }
+    fake.rows = [
+      { value: { ...row, client: 'Acme', archived: true, archivedAt: 1_700_000_000 } },
+      { value: { ...row, client: null, archived: false, archivedAt: null } },
+    ]
+
+    const response = await built.inject({
+      method: 'GET',
+      url: '/projects',
+      headers: { authorization: `Bearer ${tokenFor(OWNER)}` },
+    })
+
+    expect(response.json()[0]).toMatchObject({ client: 'Acme', archivedAt: 1_700_000_000 })
+    expect(response.json()[1]).not.toHaveProperty('client')
+    expect(response.json()[1]).not.toHaveProperty('archivedAt')
+  })
+
   it('leaves the address out when the project has none', async () => {
     // `address: null`, because that is what the view emits — the map function names the field
     // whatever the pointer holds, and CouchDB renders a missing one as null rather than
@@ -751,6 +816,36 @@ describe('changing a project settings', () => {
     expect((await patch(built, { address: 42 })).statusCode).toBe(400)
   })
 
+  it('sets, trims and clears the client', async () => {
+    const { app: built } = server()
+    await create(built, { name: 'Musterstraße 12' })
+
+    expect((await patch(built, { client: '  Acme  ' })).json()).toMatchObject({ client: 'Acme' })
+    expect((await patch(built, { client: null })).json()).not.toHaveProperty('client')
+    await patch(built, { client: 'Acme' })
+    expect((await patch(built, { client: '   ' })).json()).not.toHaveProperty('client')
+  })
+
+  it('refuses a client that is neither text nor null, or is too long', async () => {
+    const { app: built } = server()
+    await create(built, { name: 'Musterstraße 12' })
+
+    expect((await patch(built, { client: 5 })).statusCode).toBe(400)
+    expect((await patch(built, { client: 'x'.repeat(201) })).statusCode).toBe(400)
+  })
+
+  it('stamps archivedAt on archive and removes it on unarchive', async () => {
+    // The injected seconds clock, so the stamp is asserted rather than merely "a number".
+    const stamp = Math.floor(Date.now() / 1000)
+    const { app: built } = server({ now: () => stamp })
+    await create(built, { name: 'Musterstraße 12' })
+
+    const archived = await patch(built, { archived: true })
+    expect(archived.json().archivedAt).toBe(stamp)
+
+    expect((await patch(built, { archived: false })).json()).not.toHaveProperty('archivedAt')
+  })
+
   it('refuses a body that changes nothing', async () => {
     const { app: built } = server()
     await create(built, { name: 'Musterstraße 12' })
@@ -815,6 +910,7 @@ describe('changing a project settings', () => {
     const response = await patch(built, { name: 'x' }, 'google|grace')
 
     expect(response.statusCode).toBe(403)
+    expect(response.json()).toMatchObject({ reason: 'not-a-manager' })
     expect(response.headers['content-type']).toMatch(PROBLEM_JSON)
     expect(
       validate(response.json(), contractSchema('PATCH', '/projects/{projectId}', '403')),
@@ -898,7 +994,7 @@ describe('sharing a project', () => {
 
     expect(built.gateCalls.find((call) => call.action === 'project.invite')?.principal).toEqual({
       sub: OWNER,
-      plan: 'free',
+      plan: 'member',
       ownedProjects: 2,
     })
   })
@@ -1079,7 +1175,23 @@ describe('sharing a project', () => {
 })
 
 describe('handing a project to somebody else', () => {
-  const seedProject = (built: ReturnType<typeof server>) => {
+  /**
+   * Grace, who is to accept, on the `member` plan. Accepting an active project is judged by the
+   * recipient's plan, and a recipient with no record is `free`: every acceptance below that is
+   * about something else than the plan has to start from somebody whose plan allows it.
+   */
+  const asMember = (built: ReturnType<typeof server>) => {
+    built.couch.documents.set(`${USERS_DB}/${userDocId('grace@example.test')}`, {
+      _id: userDocId('grace@example.test'),
+      type: 'user',
+      sub: 'google|grace',
+      email: 'grace@example.test',
+      plan: 'member',
+    })
+    return built
+  }
+
+  const seedProject = (built: ReturnType<typeof server>, archived = false) => {
     built.couch.documents.set(`projects/project:${PROJECT_ID}`, {
       _id: `project:${PROJECT_ID}`,
       _rev: '1-a',
@@ -1089,6 +1201,7 @@ describe('handing a project to somebody else', () => {
       projectName: 'Musterstraße 12',
       participants: [{ role: 'owner', userid: OWNER }],
       addedAt: '2026-08-27T09:00:00.000Z',
+      ...(archived ? { archived: true } : {}),
     })
     return built
   }
@@ -1203,7 +1316,7 @@ describe('handing a project to somebody else', () => {
   })
 
   it('moves ownership when the recipient accepts', async () => {
-    const built = seedProject(server())
+    const built = asMember(seedProject(server()))
     await transfer(built.app, { toEmail: 'grace@example.test', retainAccess: 'read' })
 
     const response = await built.app.inject({
@@ -1229,6 +1342,7 @@ describe('handing a project to somebody else', () => {
         _id: userDocId('grace@example.test'),
         type: 'user',
         email: 'grace@example.test',
+        plan: 'member',
         ...(sub === undefined ? {} : { sub }),
       })
       return built
@@ -1281,8 +1395,11 @@ describe('handing a project to somebody else', () => {
     const grace = () =>
       `Bearer ${accessTokenFor(KEY, { sub: 'google|grace', email: 'grace@example.test' })}`
 
+    // An archived project: a person with no record is `free`, and an active project is refused
+    // to a free recipient (see "accepting a transfer against the recipient's plan"). An archived
+    // one is not asked about, so these still reach the record-less acceptance they are about.
     const offered = async () => {
-      const built = seedProject(server({ realLookups: true }))
+      const built = seedProject(server({ realLookups: true }), true)
       await transfer(built.app, { toEmail: 'grace@example.test' })
       built.couch.rows = [
         {
@@ -1448,7 +1565,7 @@ describe('handing a project to somebody else', () => {
     // `acceptTransfer` retries a conflicting registry three times and then throws
     // `MembershipRefused(409)`. The contract declared 204, 400, 401 and 404, so this was the one
     // status of the four the error type can carry that the file did not mention.
-    const built = seedOffer(seedProject(server({ registryConflicts: true })))
+    const built = seedOffer(asMember(seedProject(server({ registryConflicts: true }))))
 
     const response = await built.app.inject({
       method: 'POST',
@@ -1467,7 +1584,7 @@ describe('handing a project to somebody else', () => {
     // The positive control, as on the sharing route: refusing the first conflict answers the
     // same 409, and would turn an ordinary simultaneous edit into a failure the recipient has to
     // resolve by hand.
-    const built = seedOffer(seedProject(server({ registryConflicts: true })))
+    const built = seedOffer(asMember(seedProject(server({ registryConflicts: true }))))
 
     await built.app.inject({
       method: 'POST',
@@ -1513,6 +1630,434 @@ describe('handing a project to somebody else', () => {
   })
 })
 
+describe("unarchiving against the owner's plan", () => {
+  // Archived projects stop counting toward the limit, so without this an owner could archive N,
+  // create N more and unarchive the old ones. The plan that pays is the OWNER's, whoever asks.
+  const GRACE = 'google|grace'
+  const POINTER = `${REGISTRY_DATABASE}/${pointerId(PROJECT_ID)}`
+
+  const seedRecord = (built: ReturnType<typeof server>, sub: string, plan: Plan) => {
+    const email = EMAILS[sub] as string
+    built.couch.documents.set(`${USERS_DB}/${userDocId(email)}`, {
+      _id: userDocId(email),
+      type: 'user',
+      sub,
+      email,
+      plan,
+    })
+  }
+
+  /**
+   * A registry where {@link OWNER} owns `active` live projects plus the one under test, which is
+   * archived or not as stated, and {@link GRACE} manages it.
+   */
+  function scenario(options: {
+    ownerPlan: Plan | null
+    active: number
+    archived?: boolean
+    managerPlan?: Plan
+  }) {
+    const built = server({ plan: options.ownerPlan })
+    if (options.managerPlan !== undefined) seedRecord(built, GRACE, options.managerPlan)
+    built.couch.documents.set(POINTER, {
+      _id: pointerId(PROJECT_ID),
+      _rev: '1-a',
+      type: 'projectPointer',
+      projectId: PROJECT_ID,
+      dbName: DATABASE,
+      projectName: 'Musterstraße 12',
+      participants: [
+        { role: 'owner', userid: OWNER },
+        { role: 'manage', userid: GRACE },
+      ],
+      addedAt: '2026-08-27T09:00:00.000Z',
+      archived: options.archived ?? true,
+      archivedAt: 1_700_000_000,
+    })
+    built.couch.rowsByDesign.by_sub = [
+      { id: userDocId(EMAILS[OWNER] as string), key: OWNER, value: null },
+    ]
+    const row = (projectId: string, archived: boolean) => ({
+      value: {
+        projectId,
+        dbName: `project_${projectId}`,
+        projectName: projectId,
+        address: null,
+        role: 'owner',
+        archived,
+        ownerId: OWNER,
+      },
+    })
+    built.couch.rows = [
+      ...Array.from({ length: options.active }, (_unused, index) => row(`live-${index}`, false)),
+      row(PROJECT_ID, options.archived ?? true),
+    ]
+    return built
+  }
+
+  const unarchive = (built: ReturnType<typeof server>, sub: string = OWNER) =>
+    built.inject({
+      method: 'PATCH',
+      url: `/projects/${PROJECT_ID}`,
+      headers: { authorization: bearer(sub) },
+      payload: { archived: false },
+    })
+
+  const stored = (built: ReturnType<typeof server>) =>
+    built.couch.documents.get(POINTER) as { archived: boolean; _rev: string }
+
+  it('refuses a member owner at the limit, naming project-limit-reached, and writes nothing', async () => {
+    const built = scenario({ ownerPlan: 'member', active: 5 })
+
+    const response = await unarchive(built)
+
+    expect(response.statusCode).toBe(403)
+    expect(response.json()).toMatchObject({ reason: 'project-limit-reached' })
+    expect(
+      validate(response.json(), contractSchema('PATCH', '/projects/{projectId}', '403')),
+    ).toEqual([])
+    expect(stored(built)).toMatchObject({ archived: true, _rev: '1-a' })
+  })
+
+  it('lets a member owner with room unarchive', async () => {
+    const built = scenario({ ownerPlan: 'member', active: 4 })
+
+    const response = await unarchive(built)
+
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toMatchObject({ archived: false })
+    expect(stored(built).archived).toBe(false)
+  })
+
+  it('refuses an owner whose plan no longer syncs, naming plan-no-sync', async () => {
+    const built = scenario({ ownerPlan: 'free', active: 0 })
+
+    const response = await unarchive(built)
+
+    expect(response.statusCode).toBe(403)
+    expect(response.json()).toMatchObject({ reason: 'plan-no-sync' })
+    expect(
+      validate(response.json(), contractSchema('PATCH', '/projects/{projectId}', '403')),
+    ).toEqual([])
+    expect(stored(built).archived).toBe(true)
+  })
+
+  it('treats an owner with no record as free', async () => {
+    const built = scenario({ ownerPlan: null, active: 0 })
+    built.couch.rowsByDesign.by_sub = []
+
+    expect((await unarchive(built)).json()).toMatchObject({ reason: 'plan-no-sync' })
+  })
+
+  it("judges a manager's unarchive by the owner's plan, not the manager's", async () => {
+    const built = scenario({ ownerPlan: 'free', active: 0, managerPlan: 'pro' })
+
+    const response = await unarchive(built, GRACE)
+
+    expect(response.statusCode).toBe(403)
+    expect(response.json()).toMatchObject({ reason: 'plan-no-sync' })
+    expect(stored(built).archived).toBe(true)
+  })
+
+  it('lets a manager unarchive when the owner has room', async () => {
+    const built = scenario({ ownerPlan: 'member', active: 2, managerPlan: 'free' })
+
+    expect((await unarchive(built, GRACE)).statusCode).toBe(200)
+  })
+
+  it('asks sync before capacity, with the owner as the principal', async () => {
+    const built = scenario({ ownerPlan: 'member', active: 4 })
+    built.gateCalls.length = 0
+
+    await unarchive(built)
+
+    expect(built.gateCalls.map((call) => call.action)).toEqual(['project.sync', 'project.create'])
+    expect(built.gateCalls[0]?.principal).toMatchObject({
+      sub: OWNER,
+      plan: 'member',
+      ownedProjects: 4,
+    })
+  })
+
+  it('never refuses archiving, whatever the plan', async () => {
+    const built = scenario({ ownerPlan: 'free', active: 9, archived: false })
+
+    const response = await built.inject({
+      method: 'PATCH',
+      url: `/projects/${PROJECT_ID}`,
+      headers: { authorization: bearer(OWNER) },
+      payload: { archived: true },
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(built.gateCalls).toEqual([])
+  })
+
+  it('does not gate an edit that leaves an archived project archived', async () => {
+    const built = scenario({ ownerPlan: 'free', active: 0 })
+
+    const response = await built.inject({
+      method: 'PATCH',
+      url: `/projects/${PROJECT_ID}`,
+      headers: { authorization: bearer(OWNER) },
+      payload: { name: 'Renamed' },
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(built.gateCalls).toEqual([])
+  })
+
+  it('does not gate unarchiving a project that is not archived', async () => {
+    const built = scenario({ ownerPlan: 'free', active: 0, archived: false })
+
+    expect((await unarchive(built)).statusCode).toBe(200)
+    expect(built.gateCalls).toEqual([])
+  })
+})
+
+describe("accepting a transfer against the recipient's plan", () => {
+  // Acceptance makes the caller the OWNER, so an active project moved to a free account would
+  // be a server project nobody entitled to one owns. The recipient's plan is asked, as a
+  // creation's is; an archived project is not, because unarchiving it is gated instead.
+  const GRACE = 'google|grace'
+  const POINTER = `${REGISTRY_DATABASE}/${pointerId(PROJECT_ID)}`
+  const OFFER = `${REGISTRY_DATABASE}/${transferId(PROJECT_ID)}`
+
+  /**
+   * An offer from {@link OWNER} to Grace, who holds `gracePlan` and already owns `active`
+   * projects that are not archived.
+   */
+  function scenario(options: {
+    gracePlan: Plan | null
+    active: number
+    archived?: boolean
+    fails?: CouchFailures
+  }) {
+    const built = server(options.fails === undefined ? {} : { fails: options.fails })
+    if (options.gracePlan !== null) {
+      built.couch.documents.set(`${USERS_DB}/${userDocId('grace@example.test')}`, {
+        _id: userDocId('grace@example.test'),
+        type: 'user',
+        sub: GRACE,
+        email: 'grace@example.test',
+        plan: options.gracePlan,
+      })
+    }
+    built.couch.documents.set(POINTER, {
+      _id: pointerId(PROJECT_ID),
+      _rev: '1-a',
+      type: 'projectPointer',
+      projectId: PROJECT_ID,
+      dbName: DATABASE,
+      projectName: 'Musterstraße 12',
+      participants: [{ role: 'owner', userid: OWNER }],
+      addedAt: '2026-08-27T09:00:00.000Z',
+      ...(options.archived === true ? { archived: true, archivedAt: 1_700_000_000 } : {}),
+    })
+    built.couch.documents.set(OFFER, {
+      _id: transferId(PROJECT_ID),
+      _rev: '1-a',
+      type: 'transfer',
+      projectId: PROJECT_ID,
+      toEmail: 'grace@example.test',
+      fromSub: OWNER,
+      retainAccess: 'none',
+      createdAt: '2026-08-27T09:00:00.000Z',
+      expiresAt: '2026-09-10T09:00:00.000Z',
+    })
+    // What Grace already owns: one row per project, as the view emits them.
+    built.couch.rows = Array.from({ length: options.active }, (_unused, index) => ({
+      value: {
+        projectId: `live-${index}`,
+        dbName: `project_live-${index}`,
+        projectName: `live-${index}`,
+        address: null,
+        role: 'owner',
+        archived: false,
+        ownerId: GRACE,
+      },
+    }))
+    return built
+  }
+
+  const accept = (built: ReturnType<typeof server>) =>
+    built.inject({
+      method: 'POST',
+      url: `/transfers/${PROJECT_ID}`,
+      headers: { authorization: bearer(GRACE) },
+    })
+
+  const ownersAfter = (built: ReturnType<typeof server>) =>
+    (built.couch.documents.get(POINTER) as { participants: unknown[] }).participants
+
+  const offerIsPending = (built: ReturnType<typeof server>) =>
+    (built.couch.documents.get(OFFER) as { _deleted?: boolean })._deleted !== true
+
+  /**
+   * The projects `GET /transfers` offers Grace, which is what the client sees. The fake's offer
+   * view returns what it is given, so it is pointed at the stored offer unless that is deleted.
+   */
+  const offerListedFor = async (built: ReturnType<typeof server>): Promise<string[]> => {
+    const stored = built.couch.documents.get(OFFER) as { _deleted?: boolean }
+    built.couch.rowsByDesign.by_recipient = stored._deleted === true ? [] : [{ value: stored }]
+    const response = await built.inject({
+      method: 'GET',
+      url: '/transfers',
+      headers: { authorization: bearer(GRACE) },
+    })
+    return (response.json() as Array<{ projectId: string }>).map((entry) => entry.projectId)
+  }
+
+  it('refuses a free recipient, naming plan-no-sync, and leaves ownership and the offer alone', async () => {
+    const built = scenario({ gracePlan: 'free', active: 0 })
+
+    const response = await accept(built)
+
+    expect(response.statusCode).toBe(403)
+    expect(response.json()).toMatchObject({ reason: 'plan-no-sync' })
+    expect(
+      validate(response.json(), contractSchema('POST', '/transfers/{projectId}', '403')),
+    ).toEqual([])
+    expect(ownersAfter(built)).toEqual([{ role: 'owner', userid: OWNER }])
+    expect(offerIsPending(built)).toBe(true)
+    expect(built.couch.security.has(DATABASE)).toBe(false)
+    expect(await offerListedFor(built)).toEqual([PROJECT_ID])
+  })
+
+  it('creates no record for a recipient it refuses', async () => {
+    const built = scenario({ gracePlan: null, active: 0 })
+
+    expect((await accept(built)).json()).toMatchObject({ reason: 'plan-no-sync' })
+    expect(built.couch.documents.has(`${USERS_DB}/${userDocId('grace@example.test')}`)).toBe(false)
+  })
+
+  it('refuses a member recipient at the limit, naming project-limit-reached', async () => {
+    const built = scenario({ gracePlan: 'member', active: 5 })
+
+    const response = await accept(built)
+
+    expect(response.statusCode).toBe(403)
+    expect(response.json()).toMatchObject({ reason: 'project-limit-reached' })
+    expect(
+      validate(response.json(), contractSchema('POST', '/transfers/{projectId}', '403')),
+    ).toEqual([])
+    expect(ownersAfter(built)).toEqual([{ role: 'owner', userid: OWNER }])
+    expect(offerIsPending(built)).toBe(true)
+  })
+
+  it('lets a member recipient with room accept', async () => {
+    const built = scenario({ gracePlan: 'member', active: 4 })
+
+    expect((await accept(built)).statusCode).toBe(204)
+    expect(ownersAfter(built)).toEqual([{ role: 'owner', userid: GRACE }])
+  })
+
+  it('asks sync before capacity, with the recipient as the principal', async () => {
+    const built = scenario({ gracePlan: 'member', active: 4 })
+    built.gateCalls.length = 0
+
+    await accept(built)
+
+    expect(built.gateCalls.map((call) => call.action)).toEqual(['project.sync', 'project.create'])
+    expect(built.gateCalls[0]?.principal).toMatchObject({
+      sub: GRACE,
+      plan: 'member',
+      ownedProjects: 4,
+    })
+  })
+
+  it('accepts an archived project for a free recipient: unarchiving is where it is gated', async () => {
+    const built = scenario({ gracePlan: 'free', active: 0, archived: true })
+
+    expect((await accept(built)).statusCode).toBe(204)
+    expect(ownersAfter(built)).toEqual([{ role: 'owner', userid: GRACE }])
+    expect(built.gateCalls).toEqual([])
+  })
+
+  describe('when CouchDB cannot say what the recipient already has', () => {
+    it('answers a problem+json 500 when the registry view cannot be read, and changes nothing', async () => {
+      // `ownedActive` reads the registry's view; the users database answers fine.
+      const built = scenario({ gracePlan: 'member', active: 0, fails: { view: REGISTRY_DATABASE } })
+
+      const response = await accept(built)
+
+      expect(response.statusCode).toBe(500)
+      expect(response.headers['content-type']).toMatch(/application\/problem\+json/)
+      expect(response.json()).toEqual({
+        title: 'That transfer could not be accepted.',
+        status: 500,
+      })
+      expect(response.body).not.toMatch(/internal server error|couch|_design/i)
+      expect(ownersAfter(built)).toEqual([{ role: 'owner', userid: OWNER }])
+      expect(offerIsPending(built)).toBe(true)
+    })
+
+    it('answers a problem+json 500 that says nothing about CouchDB, and changes nothing', async () => {
+      const built = scenario({ gracePlan: 'member', active: 0, fails: { getDoc: USERS_DB } })
+
+      const response = await accept(built)
+
+      expect(response.statusCode).toBe(500)
+      expect(response.headers['content-type']).toMatch(/application\/problem\+json/)
+      expect(response.json()).toEqual({
+        title: 'That transfer could not be accepted.',
+        status: 500,
+      })
+      expect(response.body).not.toMatch(/internal server error|couch|_design/i)
+      expect(
+        validate(response.json(), contractSchema('POST', '/transfers/{projectId}', '500')),
+      ).toEqual([])
+      expect(ownersAfter(built)).toEqual([{ role: 'owner', userid: OWNER }])
+      expect(offerIsPending(built)).toBe(true)
+    })
+  })
+})
+
+describe('unarchiving when CouchDB cannot say what the owner already has', () => {
+  const POINTER = `${REGISTRY_DATABASE}/${pointerId(PROJECT_ID)}`
+
+  /** An archived project of Ada's, whose owner lookup (`readBySub`) is the thing that fails. */
+  const unarchiveWithFailing = (fails: CouchFailures) => {
+    const built = server({ fails })
+    built.couch.documents.set(POINTER, {
+      _id: pointerId(PROJECT_ID),
+      _rev: '1-a',
+      type: 'projectPointer',
+      projectId: PROJECT_ID,
+      dbName: DATABASE,
+      projectName: 'Musterstraße 12',
+      participants: [{ role: 'owner', userid: OWNER }],
+      addedAt: '2026-08-27T09:00:00.000Z',
+      archived: true,
+      archivedAt: 1_700_000_000,
+    })
+    return built
+  }
+
+  it.each([
+    ['the owner lookup', { view: USERS_DB }],
+    ['the registry view', { view: REGISTRY_DATABASE }],
+  ])('answers a problem+json 500 when %s fails, and writes nothing', async (_name, fails) => {
+    const built = unarchiveWithFailing(fails)
+
+    const response = await built.inject({
+      method: 'PATCH',
+      url: `/projects/${PROJECT_ID}`,
+      headers: { authorization: bearer(OWNER) },
+      payload: { archived: false },
+    })
+
+    expect(response.statusCode).toBe(500)
+    expect(response.headers['content-type']).toMatch(/application\/problem\+json/)
+    expect(response.json()).toEqual({ title: 'That project could not be changed.', status: 500 })
+    expect(response.body).not.toMatch(/internal server error|couch|_design/i)
+    expect(
+      validate(response.json(), contractSchema('PATCH', '/projects/{projectId}', '500')),
+    ).toEqual([])
+    expect(built.couch.documents.get(POINTER)).toMatchObject({ archived: true, _rev: '1-a' })
+  })
+})
+
 /**
  * A server whose registry already holds what this caller owns, and whose user record
  * carries their plan.
@@ -1523,13 +2068,13 @@ describe('handing a project to somebody else', () => {
  *
  * @param options.plan what the user record holds, as an operator would have typed it
  * @param options.owned how many projects this subject owns
- * @param options.archived whether those owned projects are archived - they count either way (#55)
+ * @param options.archivedCount how many of those owned projects are archived - they do not count
  * @param options.memberOf how many further projects this subject can see but does not own
  */
 function serverWithProjects(options: {
   plan: Plan
   owned: number
-  archived?: boolean
+  archivedCount?: number
   memberOf?: number
 }): Server {
   const built = server()
@@ -1548,7 +2093,7 @@ function serverWithProjects(options: {
   // One row per participation, which is what the view emits: a project somebody shared with
   // this subject is a row of theirs carrying somebody else's `ownerId`. `read` rather than the
   // `member` a reader might expect - `ProjectRole` has four values and that is not one of them.
-  const rows = (count: number, role: string, archived: boolean, prefix: string) =>
+  const rows = (count: number, role: string, archivedCount: number, prefix: string) =>
     Array.from({ length: count }, (_unused, index) => ({
       value: {
         projectId: `${prefix}-${index}`,
@@ -1556,14 +2101,14 @@ function serverWithProjects(options: {
         projectName: `Project ${index}`,
         address: null,
         role,
-        archived,
+        archived: index < archivedCount,
         ownerId: role === 'owner' ? SUBJECT : 'google|somebody-else',
       },
     }))
 
   built.couch.rows = [
-    ...rows(options.owned, 'owner', options.archived === true, 'owned'),
-    ...rows(options.memberOf ?? 0, 'read', false, 'shared'),
+    ...rows(options.owned, 'owner', options.archivedCount ?? 0, 'owned'),
+    ...rows(options.memberOf ?? 0, 'read', 0, 'shared'),
   ]
 
   return built.app
@@ -1603,8 +2148,81 @@ describe("the caller's own record, found by the address on their token", () => {
   })
 })
 
+describe("creating a project completes the creator's record", () => {
+  // An owner is found by subject wherever the caller is somebody else - unarchiving by a
+  // manager, or by the owner after their token's address has changed. A record an operator
+  // created by address through `PUT /customer` has no `sub` until something fills it in, so
+  // without this a paying owner read as `free` and their own unarchive answered `plan-no-sync`.
+
+  /**
+   * The `by_sub` view as CouchDB would answer it: a row only for a record that carries the
+   * subject. The fake's views are static, so this is computed from the stored documents on
+   * every read rather than seeded, which is what lets the test see a `sub` being filled in.
+   */
+  const bySubFromDocuments = (fake: FakeCouch) => {
+    Object.defineProperty(fake.rowsByDesign, 'by_sub', {
+      configurable: true,
+      enumerable: true,
+      get: () =>
+        [...fake.documents.entries()]
+          .filter(([key, doc]) => key.startsWith(`${USERS_DB}/`) && doc.sub === SUBJECT)
+          .map(([, doc]) => ({ id: doc._id, key: SUBJECT, value: null })),
+    })
+  }
+
+  const patch = (built: Server, payload: Record<string, unknown>) =>
+    built.inject({
+      method: 'PATCH',
+      url: `/projects/${PROJECT_ID}`,
+      headers: { authorization: bearer(SUBJECT) },
+      payload,
+    })
+
+  it('lets an owner whose record an operator created by address unarchive their project', async () => {
+    const { app: built, couch: fake } = server({ plan: null })
+    await userRecords(fake.couch).setPlan(SUBJECT_EMAIL, 'member')
+    bySubFromDocuments(fake)
+
+    expect((await create(built, { name: 'Home' }, SUBJECT)).statusCode).toBe(201)
+    expect((await patch(built, { archived: true })).statusCode).toBe(200)
+
+    const unarchived = await patch(built, { archived: false })
+    expect(unarchived.json()).toMatchObject({ archived: false })
+    expect(unarchived.statusCode).toBe(200)
+    expect(fake.documents.get(`${USERS_DB}/${userDocId(SUBJECT_EMAIL)}`)).toMatchObject({
+      sub: SUBJECT,
+      plan: 'member',
+    })
+  })
+
+  it('provisions nothing when the record cannot be completed', async () => {
+    // Before provisioning, so a failure leaves no project whose owner cannot be resolved. The
+    // caller passed the gate, so their record exists and this only fills in `sub`.
+    const { app: built, couch: fake } = server({
+      ensureRecord: async () => {
+        throw new CouchError(500, 'internal', 'matter_manager is down')
+      },
+    })
+
+    const response = await create(built, { name: 'Home' })
+
+    expect(response.statusCode).toBe(500)
+    expect(response.body).not.toContain('matter_manager')
+    expect(fake.databases.has(DATABASE)).toBe(false)
+  })
+
+  it('creates no record for a caller the plan refuses', async () => {
+    const { app: built, couch: fake } = server({ plan: null })
+
+    expect((await create(built, { name: 'Home' }, SUBJECT)).statusCode).toBe(403)
+    expect(fake.documents.has(`${USERS_DB}/${userDocId(SUBJECT_EMAIL)}`)).toBe(false)
+  })
+})
+
 describe('creating a project against the plan', () => {
-  it('creates the first project on a free plan', async () => {
+  it('refuses a free plan its first server project, naming plan-no-sync', async () => {
+    // The free plan keeps its projects on the device. A server project is what sync is, so
+    // there is nothing to count: the refusal is about the plan, not about capacity.
     const built = serverWithProjects({ plan: 'free', owned: 0 })
     const response = await built.inject({
       method: 'POST',
@@ -1612,13 +2230,33 @@ describe('creating a project against the plan', () => {
       headers: { authorization: bearer(SUBJECT) },
       payload: { name: 'Home' },
     })
-    expect(response.statusCode).toBe(201)
+    expect(response.statusCode).toBe(403)
+    expect(response.json()).toMatchObject({ reason: 'plan-no-sync' })
+    expect(validate(response.json(), contractSchema('POST', '/projects', '403'))).toEqual([])
   })
 
-  it('refuses the second, and says why in a way a client can branch on', async () => {
+  it('provisions nothing for a free plan', async () => {
+    const built = serverWithProjects({ plan: 'free', owned: 0 })
+    await built.inject({
+      method: 'POST',
+      url: '/projects',
+      headers: { authorization: bearer(SUBJECT) },
+      payload: { name: 'Home' },
+    })
+    // The registry is created before the caller can be counted, so only a project database
+    // is evidence of provisioning.
+    expect(
+      couch.calls.filter(
+        (call) => call.operation === 'createDb' && call.database.startsWith('project_'),
+      ),
+    ).toEqual([])
+    expect(couch.databases.has(`project_${PROJECT_ID}`)).toBe(false)
+  })
+
+  it('refuses a member at the limit, and says why in a way a client can branch on', async () => {
     // An empty 403 leaves the page unable to tell "you have used all your slots" from "you may
     // not do this", and those deserve different sentences.
-    const built = serverWithProjects({ plan: 'free', owned: 1 })
+    const built = serverWithProjects({ plan: 'member', owned: 5 })
     const response = await built.inject({
       method: 'POST',
       url: '/projects',
@@ -1629,13 +2267,13 @@ describe('creating a project against the plan', () => {
     expect(response.json()).toMatchObject({ reason: 'project-limit-reached' })
   })
 
-  it('answers the refusal the contract declares, reason and all', async () => {
+  it('answers the capacity refusal the contract declares, reason and all', async () => {
     // The contract declared this 403 with a bare description and no schema at all until this
     // task, so `reason` - which the handler had been sending since the limit was enforced - was
     // documented nowhere and checked by nothing. Two separate gaps made that invisible: no
     // schema to look up, and an `operationsOf` that collected only `application/json` while
     // every refusal here is `application/problem+json`.
-    const built = serverWithProjects({ plan: 'free', owned: 1 })
+    const built = serverWithProjects({ plan: 'member', owned: 5 })
     const response = await built.inject({
       method: 'POST',
       url: '/projects',
@@ -1650,40 +2288,56 @@ describe('creating a project against the plan', () => {
   it('would notice a refusal that stopped naming itself', async () => {
     // The negative control. `validate` ignores properties the contract does not declare, so the
     // test above would go on passing if `reason` left the 403 schema - and the page would branch
-    // on a field the contract no longer promised. This asserts both ways the pin can come
-    // loose: the field leaving `required`, and the `const` naming a different refusal.
+    // on a field the contract no longer promised. The 403 is now one of two refusals, so this
+    // asserts both ways the pin can come loose: the field going missing, and a reason that
+    // names neither refusal.
     const schema = contractSchema('POST', '/projects', '403')
 
-    expect(validate({ title: 'No', status: 403 }, schema)).toEqual([
-      { at: '$.reason', says: 'is required and missing' },
-    ])
+    expect(validate({ title: 'No', status: 403 }, schema)).not.toEqual([])
     // The other refusal's reason, which is what a copy-paste produces. A capacity 403 that said
     // `not-an-operator` would tell a page to explain a permission problem to somebody whose
     // only problem is that they have run out of slots - and only one of those is fixed by
     // upgrading, which is the whole reason the field exists.
-    expect(validate({ title: 'No', status: 403, reason: 'not-an-operator' }, schema)).toEqual([
-      { at: '$.reason', says: 'must be "project-limit-reached", got "not-an-operator"' },
-    ])
+    expect(validate({ title: 'No', status: 403, reason: 'not-an-operator' }, schema)).not.toEqual(
+      [],
+    )
+    // And both real reasons pass, so the check is not simply refusing everything.
+    expect(validate({ title: 'No', status: 403, reason: 'plan-no-sync' }, schema)).toEqual([])
+    expect(validate({ title: 'No', status: 403, reason: 'project-limit-reached' }, schema)).toEqual(
+      [],
+    )
   })
 
-  it('counts an archived project against the limit', async () => {
-    // Archiving is not deletion (#55) - the database still exists and still costs - so an
-    // archived project occupies its slot. The alternative would let a free account accumulate
-    // databases without limit by archiving each one.
-    const built = serverWithProjects({ plan: 'free', owned: 1, archived: true })
+  it('does not count an archived project against the limit', async () => {
+    // Reverses #55. Archiving is how a project is put away, and a plan's allowance is for the
+    // projects somebody is working on; the database of an archived one stays, but it no longer
+    // takes a slot. Five owned with two archived leaves a member with room.
+    const built = serverWithProjects({ plan: 'member', owned: 5, archivedCount: 2 })
     const response = await built.inject({
       method: 'POST',
       url: '/projects',
       headers: { authorization: bearer(SUBJECT) },
-      payload: { name: 'Second' },
+      payload: { name: 'Sixth' },
+    })
+    expect(response.statusCode).toBe(201)
+  })
+
+  it('still counts every project that is not archived', async () => {
+    const built = serverWithProjects({ plan: 'member', owned: 5, archivedCount: 0 })
+    const response = await built.inject({
+      method: 'POST',
+      url: '/projects',
+      headers: { authorization: bearer(SUBJECT) },
+      payload: { name: 'Sixth' },
     })
     expect(response.statusCode).toBe(403)
+    expect(response.json()).toMatchObject({ reason: 'project-limit-reached' })
   })
 
   it('does not count a project somebody else owns', async () => {
     // Membership is not ownership. A free user invited to a colleague's project keeps their
     // own slot, which is the point of counting ownership rather than visibility.
-    const built = serverWithProjects({ plan: 'free', owned: 0, memberOf: 3 })
+    const built = serverWithProjects({ plan: 'member', owned: 0, memberOf: 3 })
     const response = await built.inject({
       method: 'POST',
       url: '/projects',
@@ -1707,7 +2361,7 @@ describe('creating a project against the plan', () => {
   it('creates nothing when it refuses', async () => {
     // The refusal has to happen before provisioning, not alongside it. A limit enforced after
     // the database exists is a limit that costs exactly as much as no limit at all.
-    const built = serverWithProjects({ plan: 'free', owned: 1 })
+    const built = serverWithProjects({ plan: 'member', owned: 5 })
     await built.inject({
       method: 'POST',
       url: '/projects',

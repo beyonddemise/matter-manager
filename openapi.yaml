@@ -345,6 +345,7 @@ paths:
               properties:
                 name: { type: string, minLength: 1, maxLength: 200 }
                 address: { type: string, maxLength: 500 }
+                client: { type: string, maxLength: 200 }
       responses:
         '201':
           description: Project created and its database provisioned
@@ -362,16 +363,22 @@ paths:
         # documented nowhere.
         '403':
           description: |
-            No room for another project on this plan (ADR 0009).
+            Refused by the plan (ADR 0009), for one of two reasons a client branches on.
+            `plan-no-sync` is asked first: the free plan owns no server projects, so there is
+            no capacity to run out of. `project-limit-reached` is a paying plan with no room
+            left among its projects that are not archived.
 
-            Named rather than empty, because a page cannot tell a capacity refusal from a
-            permission refusal by status code alone - and only one of the two is fixed by
-            upgrading. A client that reads `projectLimit` from `GET /profile` should not
-            normally reach this; it is the answer when it does anyway, which is what a limit
-            enforced on the server rather than in the page means.
+            Named rather than empty, because a page cannot tell either refusal from a
+            permission refusal by status code alone - and the two are fixed differently. A
+            client that reads `projectLimit` from `GET /profile` should not normally reach
+            this; it is the answer when it does anyway, which is what a limit enforced on the
+            server rather than in the page means.
           content:
             application/problem+json:
-              schema: { $ref: '#/components/schemas/ProjectLimitReached' }
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/PlanHasNoSync'
+                  - $ref: '#/components/schemas/ProjectLimitReached'
         # The one operation in this contract that can fail for the deployment's reasons rather
         # than the caller's: it creates a database, writes its `_security` and installs its
         # access rules, so a CouchDB that is unreachable mid-sequence is a real outcome. The
@@ -418,6 +425,12 @@ paths:
                 address:
                   type: [string, 'null']
                   maxLength: 500
+                client:
+                  type: [string, 'null']
+                  maxLength: 200
+                  description: |
+                    Who the project is for. Trimmed; `null` or a blank string removes it, and
+                    absent leaves it alone, for the reason `address` is spelled the same way.
                 archived:
                   type: boolean
                   description: |
@@ -438,8 +451,30 @@ paths:
         # either. Declared properly and driven by a test per status in `projects/routes.test.ts`.
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
+        '403':
+          description: |
+            Refused, for one of three reasons a client branches on. `not-a-manager`: the caller
+            is a participant without the role to change settings. `plan-no-sync` and
+            `project-limit-reached`: the caller may change settings, but **unarchiving** a
+            project makes it active again, and the OWNER's plan (not the caller's: the owner
+            pays, a manager may unarchive) has no synchronized projects or no room left among
+            its projects that are not archived. Without that check an owner could archive,
+            create a replacement and unarchive, and walk past the limit. Nothing is written.
+          content:
+            application/problem+json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/NotAManager'
+                  - $ref: '#/components/schemas/PlanHasNoSync'
+                  - $ref: '#/components/schemas/ProjectLimitReached'
         '404': { $ref: '#/components/responses/NotFound' }
+        # The owner's plan or project count could not be read while unarchiving. Scrubbed, as
+        # `POST /projects`'s 500 is.
+        '500':
+          description: The change could not be made, for a reason the caller cannot act on
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
 
   /projects/{projectId}/members:
     parameters:
@@ -594,12 +629,33 @@ paths:
         '204': { description: Accepted; ownership has moved }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: |
+            Refused by the RECIPIENT's plan, for one of two reasons a client branches on.
+            Accepting makes the caller the owner of an active project, so their plan must
+            include synchronized projects (`plan-no-sync`) and have room among the projects
+            they own that are not archived (`project-limit-reached`). An archived project is
+            not asked about; unarchiving it is. Nothing is written and the offer stays pending,
+            so the recipient can accept after changing plan or archiving something.
+          content:
+            application/problem+json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/PlanHasNoSync'
+                  - $ref: '#/components/schemas/ProjectLimitReached'
         '404': { $ref: '#/components/responses/NotFound' }
         # `acceptTransfer` re-reads and retries a conflicting registry write three times and then
         # refuses, because a conflict that keeps happening is something the recipient should hear
         # about rather than wait through. The one status `MembershipRefused` can carry that this
         # operation did not declare.
         '409': { $ref: '#/components/responses/Conflict' }
+        # The recipient's plan or project count could not be read. The body says nothing about
+        # CouchDB; that goes to the log.
+        '500':
+          description: The transfer could not be accepted, for a reason the caller cannot act on
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
     delete:
       tags: [projects]
       summary: Decline an offer of ownership
@@ -689,8 +745,16 @@ components:
             Accepted by `POST /projects` since M5-1 and, until #128, silently discarded: the
             length was checked and the value went no further. For a catalogue whose purpose is
             finding a device in a building years later, this is not decoration.
+        client:
+          type: string
+          description: Who the project is for. Optional, and absent rather than empty when none.
         role: { $ref: '#/components/schemas/Role' }
         owner: { $ref: '#/components/schemas/Principal' }
+        archivedAt:
+          type: integer
+          description: |
+            When the project was archived, in seconds since the epoch. Present only while it is
+            archived: stamped by the first archive, kept by repeats, removed by an unarchive.
         archived:
           type: boolean
           description: |
@@ -760,11 +824,51 @@ components:
             Pinned, so a handler that renamed it or stopped sending it fails the contract check
             rather than silently becoming a refusal no client recognises.
 
+    NotAManager:
+      type: object
+      description: |
+        Changing a project's settings was refused: the caller is a participant whose role may
+        not change them. Distinct from the plan refusals so a client can tell "ask the owner"
+        from "upgrade".
+      required: [title, status, reason]
+      properties:
+        type: { type: string, format: uri }
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: string }
+        reason:
+          type: string
+          const: not-a-manager
+          description: >-
+            Pinned, so a handler that renamed it or stopped sending it fails the contract check
+            rather than silently becoming a refusal no client recognises.
+
+    PlanHasNoSync:
+      type: object
+      description: |
+        Creating a project, unarchiving one or accepting a transfer of one was refused: this
+        plan does not include synchronized projects (ADR 0009). The free plan keeps its projects
+        on the device, so there is no server project to count - upgrading is the fix, not
+        archiving.
+      required: [title, status, reason]
+      properties:
+        type: { type: string, format: uri }
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: string }
+        reason:
+          type: string
+          const: plan-no-sync
+          description: >-
+            Pinned, so a handler that renamed it or stopped sending it fails the contract check
+            rather than silently becoming a refusal no client recognises.
+
     ProjectLimitReached:
       type: object
       description: |
-        Creating a project was refused: this plan has no room for another one (ADR 0009). The
-        count includes archived projects, which still have a database and still cost.
+        Creating a project, unarchiving one or accepting a transfer of one was refused: this
+        plan has no room for another one (ADR 0009). The count is of projects that are not
+        archived; an archived project keeps its database but no longer takes a slot.
       required: [title, status, reason]
       properties:
         type: { type: string, format: uri }

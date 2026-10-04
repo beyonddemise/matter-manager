@@ -140,13 +140,27 @@ export async function removeTransfer(
  * an invitation at sign-in does. Ensured first so a failure leaves the project untouched, and
  * only after the offer is checked so nobody gets a record by asking for one.
  *
- * @param deps - CouchDB, and how the recipient's record is created or completed
+ * **An active project is accepted only if the recipient's plan allows it.** Accepting makes
+ * them the owner, which is a creation as far as a plan is concerned: without this a free account
+ * could be handed a server project it could never have made. `authoriseAccept` is asked after
+ * the offer is known to be theirs and before the record is ensured or anything is written, so a
+ * refusal leaves the project, the offer and the user records exactly as they were, and the offer
+ * stays pending for when the plan changes. An archived project is not asked about: it does not
+ * count, and bringing it back is gated where that happens.
+ *
+ * @param deps - CouchDB, how the recipient's record is created or completed, and whether the
+ *   recipient's plan may take one more active project. `authoriseAccept` rejects to refuse; the
+ *   route maps the seam's own error to its named 403
  * @param identity - The recipient, from their verified access token
  * @throws {MembershipRefused} when the offer is not this person's to accept, has expired, or the
  *   person who made it no longer owns the project
  */
 export async function acceptTransfer(
-  deps: { readonly couch: CouchClient; readonly ensureRecord: EnsureRecord },
+  deps: {
+    readonly couch: CouchClient
+    readonly ensureRecord: EnsureRecord
+    readonly authoriseAccept: (recipient: Identity) => Promise<void>
+  },
   projectId: string,
   identity: Identity,
   now: () => number,
@@ -156,6 +170,9 @@ export async function acceptTransfer(
   // into a 404 for exactly the person the offer was for. `acceptable` below still decides on
   // the verified address, so a subject alone accepts nothing.
   let ensured = false
+  // The plan decision is made once. A retry follows a `_security` write, and a second answer
+  // (the recipient's count may have moved) must not refuse a transfer already half applied.
+  let authorised = false
 
   for (let attempt = 0; attempt < CONFLICT_ATTEMPTS; attempt += 1) {
     const offer = await deps.couch.getDoc<TransferDocument>(
@@ -177,6 +194,12 @@ export async function acceptTransfer(
       // they were sent rather than about a project they cannot see.
       throw new MembershipRefused(400, `That transfer cannot be accepted: ${problem}.`)
     }
+    // The recipient's plan, for a project that is active. Before `ensureRecord`, which writes:
+    // an account that is refused must not leave a record behind for having asked.
+    if (!authorised && pointer.archived !== true) {
+      await deps.authoriseAccept(identity)
+      authorised = true
+    }
     // `acceptable` has matched the verified address to the offer, so it is present. Once, not
     // per conflict retry: the record does not change between attempts.
     if (!ensured && identity.email !== undefined) {
@@ -197,7 +220,11 @@ export async function acceptTransfer(
     }
 
     try {
-      await deps.couch.putSecurity(pointer.dbName, securityFor(participants))
+      // An archived project stays archived under its new owner, so the state goes with it.
+      await deps.couch.putSecurity(
+        pointer.dbName,
+        securityFor(participants, { archived: pointer.archived === true }),
+      )
       await deps.couch.putDoc(REGISTRY_DATABASE, { ...pointer, participants })
       await removeTransfer(deps.couch, offer)
       return

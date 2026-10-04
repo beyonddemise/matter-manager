@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
+import type { Identity } from '../../src/auth/oidc.js'
+import { CouchError } from '../../src/couch/client.js'
 import type { Participant } from '../../src/domain/index.js'
 import { MembershipRefused } from '../../src/projects/members.js'
 import { forgetRegistry, pointerId, REGISTRY_DATABASE } from '../../src/projects/registry.js'
@@ -63,10 +65,14 @@ function registry(
 let ensured: Seed[] = []
 
 /** Dependencies whose record ensurer records what it was asked for. */
-function deps(fake: FakeCouch) {
+function deps(
+  fake: FakeCouch,
+  authoriseAccept: (recipient: Identity) => Promise<void> = async () => {},
+) {
   ensured = []
   return {
     couch: fake.couch,
+    authoriseAccept,
     ensureRecord: async (seed: Seed) => {
       ensured.push(seed)
       return { _id: 'user:x', type: 'user' as const, ...seed }
@@ -197,6 +203,19 @@ describe('accepting an offer', () => {
     expect(fake.security.get(DATABASE)?.members?.names).toContain(INSTALLER)
   })
 
+  it('leaves exactly the new owner in owners, whatever the previous owner retains', async () => {
+    // `owners` is what the validator uses to refuse a plan that cannot sync, so a stale entry
+    // would keep billing the previous owner's plan for a project they gave away.
+    const fake = registry(undefined, offer({ retainAccess: 'read' }))
+
+    await acceptTransfer(deps(fake), PROJECT_ID, homeowner, clock())
+
+    const security = fake.security.get(DATABASE)
+    expect(security?.owners?.names).toEqual([HOMEOWNER])
+    expect(security?.owners?.names).not.toContain(INSTALLER)
+    expect(security?.members?.names).toContain(INSTALLER)
+  })
+
   it('removes the previous owner entirely when nothing was retained', async () => {
     const fake = registry(undefined, offer())
 
@@ -303,5 +322,174 @@ describe('accepting an offer', () => {
     ).catch(() => undefined)
 
     expect(operations(fake)).not.toContain('putSecurity')
+  })
+})
+
+describe("accepting an active project is the recipient's plan to authorise", () => {
+  /** The pointer, archived or not, so a test states the one fact the hook is asked about. */
+  const archive = (fake: FakeCouch, archived: boolean) => {
+    const id = `${REGISTRY_DATABASE}/${pointerId(PROJECT_ID)}`
+    fake.documents.set(id, { ...(fake.documents.get(id) as object), archived } as never)
+  }
+
+  it('asks before anything is written, and a refusal leaves the project and the offer alone', async () => {
+    const fake = registry(undefined, offer())
+    const refusal = new Error('no room')
+
+    await expect(
+      acceptTransfer(
+        deps(fake, async () => {
+          throw refusal
+        }),
+        PROJECT_ID,
+        homeowner,
+        clock(),
+      ),
+    ).rejects.toBe(refusal)
+
+    expect(participantsIn(fake)).toEqual([{ role: 'owner', userid: INSTALLER }])
+    expect(operations(fake)).not.toContain('putSecurity')
+    expect(operations(fake)).not.toContain('putDoc')
+    expect(ensured).toEqual([])
+  })
+
+  it('asks about the recipient', async () => {
+    const fake = registry(undefined, offer())
+    const asked: Identity[] = []
+
+    await acceptTransfer(
+      deps(fake, async (recipient) => {
+        asked.push(recipient)
+      }),
+      PROJECT_ID,
+      homeowner,
+      clock(),
+    )
+
+    expect(asked).toEqual([homeowner])
+  })
+
+  it('does not ask for an archived project, whose unarchiving is gated instead', async () => {
+    const fake = registry(undefined, offer())
+    archive(fake, true)
+
+    await acceptTransfer(
+      deps(fake, async () => {
+        throw new Error('must not be asked')
+      }),
+      PROJECT_ID,
+      homeowner,
+      clock(),
+    )
+
+    expect(participantsIn(fake)).toEqual([{ role: 'owner', userid: HOMEOWNER }])
+  })
+
+  it('keeps an archived project archived in CouchDB under its new owner', async () => {
+    // `_security` is rebuilt from the new participants. Rebuilt without the archived state, a
+    // transfer would hand over a project that the registry lists as archived and the database
+    // lets everybody write.
+    const fake = registry(undefined, offer())
+    archive(fake, true)
+
+    await acceptTransfer(deps(fake), PROJECT_ID, homeowner, clock())
+
+    expect(fake.security.get(DATABASE)).toEqual({
+      members: { names: [HOMEOWNER], roles: [] },
+      writers: { names: [HOMEOWNER] },
+      owners: { names: [HOMEOWNER] },
+      archived: true,
+    })
+  })
+
+  it('leaves an active project without the flag', async () => {
+    const fake = registry(undefined, offer())
+
+    await acceptTransfer(deps(fake), PROJECT_ID, homeowner, clock())
+
+    expect(fake.security.get(DATABASE)).not.toHaveProperty('archived')
+  })
+
+  it('decides once, so a retry cannot refuse after _security was already written', async () => {
+    // The first attempt is authorised and writes `_security`, then its registry write
+    // conflicts. A second attempt that asked again could answer differently (the recipient's
+    // count moved in between) and refuse a transfer whose access change is already in CouchDB.
+    const fake = registry(undefined, offer())
+    let asked = 0
+    let conflicts = 1
+    const couch = {
+      ...fake.couch,
+      putDoc: async (database: string, document: { _id: string }) => {
+        if (document._id === pointerId(PROJECT_ID) && conflicts > 0) {
+          conflicts -= 1
+          throw new CouchError(409, 'conflict', 'Document update conflict')
+        }
+        return fake.couch.putDoc(database, document)
+      },
+    } as FakeCouch['couch']
+
+    await acceptTransfer(
+      {
+        ...deps(fake, async () => {
+          asked += 1
+          if (asked > 1) throw new Error('refused on retry')
+        }),
+        couch,
+      },
+      PROJECT_ID,
+      homeowner,
+      clock(),
+    )
+
+    expect(asked).toBe(1)
+    expect(participantsIn(fake)).toEqual([{ role: 'owner', userid: HOMEOWNER }])
+  })
+
+  it('still asks on a retry when the first attempt did not ask because it was archived', async () => {
+    // Archived on attempt one (not gated), unarchived before the retry: now it counts.
+    const fake = registry(undefined, offer())
+    archive(fake, true)
+    let asked = 0
+    let conflicts = 1
+    const couch = {
+      ...fake.couch,
+      putDoc: async (database: string, document: { _id: string }) => {
+        if (document._id === pointerId(PROJECT_ID) && conflicts > 0) {
+          conflicts -= 1
+          archive(fake, false)
+          throw new CouchError(409, 'conflict', 'Document update conflict')
+        }
+        return fake.couch.putDoc(database, document)
+      },
+    } as FakeCouch['couch']
+
+    await acceptTransfer(
+      {
+        ...deps(fake, async () => {
+          asked += 1
+        }),
+        couch,
+      },
+      PROJECT_ID,
+      homeowner,
+      clock(),
+    )
+
+    expect(asked).toBe(1)
+  })
+
+  it("does not ask about an offer that is not the recipient's to accept", async () => {
+    const fake = registry(undefined, offer())
+
+    await expect(
+      acceptTransfer(
+        deps(fake, async () => {
+          throw new Error('must not be asked')
+        }),
+        PROJECT_ID,
+        { ...homeowner, emailVerified: false },
+        clock(),
+      ),
+    ).rejects.toBeInstanceOf(MembershipRefused)
   })
 })

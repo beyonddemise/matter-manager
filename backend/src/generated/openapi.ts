@@ -491,6 +491,7 @@ export interface paths {
                     "application/json": {
                         name: string;
                         address?: string;
+                        client?: string;
                     };
                 };
             };
@@ -507,20 +508,23 @@ export interface paths {
                 400: components["responses"]["BadRequest"];
                 401: components["responses"]["Unauthorized"];
                 /**
-                 * @description No room for another project on this plan (ADR 0009).
+                 * @description Refused by the plan (ADR 0009), for one of two reasons a client branches on.
+                 *     `plan-no-sync` is asked first: the free plan owns no server projects, so there is
+                 *     no capacity to run out of. `project-limit-reached` is a paying plan with no room
+                 *     left among its projects that are not archived.
                  *
-                 *     Named rather than empty, because a page cannot tell a capacity refusal from a
-                 *     permission refusal by status code alone - and only one of the two is fixed by
-                 *     upgrading. A client that reads `projectLimit` from `GET /profile` should not
-                 *     normally reach this; it is the answer when it does anyway, which is what a limit
-                 *     enforced on the server rather than in the page means.
+                 *     Named rather than empty, because a page cannot tell either refusal from a
+                 *     permission refusal by status code alone - and the two are fixed differently. A
+                 *     client that reads `projectLimit` from `GET /profile` should not normally reach
+                 *     this; it is the answer when it does anyway, which is what a limit enforced on the
+                 *     server rather than in the page means.
                  */
                 403: {
                     headers: {
                         [name: string]: unknown;
                     };
                     content: {
-                        "application/problem+json": components["schemas"]["ProjectLimitReached"];
+                        "application/problem+json": components["schemas"]["PlanHasNoSync"] | components["schemas"]["ProjectLimitReached"];
                     };
                 };
                 /** @description The project could not be created, for a reason the caller cannot act on */
@@ -585,6 +589,11 @@ export interface paths {
                         name?: string;
                         address?: string | null;
                         /**
+                         * @description Who the project is for. Trimmed; `null` or a blank string removes it, and
+                         *     absent leaves it alone, for the reason `address` is spelled the same way.
+                         */
+                        client?: string | null;
+                        /**
                          * @description Put the project away, or bring it back. A state rather than an event, so
                          *     it can be undone — a project that could be archived and not unarchived
                          *     would be deleted with extra steps.
@@ -605,8 +614,33 @@ export interface paths {
                 };
                 400: components["responses"]["BadRequest"];
                 401: components["responses"]["Unauthorized"];
-                403: components["responses"]["Forbidden"];
+                /**
+                 * @description Refused, for one of three reasons a client branches on. `not-a-manager`: the caller
+                 *     is a participant without the role to change settings. `plan-no-sync` and
+                 *     `project-limit-reached`: the caller may change settings, but **unarchiving** a
+                 *     project makes it active again, and the OWNER's plan (not the caller's: the owner
+                 *     pays, a manager may unarchive) has no synchronized projects or no room left among
+                 *     its projects that are not archived. Without that check an owner could archive,
+                 *     create a replacement and unarchive, and walk past the limit. Nothing is written.
+                 */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["NotAManager"] | components["schemas"]["PlanHasNoSync"] | components["schemas"]["ProjectLimitReached"];
+                    };
+                };
                 404: components["responses"]["NotFound"];
+                /** @description The change could not be made, for a reason the caller cannot act on */
+                500: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
             };
         };
         trace?: never;
@@ -840,8 +874,33 @@ export interface paths {
                 };
                 400: components["responses"]["BadRequest"];
                 401: components["responses"]["Unauthorized"];
+                /**
+                 * @description Refused by the RECIPIENT's plan, for one of two reasons a client branches on.
+                 *     Accepting makes the caller the owner of an active project, so their plan must
+                 *     include synchronized projects (`plan-no-sync`) and have room among the projects
+                 *     they own that are not archived (`project-limit-reached`). An archived project is
+                 *     not asked about; unarchiving it is. Nothing is written and the offer stays pending,
+                 *     so the recipient can accept after changing plan or archiving something.
+                 */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["PlanHasNoSync"] | components["schemas"]["ProjectLimitReached"];
+                    };
+                };
                 404: components["responses"]["NotFound"];
                 409: components["responses"]["Conflict"];
+                /** @description The transfer could not be accepted, for a reason the caller cannot act on */
+                500: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
             };
         };
         /** Decline an offer of ownership */
@@ -935,8 +994,15 @@ export interface components {
              *     finding a device in a building years later, this is not decoration.
              */
             address?: string;
+            /** @description Who the project is for. Optional, and absent rather than empty when none. */
+            client?: string;
             role: components["schemas"]["Role"];
             owner: components["schemas"]["Principal"];
+            /**
+             * @description When the project was archived, in seconds since the epoch. Present only while it is
+             *     archived: stamped by the first archive, kept by repeats, removed by an unarchive.
+             */
+            archivedAt?: number;
             /**
              * @description Whether the project has been put away (#55).
              *
@@ -991,8 +1057,44 @@ export interface components {
             reason: "not-an-operator";
         };
         /**
-         * @description Creating a project was refused: this plan has no room for another one (ADR 0009). The
-         *     count includes archived projects, which still have a database and still cost.
+         * @description Changing a project's settings was refused: the caller is a participant whose role may
+         *     not change them. Distinct from the plan refusals so a client can tell "ask the owner"
+         *     from "upgrade".
+         */
+        NotAManager: {
+            /** Format: uri */
+            type?: string;
+            title: string;
+            status: number;
+            detail?: string;
+            /**
+             * @description Pinned, so a handler that renamed it or stopped sending it fails the contract check rather than silently becoming a refusal no client recognises.
+             * @constant
+             */
+            reason: "not-a-manager";
+        };
+        /**
+         * @description Creating a project, unarchiving one or accepting a transfer of one was refused: this
+         *     plan does not include synchronized projects (ADR 0009). The free plan keeps its projects
+         *     on the device, so there is no server project to count - upgrading is the fix, not
+         *     archiving.
+         */
+        PlanHasNoSync: {
+            /** Format: uri */
+            type?: string;
+            title: string;
+            status: number;
+            detail?: string;
+            /**
+             * @description Pinned, so a handler that renamed it or stopped sending it fails the contract check rather than silently becoming a refusal no client recognises.
+             * @constant
+             */
+            reason: "plan-no-sync";
+        };
+        /**
+         * @description Creating a project, unarchiving one or accepting a transfer of one was refused: this
+         *     plan has no room for another one (ADR 0009). The count is of projects that are not
+         *     archived; an archived project keeps its database but no longer takes a slot.
          */
         ProjectLimitReached: {
             /** Format: uri */
