@@ -115,10 +115,10 @@ wa-page[view="mobile"] wa-dialog::part(footer) {
 }
 
 wa-page {
-  /* 15rem, derived from the space scale rather than written as a literal: --wa-space-5xl is
-     5rem, and this constraint (src/ui/styles/app.css: only --wa-* tokens, no raw
-     px/rem) applies to every value here, including custom properties that happen to hold a
-     dimension rather than a spacing gap. */
+  /* The navigation column width (270px at the default 16px root), derived from the space scale
+     rather than written as a literal: --wa-space-5xl is 90px, three of them make 270px. The
+     constraint (only --wa-* tokens, no raw px/rem) applies to every value here, including
+     custom properties that happen to hold a dimension rather than a spacing gap. */
   --menu-width: calc(var(--wa-space-5xl) * 3);
 }
 
@@ -163,7 +163,8 @@ settings-view {
 }
 
 .app-form {
-  /* 40rem, from the space scale rather than a literal - the same rule as --menu-width above.
+  /* 720px at the default 16px root (eight --wa-space-5xl steps), from the space scale rather
+     than a literal - the same rule as --menu-width above.
      A form whose fields run the full width of a desktop window is harder to read, not easier. */
   max-width: calc(var(--wa-space-5xl) * 8);
 }
@@ -240,7 +241,6 @@ a.app-device:hover {
 .app-pairing-code {
   font-family: var(--wa-font-family-code);
   font-size: var(--wa-font-size-l);
-  letter-spacing: var(--wa-letter-spacing-wider);
 }
 
 /* The camera preview. Sized by the dialog rather than by the stream: a camera's own aspect
@@ -494,12 +494,16 @@ wa-page[view="mobile"] .app-projects-table .app-cell-actions {
     --wa-color-surface-raised: white;
     --wa-color-surface-lowered: white;
     --wa-color-text-normal: black;
-    --wa-color-text-quiet: #3a3a3a;
+    /* The greys come from the palette's gray scale, not the scheme tokens: the scale does not
+       flip with the colour scheme, so a user in dark mode still prints dark grey on white
+       (gray-40 is 7:1 on white, gray-50 4.6:1). The scheme tokens above would resolve to light
+       text in dark mode, hence the forced white and black. */
+    --wa-color-text-quiet: var(--wa-color-gray-40);
     --wa-color-text-link: black;
     --wa-color-brand-on-quiet: black;
     --wa-color-brand-fill-quiet: transparent;
     --wa-color-neutral-fill-quiet: transparent;
-    --wa-color-neutral-border-quiet: #999;
+    --wa-color-neutral-border-quiet: var(--wa-color-gray-50);
   }
 
   html,
@@ -589,7 +593,7 @@ wa-page[view="mobile"] .app-projects-table .app-cell-actions {
      border does that work on paper: a printed list where a decommissioned device looks live is
      a list that sends somebody to a wall socket. */
   [data-disabled] > .app-device {
-    border: var(--wa-border-width-s) dashed #999;
+    border: var(--wa-border-width-s) dashed var(--wa-color-gray-50);
   }
 
   /* The QR's quiet zone must stay white whatever the surrounding palette does — a code printed

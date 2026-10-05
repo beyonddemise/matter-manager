@@ -41,7 +41,7 @@ const iconsDir = join(root, 'src/ui/icons/svg')
  * The theme's own `@import` asks for all nine weights and both styles of all three families.
  * That is 108 combinations, of which a running browser has ever been observed to fetch three.
  */
-const FONTS = 'figtree:300,400,600,800|chivo-mono:400|fraunces:300'
+const FONTS = 'figtree:300,400,600,800|chivo-mono:400'
 
 /**
  * Where the icons come from.
@@ -189,7 +189,7 @@ writeFileSync(
  * third-party request and leaves an offline application with no typography at all (#106). The
  * import is stripped at build time by the plugin in vite.config.ts; this file replaces it.
  *
- * Figtree, Chivo Mono and Fraunces are all under the SIL Open Font License 1.1 — see LICENSE
+ * Figtree and Chivo Mono are all under the SIL Open Font License 1.1 — see LICENSE
  * beside this file. The @font-face blocks and their unicode-range values come from Bunny's own
  * stylesheet, so a browser still downloads only the subsets a page actually needs.
  */
