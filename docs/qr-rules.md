@@ -47,7 +47,8 @@ Home Assistant and others) can scan and understand a device's payload reliably. 
   four modules wide, so that nearby packaging text or device seams cannot confuse the scanner.
   - **Spec note.** The four-module quiet zone comes from ISO/IEC 18004, which the Matter
     specification references. It is not a separate Matter rule.
-  - **Known gap.** The on-screen plate gives about 2.5 modules at the inline size.
+  - This application draws the quiet zone as part of the image (`QUIET_ZONE` in
+    `frontend/src/ui/qr/render.ts`), on screen and in PDFs, so it is four modules at any size.
 - **Size.** On a physical product, the code must be large enough for a standard phone camera to
   resolve. General QR guidance suggests at least one inch square for print. Small hardware such as
   smart plugs or bulb bases needs high-density precision printing to stay readable at smaller
@@ -76,6 +77,7 @@ Newer specification versions extend the format to cover several devices with one
 | Level M by default | `encodeQr(text, errorCorrection = 'M')` |
 | The mask real label tooling picks | `chooseMask`, python-qrcode scoring; see ADR 0018 |
 | Black on white, never themed | `frontend/src/ui/qr/render.ts`, `frontend/src/ui/pdf/qr.ts` |
+| Four-module quiet zone inside the image | `QUIET_ZONE` in `frontend/src/ui/qr/render.ts` |
 | Matches a real label module for module | `frontend/test/ui/qr/encode.test.ts` |
 
 ## Sources
