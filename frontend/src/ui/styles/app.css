@@ -295,6 +295,10 @@ a.app-device:hover {
 }
 
 .app-project-slot {
+  /* The flank's documented threshold: the content keeps at least 70% of the row, so once the
+     row is narrower than about 400px (a phone) Open and the menu move to a line of their own
+     rather than squeezing the name into a column beside them. */
+  --content-percentage: 70%;
   padding: var(--wa-space-s) var(--wa-space-m);
   border: var(--wa-border-width-s) solid var(--wa-color-surface-border);
   border-radius: var(--wa-border-radius-m);
@@ -319,12 +323,17 @@ a.app-device:hover {
   overflow-wrap: anywhere;
 }
 
+/* At phone width the name and its pen take a line of their own, the tags the next. */
+wa-page[view="mobile"] .app-project-slot .app-project-name {
+  flex-basis: 100%;
+}
+
 /* Open and the menu never wrap apart: the menu belongs to the row's Open. */
 .app-row-actions {
   flex-wrap: nowrap;
 }
 
-/* A row's note (why it cannot be opened or renamed) is secondary text. */
+/* A row's note (why it cannot be opened) is secondary text. */
 [data-note] {
   font-size: var(--wa-font-size-s);
 }
@@ -384,8 +393,11 @@ a.app-device:hover {
 
 /* At phone width each row becomes a block: the name with Open and the menu beside it, then the
    client, then the tags. A five-column table scrolled sideways on a phone hides Open, the one
-   thing an installer on site came for. The column heads go, except the sortable ones, which stay
-   as a row of sort controls. The markup stays a table, so nothing moves between the views.
+   thing an installer on site came for. The heads of the columns that cannot be sorted are hidden
+   visually but stay for assistive technology; the sortable ones stay as a row of sort controls.
+
+   Changing a table's `display` makes some browsers (Safari) drop its table semantics, so the
+   markup states them with explicit roles (`projects.ts`), and the cells are placed by class.
 
    A grid rather than a layout utility: the cells are a table row's, and only a grid can give
    each its place without changing the markup. */
@@ -395,17 +407,23 @@ wa-page[view="mobile"] .app-projects-table tbody {
 }
 
 wa-page[view="mobile"] .app-projects-table thead tr {
+  position: relative;
   display: flex;
   gap: var(--wa-space-m);
-}
-
-wa-page[view="mobile"] .app-projects-table th:not([aria-sort]) {
-  display: none;
 }
 
 wa-page[view="mobile"] .app-projects-table th {
   padding-inline: 0;
   border: none;
+}
+
+/* Web Awesome's visually hidden technique, without its fixed size: clipped to nothing and out of
+   the flow, but still read. */
+wa-page[view="mobile"] .app-projects-table th:not([aria-sort]) {
+  position: absolute;
+  overflow: hidden;
+  white-space: nowrap;
+  clip-path: inset(50%);
 }
 
 wa-page[view="mobile"] .app-projects-table tbody tr {
@@ -428,30 +446,30 @@ wa-page[view="mobile"] .app-projects-table td {
   width: auto;
 }
 
-wa-page[view="mobile"] .app-projects-table td:nth-child(1) {
+wa-page[view="mobile"] .app-projects-table .app-cell-name {
   grid-area: name;
 }
 
-wa-page[view="mobile"] .app-projects-table td:nth-child(2) {
+wa-page[view="mobile"] .app-projects-table .app-cell-client {
   grid-area: client;
   color: var(--wa-color-text-quiet);
   font-size: var(--wa-font-size-s);
 }
 
 /* An empty client takes no line. */
-wa-page[view="mobile"] .app-projects-table td:nth-child(2):empty {
+wa-page[view="mobile"] .app-projects-table .app-cell-client:empty {
   display: none;
 }
 
-wa-page[view="mobile"] .app-projects-table td:nth-child(3) {
+wa-page[view="mobile"] .app-projects-table .app-cell-location {
   grid-area: location;
 }
 
-wa-page[view="mobile"] .app-projects-table td:nth-child(4) {
+wa-page[view="mobile"] .app-projects-table .app-cell-sync {
   grid-area: sync;
 }
 
-wa-page[view="mobile"] .app-projects-table td:nth-child(5) {
+wa-page[view="mobile"] .app-projects-table .app-cell-actions {
   grid-area: actions;
 }
 

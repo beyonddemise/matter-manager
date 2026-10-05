@@ -36,6 +36,7 @@ import {
   projectsModel,
   type Row,
 } from '../projects-model.js'
+import { syncStatusOf, syncStatusText, syncStatusVariant } from '../shell-status.js'
 import {
   type Confirmation,
   needsConfirmation,
@@ -76,6 +77,17 @@ import {
  * by the fields, so a local-only project cannot hold a name its promotion would be refused for.
  */
 const TEXT_MAX_LENGTH = 200
+
+/**
+ * Rename refusals that will not change while the page is open: the pen is left out rather than
+ * shown disabled. The others (offline, signed out, a stale list) pass, so the pen stays, disabled
+ * with its reason.
+ */
+const PERMANENT_REFUSALS: ReadonlySet<string | undefined> = new Set([
+  'role',
+  'read-only',
+  'not-applicable',
+])
 
 /** The local-only project operations the page performs. Injectable so a test owns no database. */
 export interface LocalProjects {
@@ -671,30 +683,34 @@ export class ProjectsView extends LitElement {
   private renderTable(rows: readonly Row[], sortable: boolean): TemplateResult {
     const sorted = sortable ? sortRows(rows, this.sort) : rows
     return html`
-      <wa-scroller><table class="app-projects-table">
-        <thead>
-          <tr>
+      <!-- Roles stated explicitly: at phone width the rows are laid out as blocks (app.css),
+           and some browsers drop a table's semantics once its display changes. -->
+      <wa-scroller><table class="app-projects-table" role="table">
+        <thead role="rowgroup">
+          <tr role="row">
             ${this.renderSortHeader('name', msg('Name'), sortable)}
             ${this.renderSortHeader('client', msg('Client'), sortable)}
-            <th scope="col" class="app-col-fit">${msg('Location')}</th>
-            <th scope="col" class="app-col-fit">${msg('Sync')}</th>
-            <th scope="col" class="app-col-fit app-col-end">${msg('Actions')}</th>
+            <th scope="col" role="columnheader" class="app-col-fit">${msg('Location')}</th>
+            <th scope="col" role="columnheader" class="app-col-fit">${msg('Sync')}</th>
+            <th scope="col" role="columnheader" class="app-col-fit app-col-end">
+              ${msg('Actions')}
+            </th>
           </tr>
         </thead>
-        <tbody>
+        <tbody role="rowgroup">
           ${sorted.map(
             (row) => html`
-              <tr data-row=${row.key}>
-                <td>
+              <tr role="row" data-row=${row.key}>
+                <td role="cell" class="app-cell-name">
                   <div class="wa-stack wa-gap-3xs">
                     <div class="wa-cluster wa-gap-2xs app-project-name">${this.renderName(row, true)}</div>
                     ${this.renderRowNote(row)}
                   </div>
                 </td>
-                <td data-client>${this.editing === row.key ? nothing : (row.client ?? nothing)}</td>
-                <td class="app-col-fit">${this.renderLocation(row)}</td>
-                <td class="app-col-fit">${this.renderSync(row)}</td>
-                <td class="app-col-fit app-col-end">
+                <td role="cell" class="app-cell-client" data-client>${this.editing === row.key ? nothing : (row.client ?? nothing)}</td>
+                <td role="cell" class="app-col-fit app-cell-location">${this.renderLocation(row)}</td>
+                <td role="cell" class="app-col-fit app-cell-sync">${this.renderSync(row)}</td>
+                <td role="cell" class="app-col-fit app-col-end app-cell-actions">
                   <div class="wa-cluster wa-gap-2xs wa-justify-content-end app-row-actions">
                     ${this.renderOpen(row)} ${this.renderMenu(row)}
                   </div>
@@ -708,11 +724,11 @@ export class ProjectsView extends LitElement {
   }
 
   private renderSortHeader(by: Sort['by'], label: string, sortable: boolean): TemplateResult {
-    if (!sortable) return html`<th scope="col">${label}</th>`
+    if (!sortable) return html`<th scope="col" role="columnheader">${label}</th>`
     const active = this.sort.by === by
     const direction = active ? (this.sort.ascending ? 'ascending' : 'descending') : 'none'
     return html`
-      <th scope="col" aria-sort=${direction}>
+      <th scope="col" role="columnheader" aria-sort=${direction}>
         <wa-button
           data-sort=${by}
           class="app-sort"
@@ -820,8 +836,14 @@ export class ProjectsView extends LitElement {
       `
     }
     const rename = row.actions.rename
+    const name = html`<span data-name>${row.name === '' ? msg('Unnamed project') : row.name}</span>`
+    // No pen at all where renaming will never be possible here — a role that does not allow it,
+    // a copy the server no longer takes, a promotion under way: an editing control that can only
+    // ever be refused is noise. Disabled, with its reason, where it will come back (offline,
+    // signed out, waiting for the list).
+    if (!rename.allowed && PERMANENT_REFUSALS.has(rename.reason)) return name
     return html`
-      <span data-name>${row.name === '' ? msg('Unnamed project') : row.name}</span>
+      ${name}
       <wa-button
         data-rename
         appearance="plain"
@@ -850,17 +872,14 @@ export class ProjectsView extends LitElement {
   }
 
   /**
-   * One short note per row saying what it cannot do and why: opening first, since a row that
-   * cannot be opened has nothing else worth saying; then renaming, the other action on the row.
+   * Why a row cannot be opened, when it cannot: the one refusal worth a sentence on the row,
+   * because Open is missing and the reader would otherwise not know why. Other refusals are said
+   * where they are met — on the disabled pen, beside a disabled menu item, or after an attempt.
    */
   private renderRowNote(row: Row): TemplateResult | typeof nothing {
-    const { open, rename } = row.actions
-    const note =
-      open.reason !== undefined
-        ? openRefusalText(open.reason)
-        : rename.reason !== undefined
-          ? reasonText(rename.reason)
-          : ''
+    const { open } = row.actions
+    if (open.reason === undefined) return nothing
+    const note = openRefusalText(open.reason)
     return note === '' ? nothing : html`<span class="app-empty" data-note>${note}</span>`
   }
 
@@ -871,27 +890,16 @@ export class ProjectsView extends LitElement {
   }
 
   /**
-   * The live replication state, when there is one. Waiting is neutral, never danger: offline is
-   * ordinary here and the local copy is complete. A refusal is a warning, worded as what it
-   * means for this project — an archived one is simply read-only now.
+   * Where a synchronized copy's changes stand, in the status bar's words and colours
+   * (`shell-status.ts`), so the page and the footer never describe the same state differently.
+   * Nothing for a project only here or only on the server: its location tag says all there is.
    */
   private renderSync(row: Row): TemplateResult | typeof nothing {
-    const state = row.syncState
-    if (state === undefined) return nothing
-    switch (state) {
-      case 'idle':
-        return html`<wa-tag data-sync size="s" variant="success">${msg('Up to date')}</wa-tag>`
-      case 'active':
-        return html`<wa-tag data-sync size="s" variant="neutral">${msg('Syncing')}</wa-tag>`
-      case 'offline':
-        return html`<wa-tag data-sync size="s" variant="neutral">${msg('Waiting to sync')}</wa-tag>`
-      case 'stopped':
-        return html`<wa-tag data-sync size="s" variant="neutral">${msg('Not syncing')}</wa-tag>`
-      case 'denied':
-        return html`<wa-tag data-sync size="s" variant="warning">
-          ${row.archived ? msg('Archived — read-only') : msg('No permission to sync')}
-        </wa-tag>`
-    }
+    if (row.location !== 'synced') return nothing
+    const status = syncStatusOf(row, this.input.session === 'signed-in')
+    return html`<wa-tag data-sync size="s" variant=${syncStatusVariant(status)}>
+      ${syncStatusText(status)}
+    </wa-tag>`
   }
 
   /** The element around a clicked control that holds its fields. */

@@ -89,8 +89,9 @@ export default defineConfig(({ mode }) => {
       // parts (PDF writer, lazy fallback) are already split out and guarded by `check:lazy` and
       // `check:lazy-pdf`, so the warning's advice is spent. A budget just above today's size
       // keeps the warning meaningful: it fires again when the entry grows materially, instead of
-      // being printed on every build and ignored. Raised from 700 when the footer status bar and
-      // the projects page's scroller and menu divider took the entry from ~697 kB to ~708 kB.
+      // being printed on every build and ignored. Raised from 700 for #214, when the footer status
+      // bar and the projects page's scroller and menu divider took the entry from ~697 kB to
+      // ~708 kB.
       chunkSizeWarningLimit: 720,
       rolldownOptions: {
         output: {

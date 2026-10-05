@@ -345,10 +345,12 @@ describe('the member plan', () => {
       'On this device',
     )
     expect(text(find(view, '[data-row="project_p1"] [data-location]'))).toContain('Synchronized')
-    expect(text(find(view, '[data-row="project_p1"] [data-sync]'))).toContain('Up to date')
+    // The status bar's words: one vocabulary for sync, wherever it is shown.
+    expect(text(find(view, '[data-row="project_p1"] [data-sync]')).trim()).toBe('Synced')
+    expect(view.querySelector('[data-row="project_local_a"] [data-sync]')).toBeNull()
   })
 
-  it('shows a waiting sync quietly, never as an error', async () => {
+  it('shows a waiting sync as pending, never as an error', async () => {
     const view = await member({
       local: [entry({ dbName: 'project_p1', name: 'Beta', projectId: 'p1' })],
       server: [project()],
@@ -356,7 +358,8 @@ describe('the member plan', () => {
     })
 
     const tag = find(view, '[data-row="project_p1"] [data-sync]')
-    expect(tag.getAttribute('variant')).toBe('neutral')
+    expect(text(tag).trim()).toBe('Sync pending')
+    expect(tag.getAttribute('variant')).toBe('warning')
   })
 
   it('creates on the server, keeps a local copy and refetches the list', async () => {
@@ -388,7 +391,7 @@ describe('the member plan', () => {
     expect(fieldOf(find(view, '[data-slot-empty]'), 'name')).toBe('')
   })
 
-  it('says a refused sync plainly, and an archived project as read-only', async () => {
+  it('says a refused sync plainly; an archived copy is only on this device now', async () => {
     const view = await member({
       local: [
         entry({ dbName: 'project_p1', name: 'Beta', projectId: 'p1' }),
@@ -399,11 +402,12 @@ describe('the member plan', () => {
     })
 
     const denied = find(view, '[data-row="project_p1"] [data-sync]')
-    expect(text(denied)).toContain('No permission to sync')
-    expect(denied.getAttribute('variant')).toBe('warning')
-    expect(text(find(view, '[data-row="project_p2"] [data-sync]'))).toContain(
-      'Archived — read-only',
-    )
+    expect(text(denied).trim()).toBe('No permission to sync')
+    expect(denied.getAttribute('variant')).toBe('danger')
+    // The server took the archived project away: what is left is this device's copy, with no
+    // sync to report on.
+    expect(view.querySelector('[data-row="project_p2"] [data-sync]')).toBeNull()
+    expect(text(find(view, '[data-row="project_p2"] [data-location]'))).toContain('On this device')
   })
 
   it('creates on this device when offline', async () => {
@@ -587,6 +591,47 @@ describe('every plan', () => {
     expect(view.querySelectorAll('[data-slot-empty]')).toHaveLength(5)
   })
 
+  it('leaves out the pen, and says nothing, where the role never allows renaming', async () => {
+    const view = await page({
+      plan: 'member',
+      local: [entry({ dbName: 'project_p2', name: 'Theirs', projectId: 'p2' })],
+      server: [project({ projectId: 'p2', dbName: 'project_p2', name: 'Theirs', role: 'write' })],
+    })
+
+    const row = find(view, '[data-row="project_p2"]')
+    expect(row.querySelector('[data-rename]')).toBeNull()
+    expect(row.querySelector('[data-note]')).toBeNull()
+    expect(text(row)).not.toContain('Only the owner or a manager can change this')
+  })
+
+  it('states the table roles, which survive the phone layout', async () => {
+    const view = await page({
+      plan: 'pro',
+      local: [entry()],
+      server: [project({ projectId: 'p2', dbName: 'project_p2', name: 'Remote' })],
+    })
+
+    const table = find(view, 'table')
+    expect(table.getAttribute('role')).toBe('table')
+    expect([...table.querySelectorAll('thead, tbody')].map((g) => g.getAttribute('role'))).toEqual([
+      'rowgroup',
+      'rowgroup',
+    ])
+    for (const row of table.querySelectorAll('tr')) expect(row.getAttribute('role')).toBe('row')
+    for (const head of table.querySelectorAll('th')) {
+      expect(head.getAttribute('role')).toBe('columnheader')
+    }
+    const cells = [...find(view, 'tr[data-row="project_local_a"]').children]
+    expect(cells.map((cell) => cell.getAttribute('role'))).toEqual(Array(5).fill('cell'))
+    expect(cells.map((cell) => cell.className.match(/app-cell-\w+/)?.[0])).toEqual([
+      'app-cell-name',
+      'app-cell-client',
+      'app-cell-location',
+      'app-cell-sync',
+      'app-cell-actions',
+    ])
+  })
+
   it('signed out on the free plan, says to sign in and disables the create card', async () => {
     const view = await page({ session: 'signed-out', server: undefined })
 
@@ -625,9 +670,12 @@ describe('every plan', () => {
     const remote = find(view, '[data-row="project_p3"]')
     expect(remote.querySelector('[data-open]')).toBeNull()
     expect(text(remote)).toContain('Not available offline')
+    // Renaming comes back with the connection: the pen stays, disabled, with its reason on it
+    // rather than as a sentence on the row.
     const pen = find(view, '[data-row="project_p1"] [data-rename]')
     expect(pen.hasAttribute('disabled')).toBe(true)
-    expect(text(find(view, '[data-row="project_p1"]'))).toContain('Needs a connection')
+    expect(pen.getAttribute('title')).toBe('Needs a connection')
+    expect(view.querySelector('[data-row="project_p1"] [data-note]')).toBeNull()
   })
 
   it('speaks German', async () => {
