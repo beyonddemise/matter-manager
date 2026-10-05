@@ -1,3 +1,4 @@
+import '@awesome.me/webawesome-pro/dist/components/tag/tag.js'
 import { describe, expect, it } from 'vitest'
 import { EXCLUDED_THEMES, PALETTES, THEMES } from '../../../src/ui/theme.js'
 import { contrastRatio, PAIRS, type Pair, resolvePair, WA_THEMES } from './support/contrast.js'
@@ -7,7 +8,7 @@ import { contrastRatio, PAIRS, type Pair, resolvePair, WA_THEMES } from './suppo
  * did the same in dark mode — and asked that contrast be verified rather than assumed if
  * arbitrary theme and palette pairs became selectable.
  *
- * With 11 themes, 10 palettes, two schemes and ten token pairs, that is 2200 measurements.
+ * With 11 themes, 10 palettes, two schemes and eleven token pairs, that is 2420 measurements.
  * "Check it looks right" is not something anybody will do twice, so it is this.
  */
 
@@ -102,4 +103,51 @@ describe('the themes withheld for contrast', () => {
     // union check lost a case rather than strengthening it - the count was weak, not useless.
     expect(THEMES.filter((theme) => theme in EXCLUDED_THEMES)).toEqual([])
   })
+})
+
+describe('the status tags', () => {
+  /** The pair each filled tag variant is drawn with; see `neutralQuiet` in the support file. */
+  const VARIANTS: Readonly<Record<string, Pair>> = {
+    success: 'successQuiet',
+    warning: 'warningQuiet',
+    neutral: 'neutralQuiet',
+    danger: 'dangerQuiet',
+  }
+
+  /**
+   * The token pairs above are only the tags' contrast if a filled tag really draws with them. A
+   * real `<wa-tag appearance="filled" size="s">` of each variant, in the application's look and
+   * both schemes, is held to its pair and to AA — so a Web Awesome release that changes what a
+   * filled tag uses fails here rather than passing on tokens nothing reads.
+   */
+  it.each(SCHEMES)(
+    'draws each filled variant with its quiet pair, at AA, in %s',
+    async (scheme) => {
+      const host = document.createElement('div')
+      host.className = `wa-theme-glossy wa-palette-anodized ${scheme}`
+      document.body.append(host)
+      try {
+        for (const [variant, pair] of Object.entries(VARIANTS)) {
+          const tag = document.createElement('wa-tag') as HTMLElement & {
+            updateComplete: Promise<unknown>
+          }
+          tag.setAttribute('variant', variant)
+          tag.setAttribute('appearance', 'filled')
+          tag.setAttribute('size', 's')
+          tag.textContent = 'Synced'
+          host.append(tag)
+          await tag.updateComplete
+          const drawn = getComputedStyle(tag)
+          const expected = resolvePair('glossy', 'anodized', scheme, pair)
+          expect(drawn.color, variant).toBe(expected.foreground)
+          expect(drawn.backgroundColor, variant).toBe(expected.background)
+          expect(contrastRatio(drawn.color, drawn.backgroundColor), variant).toBeGreaterThanOrEqual(
+            AA,
+          )
+        }
+      } finally {
+        host.remove()
+      }
+    },
+  )
 })

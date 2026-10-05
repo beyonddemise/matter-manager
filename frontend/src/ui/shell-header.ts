@@ -41,7 +41,14 @@ export function renderAccount(
   }
   return html`
     <wa-button data-sign-in appearance="plain" @click=${onSignIn}>
-      ${session === 'expired' ? msg('Session ended - sign in again') : msg('Sign in')}
+      ${
+        // At phone width the short form: the header has no room for the sentence, and the
+        // session-ended notice above the page already says it.
+        session === 'expired'
+          ? html`<span class="wa-desktop-only">${msg('Session ended - sign in again')}</span>
+              <span class="wa-mobile-only">${msg('Sign in')}</span>`
+          : msg('Sign in')
+      }
     </wa-button>
   `
 }

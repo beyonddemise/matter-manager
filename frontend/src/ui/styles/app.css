@@ -42,14 +42,27 @@ wa-page[view="mobile"] .app-main {
   padding: var(--wa-space-m);
 }
 
-/* The footer: the status bar, then the website's links. Sticky at the bottom of the viewport,
-   because the network state must always be visible (PRODUCT.md) and `<wa-page>` otherwise puts
-   its footer below the fold. `footer` is a documented part of <wa-page>; the slotted element
-   inside it carries the surface, so the content scrolling underneath never shows through. */
+/* The footer: the status bar, then (on desktop) the website's links. Sticky at the bottom of
+   the viewport, because the network state must always be visible (PRODUCT.md) and `<wa-page>`
+   otherwise puts its footer below the fold.
+
+   **Off the documented API, deliberately.** `footer` is a documented part of <wa-page>, but the
+   footer is not among its documented sticky sections (banner, header, subheader, menu, aside),
+   so making it sticky is ours, not the component's. A Web Awesome release that changes the
+   footer's box could break it silently, which is why `app-shell.browser.test.ts` asserts the
+   part's computed position. The slotted element carries the surface, so the content scrolling
+   underneath never shows through. */
 wa-page::part(footer) {
   position: sticky;
   inset-block-end: 0;
   z-index: 5;
+}
+
+/* What the sticky footer covers is kept out of the way of focus: a control that is tabbed to is
+   scrolled clear of it (WCAG 2.4.11). The height is measured by the shell, which watches the
+   footer and sets the property. */
+html {
+  scroll-padding-block-end: var(--app-footer-height, 0);
 }
 
 .app-footer {
@@ -61,10 +74,38 @@ wa-page::part(footer) {
   border-block-start: var(--wa-border-width-s) solid var(--wa-color-surface-border);
 }
 
-/* The links are secondary to the status beside them, but they are links: underlined, in the
-   link colour, at the footer's size. */
-.app-footer-links a {
+/* The website's links, in the footer on desktop and the drawer's footer at phone width:
+   secondary, but links, underlined and in the link colour. */
+.app-site-links {
+  font-size: var(--wa-font-size-s);
+}
+
+.app-site-links a {
   color: var(--wa-color-text-link);
+}
+
+/* In the drawer's footer: a row, as in the desktop footer, across the drawer's width. <wa-page>
+   lays every navigation slot out as a column, which would stack three short links one per line. */
+.app-site-links[slot="navigation-footer"] {
+  flex-grow: 1;
+  flex-direction: row;
+}
+
+/* The account at phone width, in the drawer above Sign out: context, laid out like the items
+   around it but quieter. */
+.app-nav-email {
+  padding: var(--wa-space-s) var(--wa-space-m);
+  color: var(--wa-color-text-quiet);
+  font-size: var(--wa-font-size-s);
+  overflow-wrap: anywhere;
+}
+
+/* At phone width a dialog's footer buttons stack, full width, in their order: Cancel first, then
+   the confirm. Two buttons side by side at 375px leave a destructive label wrapping onto two
+   lines. `footer` is the dialog's documented part. */
+wa-page[view="mobile"] wa-dialog::part(footer) {
+  flex-direction: column;
+  align-items: stretch;
 }
 
 /* A status in the status bar: a <wa-tag>, which is a label rather than a control, so it has no
@@ -246,8 +287,7 @@ a.app-device:hover {
 
 /* The member plan's slots: one bordered row per project the plan allows, filled or not, so
    "how many more can I have" is answered by looking. A row is a `wa-flank:end`: the name and its
-   tags take the room and wrap, Open and the menu keep their size at the end, and on a phone the
-   two halves stack. */
+   tags take the room, Open and the menu keep their size at the end. */
 .app-project-slots {
   margin: 0;
   padding: 0;

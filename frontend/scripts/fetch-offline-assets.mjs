@@ -98,13 +98,14 @@ const ICONS = [
   // #132: `camera-slash` and `cloud-slash` are Pro-only and 403 on the endpoint Web Awesome
   // uses, so neither has ever rendered. These are their free replacements.
   'video-slash',
-  // The status bar's network status while offline, beside `wifi` for online.
+  // Chosen at run time: the status bar's network status in `shell-status.ts`.
   'plug-circle-xmark',
   'wifi',
   // Chosen at run time: the status bar's sync status in `shell-status.ts` (with `arrows-rotate`
   // and `triangle-exclamation` above).
   'laptop',
   'circle-check',
+  'circle-pause',
   // Sign out, the last item of the navigation in `app-shell.ts`.
   'right-from-bracket',
   // The header's Upgrade button in `app-shell.ts`.

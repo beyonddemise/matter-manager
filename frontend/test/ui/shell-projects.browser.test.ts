@@ -372,7 +372,7 @@ describe('a project the server refuses', () => {
     expect(stopped).toEqual([])
     expect(projectsView(element)?.input.syncStates('p1')).toBe('denied')
     expect(text(element.querySelector('footer [data-sync-status="denied"]'))).toBe(
-      'No permission to sync',
+      'Beta: No permission to sync',
     )
   })
 
@@ -603,6 +603,18 @@ describe('the header', () => {
     expect(element.querySelector('[data-sign-in]')).toBeNull()
   })
 
+  it('moves the email into the drawer at phone width, above Sign out', async () => {
+    const { element } = await mount({ cachedProfile: profile() })
+    await waitUntil(() => element.querySelector('nav [data-nav-email]') !== null, 'not in the menu')
+    const inNav = element.querySelector('nav [data-nav-email]') as HTMLElement
+    expect(text(inNav)).toBe('ada@example.org')
+    expect(inNav.classList.contains('wa-mobile-only')).toBe(true)
+    expect(inNav.nextElementSibling?.matches('[data-sign-out]')).toBe(true)
+    expect(element.querySelector('header [data-user-email]')?.classList).toContain(
+      'wa-desktop-only',
+    )
+  })
+
   it('shows the email the profile brings, once it arrives', async () => {
     const store = isolatedProjectStore()
     const { element } = await mount({
@@ -641,7 +653,12 @@ describe('the header', () => {
 
 describe('the status bar', () => {
   /** The shell with a local project and a synchronized copy, and replication's reporting line. */
-  async function statusShell(network = fakeNetwork(true)) {
+  async function statusShell(
+    options: {
+      network?: ReturnType<typeof fakeNetwork>
+      session?: 'signed-in' | 'signed-out'
+    } = {},
+  ) {
     let report: (projectId: string, state: string) => void = () => {}
     const store = isolatedProjectStore()
     await store.cache().addLocalProject(entry())
@@ -650,8 +667,8 @@ describe('the status bar', () => {
     writeCurrentProjectId(() => localStorage, 'p1')
     const element = (await fixture(html`
       <app-shell
-        .refresher=${refresherReporting('signed-in')}
-        .connectivity=${network}
+        .refresher=${refresherReporting(options.session ?? 'signed-in')}
+        .connectivity=${options.network ?? fakeNetwork(true)}
         .followLocale=${async () => undefined}
         .listProjects=${async () => [project()]}
         .makeSync=${(onState: (projectId: string, state: string) => void) => {
@@ -661,12 +678,27 @@ describe('the status bar', () => {
         .projectStore=${store}
       ></app-shell>
     `)) as AppShell
-    await inputSettles(element, (i) => i.server !== undefined, 'no list arrived')
+    if (options.session !== 'signed-out') {
+      await inputSettles(element, (i) => i.server !== undefined, 'no list arrived')
+    }
     await waitUntil(() => currentProjectDatabaseName() === copy.dbName, 'the copy never opened')
+    await waitUntil(() => status(element) !== null, 'no sync status')
     return { element, report: (state: string) => report('p1', state) }
   }
 
   const status = (element: Element) => element.querySelector('footer [data-sync-status]')
+  const statusOf = (element: Element) => status(element)?.getAttribute('data-sync-status')
+  const announced = (element: Element) => text(element.querySelector('[data-status-announcement]'))
+
+  /** Reports a state and waits for the shell to have rendered it. */
+  async function reportAndRender(
+    element: AppShell,
+    report: (state: string) => void,
+    state: string,
+  ): Promise<void> {
+    report(state)
+    await element.updateComplete
+  }
 
   it('sits in the footer beside the website links, which stay', async () => {
     const { element } = await statusShell()
@@ -689,73 +721,103 @@ describe('the status bar', () => {
     expect(element.querySelector('[data-offline]')).toBeNull()
   })
 
-  it('says Offline as a warning, and stops saying Online', async () => {
+  it('says Offline as a warning on the same element, and announces it once', async () => {
     const network = fakeNetwork(true)
-    const { element } = await statusShell(network)
+    const { element } = await statusShell({ network })
+    const before = element.querySelector('footer [data-network]')
+    expect(announced(element)).toBe('')
 
     network.go(false)
     await element.updateComplete
 
     const tag = element.querySelector('footer [data-offline]')
+    expect(tag).toBe(before)
     expect(text(tag)).toBe('Offline')
     expect(tag?.getAttribute('variant')).toBe('warning')
     expect(element.querySelector('[data-online]')).toBeNull()
+    expect(announced(element)).toBe('Offline')
+
+    network.go(true)
+    await element.updateComplete
+    expect(announced(element)).toBe('Online')
   })
 
   it('says Sync pending for the open copy until it is caught up, then Synced', async () => {
     const { element, report } = await statusShell()
     // No state reported yet: not caught up as far as anybody knows.
-    expect(status(element)?.getAttribute('data-sync-status')).toBe('pending')
+    expect(statusOf(element)).toBe('pending')
+    expect(status(element)?.getAttribute('variant')).toBe('warning')
 
     for (const state of ['active', 'offline', 'stopped']) {
-      report(state)
-      await element.updateComplete
-      expect(status(element)?.getAttribute('data-sync-status'), state).toBe('pending')
-      expect(text(status(element))).toBe('Sync pending')
+      await reportAndRender(element, report, state)
+      expect(statusOf(element), state).toBe('pending')
+      expect(text(status(element))).toBe('Beta: Sync pending')
     }
 
-    report('idle')
-    await element.updateComplete
-    expect(status(element)?.getAttribute('data-sync-status')).toBe('synced')
-    expect(text(status(element))).toBe('Synced')
+    await reportAndRender(element, report, 'idle')
+    expect(statusOf(element)).toBe('synced')
+    expect(text(status(element))).toBe('Beta: Synced')
     expect(status(element)?.getAttribute('variant')).toBe('success')
+    // Pending and synced trade places all the time: nothing is announced for it.
+    expect(announced(element)).toBe('')
   })
 
-  it('says No permission to sync, as a warning, for a refused copy', async () => {
+  it('names the project for assistive technology only', async () => {
+    const { element } = await statusShell()
+    const name = status(element)?.querySelector('.wa-visually-hidden')
+    expect(text(name ?? null)).toBe('Beta:')
+  })
+
+  it('says No permission to sync, as danger, and announces it starting and ending', async () => {
     const { element, report } = await statusShell()
-    report('denied')
-    await element.updateComplete
-    expect(status(element)?.getAttribute('data-sync-status')).toBe('denied')
-    expect(status(element)?.getAttribute('variant')).toBe('warning')
+    await reportAndRender(element, report, 'denied')
+    expect(statusOf(element)).toBe('denied')
+    expect(status(element)?.getAttribute('variant')).toBe('danger')
+    expect(announced(element)).toBe('Beta: No permission to sync')
+
+    // A successful push is the one proof a refusal is over (ruling C-R12).
+    await projectsView(element)?.sync?.pushNow('p1')
+    await reportAndRender(element, report, 'idle')
+    expect(statusOf(element)).toBe('synced')
+    expect(announced(element)).toBe('Beta: Synced')
+  })
+
+  it('says Sync paused when nobody is signed in', async () => {
+    const { element } = await statusShell({ session: 'signed-out' })
+    await waitUntil(() => statusOf(element) === 'paused', 'never paused')
+    expect(text(status(element))).toBe('Beta: Sync paused – signed out')
+    expect(status(element)?.getAttribute('variant')).toBe('neutral')
   })
 
   it('follows the open project: Local for one only on this device', async () => {
     const { element, report } = await statusShell()
-    report('idle')
-    await element.updateComplete
-    expect(status(element)?.getAttribute('data-sync-status')).toBe('synced')
+    await reportAndRender(element, report, 'idle')
+    expect(statusOf(element)).toBe('synced')
 
     // Opened from the projects page, which points the views at it and says so.
     useProjectDatabase(entry().dbName)
     await element.updateComplete
 
-    expect(status(element)?.getAttribute('data-sync-status')).toBe('local')
-    expect(text(status(element))).toBe('Local')
+    expect(statusOf(element)).toBe('local')
+    expect(text(status(element))).toBe('Alpha: Local')
+    expect(status(element)?.getAttribute('variant')).toBe('neutral')
   })
 
-  it('announces changes and offers nothing to press', async () => {
+  it('has one live region, and tags that are neither live nor controls', async () => {
     const { element } = await statusShell()
-    for (const tag of element.querySelectorAll('[data-status-bar] > *')) {
-      expect(tag.localName).toBe('wa-tag')
-      expect(tag.getAttribute('role')).toBe('status')
-      expect(tag.getAttribute('aria-live')).toBe('polite')
+    const bar = element.querySelector('[data-status-bar]') as HTMLElement
+    expect(bar.querySelectorAll('[role="status"], [aria-live]')).toHaveLength(1)
+    expect(bar.querySelector('[data-status-announcement]')?.getAttribute('role')).toBe('status')
+    const tags = [...bar.querySelectorAll('wa-tag')]
+    expect(tags).toHaveLength(2)
+    for (const tag of tags) {
+      expect(tag.hasAttribute('role')).toBe(false)
       expect(tag.hasAttribute('tabindex')).toBe(false)
       expect(tag.hasAttribute('with-remove')).toBe(false)
       // Nothing inside it takes focus either: a tag without `with-remove` has no button.
       expect(tag.shadowRoot?.querySelector('button, wa-button, [tabindex]')).toBeNull()
       expect(tag.querySelector('wa-icon')).not.toBeNull()
     }
-    expect(element.querySelectorAll('[data-status-bar] > *')).toHaveLength(2)
   })
 })
 

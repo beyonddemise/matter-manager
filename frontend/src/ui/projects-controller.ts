@@ -22,6 +22,7 @@ import { isLocalOnlyDatabase } from '../data/index.js'
 import { DEFAULT_PLAN } from '../domain/plan.js'
 import { projectSync, projects } from './composition.js'
 import {
+  PROJECT_CHANGED,
   readCurrentProjectId,
   resolveCurrentProject,
   writeCurrentProjectId,
@@ -42,7 +43,7 @@ import {
   synchronizedProjects,
 } from './projects-model.js'
 import type { SessionState } from './session.js'
-import { type SyncStatus, syncStatusOf } from './shell-status.js'
+import { type CurrentSync, syncStatusOf } from './shell-status.js'
 import type { SyncManager } from './sync/manager.js'
 import type { SyncState } from './sync/replication.js'
 
@@ -129,6 +130,7 @@ export class ProjectsController implements ReactiveController {
   }
 
   hostConnected(): void {
+    window.addEventListener(PROJECT_CHANGED, this.onProjectChanged)
     // What an action skipped applying, applied once it is done — from a fresh read, because the
     // action has changed the index since the last one.
     this.stopListeningForIdle = onProjectActionsIdle(() => void this.refresh(false))
@@ -138,6 +140,7 @@ export class ProjectsController implements ReactiveController {
   }
 
   hostDisconnected(): void {
+    window.removeEventListener(PROJECT_CHANGED, this.onProjectChanged)
     // A replication left running against a detached shell is a request nobody will read.
     this.end()
     this.stopListeningForIdle?.()
@@ -194,23 +197,47 @@ export class ProjectsController implements ReactiveController {
    * bar the open project's.
    */
   private stateChanged(): void {
+    this.recomputeCurrent()
     this.host.requestUpdate()
   }
+
+  /** The open project's sync status, as last computed; see {@link currentSync}. */
+  private current: CurrentSync | undefined
 
   /**
    * Where the open project's changes stand, for the status bar; `undefined` until the projects
    * have first been read.
    *
+   * Cached rather than computed per render: it needs the page's whole model, and the shell
+   * renders on every keystroke in a dialog. Recomputed when anything it reads changes — a read,
+   * a replication state, the session ending, another project being opened.
+   */
+  currentSync(): CurrentSync | undefined {
+    return this.current
+  }
+
+  /**
    * Found by database name, the one thing the open project is always known by. A database the
    * index does not list (the first-run catalogue before it is adopted) is local: nothing
    * replicates a database that is not listed.
    */
-  currentSyncStatus(): SyncStatus | undefined {
-    if (this.facts === undefined) return undefined
+  private recomputeCurrent(): void {
+    if (this.facts === undefined) {
+      this.current = undefined
+      return
+    }
     const dbName = currentProjectDatabaseName()
     const model = projectsModel(this.input())
     const row = [...model.owned, ...model.shared].find((r) => r.dbName === dbName)
-    return row === undefined ? 'local' : syncStatusOf(row)
+    this.current =
+      row === undefined
+        ? { status: 'local', name: '' }
+        : { status: syncStatusOf(row, this.host.session === 'signed-in'), name: row.name }
+  }
+
+  /** Another project was opened: the status bar reports the open project. */
+  private readonly onProjectChanged = (): void => {
+    this.stateChanged()
   }
 
   /**
@@ -227,7 +254,7 @@ export class ProjectsController implements ReactiveController {
     this.states.clear()
     this.denied.clear()
     this.fresh = undefined
-    this.host.requestUpdate()
+    this.stateChanged()
   }
 
   /**
@@ -353,7 +380,7 @@ export class ProjectsController implements ReactiveController {
     // reopen a database it left.
     if (epoch !== projectActionEpoch()) return
     this.facts = facts
-    this.host.requestUpdate()
+    this.stateChanged()
     this.apply()
   }
 

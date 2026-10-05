@@ -9,7 +9,6 @@ import {
   type TokenOutcome,
 } from './composition.js'
 import { browserConnectivity, type ConnectivitySource, watchConnectivity } from './connectivity.js'
-import { PROJECT_CHANGED } from './current-project.js'
 import { localDatabase } from './db/project-database.js'
 import { negotiateLocale } from './i18n/locale.js'
 import { activateLocale } from './i18n/localization.js'
@@ -34,7 +33,12 @@ import {
   renderUpgrade,
   type SignOutStep,
 } from './shell-header.js'
-import { renderNetworkStatus, renderSyncStatus } from './shell-status.js'
+import {
+  announcementFor,
+  renderNetworkStatus,
+  renderSyncStatus,
+  type StatusSnapshot,
+} from './shell-status.js'
 import type { SyncManager } from './sync/manager.js'
 import type { SyncState } from './sync/replication.js'
 import { startRefresher } from './token-refresher.js'
@@ -178,6 +182,7 @@ export class AppShell extends LitElement implements ViewHost {
     signIn: { attribute: false },
     signOutOf: { attribute: false },
     hash: { state: true },
+    announcement: { state: true },
     schemePreference: { state: true },
     online: { state: true },
     updateReady: { attribute: false },
@@ -188,6 +193,8 @@ export class AppShell extends LitElement implements ViewHost {
   }
 
   declare hash: string
+  /** What the status bar's live region last said; see `announcementFor`. */
+  declare announcement: string
   declare schemePreference: SchemePreference
 
   /**
@@ -254,11 +261,6 @@ export class AppShell extends LitElement implements ViewHost {
     this.hash = window.location.hash
   }
 
-  /** Another project was opened: the status bar reports the open project, so it renders again. */
-  private readonly onProjectChanged = () => {
-    this.requestUpdate()
-  }
-
   constructor() {
     super()
     // Every component that renders a `msg()` needs this, and a component that forgets keeps
@@ -269,6 +271,7 @@ export class AppShell extends LitElement implements ViewHost {
     this.upgrading = false
     this.sessionEndedNotice = false
     this.hash = window.location.hash
+    this.announcement = ''
     // Read once at construction. The write side (`cycleScheme`) keeps this field and
     // storage in sync itself, so there is no need to re-read on every render.
     this.schemePreference = readPreference(() => localStorage)
@@ -281,7 +284,6 @@ export class AppShell extends LitElement implements ViewHost {
   override connectedCallback(): void {
     super.connectedCallback()
     window.addEventListener('hashchange', this.onHashChange)
-    window.addEventListener(PROJECT_CHANGED, this.onProjectChanged)
     this.stopWatchingNetwork = watchConnectivity(
       this.connectivity ?? browserConnectivity(),
       (online) => {
@@ -361,12 +363,46 @@ export class AppShell extends LitElement implements ViewHost {
     this.projects.end()
   }
 
+  /** What the status bar showed at the last render, to tell what changed since. */
+  private lastStatus: StatusSnapshot | undefined
+
+  /**
+   * Writes into the live region only what is worth interrupting for (`announcementFor`). Set
+   * here, before rendering, so the change and its announcement arrive in one render.
+   */
+  protected override willUpdate(): void {
+    const status: StatusSnapshot = { online: this.online, sync: this.projects.currentSync() }
+    const announcement = announcementFor(this.lastStatus, status)
+    if (announcement !== undefined) this.announcement = announcement
+    this.lastStatus = status
+  }
+
+  /** Watches the sticky footer's height; see {@link firstUpdated}. */
+  private footerObserver: ResizeObserver | undefined
+
+  /**
+   * Keeps the page's scroll padding equal to the sticky footer's height, so a control that takes
+   * focus is scrolled clear of the footer rather than under it (WCAG 2.4.11). Measured, because
+   * the footer's height changes with the language, the font size and the width.
+   */
+  protected override firstUpdated(): void {
+    const footer = this.querySelector('footer[slot="footer"]')
+    if (footer === null) return
+    const root = document.documentElement
+    this.footerObserver = new ResizeObserver(() => {
+      root.style.setProperty('--app-footer-height', `${footer.getBoundingClientRect().height}px`)
+    })
+    this.footerObserver.observe(footer)
+  }
+
   override disconnectedCallback(): void {
+    this.footerObserver?.disconnect()
+    this.footerObserver = undefined
+    document.documentElement.style.removeProperty('--app-footer-height')
     // Replication is ended by the projects controller, which is disconnected with the shell.
     this.tokenRefresher?.stop()
     this.tokenRefresher = undefined
     window.removeEventListener('hashchange', this.onHashChange)
-    window.removeEventListener(PROJECT_CHANGED, this.onProjectChanged)
     this.stopWatchingNetwork?.()
     this.stopWatchingNetwork = undefined
     super.disconnectedCallback()
@@ -579,6 +615,15 @@ export class AppShell extends LitElement implements ViewHost {
     this.upgrading = false
   }
 
+  /** The public website, its privacy notice and its terms. */
+  private renderSiteLinks(): TemplateResult {
+    return html`
+      <a href="${WEBSITE}/">${msg('About Matter Manager')}</a>
+      <a href="${WEBSITE}/privacy">${msg('Privacy')}</a>
+      <a href="${WEBSITE}/tos">${msg('Terms')}</a>
+    `
+  }
+
   override render() {
     const match = matchRoute(this.hash, ROUTES)
     const view = match ? VIEWS[match.route.view] : undefined
@@ -623,8 +668,22 @@ export class AppShell extends LitElement implements ViewHost {
               </a>
             `,
           )}
+          ${
+            // The header has no room for the account at phone width, so the drawer carries it,
+            // beside the sign-out it belongs with.
+            this.session === 'signed-in' && this.projects.facts?.email !== undefined
+              ? html`<span data-nav-email class="wa-mobile-only app-nav-email">
+                  ${this.projects.facts.email}
+                </span>`
+              : ''
+          }
           ${renderSignOut(this.session, this.onAskSignOut)}
         </nav>
+        <!-- The website's links at phone width, where the footer holds only the status bar: in
+             the drawer, which every view has. On desktop they are in the footer instead. -->
+        <div slot="navigation-footer" class="wa-mobile-only wa-cluster wa-gap-m app-site-links">
+          ${this.renderSiteLinks()}
+        </div>
         ${renderSignOutConfirmation(this.signingOut, {
           onCancel: this.onCancelSignOut,
           onConfirm: this.onSignOut,
@@ -665,22 +724,26 @@ export class AppShell extends LitElement implements ViewHost {
           ${view && match ? view(match.params, this) : html`<not-found-view></not-found-view>`}
         </main>
 
-        <!-- The status bar and the website's links. Sticky (app.css): the network state must
-             always be visible, and offline is the normal state here.
+        <!-- The status bar and, on desktop, the website's links. Sticky (app.css): the network
+             state must always be visible, and offline is the normal state here.
 
-             The links are in the footer slot, not the navigation: on a phone the navigation is
-             a closed drawer. Google's OAuth review expects the purpose and the privacy policy
-             to be reachable from the application, and so does anybody deciding whether to sign
-             in. -->
+             Google's OAuth review expects the purpose and the privacy policy to be reachable
+             from every view, and so does anybody deciding whether to sign in: here on desktop,
+             in the drawer's footer at phone width, where one row of status is all the footer
+             can spare. -->
         <footer slot="footer" class="wa-split wa-gap-s app-footer">
           <div class="wa-cluster wa-gap-xs" data-status-bar>
             ${renderNetworkStatus(this.online)}
-            ${renderSyncStatus(this.projects.currentSyncStatus())}
+            ${renderSyncStatus(this.projects.currentSync())}
+            <!-- The one live region: the tags change silently, and only what is worth
+                 interrupting for is written here. Always present, so it is registered before
+                 the first thing it says. -->
+            <span data-status-announcement role="status" class="wa-visually-hidden">
+              ${this.announcement}
+            </span>
           </div>
-          <div class="wa-cluster wa-gap-m app-footer-links">
-            <a href="${WEBSITE}/">${msg('About Matter Manager')}</a>
-            <a href="${WEBSITE}/privacy">${msg('Privacy')}</a>
-            <a href="${WEBSITE}/tos">${msg('Terms')}</a>
+          <div class="wa-desktop-only wa-cluster wa-gap-m app-site-links">
+            ${this.renderSiteLinks()}
           </div>
         </footer>
       </wa-page>
