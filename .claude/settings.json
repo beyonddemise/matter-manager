@@ -1,0 +1,6 @@
+{
+  "enabledPlugins": {
+    "impeccable@impeccable": true,
+    "typescript-lsp@claude-plugins-official": true
+  }
+}
