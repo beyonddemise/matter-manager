@@ -564,7 +564,7 @@ export class ProjectsView extends LitElement {
               ? this.renderName(row, false)
               : html`<h2 class="wa-cluster wa-gap-xs">${this.renderName(row, false)}</h2>`
           }
-          <div class="wa-cluster wa-gap-s">
+          <div class="wa-cluster wa-gap-2xs">
             ${
               row.actions.open.allowed
                 ? html`<wa-button data-open variant="brand" @click=${() => this.open(row)}>
@@ -601,17 +601,20 @@ export class ProjectsView extends LitElement {
 
   private renderEmptySlot(model: ProjectsModel): TemplateResult {
     return html`
-      <li data-slot-empty class="wa-cluster wa-gap-s app-project-slot">
+      <li data-slot-empty class="wa-flank:end wa-gap-s app-project-slot">
+        <!-- The label is for assistive technology only: the placeholder says the same thing,
+             and a visible one would make an empty slot twice as tall as a filled one. -->
         <wa-input
           data-field="name"
+          class="wa-visually-hidden-label"
           maxlength=${TEXT_MAX_LENGTH}
           label=${msg('New project')}
-          with-label="false"
           placeholder=${msg('New project name')}
           ?disabled=${!model.canCreate.allowed}
         ></wa-input>
         <wa-button
           data-create
+          appearance="filled-outlined"
           ?disabled=${!model.canCreate.allowed || this.busy}
           @click=${(event: Event) => this.create(this.containerOf(event, '[data-slot-empty]'))}
         >
@@ -623,10 +626,12 @@ export class ProjectsView extends LitElement {
 
   private renderListRow(row: Row): TemplateResult {
     return html`
-      <li data-row=${row.key} class="wa-split wa-gap-s app-project-slot">
-        <div class="wa-cluster wa-gap-xs">${this.renderName(row, false)}</div>
-        <div class="wa-cluster wa-gap-s">
+      <li data-row=${row.key} class="wa-flank:end wa-gap-s app-project-slot">
+        <div class="wa-cluster wa-gap-xs">
+          <div class="wa-cluster wa-gap-2xs app-project-name">${this.renderName(row, false)}</div>
           ${this.renderLocation(row)} ${this.renderSync(row)} ${this.renderRowNote(row)}
+        </div>
+        <div class="wa-cluster wa-gap-2xs app-row-actions">
           ${this.renderOpen(row)} ${this.renderMenu(row)}
         </div>
       </li>
@@ -666,34 +671,39 @@ export class ProjectsView extends LitElement {
   private renderTable(rows: readonly Row[], sortable: boolean): TemplateResult {
     const sorted = sortable ? sortRows(rows, this.sort) : rows
     return html`
-      <div class="app-projects-scroll"><table class="app-projects-table">
+      <wa-scroller><table class="app-projects-table">
         <thead>
           <tr>
             ${this.renderSortHeader('name', msg('Name'), sortable)}
             ${this.renderSortHeader('client', msg('Client'), sortable)}
-            <th scope="col">${msg('Location')}</th>
-            <th scope="col">${msg('Sync')}</th>
-            <th scope="col">${msg('Actions')}</th>
+            <th scope="col" class="app-col-fit">${msg('Location')}</th>
+            <th scope="col" class="app-col-fit">${msg('Sync')}</th>
+            <th scope="col" class="app-col-fit app-col-end">${msg('Actions')}</th>
           </tr>
         </thead>
         <tbody>
           ${sorted.map(
             (row) => html`
               <tr data-row=${row.key}>
-                <td><div class="wa-cluster wa-gap-xs">${this.renderName(row, true)}</div></td>
-                <td data-client>${this.editing === row.key ? nothing : (row.client ?? '')}</td>
-                <td>${this.renderLocation(row)}</td>
-                <td>${this.renderSync(row)}</td>
                 <td>
-                  <div class="wa-cluster wa-gap-xs">
-                    ${this.renderOpen(row)} ${this.renderMenu(row)} ${this.renderRowNote(row)}
+                  <div class="wa-stack wa-gap-3xs">
+                    <div class="wa-cluster wa-gap-2xs app-project-name">${this.renderName(row, true)}</div>
+                    ${this.renderRowNote(row)}
+                  </div>
+                </td>
+                <td data-client>${this.editing === row.key ? nothing : (row.client ?? nothing)}</td>
+                <td class="app-col-fit">${this.renderLocation(row)}</td>
+                <td class="app-col-fit">${this.renderSync(row)}</td>
+                <td class="app-col-fit app-col-end">
+                  <div class="wa-cluster wa-gap-2xs wa-justify-content-end app-row-actions">
+                    ${this.renderOpen(row)} ${this.renderMenu(row)}
                   </div>
                 </td>
               </tr>
             `,
           )}
         </tbody>
-      </table></div>
+      </table></wa-scroller>
     `
   }
 
@@ -705,6 +715,7 @@ export class ProjectsView extends LitElement {
       <th scope="col" aria-sort=${direction}>
         <wa-button
           data-sort=${by}
+          class="app-sort"
           appearance="plain"
           size="s"
           @click=${() => {
@@ -713,8 +724,9 @@ export class ProjectsView extends LitElement {
         >
           ${label}
           ${
+            // The inactive column shows that it can be sorted, quietly; the active one which way.
             !active
-              ? nothing
+              ? html`<wa-icon slot="end" name="sort" class="app-sort-idle"></wa-icon>`
               : this.sort.ascending
                 ? html`<wa-icon slot="end" name="sort-up"></wa-icon>`
                 : html`<wa-icon slot="end" name="sort-down"></wa-icon>`
@@ -736,11 +748,16 @@ export class ProjectsView extends LitElement {
         }}
       >
         <div class="wa-stack wa-gap-m">
-          <wa-input data-field="name" maxlength=${TEXT_MAX_LENGTH} label=${msg('Name')}></wa-input>
+          <wa-input
+            data-field="name"
+            maxlength=${TEXT_MAX_LENGTH}
+            label=${msg('Name')}
+            autofocus
+          ></wa-input>
           <wa-input data-field="client" maxlength=${TEXT_MAX_LENGTH} label=${msg('Client (optional)')}></wa-input>
           ${this.renderCreateReason(model)}
         </div>
-        <wa-button slot="footer" data-cancel @click=${() => {
+        <wa-button slot="footer" data-cancel appearance="outlined" @click=${() => {
           this.adding = false
         }}>
           ${msg('Cancel')}
@@ -827,7 +844,7 @@ export class ProjectsView extends LitElement {
 
   private renderOpen(row: Row): TemplateResult | typeof nothing {
     if (!row.actions.open.allowed) return nothing
-    return html`<wa-button data-open size="s" @click=${() => this.open(row)}>
+    return html`<wa-button data-open size="s" appearance="filled-outlined" @click=${() => this.open(row)}>
       ${msg('Open')}
     </wa-button>`
   }

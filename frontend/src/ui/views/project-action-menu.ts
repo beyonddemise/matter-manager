@@ -73,6 +73,7 @@ export function renderActionsMenu(
   return html`
     <wa-dropdown
       data-actions
+      placement="bottom-end"
       @wa-select=${(event: CustomEvent<{ item: Element }>) => {
         const action = event.detail.item.getAttribute('value') as MenuAction | null
         if (action !== null) choose(action)
@@ -81,14 +82,20 @@ export function renderActionsMenu(
       <wa-button slot="trigger" data-actions-trigger appearance="plain" size="s" ?disabled=${busy}>
         <wa-icon name="ellipsis-vertical" label=${msg('Project actions')}></wa-icon>
       </wa-button>
-      ${offered.map((action) => {
+      ${offered.map((action, index) => {
         const { allowed, reason } = row.actions[action]
+        const destructive = needsConfirmation(action)
+        // A divider where the safe actions end and the removals begin, so a removal is never
+        // the item next to the one the reader meant.
+        const divider =
+          destructive && index > 0 && !needsConfirmation(offered[index - 1] as MenuAction)
         return html`
+          ${divider ? html`<wa-divider></wa-divider>` : nothing}
           <wa-dropdown-item
             value=${action}
             data-action=${action}
             ?disabled=${!allowed || busy}
-            variant=${action === 'promote' || action === 'download' ? 'default' : 'danger'}
+            variant=${destructive ? 'danger' : 'default'}
           >
             ${actionText(action)}
             ${
@@ -214,6 +221,7 @@ export function renderConfirmDialog(
                   ? html`<wa-input
                       data-field="confirm-name"
                       label=${msg('Type the project name to confirm')}
+                      autofocus
                       .value=${options.typed}
                       @input=${(event: Event) =>
                         options.onType(
@@ -224,7 +232,15 @@ export function renderConfirmDialog(
               }
             </div>`
       }
-      <wa-button slot="footer" data-cancel-confirm ?disabled=${options.busy} @click=${options.onCancel}>
+      <!-- Focus starts on Cancel, the safe answer, unless a name has to be typed first. -->
+      <wa-button
+        slot="footer"
+        data-cancel-confirm
+        appearance="outlined"
+        ?autofocus=${!typedName}
+        ?disabled=${options.busy}
+        @click=${options.onCancel}
+      >
         ${msg('Cancel')}
       </wa-button>
       <wa-button

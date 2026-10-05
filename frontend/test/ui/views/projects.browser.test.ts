@@ -687,6 +687,33 @@ describe('the actions menu', () => {
     expect(item(offline, 'project_p3', 'download').disabled).toBe(true)
   })
 
+  it('separates the removals from the safe actions with a divider', async () => {
+    const view = await member({ local: [entry(), synced], server: [project()], online: true })
+
+    // Promote, then the removals: one divider, right before the first removal.
+    const local = find(view, '[data-row="project_local_a"] [data-actions]')
+    const children = [...local.children].map((child) =>
+      child.localName === 'wa-divider' ? 'divider' : child.getAttribute('data-action'),
+    )
+    expect(children.filter((c) => c !== null)).toEqual(['promote', 'divider', 'deleteLocal'])
+
+    // Only removals: nothing to separate.
+    expect(view.querySelector('[data-row="project_p1"] [data-actions] wa-divider')).toBeNull()
+  })
+
+  it('starts a removal confirmation on Cancel, and a delete on the name field', async () => {
+    const view = await member({ local: [entry(), synced], server: [project()] })
+
+    await choose(view, 'project_p1', 'removeLocal')
+    expect(find(view, '[data-cancel-confirm]').hasAttribute('autofocus')).toBe(true)
+    await click(view, '[data-cancel-confirm]', dialog(view))
+    await view.updateComplete
+
+    await choose(view, 'project_local_a', 'deleteLocal')
+    expect(find(view, '[data-cancel-confirm]').hasAttribute('autofocus')).toBe(false)
+    expect(find(view, '[data-field="confirm-name"]').hasAttribute('autofocus')).toBe(true)
+  })
+
   it('promotes and downloads straight from the menu', async () => {
     const view = await member({
       local: [entry()],

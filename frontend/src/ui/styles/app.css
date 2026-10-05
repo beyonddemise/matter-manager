@@ -245,7 +245,9 @@ a.app-device:hover {
 /* ─── Projects ────────────────────────────────────────────────────────────────────────────── */
 
 /* The member plan's slots: one bordered row per project the plan allows, filled or not, so
-   "how many more can I have" is answered by looking. Wraps on a phone rather than scrolling. */
+   "how many more can I have" is answered by looking. A row is a `wa-flank:end`: the name and its
+   tags take the room and wrap, Open and the menu keep their size at the end, and on a phone the
+   two halves stack. */
 .app-project-slots {
   margin: 0;
   padding: 0;
@@ -254,26 +256,47 @@ a.app-device:hover {
 
 .app-project-slot {
   padding: var(--wa-space-s) var(--wa-space-m);
-  border: var(--wa-border-width-s) solid var(--wa-color-neutral-border-quiet);
+  border: var(--wa-border-width-s) solid var(--wa-color-surface-border);
   border-radius: var(--wa-border-radius-m);
-  flex-wrap: wrap;
+  background-color: var(--wa-color-surface-raised);
 }
 
-/* An empty slot's field takes the room its Create button does not. */
-.app-project-slot > wa-input {
-  flex: 1;
-  min-width: calc(var(--wa-space-5xl) * 2);
+/* An empty slot is room, not a project: dashed, and without the raised surface. */
+.app-project-slot[data-slot-empty] {
+  border-style: dashed;
+  background-color: transparent;
 }
 
-/* The pro plan's table. Its wrapper scrolls sideways on a phone instead of widening the page:
-   five columns do not fit 360px, and squeezing them would wrap every tag onto three lines. */
-.app-projects-scroll {
-  overflow-x: auto;
+/* The name reads first: a step heavier than the tags and notes beside it. Its pen stays beside
+   it, and a long name wraps inside itself rather than pushing the pen onto a line of its own. */
+.app-project-name {
+  flex-wrap: nowrap;
+  min-width: 0;
 }
 
+.app-project-name [data-name] {
+  font-weight: var(--wa-font-weight-semibold);
+  overflow-wrap: anywhere;
+}
+
+/* Open and the menu never wrap apart: the menu belongs to the row's Open. */
+.app-row-actions {
+  flex-wrap: nowrap;
+}
+
+/* A row's note (why it cannot be opened or renamed) is secondary text. */
+[data-note] {
+  font-size: var(--wa-font-size-s);
+}
+
+/* The pro plan's table, in a <wa-scroller>: five columns do not fit a phone, so the table keeps
+   its shape and scrolls sideways inside the page, with the scroller's edge shadow saying so,
+   rather than widening the page or squeezing every cell onto three lines. At phone width it
+   becomes a list instead (below), and the scroller is only needed between the two. */
 .app-projects-table {
   border-collapse: collapse;
   width: 100%;
+  font-variant-numeric: tabular-nums;
 }
 
 .app-projects-table th,
@@ -281,7 +304,115 @@ a.app-device:hover {
   padding: var(--wa-space-xs) var(--wa-space-s);
   text-align: start;
   vertical-align: middle;
-  border-block-end: var(--wa-border-width-s) solid var(--wa-color-neutral-border-quiet);
+  white-space: nowrap;
+  border-block-end: var(--wa-border-width-s) solid var(--wa-color-surface-border);
+}
+
+/* Column heads: quieter and smaller than the rows, so the rows are what is read. */
+.app-projects-table th {
+  font-size: var(--wa-font-size-s);
+  font-weight: var(--wa-font-weight-semibold);
+  color: var(--wa-color-text-quiet);
+}
+
+/* The sortable heads are buttons; flush with the column so the label lines up with the cells
+   below it, and in the head's colour rather than a button's. `button` is the documented part. */
+.app-sort::part(button) {
+  padding-inline: 0;
+  color: inherit;
+  font-weight: inherit;
+}
+
+/* The inactive columns' sort affordance: present, so the reader knows it sorts, but quiet. */
+.app-sort-idle {
+  color: var(--wa-color-text-quiet);
+}
+
+/* Location, Sync and Actions take what their content needs; Name and Client the rest. */
+.app-projects-table .app-col-fit {
+  width: 1%;
+}
+
+.app-projects-table .app-col-end {
+  text-align: end;
+}
+
+/* The name's note may wrap: it is a sentence, and the name column is the one with room. */
+.app-projects-table [data-note] {
+  white-space: normal;
+}
+
+/* At phone width each row becomes a block: the name with Open and the menu beside it, then the
+   client, then the tags. A five-column table scrolled sideways on a phone hides Open, the one
+   thing an installer on site came for. The column heads go, except the sortable ones, which stay
+   as a row of sort controls. The markup stays a table, so nothing moves between the views.
+
+   A grid rather than a layout utility: the cells are a table row's, and only a grid can give
+   each its place without changing the markup. */
+wa-page[view="mobile"] .app-projects-table,
+wa-page[view="mobile"] .app-projects-table tbody {
+  display: block;
+}
+
+wa-page[view="mobile"] .app-projects-table thead tr {
+  display: flex;
+  gap: var(--wa-space-m);
+}
+
+wa-page[view="mobile"] .app-projects-table th:not([aria-sort]) {
+  display: none;
+}
+
+wa-page[view="mobile"] .app-projects-table th {
+  padding-inline: 0;
+  border: none;
+}
+
+wa-page[view="mobile"] .app-projects-table tbody tr {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    "name name name actions"
+    "client client client client"
+    "location sync . .";
+  align-items: center;
+  gap: var(--wa-space-2xs) var(--wa-space-xs);
+  padding-block: var(--wa-space-s);
+  border-block-end: var(--wa-border-width-s) solid var(--wa-color-surface-border);
+}
+
+wa-page[view="mobile"] .app-projects-table td {
+  padding: 0;
+  border: none;
+  white-space: normal;
+  width: auto;
+}
+
+wa-page[view="mobile"] .app-projects-table td:nth-child(1) {
+  grid-area: name;
+}
+
+wa-page[view="mobile"] .app-projects-table td:nth-child(2) {
+  grid-area: client;
+  color: var(--wa-color-text-quiet);
+  font-size: var(--wa-font-size-s);
+}
+
+/* An empty client takes no line. */
+wa-page[view="mobile"] .app-projects-table td:nth-child(2):empty {
+  display: none;
+}
+
+wa-page[view="mobile"] .app-projects-table td:nth-child(3) {
+  grid-area: location;
+}
+
+wa-page[view="mobile"] .app-projects-table td:nth-child(4) {
+  grid-area: sync;
+}
+
+wa-page[view="mobile"] .app-projects-table td:nth-child(5) {
+  grid-area: actions;
 }
 
 /* ─── Print ────────────────────────────────────────────────────────────────────────────────
