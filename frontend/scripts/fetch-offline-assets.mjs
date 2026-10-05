@@ -65,10 +65,10 @@ const FA_FREE = join(root, 'node_modules/@fortawesome/fontawesome-free/svgs/soli
 /**
  * Every icon the application can ask for.
  *
- * Written out rather than derived from the source, because eight of them are chosen at run time
- * — the scheme toggle, the navigation entries, and the enable/disable button — so no grep
- * over the templates can find them. `test/ui/views/icons.browser.test.ts` asserts this
- * list and the directory agree, which is what keeps the list honest.
+ * Written out rather than derived from the source, because several are chosen at run time
+ * — the scheme toggle, the navigation entries, the enable/disable button and the sync status —
+ * so no grep over the templates can find them. `test/ui/views/icons.browser.test.ts` asserts
+ * this list and the directory agree, which is what keeps the list honest.
  */
 const ICONS = [
   // Named directly in a template.
@@ -87,7 +87,9 @@ const ICONS = [
   'file-pdf',
   'pen',
   'plus',
-  // The sort direction of the projects table's active column, in `views/projects.ts`.
+  // The sort direction of the projects table's active column, in `views/projects.ts`, and
+  // `sort` on the columns that can be sorted but are not.
+  'sort',
   'sort-down',
   'sort-up',
   'tags',
@@ -96,9 +98,13 @@ const ICONS = [
   // #132: `camera-slash` and `cloud-slash` are Pro-only and 403 on the endpoint Web Awesome
   // uses, so neither has ever rendered. These are their free replacements.
   'video-slash',
+  // The status bar's network status while offline, beside `wifi` for online.
   'plug-circle-xmark',
-  // The header's network tag while online, beside `plug-circle-xmark` for offline.
-  'plug-circle-check',
+  'wifi',
+  // Chosen at run time: the status bar's sync status in `shell-status.ts` (with `arrows-rotate`
+  // and `triangle-exclamation` above).
+  'laptop',
+  'circle-check',
   // Sign out, the last item of the navigation in `app-shell.ts`.
   'right-from-bracket',
   // The header's Upgrade button in `app-shell.ts`.

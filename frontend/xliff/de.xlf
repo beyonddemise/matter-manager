@@ -934,6 +934,18 @@
   <source>The projects on this device could not be checked.</source>
   <target>Die Projekte auf diesem Gerät konnten nicht geprüft werden.</target>
 </trans-unit>
+<trans-unit id="se9b1fec72ffd8f48">
+  <source>Local</source>
+  <target>Lokal</target>
+</trans-unit>
+<trans-unit id="s386b429b46b4d951">
+  <source>Sync pending</source>
+  <target>Abgleich ausstehend</target>
+</trans-unit>
+<trans-unit id="sa968b0c395c8592b">
+  <source>Synced</source>
+  <target>Abgeglichen</target>
+</trans-unit>
 </body>
 </file>
 </xliff>

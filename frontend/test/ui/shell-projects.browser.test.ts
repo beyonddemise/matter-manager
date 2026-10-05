@@ -294,7 +294,7 @@ describe('what replicates', () => {
 
 describe('a project the server refuses', () => {
   it('stops being reported once it is no longer replicated', async () => {
-    // A copy removed while it was denied must not hold the header at "No permission to sync".
+    // A copy removed while it was denied must not hold the status bar at "No permission to sync".
     let report: (projectId: string, state: string) => void = () => {}
     const sync = recordingSync()
     const store = isolatedProjectStore()
@@ -315,13 +315,16 @@ describe('a project the server refuses', () => {
     `)) as AppShell
     await inputSettles(element, (i) => i.server !== undefined, 'no list arrived')
     report('p1', 'denied')
-    await waitUntil(() => element.querySelector('[data-syncing]') !== null, 'no summary')
+    await waitUntil(
+      () => element.querySelector('[data-sync-status="denied"]') !== null,
+      'the refusal was not shown',
+    )
 
     await store.cache().removeLocalProject(copy.dbName)
     await projectsView(element)?.refresh?.()
     await element.updateComplete
 
-    expect(element.querySelector('[data-syncing]')).toBeNull()
+    expect(element.querySelector('[data-sync-status="denied"]')).toBeNull()
   })
 
   /** The shell with one synchronized copy, and the replication's reporting line. */
@@ -368,7 +371,9 @@ describe('a project the server refuses', () => {
 
     expect(stopped).toEqual([])
     expect(projectsView(element)?.input.syncStates('p1')).toBe('denied')
-    expect(text(element.querySelector('[data-syncing]'))).toBe('No permission to sync')
+    expect(text(element.querySelector('footer [data-sync-status="denied"]'))).toBe(
+      'No permission to sync',
+    )
   })
 
   it('stops saying it once a push of it succeeds', async () => {
@@ -381,7 +386,9 @@ describe('a project the server refuses', () => {
     await element.updateComplete
 
     expect(projectsView(element)?.input.syncStates('p1')).toBe('idle')
-    expect(element.querySelector('[data-syncing]')).toBeNull()
+    expect(element.querySelector('[data-sync-status]')?.getAttribute('data-sync-status')).toBe(
+      'synced',
+    )
   })
 
   it('keeps saying it when a push of it fails', async () => {
@@ -618,29 +625,137 @@ describe('the header', () => {
     expect(element.querySelector('[data-user-email]')).toBeNull()
   })
 
-  it('says it is online, quietly', async () => {
-    const { element } = await mount()
-    expect(text(element.querySelector('header [data-online]'))).toBe('Online')
-    expect(element.querySelector('[data-offline]')).toBeNull()
-  })
-
-  it('says it is offline, neutrally, and stops saying online', async () => {
-    const network = fakeNetwork(true)
-    const { element } = await mount({ network })
-
-    network.go(false)
-    await element.updateComplete
-
-    const tag = element.querySelector('header [data-offline]')
-    expect(text(tag)).toBe('Offline')
-    expect(tag?.getAttribute('variant')).toBe('neutral')
-    expect(element.querySelector('[data-online]')).toBeNull()
+  it('carries no network or sync status: the status bar in the footer does', async () => {
+    const { element } = await mount({ local: [copy], list: async () => [project()] })
+    await inputSettles(element, (i) => i.server !== undefined, 'no list arrived')
+    const header = element.querySelector('header') as HTMLElement
+    expect(header.querySelector('[data-online], [data-offline], [data-sync-status]')).toBeNull()
   })
 
   it('has no project switcher: the projects page replaces it', async () => {
     const { element } = await mount({ local: [entry(), copy], list: async () => [project()] })
     await inputSettles(element, (i) => i.server !== undefined, 'no list arrived')
     expect(element.querySelector('[data-project-switcher]')).toBeNull()
+  })
+})
+
+describe('the status bar', () => {
+  /** The shell with a local project and a synchronized copy, and replication's reporting line. */
+  async function statusShell(network = fakeNetwork(true)) {
+    let report: (projectId: string, state: string) => void = () => {}
+    const store = isolatedProjectStore()
+    await store.cache().addLocalProject(entry())
+    await store.cache().addLocalProject(copy)
+    await store.cache().writeProfile(profile())
+    writeCurrentProjectId(() => localStorage, 'p1')
+    const element = (await fixture(html`
+      <app-shell
+        .refresher=${refresherReporting('signed-in')}
+        .connectivity=${network}
+        .followLocale=${async () => undefined}
+        .listProjects=${async () => [project()]}
+        .makeSync=${(onState: (projectId: string, state: string) => void) => {
+          report = onState
+          return recordingSync().manager
+        }}
+        .projectStore=${store}
+      ></app-shell>
+    `)) as AppShell
+    await inputSettles(element, (i) => i.server !== undefined, 'no list arrived')
+    await waitUntil(() => currentProjectDatabaseName() === copy.dbName, 'the copy never opened')
+    return { element, report: (state: string) => report('p1', state) }
+  }
+
+  const status = (element: Element) => element.querySelector('footer [data-sync-status]')
+
+  it('sits in the footer beside the website links, which stay', async () => {
+    const { element } = await statusShell()
+    const footer = element.querySelector('footer[slot="footer"]') as HTMLElement
+    expect(footer.querySelector('[data-online]')).not.toBeNull()
+    expect(footer.querySelector('[data-sync-status]')).not.toBeNull()
+    const links = [...footer.querySelectorAll('a')].map((a) => a.getAttribute('href'))
+    expect(links).toEqual([
+      'https://www.matter-manager.io/',
+      'https://www.matter-manager.io/privacy',
+      'https://www.matter-manager.io/tos',
+    ])
+  })
+
+  it('says Online with a success colour, and nothing about being offline', async () => {
+    const { element } = await statusShell()
+    const tag = element.querySelector('footer [data-online]')
+    expect(text(tag)).toBe('Online')
+    expect(tag?.getAttribute('variant')).toBe('success')
+    expect(element.querySelector('[data-offline]')).toBeNull()
+  })
+
+  it('says Offline as a warning, and stops saying Online', async () => {
+    const network = fakeNetwork(true)
+    const { element } = await statusShell(network)
+
+    network.go(false)
+    await element.updateComplete
+
+    const tag = element.querySelector('footer [data-offline]')
+    expect(text(tag)).toBe('Offline')
+    expect(tag?.getAttribute('variant')).toBe('warning')
+    expect(element.querySelector('[data-online]')).toBeNull()
+  })
+
+  it('says Sync pending for the open copy until it is caught up, then Synced', async () => {
+    const { element, report } = await statusShell()
+    // No state reported yet: not caught up as far as anybody knows.
+    expect(status(element)?.getAttribute('data-sync-status')).toBe('pending')
+
+    for (const state of ['active', 'offline', 'stopped']) {
+      report(state)
+      await element.updateComplete
+      expect(status(element)?.getAttribute('data-sync-status'), state).toBe('pending')
+      expect(text(status(element))).toBe('Sync pending')
+    }
+
+    report('idle')
+    await element.updateComplete
+    expect(status(element)?.getAttribute('data-sync-status')).toBe('synced')
+    expect(text(status(element))).toBe('Synced')
+    expect(status(element)?.getAttribute('variant')).toBe('success')
+  })
+
+  it('says No permission to sync, as a warning, for a refused copy', async () => {
+    const { element, report } = await statusShell()
+    report('denied')
+    await element.updateComplete
+    expect(status(element)?.getAttribute('data-sync-status')).toBe('denied')
+    expect(status(element)?.getAttribute('variant')).toBe('warning')
+  })
+
+  it('follows the open project: Local for one only on this device', async () => {
+    const { element, report } = await statusShell()
+    report('idle')
+    await element.updateComplete
+    expect(status(element)?.getAttribute('data-sync-status')).toBe('synced')
+
+    // Opened from the projects page, which points the views at it and says so.
+    useProjectDatabase(entry().dbName)
+    await element.updateComplete
+
+    expect(status(element)?.getAttribute('data-sync-status')).toBe('local')
+    expect(text(status(element))).toBe('Local')
+  })
+
+  it('announces changes and offers nothing to press', async () => {
+    const { element } = await statusShell()
+    for (const tag of element.querySelectorAll('[data-status-bar] > *')) {
+      expect(tag.localName).toBe('wa-tag')
+      expect(tag.getAttribute('role')).toBe('status')
+      expect(tag.getAttribute('aria-live')).toBe('polite')
+      expect(tag.hasAttribute('tabindex')).toBe(false)
+      expect(tag.hasAttribute('with-remove')).toBe(false)
+      // Nothing inside it takes focus either: a tag without `with-remove` has no button.
+      expect(tag.shadowRoot?.querySelector('button, wa-button, [tabindex]')).toBeNull()
+      expect(tag.querySelector('wa-icon')).not.toBeNull()
+    }
+    expect(element.querySelectorAll('[data-status-bar] > *')).toHaveLength(2)
   })
 })
 

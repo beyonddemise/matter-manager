@@ -22,7 +22,7 @@ import { registerIconLibrary } from '@awesome.me/webawesome-pro/dist/webawesome.
  * `eager` rather than lazy: an icon is wanted at the moment it renders, and a dynamic import
  * per icon would put a network round trip back in the path this module exists to remove — the
  * shape of the bug, if not its destination. Vite emits each SVG as a fingerprinted asset and
- * this map holds the URLs, so the bundle carries 22 short strings rather than the files.
+ * this map holds the URLs, so the bundle carries one short string per icon rather than the files.
  */
 const BUNDLED = import.meta.glob('./svg/*.svg', {
   query: '?url',

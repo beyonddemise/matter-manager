@@ -19,14 +19,58 @@ not-found-view {
   padding: var(--wa-space-s) var(--wa-space-m);
 }
 
+/* At phone width the menu button's own padding is the gutter, so the bar's is smaller: the
+   name, Upgrade and the scheme toggle then fit one line at 375px. */
+wa-page[view="mobile"] .app-header {
+  padding-inline: var(--wa-space-s);
+}
+
+/* The name and the header's controls each stay on one line: wrapping them puts a second and
+   third row of chrome above every page on a phone. */
+.app-header-title,
+.app-header-actions {
+  flex-wrap: nowrap;
+  white-space: nowrap;
+}
+
 .app-main {
   padding: var(--wa-space-l);
 }
 
+/* A phone's gutter: the desktop's large padding takes a sixth of a 375px screen. */
+wa-page[view="mobile"] .app-main {
+  padding: var(--wa-space-m);
+}
+
+/* The footer: the status bar, then the website's links. Sticky at the bottom of the viewport,
+   because the network state must always be visible (PRODUCT.md) and `<wa-page>` otherwise puts
+   its footer below the fold. `footer` is a documented part of <wa-page>; the slotted element
+   inside it carries the surface, so the content scrolling underneath never shows through. */
+wa-page::part(footer) {
+  position: sticky;
+  inset-block-end: 0;
+  z-index: 5;
+}
+
 .app-footer {
-  padding: var(--wa-space-s) var(--wa-space-l);
+  padding: var(--wa-space-xs) var(--wa-space-m);
+  align-items: center;
   font-size: var(--wa-font-size-s);
   color: var(--wa-color-text-quiet);
+  background-color: var(--wa-color-surface-default);
+  border-block-start: var(--wa-border-width-s) solid var(--wa-color-surface-border);
+}
+
+/* The links are secondary to the status beside them, but they are links: underlined, in the
+   link colour, at the footer's size. */
+.app-footer-links a {
+  color: var(--wa-color-text-link);
+}
+
+/* A status in the status bar: a <wa-tag>, which is a label rather than a control, so it has no
+   hover, pressed or focus state to suppress. The icon sits in the tag's only (default) slot. */
+.app-status-icon {
+  margin-inline-end: var(--wa-space-2xs);
 }
 
 wa-page {
@@ -67,6 +111,7 @@ wa-page[view="mobile"] {
 .app-email {
   color: var(--wa-color-text-quiet);
   font-size: var(--wa-font-size-s);
+  white-space: nowrap;
 }
 
 /* The add-device form and the device list. Only what has no utility-class equivalent:

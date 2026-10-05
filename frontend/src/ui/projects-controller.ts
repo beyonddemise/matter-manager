@@ -26,7 +26,7 @@ import {
   resolveCurrentProject,
   writeCurrentProjectId,
 } from './current-project.js'
-import { useProjectDatabase } from './db/project-database.js'
+import { currentProjectDatabaseName, useProjectDatabase } from './db/project-database.js'
 import {
   adoptLegacyCatalogue,
   type LocalProjectDependencies,
@@ -42,6 +42,7 @@ import {
   synchronizedProjects,
 } from './projects-model.js'
 import type { SessionState } from './session.js'
+import { type SyncStatus, syncStatusOf } from './shell-status.js'
 import type { SyncManager } from './sync/manager.js'
 import type { SyncState } from './sync/replication.js'
 
@@ -94,15 +95,7 @@ export class ProjectsController implements ReactiveController {
   /** One replication per project while signed in; `undefined` otherwise. */
   sync: SyncManager | undefined
 
-  /**
-   * What replication is doing across every project, or `undefined` when none is running.
-   *
-   * The worst state wins, because a summary that reported `idle` while one project was
-   * unreachable would be reassuring and wrong.
-   */
-  syncing: SyncState | undefined
-
-  /** Each project's last reported state, for the page's rows and the summary. */
+  /** Each project's last reported state, for the page's rows and the status bar. */
   private readonly states = new Map<string, SyncState>()
 
   /**
@@ -167,7 +160,7 @@ export class ProjectsController implements ReactiveController {
    * The manager is built at once, before the list arrives: the projects page needs it to push
    * and hold while promoting and removing, and what it replicates comes from the index, which is
    * already here. A list that cannot be fetched is not reported: the remembered one stands in,
-   * and `offline` in the summary is what replication resuming later looks like.
+   * and "Sync pending" in the status bar is what replication resuming later looks like.
    */
   start(): void {
     const generation = this.sessionGeneration
@@ -197,17 +190,27 @@ export class ProjectsController implements ReactiveController {
   }
 
   /**
-   * Recomputes the summary and asks for a render. Every state change asks: the page shows each
-   * row's state, and one project going from `active` to `idle` leaves the summary unchanged.
+   * Asks for a render. Every state change asks: the page shows each row's state, and the status
+   * bar the open project's.
    */
   private stateChanged(): void {
-    this.syncing = worstOf(
-      [...new Set([...this.states.keys(), ...this.denied])].flatMap((projectId) => {
-        const state = this.shownState(projectId)
-        return state === undefined ? [] : [state]
-      }),
-    )
     this.host.requestUpdate()
+  }
+
+  /**
+   * Where the open project's changes stand, for the status bar; `undefined` until the projects
+   * have first been read.
+   *
+   * Found by database name, the one thing the open project is always known by. A database the
+   * index does not list (the first-run catalogue before it is adopted) is local: nothing
+   * replicates a database that is not listed.
+   */
+  currentSyncStatus(): SyncStatus | undefined {
+    if (this.facts === undefined) return undefined
+    const dbName = currentProjectDatabaseName()
+    const model = projectsModel(this.input())
+    const row = [...model.owned, ...model.shared].find((r) => r.dbName === dbName)
+    return row === undefined ? 'local' : syncStatusOf(row)
   }
 
   /**
@@ -223,7 +226,6 @@ export class ProjectsController implements ReactiveController {
     this.sync = undefined
     this.states.clear()
     this.denied.clear()
-    this.syncing = undefined
     this.fresh = undefined
     this.host.requestUpdate()
   }
@@ -363,7 +365,7 @@ export class ProjectsController implements ReactiveController {
    * server project: one listed but not downloaded would be downloaded, a copy just removed
    * downloaded again. A project an action holds (`SyncManager.suspend`) stays held whatever this
    * list says. States and refusals of projects no longer handed over are forgotten, so a
-   * dropped project cannot hold the summary at its last word.
+   * dropped project cannot hold the status bar at its last word.
    *
    * Skipped entirely while a project action runs; see the module comment.
    */
@@ -384,7 +386,7 @@ export class ProjectsController implements ReactiveController {
       if (!kept.has(projectId)) this.states.delete(projectId)
     }
     // A refusal is forgotten with the project, so a copy removed while refused cannot hold the
-    // summary at "No permission to sync".
+    // status bar at "No permission to sync".
     for (const projectId of [...this.denied]) {
       if (!kept.has(projectId)) this.denied.delete(projectId)
     }
@@ -395,16 +397,4 @@ export class ProjectsController implements ReactiveController {
   private store(): LocalProjectDependencies {
     return this.host.projectStore ?? localProjectDefaults
   }
-}
-
-/**
- * The state worth reporting when several replications disagree.
- *
- * Worst wins. A summary saying `idle` while one project cannot reach the server would be
- * reassuring and wrong, and the reader's question is "is everything through?" rather than "is
- * anything through?". `denied` outranks `offline`: offline heals itself, a refusal does not.
- */
-function worstOf(states: readonly SyncState[]): SyncState | undefined {
-  const order: readonly SyncState[] = ['denied', 'offline', 'stopped', 'active', 'idle']
-  return order.find((state) => states.includes(state))
 }

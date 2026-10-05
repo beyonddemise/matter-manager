@@ -9,6 +9,7 @@ import {
   type TokenOutcome,
 } from './composition.js'
 import { browserConnectivity, type ConnectivitySource, watchConnectivity } from './connectivity.js'
+import { PROJECT_CHANGED } from './current-project.js'
 import { localDatabase } from './db/project-database.js'
 import { negotiateLocale } from './i18n/locale.js'
 import { activateLocale } from './i18n/localization.js'
@@ -28,13 +29,12 @@ import {
 import { type SessionState, sessionExpired } from './session.js'
 import {
   renderAccount,
-  renderNetwork,
   renderSignOut,
   renderSignOutConfirmation,
-  renderSyncing,
   renderUpgrade,
   type SignOutStep,
 } from './shell-header.js'
+import { renderNetworkStatus, renderSyncStatus } from './shell-status.js'
 import type { SyncManager } from './sync/manager.js'
 import type { SyncState } from './sync/replication.js'
 import { startRefresher } from './token-refresher.js'
@@ -254,6 +254,11 @@ export class AppShell extends LitElement implements ViewHost {
     this.hash = window.location.hash
   }
 
+  /** Another project was opened: the status bar reports the open project, so it renders again. */
+  private readonly onProjectChanged = () => {
+    this.requestUpdate()
+  }
+
   constructor() {
     super()
     // Every component that renders a `msg()` needs this, and a component that forgets keeps
@@ -276,6 +281,7 @@ export class AppShell extends LitElement implements ViewHost {
   override connectedCallback(): void {
     super.connectedCallback()
     window.addEventListener('hashchange', this.onHashChange)
+    window.addEventListener(PROJECT_CHANGED, this.onProjectChanged)
     this.stopWatchingNetwork = watchConnectivity(
       this.connectivity ?? browserConnectivity(),
       (online) => {
@@ -360,6 +366,7 @@ export class AppShell extends LitElement implements ViewHost {
     this.tokenRefresher?.stop()
     this.tokenRefresher = undefined
     window.removeEventListener('hashchange', this.onHashChange)
+    window.removeEventListener(PROJECT_CHANGED, this.onProjectChanged)
     this.stopWatchingNetwork?.()
     this.stopWatchingNetwork = undefined
     super.disconnectedCallback()
@@ -437,8 +444,8 @@ export class AppShell extends LitElement implements ViewHost {
    * The manager is built at once, before the list arrives: the projects page needs it to push
    * and hold while promoting and removing, and what it replicates comes from the index, which is
    * already here. A list that cannot be fetched is not reported. There is nothing the reader can
-   * do about it and nothing they lose by it: the remembered list stands in, and `offline` in the
-   * summary is what replication resuming later looks like.
+   * do about it and nothing they lose by it: the remembered list stands in, and "Sync pending"
+   * in the status bar is what replication resuming later looks like.
    */
   private startSyncing(): void {
     // Found by review. The locale callback outlives this call: somebody who signs out while it
@@ -578,23 +585,21 @@ export class AppShell extends LitElement implements ViewHost {
 
     return html`
       <wa-page>
-        <header slot="header" class="wa-split app-header">
-          <div class="wa-cluster">
-            <wa-button data-toggle-nav appearance="plain" class="wa-mobile-only">
+        <header slot="header" class="wa-split wa-gap-s app-header">
+          <div class="wa-cluster wa-gap-xs app-header-title">
+            <wa-button data-toggle-nav appearance="plain" size="s" class="wa-mobile-only">
               <wa-icon name="bars" label=${msg('Menu')}></wa-icon>
             </wa-button>
             <strong>${msg('Matter Manager')}</strong>
           </div>
-          <div class="wa-cluster wa-gap-s">
-            ${renderNetwork(this.online)}
-            ${renderSyncing(this.projects.syncing)}
+          <div class="wa-cluster wa-gap-xs app-header-actions">
             ${renderUpgrade(
               this.projects.facts?.plan ?? DEFAULT_PLAN,
               this.upgrading,
               this.onUpgrade,
               this.onCloseUpgrade,
             )}
-            <wa-button data-scheme-toggle appearance="plain" @click=${this.cycleScheme}>
+            <wa-button data-scheme-toggle appearance="plain" size="s" @click=${this.cycleScheme}>
               <wa-icon
                 name=${SCHEME_ICON[this.schemePreference]}
                 label=${this.schemeToggleLabel()}
@@ -660,13 +665,23 @@ export class AppShell extends LitElement implements ViewHost {
           ${view && match ? view(match.params, this) : html`<not-found-view></not-found-view>`}
         </main>
 
-        <!-- In the footer slot, not the navigation: on a phone the navigation is a closed
-             drawer. Google's OAuth review expects the purpose and the privacy policy to be
-             reachable from the application, and so does anybody deciding whether to sign in. -->
-        <footer slot="footer" class="wa-cluster wa-gap-m app-footer">
-          <a href="${WEBSITE}/">${msg('About Matter Manager')}</a>
-          <a href="${WEBSITE}/privacy">${msg('Privacy')}</a>
-          <a href="${WEBSITE}/tos">${msg('Terms')}</a>
+        <!-- The status bar and the website's links. Sticky (app.css): the network state must
+             always be visible, and offline is the normal state here.
+
+             The links are in the footer slot, not the navigation: on a phone the navigation is
+             a closed drawer. Google's OAuth review expects the purpose and the privacy policy
+             to be reachable from the application, and so does anybody deciding whether to sign
+             in. -->
+        <footer slot="footer" class="wa-split wa-gap-s app-footer">
+          <div class="wa-cluster wa-gap-xs" data-status-bar>
+            ${renderNetworkStatus(this.online)}
+            ${renderSyncStatus(this.projects.currentSyncStatus())}
+          </div>
+          <div class="wa-cluster wa-gap-m app-footer-links">
+            <a href="${WEBSITE}/">${msg('About Matter Manager')}</a>
+            <a href="${WEBSITE}/privacy">${msg('Privacy')}</a>
+            <a href="${WEBSITE}/tos">${msg('Terms')}</a>
+          </div>
         </footer>
       </wa-page>
     `

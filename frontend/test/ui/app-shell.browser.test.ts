@@ -268,7 +268,7 @@ it('shows an unobtrusive indicator when the network goes', async () => {
   network.go(false)
   await (element as HTMLElement & Updatable).updateComplete
 
-  expect(element.querySelector('[data-offline]')?.getAttribute('variant')).toBe('neutral')
+  expect(element.querySelector('footer [data-offline]')?.getAttribute('variant')).toBe('warning')
   expect(element.querySelector('[data-online]')).toBeNull()
 })
 
@@ -516,28 +516,4 @@ it('stops the refresher when the shell is removed', async () => {
   const { element, stop } = await driven()
   element.remove()
   expect(stop).toHaveBeenCalledOnce()
-})
-
-it('shows "No permission to sync" when any project is denied, ranking it worse than offline', async () => {
-  const { element, play, makeSync } = await driven()
-  await play({ kind: 'refreshed', expiresIn: 300 })
-  await waitUntil(() => makeSync.mock.calls.length > 0, 'replication never started')
-  const report = (makeSync.mock.calls[0] as unknown as [(id: string, state: string) => void])[0]
-  const tag = () => element.querySelector('[data-syncing]')?.textContent?.trim() ?? ''
-
-  report('p1', 'offline')
-  report('p2', 'denied')
-  await waitUntil(() => tag().includes('No permission to sync'), 'denied was not shown')
-
-  // A later `idle` does not clear it (ruling C-R12): the server may still refuse every write.
-  report('p2', 'idle')
-  await element.updateComplete
-  expect(tag()).toContain('No permission to sync')
-
-  // A push the server took does: the worse of what is left is offline.
-  const page = element.querySelector('projects-view') as {
-    sync?: { pushNow(id: string): Promise<void> }
-  }
-  await page.sync?.pushNow('p2')
-  await waitUntil(() => tag().includes('Waiting to sync'), 'offline was not shown')
 })

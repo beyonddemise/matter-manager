@@ -233,49 +233,14 @@ describe('what happens once there is a session', () => {
 
   it('carries on when the project list cannot be fetched', async () => {
     // There is nothing the reader can do about it and nothing they lose by it: their devices
-    // are on this device. Replication resuming later is what the summary's `offline` is for.
+    // are on this device. Replication resuming later is what the status bar's "Sync pending" is
+    // for.
     const element = await wired({
       listProjects: async () => {
         throw new Error('offline')
       },
     })
     expect(element.querySelector('[data-sign-out]')).not.toBeNull()
-  })
-
-  it('shows the worst state, not the most reassuring one', async () => {
-    // A summary saying everything is through while one project cannot reach the server would
-    // be reassuring and wrong.
-    const element = await wired({
-      listProjects: async () => [
-        { projectId: 'p1', dbName: 'a', name: 'Beta', role: 'owner', archived: false },
-        { projectId: 'p2', dbName: 'b', name: 'Beta', role: 'owner', archived: false },
-      ],
-      makeSync: (onState: (id: string, state: string) => void) => {
-        queueMicrotask(() => {
-          onState('p1', 'idle')
-          onState('p2', 'offline')
-        })
-        return stubSync()
-      },
-    })
-    await waitUntil(() => element.querySelector('[data-syncing]') !== null, 'no summary')
-    expect(element.querySelector('[data-syncing]')?.textContent).toContain('Waiting to sync')
-  })
-
-  it('says nothing at all when everything is through', async () => {
-    // The steady state is everything being fine, and a badge that is always there says nothing
-    // when it matters.
-    const element = await wired({
-      listProjects: async () => [
-        { projectId: 'p1', dbName: 'a', name: 'Beta', role: 'owner', archived: false },
-      ],
-      makeSync: (onState: (id: string, state: string) => void) => {
-        queueMicrotask(() => onState('p1', 'idle'))
-        return stubSync()
-      },
-    })
-    await new Promise((resolve) => setTimeout(resolve, 20))
-    expect(element.querySelector('[data-syncing]')).toBeNull()
   })
 
   it('stops replicating before signing out, not after', async () => {
