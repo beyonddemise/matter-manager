@@ -41,7 +41,7 @@ const iconsDir = join(root, 'src/ui/icons/svg')
  * The theme's own `@import` asks for all nine weights and both styles of all three families.
  * That is 108 combinations, of which a running browser has ever been observed to fetch three.
  */
-const FONTS = 'figtree:300,400,600,800|chivo-mono:400|fraunces:300'
+const FONTS = 'figtree:300,400,600,800|chivo-mono:400'
 
 /**
  * Where the icons come from.
@@ -65,10 +65,10 @@ const FA_FREE = join(root, 'node_modules/@fortawesome/fontawesome-free/svgs/soli
 /**
  * Every icon the application can ask for.
  *
- * Written out rather than derived from the source, because eight of them are chosen at run time
- * — the scheme toggle, the navigation entries, and the enable/disable button — so no grep
- * over the templates can find them. `test/ui/views/icons.browser.test.ts` asserts this
- * list and the directory agree, which is what keeps the list honest.
+ * Written out rather than derived from the source, because several are chosen at run time
+ * — the scheme toggle, the navigation entries, the enable/disable button and the sync status —
+ * so no grep over the templates can find them. `test/ui/views/icons.browser.test.ts` asserts
+ * this list and the directory agree, which is what keeps the list honest.
  */
 const ICONS = [
   // Named directly in a template.
@@ -87,7 +87,9 @@ const ICONS = [
   'file-pdf',
   'pen',
   'plus',
-  // The sort direction of the projects table's active column, in `views/projects.ts`.
+  // The sort direction of the projects table's active column, in `views/projects.ts`, and
+  // `sort` on the columns that can be sorted but are not.
+  'sort',
   'sort-down',
   'sort-up',
   'tags',
@@ -96,9 +98,14 @@ const ICONS = [
   // #132: `camera-slash` and `cloud-slash` are Pro-only and 403 on the endpoint Web Awesome
   // uses, so neither has ever rendered. These are their free replacements.
   'video-slash',
+  // Chosen at run time: the status bar's network status in `shell-status.ts`.
   'plug-circle-xmark',
-  // The header's network tag while online, beside `plug-circle-xmark` for offline.
-  'plug-circle-check',
+  'wifi',
+  // Chosen at run time: the status bar's sync status in `shell-status.ts` (with `arrows-rotate`
+  // and `triangle-exclamation` above).
+  'laptop',
+  'circle-check',
+  'circle-pause',
   // Sign out, the last item of the navigation in `app-shell.ts`.
   'right-from-bracket',
   // The header's Upgrade button in `app-shell.ts`.
@@ -182,7 +189,7 @@ writeFileSync(
  * third-party request and leaves an offline application with no typography at all (#106). The
  * import is stripped at build time by the plugin in vite.config.ts; this file replaces it.
  *
- * Figtree, Chivo Mono and Fraunces are all under the SIL Open Font License 1.1 — see LICENSE
+ * Figtree and Chivo Mono are all under the SIL Open Font License 1.1 — see LICENSE
  * beside this file. The @font-face blocks and their unicode-range values come from Bunny's own
  * stylesheet, so a browser still downloads only the subsets a page actually needs.
  */

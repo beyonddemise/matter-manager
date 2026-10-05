@@ -22,11 +22,12 @@ import { isLocalOnlyDatabase } from '../data/index.js'
 import { DEFAULT_PLAN } from '../domain/plan.js'
 import { projectSync, projects } from './composition.js'
 import {
+  PROJECT_CHANGED,
   readCurrentProjectId,
   resolveCurrentProject,
   writeCurrentProjectId,
 } from './current-project.js'
-import { useProjectDatabase } from './db/project-database.js'
+import { currentProjectDatabaseName, useProjectDatabase } from './db/project-database.js'
 import {
   adoptLegacyCatalogue,
   type LocalProjectDependencies,
@@ -42,6 +43,7 @@ import {
   synchronizedProjects,
 } from './projects-model.js'
 import type { SessionState } from './session.js'
+import { type CurrentSync, syncStatusOf } from './shell-status.js'
 import type { SyncManager } from './sync/manager.js'
 import type { SyncState } from './sync/replication.js'
 
@@ -94,15 +96,7 @@ export class ProjectsController implements ReactiveController {
   /** One replication per project while signed in; `undefined` otherwise. */
   sync: SyncManager | undefined
 
-  /**
-   * What replication is doing across every project, or `undefined` when none is running.
-   *
-   * The worst state wins, because a summary that reported `idle` while one project was
-   * unreachable would be reassuring and wrong.
-   */
-  syncing: SyncState | undefined
-
-  /** Each project's last reported state, for the page's rows and the summary. */
+  /** Each project's last reported state, for the page's rows and the status bar. */
   private readonly states = new Map<string, SyncState>()
 
   /**
@@ -136,6 +130,7 @@ export class ProjectsController implements ReactiveController {
   }
 
   hostConnected(): void {
+    window.addEventListener(PROJECT_CHANGED, this.onProjectChanged)
     // What an action skipped applying, applied once it is done — from a fresh read, because the
     // action has changed the index since the last one.
     this.stopListeningForIdle = onProjectActionsIdle(() => void this.refresh(false))
@@ -145,6 +140,7 @@ export class ProjectsController implements ReactiveController {
   }
 
   hostDisconnected(): void {
+    window.removeEventListener(PROJECT_CHANGED, this.onProjectChanged)
     // A replication left running against a detached shell is a request nobody will read.
     this.end()
     this.stopListeningForIdle?.()
@@ -167,7 +163,7 @@ export class ProjectsController implements ReactiveController {
    * The manager is built at once, before the list arrives: the projects page needs it to push
    * and hold while promoting and removing, and what it replicates comes from the index, which is
    * already here. A list that cannot be fetched is not reported: the remembered one stands in,
-   * and `offline` in the summary is what replication resuming later looks like.
+   * and "Sync pending" in the status bar is what replication resuming later looks like.
    */
   start(): void {
     const generation = this.sessionGeneration
@@ -197,17 +193,51 @@ export class ProjectsController implements ReactiveController {
   }
 
   /**
-   * Recomputes the summary and asks for a render. Every state change asks: the page shows each
-   * row's state, and one project going from `active` to `idle` leaves the summary unchanged.
+   * Asks for a render. Every state change asks: the page shows each row's state, and the status
+   * bar the open project's.
    */
   private stateChanged(): void {
-    this.syncing = worstOf(
-      [...new Set([...this.states.keys(), ...this.denied])].flatMap((projectId) => {
-        const state = this.shownState(projectId)
-        return state === undefined ? [] : [state]
-      }),
-    )
+    this.recomputeCurrent()
     this.host.requestUpdate()
+  }
+
+  /** The open project's sync status, as last computed; see {@link currentSync}. */
+  private current: CurrentSync | undefined
+
+  /**
+   * Where the open project's changes stand, for the status bar; `undefined` until the projects
+   * have first been read.
+   *
+   * Cached rather than computed per render: it needs the page's whole model, and the shell
+   * renders on every keystroke in a dialog. Recomputed when anything it reads changes — a read,
+   * a replication state, the session ending, another project being opened.
+   */
+  currentSync(): CurrentSync | undefined {
+    return this.current
+  }
+
+  /**
+   * Found by database name, the one thing the open project is always known by. A database the
+   * index does not list (the first-run catalogue before it is adopted) is local: nothing
+   * replicates a database that is not listed.
+   */
+  private recomputeCurrent(): void {
+    if (this.facts === undefined) {
+      this.current = undefined
+      return
+    }
+    const dbName = currentProjectDatabaseName()
+    const model = projectsModel(this.input())
+    const row = [...model.owned, ...model.shared].find((r) => r.dbName === dbName)
+    this.current =
+      row === undefined
+        ? { status: 'local', name: '' }
+        : { status: syncStatusOf(row, this.host.session === 'signed-in'), name: row.name }
+  }
+
+  /** Another project was opened: the status bar reports the open project. */
+  private readonly onProjectChanged = (): void => {
+    this.stateChanged()
   }
 
   /**
@@ -223,9 +253,8 @@ export class ProjectsController implements ReactiveController {
     this.sync = undefined
     this.states.clear()
     this.denied.clear()
-    this.syncing = undefined
     this.fresh = undefined
-    this.host.requestUpdate()
+    this.stateChanged()
   }
 
   /**
@@ -351,7 +380,7 @@ export class ProjectsController implements ReactiveController {
     // reopen a database it left.
     if (epoch !== projectActionEpoch()) return
     this.facts = facts
-    this.host.requestUpdate()
+    this.stateChanged()
     this.apply()
   }
 
@@ -363,7 +392,7 @@ export class ProjectsController implements ReactiveController {
    * server project: one listed but not downloaded would be downloaded, a copy just removed
    * downloaded again. A project an action holds (`SyncManager.suspend`) stays held whatever this
    * list says. States and refusals of projects no longer handed over are forgotten, so a
-   * dropped project cannot hold the summary at its last word.
+   * dropped project cannot hold the status bar at its last word.
    *
    * Skipped entirely while a project action runs; see the module comment.
    */
@@ -384,7 +413,7 @@ export class ProjectsController implements ReactiveController {
       if (!kept.has(projectId)) this.states.delete(projectId)
     }
     // A refusal is forgotten with the project, so a copy removed while refused cannot hold the
-    // summary at "No permission to sync".
+    // status bar at "No permission to sync".
     for (const projectId of [...this.denied]) {
       if (!kept.has(projectId)) this.denied.delete(projectId)
     }
@@ -395,16 +424,4 @@ export class ProjectsController implements ReactiveController {
   private store(): LocalProjectDependencies {
     return this.host.projectStore ?? localProjectDefaults
   }
-}
-
-/**
- * The state worth reporting when several replications disagree.
- *
- * Worst wins. A summary saying `idle` while one project cannot reach the server would be
- * reassuring and wrong, and the reader's question is "is everything through?" rather than "is
- * anything through?". `denied` outranks `offline`: offline heals itself, a refusal does not.
- */
-function worstOf(states: readonly SyncState[]): SyncState | undefined {
-  const order: readonly SyncState[] = ['denied', 'offline', 'stopped', 'active', 'idle']
-  return order.find((state) => states.includes(state))
 }

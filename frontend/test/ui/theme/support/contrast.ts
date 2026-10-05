@@ -92,6 +92,12 @@ export const PAIRS = {
   successQuiet: ['--wa-color-success-on-quiet', '--wa-color-success-fill-quiet'],
   /** Neutral chrome: disabled rows, secondary buttons. */
   neutralNormal: ['--wa-color-neutral-on-normal', '--wa-color-neutral-fill-normal'],
+  /**
+   * The status bar's and the projects page's neutral tags (Local, Sync paused). Every status tag
+   * is `appearance="filled"`, which draws `on-quiet` on `fill-quiet`: success, warning and danger
+   * are the pairs above, and the browser test beside this file holds a real tag to them.
+   */
+  neutralQuiet: ['--wa-color-neutral-on-quiet', '--wa-color-neutral-fill-quiet'],
 } as const
 
 export type Pair = keyof typeof PAIRS

@@ -9,6 +9,8 @@ import { fixture, html, waitUntil } from '@open-wc/testing-helpers'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import type { TokenOutcome } from '../../src/ui/composition.js'
 import '../../src/ui/app-shell.js'
+// The application's CSS: the sticky footer and its scroll padding are asserted below.
+import '../../src/ui/styles/app.css'
 import { NAV_ROUTES } from '../../src/ui/router/routes.js'
 import { applyScheme, SCHEME_STORAGE_KEY } from '../../src/ui/scheme.js'
 import { accessToken, rememberAccessToken } from '../../src/ui/tokens.js'
@@ -268,7 +270,7 @@ it('shows an unobtrusive indicator when the network goes', async () => {
   network.go(false)
   await (element as HTMLElement & Updatable).updateComplete
 
-  expect(element.querySelector('[data-offline]')?.getAttribute('variant')).toBe('neutral')
+  expect(element.querySelector('footer [data-offline]')?.getAttribute('variant')).toBe('neutral')
   expect(element.querySelector('[data-online]')).toBeNull()
 })
 
@@ -360,6 +362,47 @@ it('links the public website, privacy notice and terms from a footer on every vi
   const page = element.querySelector('wa-page')
   const slot = page?.shadowRoot?.querySelector('slot[name="footer"]') as HTMLSlotElement | null
   expect(slot?.assignedElements()).toContain(footer)
+})
+
+it('links the website from the drawer at phone width, and from the footer on desktop', async () => {
+  // The footer holds one row of status at phone width, so the links move to the drawer's footer,
+  // which every view has. Each copy is hidden in the other view.
+  const element = await shell()
+  const drawer = element.querySelector('[slot="navigation-footer"]') as HTMLElement
+  const hrefs = [...drawer.querySelectorAll('a')].map((a) => a.getAttribute('href'))
+  expect(hrefs).toEqual([
+    'https://www.matter-manager.io/',
+    'https://www.matter-manager.io/privacy',
+    'https://www.matter-manager.io/tos',
+  ])
+  expect(drawer.classList.contains('wa-mobile-only')).toBe(true)
+  const desktop = element.querySelector('footer[slot="footer"] a')?.parentElement
+  expect(desktop?.classList.contains('wa-desktop-only')).toBe(true)
+})
+
+it('keeps the footer in view, and what takes focus clear of it', async () => {
+  // Sticky by our CSS, not by <wa-page>'s documented sticky sections: asserted, so a Web Awesome
+  // release that changes the footer's box is caught here rather than by a user.
+  const element = await shell()
+  const page = element.querySelector('wa-page') as HTMLElement
+  const part = page.shadowRoot?.querySelector('[part~="footer"]') as HTMLElement
+  expect(getComputedStyle(part).position).toBe('sticky')
+
+  // WCAG 2.4.11: the page's scroll padding is the footer's measured height.
+  const root = document.documentElement
+  // Waited for rather than read once: the footer keeps growing after the first measurement while
+  // its status tags and fonts arrive, and the observer follows it. What matters is that the
+  // padding settles on the footer's height, not what the first callback happened to see.
+  const footer = element.querySelector('footer[slot="footer"]') as HTMLElement
+  const padding = () => Number.parseFloat(getComputedStyle(root).scrollPaddingBlockEnd)
+  await waitUntil(
+    () => Math.abs(padding() - footer.getBoundingClientRect().height) < 0.5,
+    'the scroll padding never matched the footer',
+  )
+  expect(footer.getBoundingClientRect().height).toBeGreaterThan(0)
+
+  element.remove()
+  expect(root.style.getPropertyValue('--app-footer-height')).toBe('')
 })
 
 /** The network as a test controls it: always there, and never changing. */
@@ -516,28 +559,4 @@ it('stops the refresher when the shell is removed', async () => {
   const { element, stop } = await driven()
   element.remove()
   expect(stop).toHaveBeenCalledOnce()
-})
-
-it('shows "No permission to sync" when any project is denied, ranking it worse than offline', async () => {
-  const { element, play, makeSync } = await driven()
-  await play({ kind: 'refreshed', expiresIn: 300 })
-  await waitUntil(() => makeSync.mock.calls.length > 0, 'replication never started')
-  const report = (makeSync.mock.calls[0] as unknown as [(id: string, state: string) => void])[0]
-  const tag = () => element.querySelector('[data-syncing]')?.textContent?.trim() ?? ''
-
-  report('p1', 'offline')
-  report('p2', 'denied')
-  await waitUntil(() => tag().includes('No permission to sync'), 'denied was not shown')
-
-  // A later `idle` does not clear it (ruling C-R12): the server may still refuse every write.
-  report('p2', 'idle')
-  await element.updateComplete
-  expect(tag()).toContain('No permission to sync')
-
-  // A push the server took does: the worse of what is left is offline.
-  const page = element.querySelector('projects-view') as {
-    sync?: { pushNow(id: string): Promise<void> }
-  }
-  await page.sync?.pushNow('p2')
-  await waitUntil(() => tag().includes('Waiting to sync'), 'offline was not shown')
 })

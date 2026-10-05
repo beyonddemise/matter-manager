@@ -19,21 +19,106 @@ not-found-view {
   padding: var(--wa-space-s) var(--wa-space-m);
 }
 
+/* At phone width the menu button's own padding is the gutter, so the bar's is smaller: the
+   name, Upgrade and the scheme toggle then fit one line at 375px. */
+wa-page[view="mobile"] .app-header {
+  padding-inline: var(--wa-space-s);
+}
+
+/* The name and the header's controls each stay on one line: wrapping them puts a second and
+   third row of chrome above every page on a phone. */
+.app-header-title,
+.app-header-actions {
+  flex-wrap: nowrap;
+  white-space: nowrap;
+}
+
 .app-main {
   padding: var(--wa-space-l);
 }
 
+/* A phone's gutter: the desktop's large padding takes a sixth of a 375px screen. */
+wa-page[view="mobile"] .app-main {
+  padding: var(--wa-space-m);
+}
+
+/* The footer: the status bar, then (on desktop) the website's links. Sticky at the bottom of
+   the viewport, because the network state must always be visible (PRODUCT.md) and `<wa-page>`
+   otherwise puts its footer below the fold.
+
+   **Off the documented API, deliberately.** `footer` is a documented part of <wa-page>, but the
+   footer is not among its documented sticky sections (banner, header, subheader, menu, aside),
+   so making it sticky is ours, not the component's. A Web Awesome release that changes the
+   footer's box could break it silently, which is why `app-shell.browser.test.ts` asserts the
+   part's computed position. The slotted element carries the surface, so the content scrolling
+   underneath never shows through. */
+wa-page::part(footer) {
+  position: sticky;
+  inset-block-end: 0;
+  z-index: 5;
+}
+
+/* What the sticky footer covers is kept out of the way of focus: a control that is tabbed to is
+   scrolled clear of it (WCAG 2.4.11). The height is measured by the shell, which watches the
+   footer and sets the property. */
+html {
+  scroll-padding-block-end: var(--app-footer-height, 0);
+}
+
 .app-footer {
-  padding: var(--wa-space-s) var(--wa-space-l);
+  padding: var(--wa-space-xs) var(--wa-space-m);
+  align-items: center;
   font-size: var(--wa-font-size-s);
   color: var(--wa-color-text-quiet);
+  background-color: var(--wa-color-surface-default);
+  border-block-start: var(--wa-border-width-s) solid var(--wa-color-surface-border);
+}
+
+/* The website's links, in the footer on desktop and the drawer's footer at phone width:
+   secondary, but links, underlined and in the link colour. */
+.app-site-links {
+  font-size: var(--wa-font-size-s);
+}
+
+.app-site-links a {
+  color: var(--wa-color-text-link);
+}
+
+/* In the drawer's footer: a row, as in the desktop footer, across the drawer's width. <wa-page>
+   lays every navigation slot out as a column, which would stack three short links one per line. */
+.app-site-links[slot="navigation-footer"] {
+  flex-grow: 1;
+  flex-direction: row;
+}
+
+/* The account at phone width, in the drawer above Sign out: context, laid out like the items
+   around it but quieter. */
+.app-nav-email {
+  padding: var(--wa-space-s) var(--wa-space-m);
+  color: var(--wa-color-text-quiet);
+  font-size: var(--wa-font-size-s);
+  overflow-wrap: anywhere;
+}
+
+/* At phone width a dialog's footer buttons stack, full width, in their order: Cancel first, then
+   the confirm. Two buttons side by side at 375px leave a destructive label wrapping onto two
+   lines. `footer` is the dialog's documented part. */
+wa-page[view="mobile"] wa-dialog::part(footer) {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+/* A status in the status bar: a <wa-tag>, which is a label rather than a control, so it has no
+   hover, pressed or focus state to suppress. The icon sits in the tag's only (default) slot. */
+.app-status-icon {
+  margin-inline-end: var(--wa-space-2xs);
 }
 
 wa-page {
-  /* 15rem, derived from the space scale rather than written as a literal: --wa-space-5xl is
-     5rem, and this constraint (src/ui/styles/app.css: only --wa-* tokens, no raw
-     px/rem) applies to every value here, including custom properties that happen to hold a
-     dimension rather than a spacing gap. */
+  /* The navigation column width (270px at the default 16px root), derived from the space scale
+     rather than written as a literal: --wa-space-5xl is 90px, three of them make 270px. The
+     constraint (only --wa-* tokens, no raw px/rem) applies to every value here, including
+     custom properties that happen to hold a dimension rather than a spacing gap. */
   --menu-width: calc(var(--wa-space-5xl) * 3);
 }
 
@@ -67,6 +152,7 @@ wa-page[view="mobile"] {
 .app-email {
   color: var(--wa-color-text-quiet);
   font-size: var(--wa-font-size-s);
+  white-space: nowrap;
 }
 
 /* The add-device form and the device list. Only what has no utility-class equivalent:
@@ -77,7 +163,8 @@ settings-view {
 }
 
 .app-form {
-  /* 40rem, from the space scale rather than a literal - the same rule as --menu-width above.
+  /* 720px at the default 16px root (eight --wa-space-5xl steps), from the space scale rather
+     than a literal - the same rule as --menu-width above.
      A form whose fields run the full width of a desktop window is harder to read, not easier. */
   max-width: calc(var(--wa-space-5xl) * 8);
 }
@@ -154,7 +241,6 @@ a.app-device:hover {
 .app-pairing-code {
   font-family: var(--wa-font-family-code);
   font-size: var(--wa-font-size-l);
-  letter-spacing: var(--wa-letter-spacing-wider);
 }
 
 /* The camera preview. Sized by the dialog rather than by the stream: a camera's own aspect
@@ -200,7 +286,8 @@ a.app-device:hover {
 /* ─── Projects ────────────────────────────────────────────────────────────────────────────── */
 
 /* The member plan's slots: one bordered row per project the plan allows, filled or not, so
-   "how many more can I have" is answered by looking. Wraps on a phone rather than scrolling. */
+   "how many more can I have" is answered by looking. A row is a `wa-flank:end`: the name and its
+   tags take the room, Open and the menu keep their size at the end. */
 .app-project-slots {
   margin: 0;
   padding: 0;
@@ -208,27 +295,57 @@ a.app-device:hover {
 }
 
 .app-project-slot {
+  /* The flank's documented threshold: the content keeps at least 70% of the row, so once the
+     row is narrower than about 400px (a phone) Open and the menu move to a line of their own
+     rather than squeezing the name into a column beside them. */
+  --content-percentage: 70%;
   padding: var(--wa-space-s) var(--wa-space-m);
-  border: var(--wa-border-width-s) solid var(--wa-color-neutral-border-quiet);
+  border: var(--wa-border-width-s) solid var(--wa-color-surface-border);
   border-radius: var(--wa-border-radius-m);
-  flex-wrap: wrap;
+  background-color: var(--wa-color-surface-raised);
 }
 
-/* An empty slot's field takes the room its Create button does not. */
-.app-project-slot > wa-input {
-  flex: 1;
-  min-width: calc(var(--wa-space-5xl) * 2);
+/* An empty slot is room, not a project: dashed, and without the raised surface. */
+.app-project-slot[data-slot-empty] {
+  border-style: dashed;
+  background-color: transparent;
 }
 
-/* The pro plan's table. Its wrapper scrolls sideways on a phone instead of widening the page:
-   five columns do not fit 360px, and squeezing them would wrap every tag onto three lines. */
-.app-projects-scroll {
-  overflow-x: auto;
+/* The name reads first: a step heavier than the tags and notes beside it. Its pen stays beside
+   it, and a long name wraps inside itself rather than pushing the pen onto a line of its own. */
+.app-project-name {
+  flex-wrap: nowrap;
+  min-width: 0;
 }
 
+.app-project-name [data-name] {
+  font-weight: var(--wa-font-weight-semibold);
+  overflow-wrap: anywhere;
+}
+
+/* At phone width the name and its pen take a line of their own, the tags the next. */
+wa-page[view="mobile"] .app-project-slot .app-project-name {
+  flex-basis: 100%;
+}
+
+/* Open and the menu never wrap apart: the menu belongs to the row's Open. */
+.app-row-actions {
+  flex-wrap: nowrap;
+}
+
+/* A row's note (why it cannot be opened) is secondary text. */
+[data-note] {
+  font-size: var(--wa-font-size-s);
+}
+
+/* The pro plan's table, in a <wa-scroller>: five columns do not fit a phone, so the table keeps
+   its shape and scrolls sideways inside the page, with the scroller's edge shadow saying so,
+   rather than widening the page or squeezing every cell onto three lines. At phone width it
+   becomes a list instead (below), and the scroller is only needed between the two. */
 .app-projects-table {
   border-collapse: collapse;
   width: 100%;
+  font-variant-numeric: tabular-nums;
 }
 
 .app-projects-table th,
@@ -236,7 +353,124 @@ a.app-device:hover {
   padding: var(--wa-space-xs) var(--wa-space-s);
   text-align: start;
   vertical-align: middle;
-  border-block-end: var(--wa-border-width-s) solid var(--wa-color-neutral-border-quiet);
+  white-space: nowrap;
+  border-block-end: var(--wa-border-width-s) solid var(--wa-color-surface-border);
+}
+
+/* Column heads: quieter and smaller than the rows, so the rows are what is read. */
+.app-projects-table th {
+  font-size: var(--wa-font-size-s);
+  font-weight: var(--wa-font-weight-semibold);
+  color: var(--wa-color-text-quiet);
+}
+
+/* The sortable heads are buttons; flush with the column so the label lines up with the cells
+   below it, and in the head's colour rather than a button's. `button` is the documented part. */
+.app-sort::part(button) {
+  padding-inline: 0;
+  color: inherit;
+  font-weight: inherit;
+}
+
+/* The inactive columns' sort affordance: present, so the reader knows it sorts, but quiet. */
+.app-sort-idle {
+  color: var(--wa-color-text-quiet);
+}
+
+/* Location, Sync and Actions take what their content needs; Name and Client the rest. */
+.app-projects-table .app-col-fit {
+  width: 1%;
+}
+
+.app-projects-table .app-col-end {
+  text-align: end;
+}
+
+/* The name's note may wrap: it is a sentence, and the name column is the one with room. */
+.app-projects-table [data-note] {
+  white-space: normal;
+}
+
+/* At phone width each row becomes a block: the name with Open and the menu beside it, then the
+   client, then the tags. A five-column table scrolled sideways on a phone hides Open, the one
+   thing an installer on site came for. The heads of the columns that cannot be sorted are hidden
+   visually but stay for assistive technology; the sortable ones stay as a row of sort controls.
+
+   Changing a table's `display` makes some browsers (Safari) drop its table semantics, so the
+   markup states them with explicit roles (`projects.ts`), and the cells are placed by class.
+
+   A grid rather than a layout utility: the cells are a table row's, and only a grid can give
+   each its place without changing the markup. */
+wa-page[view="mobile"] .app-projects-table,
+wa-page[view="mobile"] .app-projects-table tbody {
+  display: block;
+}
+
+wa-page[view="mobile"] .app-projects-table thead tr {
+  position: relative;
+  display: flex;
+  gap: var(--wa-space-m);
+}
+
+wa-page[view="mobile"] .app-projects-table th {
+  padding-inline: 0;
+  border: none;
+}
+
+/* Web Awesome's visually hidden technique, without its fixed size: clipped to nothing and out of
+   the flow, but still read. */
+wa-page[view="mobile"] .app-projects-table th:not([aria-sort]) {
+  position: absolute;
+  overflow: hidden;
+  white-space: nowrap;
+  clip-path: inset(50%);
+}
+
+wa-page[view="mobile"] .app-projects-table tbody tr {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    "name name name actions"
+    "client client client client"
+    "location sync . .";
+  align-items: center;
+  gap: var(--wa-space-2xs) var(--wa-space-xs);
+  padding-block: var(--wa-space-s);
+  border-block-end: var(--wa-border-width-s) solid var(--wa-color-surface-border);
+}
+
+wa-page[view="mobile"] .app-projects-table td {
+  padding: 0;
+  border: none;
+  white-space: normal;
+  width: auto;
+}
+
+wa-page[view="mobile"] .app-projects-table .app-cell-name {
+  grid-area: name;
+}
+
+wa-page[view="mobile"] .app-projects-table .app-cell-client {
+  grid-area: client;
+  color: var(--wa-color-text-quiet);
+  font-size: var(--wa-font-size-s);
+}
+
+/* An empty client takes no line. */
+wa-page[view="mobile"] .app-projects-table .app-cell-client:empty {
+  display: none;
+}
+
+wa-page[view="mobile"] .app-projects-table .app-cell-location {
+  grid-area: location;
+}
+
+wa-page[view="mobile"] .app-projects-table .app-cell-sync {
+  grid-area: sync;
+}
+
+wa-page[view="mobile"] .app-projects-table .app-cell-actions {
+  grid-area: actions;
 }
 
 /* ─── Print ────────────────────────────────────────────────────────────────────────────────
@@ -260,12 +494,16 @@ a.app-device:hover {
     --wa-color-surface-raised: white;
     --wa-color-surface-lowered: white;
     --wa-color-text-normal: black;
-    --wa-color-text-quiet: #3a3a3a;
+    /* The greys come from the palette's gray scale, not the scheme tokens: the scale does not
+       flip with the colour scheme, so a user in dark mode still prints dark grey on white
+       (gray-40 is 7:1 on white, gray-50 4.6:1). The scheme tokens above would resolve to light
+       text in dark mode, hence the forced white and black. */
+    --wa-color-text-quiet: var(--wa-color-gray-40);
     --wa-color-text-link: black;
     --wa-color-brand-on-quiet: black;
     --wa-color-brand-fill-quiet: transparent;
     --wa-color-neutral-fill-quiet: transparent;
-    --wa-color-neutral-border-quiet: #999;
+    --wa-color-neutral-border-quiet: var(--wa-color-gray-50);
   }
 
   html,
@@ -355,7 +593,7 @@ a.app-device:hover {
      border does that work on paper: a printed list where a decommissioned device looks live is
      a list that sends somebody to a wall socket. */
   [data-disabled] > .app-device {
-    border: var(--wa-border-width-s) dashed #999;
+    border: var(--wa-border-width-s) dashed var(--wa-color-gray-50);
   }
 
   /* The QR's quiet zone must stay white whatever the surrounding palette does — a code printed

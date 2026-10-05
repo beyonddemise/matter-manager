@@ -1,6 +1,7 @@
 /**
- * The shell's account and status controls, as template functions: the network tag, the sync
- * summary, the account (email or Sign in), Upgrade, and Sign out with its confirmation.
+ * The shell's account controls, as template functions: the account (email or Sign in), Upgrade,
+ * and Sign out with its confirmation. The network and sync status are in the footer's status
+ * bar (`shell-status.ts`).
  *
  * Plain functions over plain values, rendered inside `<app-shell>`, which owns the state and
  * subscribes to locale changes — so every `msg()` here follows the language with it.
@@ -12,51 +13,6 @@ import { msg } from '@lit/localize'
 import { html, type TemplateResult } from 'lit'
 import { type Plan, showsUpgrade } from '../domain/plan.js'
 import type { SessionState } from './session.js'
-import type { SyncState } from './sync/replication.js'
-
-/**
- * Whether the browser has a network, said quietly either way.
- *
- * Always present since the projects page: whether a project can be created on the server,
- * promoted or removed depends on it, so the reader should not have to infer it from a refusal.
- * Neutral in both states — nothing in this application is blocked by being offline: every write
- * goes to a local database first, so offline explains a delay in sharing rather than a loss of
- * function. `data-offline` exists only while offline, which is what the offline journey asserts.
- */
-export function renderNetwork(online: boolean): TemplateResult {
-  return online
-    ? html`<wa-tag data-online variant="neutral" size="s">
-        <wa-icon slot="start" name="plug-circle-check"></wa-icon>
-        ${msg('Online')}
-      </wa-tag>`
-    : html`<wa-tag data-offline variant="neutral" size="s">
-        <wa-icon slot="start" name="plug-circle-xmark"></wa-icon>
-        ${msg('Offline')}
-      </wa-tag>`
-}
-
-/**
- * What replication is doing, when it is doing anything.
- *
- * Nothing at all when it is `idle`: the steady state is everything being fine, and a badge that
- * is always present says nothing when it matters. `offline` is not an error - the local database
- * is complete and usable - so it is shown as quietly as the network tag beside it.
- */
-export function renderSyncing(syncing: SyncState | undefined): TemplateResult | '' {
-  if (syncing === undefined || syncing === 'idle') return ''
-  return html`
-    <wa-tag data-syncing variant=${syncing === 'denied' ? 'warning' : 'neutral'} size="s">
-      <wa-icon slot="start" name="arrows-rotate"></wa-icon>
-      ${
-        syncing === 'denied'
-          ? msg('No permission to sync')
-          : syncing === 'offline'
-            ? msg('Waiting to sync')
-            : msg('Syncing')
-      }
-    </wa-tag>
-  `
-}
 
 /**
  * The account, top right: the signed-in email, or the way to sign in, or nothing at all until
@@ -77,11 +33,22 @@ export function renderAccount(
 ): TemplateResult | '' {
   if (session === undefined) return ''
   if (session === 'signed-in') {
-    return email === undefined ? '' : html`<span data-user-email class="app-email">${email}</span>`
+    // Desktop only: at phone width the header has room for the menu, the name and two controls,
+    // and the account's email is the one thing there that is context rather than a control.
+    return email === undefined
+      ? ''
+      : html`<span data-user-email class="app-email wa-desktop-only">${email}</span>`
   }
   return html`
     <wa-button data-sign-in appearance="plain" @click=${onSignIn}>
-      ${session === 'expired' ? msg('Session ended - sign in again') : msg('Sign in')}
+      ${
+        // At phone width the short form: the header has no room for the sentence, and the
+        // session-ended notice above the page already says it.
+        session === 'expired'
+          ? html`<span class="wa-desktop-only">${msg('Session ended - sign in again')}</span>
+              <span class="wa-mobile-only">${msg('Sign in')}</span>`
+          : msg('Sign in')
+      }
     </wa-button>
   `
 }
@@ -98,8 +65,10 @@ export function renderUpgrade(
 ): TemplateResult | '' {
   if (!showsUpgrade(plan)) return ''
   return html`
+    <!-- The rocket is desktop only: at phone width it is what keeps the header on one line at
+         360px, and the word says more than the icon. -->
     <wa-button data-upgrade size="s" variant="brand" appearance="outlined" @click=${onOpen}>
-      <wa-icon slot="start" name="rocket"></wa-icon>
+      <wa-icon slot="start" name="rocket" class="wa-desktop-only"></wa-icon>
       ${msg('Upgrade')}
     </wa-button>
     ${
@@ -194,7 +163,15 @@ export function renderSignOutConfirmation(
   const onHide = (event: Event) => {
     if (event.target === event.currentTarget) handlers.onCancel()
   }
-  const cancel = html`<wa-button slot="footer" data-cancel-sign-out @click=${handlers.onCancel}>
+  // Outlined, so the confirm beside it is the button that stands out; focused first, because it
+  // is the safe answer.
+  const cancel = html`<wa-button
+    slot="footer"
+    data-cancel-sign-out
+    appearance="outlined"
+    autofocus
+    @click=${handlers.onCancel}
+  >
     ${msg('Cancel')}
   </wa-button>`
   if (state.step === 'unpushed') {

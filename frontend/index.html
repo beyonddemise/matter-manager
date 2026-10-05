@@ -9,7 +9,10 @@
          separate link below rather than an entry in the manifest. -->
     <meta name="description" content="Never lose a Matter commissioning QR code again." />
     <link rel="manifest" href="/manifest.webmanifest" />
-    <meta name="theme-color" content="#111418" />
+    <!-- Literal colours are required here: Page White and Basement Black, the page surface in
+         each scheme (DESIGN.md). -->
+    <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#121212" media="(prefers-color-scheme: dark)" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <!-- Without this, iOS opens the pinned icon in Safari's chrome rather than as an
          application, and the "installed" app is a bookmark wearing an icon. -->

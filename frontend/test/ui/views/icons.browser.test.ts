@@ -21,9 +21,10 @@ beforeAll(() => {
  * Icon names chosen at run time, which no scan of the templates can find.
  *
  * Each is a value in a lookup rather than a literal in markup: the colour-scheme toggle in
- * `app-shell.ts`, the navigation entries in `router/routes.ts`, and the enable/disable button in
- * `views/device.ts`. They are the ones most likely to be missed when icons are bundled, because
- * grepping for `name="` finds every other icon in the application and none of these.
+ * `app-shell.ts`, the navigation entries in `router/routes.ts`, the enable/disable button in
+ * `views/device.ts`, and the network and sync status in `shell-status.ts`. They are the ones
+ * most likely to be missed when icons are bundled, because grepping for `name="` finds every
+ * other icon in the application and none of these.
  */
 const RUNTIME_CHOSEN = [
   'sun',
@@ -34,6 +35,13 @@ const RUNTIME_CHOSEN = [
   'gear',
   'play',
   'pause',
+  'laptop',
+  'arrows-rotate',
+  'circle-check',
+  'circle-pause',
+  'triangle-exclamation',
+  'wifi',
+  'plug-circle-xmark',
 ] as const
 
 /** Every source file, as text, so the templates can be searched for icon names. */

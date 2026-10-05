@@ -84,13 +84,15 @@ export default defineConfig(({ mode }) => {
     build: {
       outDir: 'dist',
       emptyOutDir: true,
-      // 500 kB is rolldown's default and the entry chunk is ~620 kB: Web Awesome, Lit, PouchDB
+      // 500 kB is rolldown's default and the entry chunk is ~708 kB: Web Awesome, Lit, PouchDB
       // and the application itself, which are all needed at first paint. The heavy optional
       // parts (PDF writer, lazy fallback) are already split out and guarded by `check:lazy` and
       // `check:lazy-pdf`, so the warning's advice is spent. A budget just above today's size
       // keeps the warning meaningful: it fires again when the entry grows materially, instead of
-      // being printed on every build and ignored.
-      chunkSizeWarningLimit: 700,
+      // being printed on every build and ignored. Raised from 700 for #214, when the footer status
+      // bar and the projects page's scroller and menu divider took the entry from ~697 kB to
+      // ~708 kB.
+      chunkSizeWarningLimit: 720,
       rolldownOptions: {
         output: {
           /**
