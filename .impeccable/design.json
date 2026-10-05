@@ -1,0 +1,759 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-05T08:58:50+00:00",
+  "title": "Design System: Matter Manager",
+  "extensions": {
+    "colorMeta": {
+      "commissioning-blue": {
+        "role": "primary",
+        "displayName": "Commissioning Blue",
+        "canonical": "oklch(47.066% 0.187 259.59)",
+        "tonalRamp": [
+          "#000e39",
+          "#001853",
+          "#002b7f",
+          "#0152c1",
+          "#0774df",
+          "#309aee",
+          "#8ed2f9",
+          "#e5f6ff"
+        ]
+      },
+      "commissioning-blue-deep": {
+        "role": "primary",
+        "displayName": "Commissioning Blue Deep",
+        "canonical": "#003ea2",
+        "tonalRamp": [
+          "#000e39",
+          "#001853",
+          "#002b7f",
+          "#0152c1",
+          "#0774df",
+          "#309aee",
+          "#8ed2f9",
+          "#e5f6ff"
+        ]
+      },
+      "commissioning-blue-mist": {
+        "role": "primary",
+        "displayName": "Commissioning Blue Mist",
+        "canonical": "oklch(96.324% 0.02167 230.54)",
+        "tonalRamp": [
+          "#000e39",
+          "#001853",
+          "#002b7f",
+          "#0152c1",
+          "#0774df",
+          "#309aee",
+          "#8ed2f9",
+          "#e5f6ff"
+        ]
+      },
+      "commissioning-blue-night": {
+        "role": "primary",
+        "displayName": "Commissioning Blue Night",
+        "canonical": "#001853",
+        "tonalRamp": [
+          "#000e39",
+          "#001853",
+          "#002b7f",
+          "#0152c1",
+          "#0774df",
+          "#309aee",
+          "#8ed2f9",
+          "#e5f6ff"
+        ]
+      },
+      "commissioning-blue-lamp": {
+        "role": "primary",
+        "displayName": "Commissioning Blue Lamp",
+        "canonical": "#5db7f3",
+        "tonalRamp": [
+          "#000e39",
+          "#001853",
+          "#002b7f",
+          "#0152c1",
+          "#0774df",
+          "#309aee",
+          "#8ed2f9",
+          "#e5f6ff"
+        ]
+      },
+      "focus-blue": {
+        "role": "primary",
+        "displayName": "Focus Blue",
+        "canonical": "oklch(66.707% 0.15592 247.36)",
+        "tonalRamp": [
+          "#000e39",
+          "#001853",
+          "#002b7f",
+          "#0152c1",
+          "#0774df",
+          "#309aee",
+          "#8ed2f9",
+          "#e5f6ff"
+        ]
+      },
+      "page-white": {
+        "role": "neutral",
+        "displayName": "Page White",
+        "canonical": "#ffffff",
+        "tonalRamp": [
+          "#121212",
+          "#1d1d1d",
+          "#323232",
+          "#454444",
+          "#757575",
+          "#aeafaf",
+          "#e6e6e6",
+          "#f2f2f2"
+        ]
+      },
+      "graphite-ink": {
+        "role": "neutral",
+        "displayName": "Graphite Ink",
+        "canonical": "#1d1d1d",
+        "tonalRamp": [
+          "#121212",
+          "#1d1d1d",
+          "#323232",
+          "#454444",
+          "#757575",
+          "#aeafaf",
+          "#e6e6e6",
+          "#f2f2f2"
+        ]
+      },
+      "graphite-quiet": {
+        "role": "neutral",
+        "displayName": "Graphite Quiet",
+        "canonical": "#595959",
+        "tonalRamp": [
+          "#121212",
+          "#1d1d1d",
+          "#323232",
+          "#454444",
+          "#757575",
+          "#aeafaf",
+          "#e6e6e6",
+          "#f2f2f2"
+        ]
+      },
+      "page-shadow-grey": {
+        "role": "neutral",
+        "displayName": "Page Shadow Grey",
+        "canonical": "#f2f2f2",
+        "tonalRamp": [
+          "#121212",
+          "#1d1d1d",
+          "#323232",
+          "#454444",
+          "#757575",
+          "#aeafaf",
+          "#e6e6e6",
+          "#f2f2f2"
+        ]
+      },
+      "page-rule": {
+        "role": "neutral",
+        "displayName": "Page Rule",
+        "canonical": "#e6e6e6",
+        "tonalRamp": [
+          "#121212",
+          "#1d1d1d",
+          "#323232",
+          "#454444",
+          "#757575",
+          "#aeafaf",
+          "#e6e6e6",
+          "#f2f2f2"
+        ]
+      },
+      "control-edge": {
+        "role": "neutral",
+        "displayName": "Control Edge",
+        "canonical": "#959595",
+        "tonalRamp": [
+          "#121212",
+          "#1d1d1d",
+          "#323232",
+          "#454444",
+          "#757575",
+          "#aeafaf",
+          "#e6e6e6",
+          "#f2f2f2"
+        ]
+      },
+      "placeholder-grey": {
+        "role": "neutral",
+        "displayName": "Placeholder Grey",
+        "canonical": "#757575",
+        "tonalRamp": [
+          "#121212",
+          "#1d1d1d",
+          "#323232",
+          "#454444",
+          "#757575",
+          "#aeafaf",
+          "#e6e6e6",
+          "#f2f2f2"
+        ]
+      },
+      "basement-black": {
+        "role": "neutral",
+        "displayName": "Basement Black",
+        "canonical": "#121212",
+        "tonalRamp": [
+          "#121212",
+          "#1d1d1d",
+          "#323232",
+          "#454444",
+          "#757575",
+          "#aeafaf",
+          "#e6e6e6",
+          "#f2f2f2"
+        ]
+      },
+      "basement-raised": {
+        "role": "neutral",
+        "displayName": "Basement Raised",
+        "canonical": "#1d1d1d",
+        "tonalRamp": [
+          "#121212",
+          "#1d1d1d",
+          "#323232",
+          "#454444",
+          "#757575",
+          "#aeafaf",
+          "#e6e6e6",
+          "#f2f2f2"
+        ]
+      },
+      "basement-rule": {
+        "role": "neutral",
+        "displayName": "Basement Rule",
+        "canonical": "#323232",
+        "tonalRamp": [
+          "#121212",
+          "#1d1d1d",
+          "#323232",
+          "#454444",
+          "#757575",
+          "#aeafaf",
+          "#e6e6e6",
+          "#f2f2f2"
+        ]
+      },
+      "basement-ink": {
+        "role": "neutral",
+        "displayName": "Basement Ink",
+        "canonical": "#f2f2f2",
+        "tonalRamp": [
+          "#121212",
+          "#1d1d1d",
+          "#323232",
+          "#454444",
+          "#757575",
+          "#aeafaf",
+          "#e6e6e6",
+          "#f2f2f2"
+        ]
+      },
+      "basement-quiet": {
+        "role": "neutral",
+        "displayName": "Basement Quiet",
+        "canonical": "#959595",
+        "tonalRamp": [
+          "#121212",
+          "#1d1d1d",
+          "#323232",
+          "#454444",
+          "#757575",
+          "#aeafaf",
+          "#e6e6e6",
+          "#f2f2f2"
+        ]
+      },
+      "signal-green": {
+        "role": "success",
+        "displayName": "Signal Green",
+        "canonical": "#1b6548",
+        "tonalRamp": [
+          "#032317",
+          "#083a29",
+          "#104f38",
+          "#1b6548",
+          "#4aa672",
+          "#68c17c",
+          "#d3efbe",
+          "#ebf6e0"
+        ]
+      },
+      "signal-green-mist": {
+        "role": "success",
+        "displayName": "Signal Green Mist",
+        "canonical": "#ebf6e0",
+        "tonalRamp": [
+          "#032317",
+          "#083a29",
+          "#104f38",
+          "#1b6548",
+          "#4aa672",
+          "#68c17c",
+          "#d3efbe",
+          "#ebf6e0"
+        ]
+      },
+      "signal-green-edge": {
+        "role": "success",
+        "displayName": "Signal Green Edge",
+        "canonical": "#96db86",
+        "tonalRamp": [
+          "#032317",
+          "#083a29",
+          "#104f38",
+          "#1b6548",
+          "#4aa672",
+          "#68c17c",
+          "#d3efbe",
+          "#ebf6e0"
+        ]
+      },
+      "signal-green-night": {
+        "role": "success",
+        "displayName": "Signal Green Night",
+        "canonical": "#032317",
+        "tonalRamp": [
+          "#032317",
+          "#083a29",
+          "#104f38",
+          "#1b6548",
+          "#4aa672",
+          "#68c17c",
+          "#d3efbe",
+          "#ebf6e0"
+        ]
+      },
+      "signal-green-lamp": {
+        "role": "success",
+        "displayName": "Signal Green Lamp",
+        "canonical": "#4aa672",
+        "tonalRamp": [
+          "#032317",
+          "#083a29",
+          "#104f38",
+          "#1b6548",
+          "#4aa672",
+          "#68c17c",
+          "#d3efbe",
+          "#ebf6e0"
+        ]
+      },
+      "caution-amber": {
+        "role": "warning",
+        "displayName": "Caution Amber",
+        "canonical": "#7f4d29",
+        "tonalRamp": [
+          "#2f1809",
+          "#4c2a14",
+          "#663b1e",
+          "#7f4d29",
+          "#bf8b4a",
+          "#d4a85b",
+          "#f4e5be",
+          "#faf3e1"
+        ]
+      },
+      "caution-amber-mist": {
+        "role": "warning",
+        "displayName": "Caution Amber Mist",
+        "canonical": "#faf3e1",
+        "tonalRamp": [
+          "#2f1809",
+          "#4c2a14",
+          "#663b1e",
+          "#7f4d29",
+          "#bf8b4a",
+          "#d4a85b",
+          "#f4e5be",
+          "#faf3e1"
+        ]
+      },
+      "caution-amber-edge": {
+        "role": "warning",
+        "displayName": "Caution Amber Edge",
+        "canonical": "#eac673",
+        "tonalRamp": [
+          "#2f1809",
+          "#4c2a14",
+          "#663b1e",
+          "#7f4d29",
+          "#bf8b4a",
+          "#d4a85b",
+          "#f4e5be",
+          "#faf3e1"
+        ]
+      },
+      "caution-amber-night": {
+        "role": "warning",
+        "displayName": "Caution Amber Night",
+        "canonical": "#2f1809",
+        "tonalRamp": [
+          "#2f1809",
+          "#4c2a14",
+          "#663b1e",
+          "#7f4d29",
+          "#bf8b4a",
+          "#d4a85b",
+          "#f4e5be",
+          "#faf3e1"
+        ]
+      },
+      "caution-amber-lamp": {
+        "role": "warning",
+        "displayName": "Caution Amber Lamp",
+        "canonical": "#bf8b4a",
+        "tonalRamp": [
+          "#2f1809",
+          "#4c2a14",
+          "#663b1e",
+          "#7f4d29",
+          "#bf8b4a",
+          "#d4a85b",
+          "#f4e5be",
+          "#faf3e1"
+        ]
+      },
+      "fault-red": {
+        "role": "danger",
+        "displayName": "Fault Red",
+        "canonical": "#89453f",
+        "tonalRamp": [
+          "#331512",
+          "#522521",
+          "#6d352f",
+          "#89453f",
+          "#d47c7e",
+          "#f19695",
+          "#fededd",
+          "#ffefee"
+        ]
+      },
+      "fault-red-mist": {
+        "role": "danger",
+        "displayName": "Fault Red Mist",
+        "canonical": "#ffefee",
+        "tonalRamp": [
+          "#331512",
+          "#522521",
+          "#6d352f",
+          "#89453f",
+          "#d47c7e",
+          "#f19695",
+          "#fededd",
+          "#ffefee"
+        ]
+      },
+      "fault-red-edge": {
+        "role": "danger",
+        "displayName": "Fault Red Edge",
+        "canonical": "#fabab8",
+        "tonalRamp": [
+          "#331512",
+          "#522521",
+          "#6d352f",
+          "#89453f",
+          "#d47c7e",
+          "#f19695",
+          "#fededd",
+          "#ffefee"
+        ]
+      },
+      "fault-red-night": {
+        "role": "danger",
+        "displayName": "Fault Red Night",
+        "canonical": "#331512",
+        "tonalRamp": [
+          "#331512",
+          "#522521",
+          "#6d352f",
+          "#89453f",
+          "#d47c7e",
+          "#f19695",
+          "#fededd",
+          "#ffefee"
+        ]
+      },
+      "fault-red-lamp": {
+        "role": "danger",
+        "displayName": "Fault Red Lamp",
+        "canonical": "#d47c7e",
+        "tonalRamp": [
+          "#331512",
+          "#522521",
+          "#6d352f",
+          "#89453f",
+          "#d47c7e",
+          "#f19695",
+          "#fededd",
+          "#ffefee"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "The view title (h1). One per view."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "Section headings within a view and the name on a single-project card."
+      },
+      "title-small": {
+        "displayName": "Title Small",
+        "purpose": "Room headings and sub-sections."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Running text, input values, navigation items."
+      },
+      "body-small": {
+        "displayName": "Body Small",
+        "purpose": "Footer text and links, emails, notes, tag text."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Table heads, form labels, button text."
+      },
+      "code": {
+        "displayName": "Code",
+        "purpose": "The numeric pairing code, shown so it can be typed by hand."
+      }
+    },
+    "shadows": [
+      {
+        "name": "wa-shadow-s",
+        "value": "0 0.125rem 0.375rem -0.0625rem var(--wa-color-shadow)",
+        "purpose": "Small lift: cards at rest; the target for project rows."
+      },
+      {
+        "name": "wa-shadow-m",
+        "value": "0 0.25rem 0.75rem -0.125rem var(--wa-color-shadow)",
+        "purpose": "Medium lift: dropdown menus and popovers."
+      },
+      {
+        "name": "wa-shadow-l",
+        "value": "0 0.5rem 1.5rem -0.25rem var(--wa-color-shadow)",
+        "purpose": "Large lift: dialogs."
+      },
+      {
+        "name": "wa-color-shadow",
+        "value": "color-mix(in oklab, transparent, var(--wa-color-neutral-05) 20%)",
+        "purpose": "Shadow colour in light; dark mixes from surface-lowered and is nearly opaque."
+      },
+      {
+        "name": "glossy-sheen",
+        "value": "inset 0 0.125rem 0 rgb(255 255 255 / 0.3), inset 0 0.25rem 0 rgb(255 255 255 / 0.1), inset 0 1.25em 0 rgb(255 255 255 / 0.1), inset 0 -1.125em 0 rgb(0 0 0 / 0.03), inset 0 -0.0625rem 0 rgb(0 0 0 / 0.15)",
+        "purpose": "Every non-plain button and checked control; never surfaces or tags."
+      },
+      {
+        "name": "input-band",
+        "value": "inset 0 -1.25em 0 rgb(255 255 255 / 0.085), inset 0 1.125em 0 rgb(0 0 0 / 0.02)",
+        "purpose": "Faint top-lit band on inputs and selects, removed on focus."
+      },
+      {
+        "name": "focus-ring",
+        "value": "outline: 3px solid var(--wa-color-focus); outline-offset: 1px",
+        "purpose": "Visible focus on every interactive element."
+      }
+    ],
+    "motion": [
+      {
+        "name": "wa-transition-easing",
+        "value": "ease",
+        "purpose": "Easing for all state transitions."
+      },
+      {
+        "name": "wa-transition-fast",
+        "value": "75ms",
+        "purpose": "Button press and sheen flip."
+      },
+      {
+        "name": "wa-transition-normal",
+        "value": "150ms",
+        "purpose": "Hover and focus tone changes."
+      },
+      {
+        "name": "wa-transition-slow",
+        "value": "300ms",
+        "purpose": "Dialogs and drawers."
+      },
+      {
+        "name": "button-press",
+        "value": "transform: scale(0.98)",
+        "purpose": "Pressed buttons sink slightly; hover never moves."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "mobile",
+        "value": "768px"
+      },
+      {
+        "name": "reflow-floor",
+        "value": "320px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The one Commissioning Blue action per view, glossy sheen, presses in.",
+      "html": "<button class=\"ds-btn-primary\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.5\" stroke-linecap=\"round\" aria-hidden=\"true\"><path d=\"M12 5v14M5 12h14\"/></svg>Add project</button>",
+      "css": ".ds-btn-primary { display: inline-flex; align-items: center; gap: 9px; font-family: Figtree, sans-serif; font-size: 16px; font-weight: 600; line-height: 1.35; color: #ffffff; background: var(--wa-color-brand-fill-loud, #0152c1); border: 1px solid var(--wa-color-brand-fill-loud, #0152c1); border-radius: 8px; padding: 0.75em 1em; cursor: pointer; box-shadow: inset 0 0.125rem 0 rgb(255 255 255 / 0.3), inset 0 0.25rem 0 rgb(255 255 255 / 0.1), inset 0 1.25em 0 rgb(255 255 255 / 0.1), inset 0 -1.125em 0 rgb(0 0 0 / 0.03), inset 0 -0.0625rem 0 rgb(0 0 0 / 0.15); transition: all 75ms ease; } .ds-btn-primary:hover { background: #003ea2; } .ds-btn-primary:focus-visible { outline: 3px solid #309aee; outline-offset: 1px; } .ds-btn-primary:active { transform: scale(0.98); box-shadow: inset 0 0.125rem 0.25rem rgb(0 0 0 / 0.25), inset 0 -0.125rem 0 rgb(255 255 255 / 0.04); }"
+    },
+    {
+      "name": "Row Action Button",
+      "kind": "button",
+      "refersTo": "button-row-action",
+      "description": "Small neutral filled-outlined Open button on project rows.",
+      "html": "<button class=\"ds-btn-row\">Open</button>",
+      "css": ".ds-btn-row { font-family: Figtree, sans-serif; font-size: 14px; font-weight: 600; line-height: 1.35; color: #1d1d1d; background: #e6e6e6; border: 1px solid #cacaca; border-radius: 8px; padding: 0.6em 0.9em; cursor: pointer; box-shadow: inset 0 0.125rem 0 rgb(255 255 255 / 0.3), inset 0 0.25rem 0 rgb(255 255 255 / 0.1), inset 0 1.25em 0 rgb(255 255 255 / 0.1), inset 0 -1.125em 0 rgb(0 0 0 / 0.03), inset 0 -0.0625rem 0 rgb(0 0 0 / 0.15); transition: all 75ms ease; } .ds-btn-row:hover { background: #dcdcdc; } .ds-btn-row:focus-visible { outline: 3px solid #309aee; outline-offset: 1px; } .ds-btn-row:active { transform: scale(0.98); }"
+    },
+    {
+      "name": "Destructive Confirm",
+      "kind": "button",
+      "refersTo": "button-destructive",
+      "description": "Danger confirm inside a dialog, always after Cancel.",
+      "html": "<div class=\"ds-confirm\"><button class=\"ds-btn-cancel\">Cancel</button><button class=\"ds-btn-danger\">Remove from server</button></div>",
+      "css": ".ds-confirm { display: flex; gap: 9px; justify-content: flex-end; } .ds-btn-cancel, .ds-btn-danger { font-family: Figtree, sans-serif; font-size: 16px; font-weight: 600; line-height: 1.35; border-radius: 8px; padding: 0.75em 1em; cursor: pointer; transition: all 75ms ease; box-shadow: inset 0 0.125rem 0 rgb(255 255 255 / 0.3), inset 0 1.25em 0 rgb(255 255 255 / 0.1), inset 0 -0.0625rem 0 rgb(0 0 0 / 0.15); } .ds-btn-cancel { background: #ffffff; color: #1d1d1d; border: 1px solid #959595; } .ds-btn-danger { background: #89453f; color: #ffffff; border: 1px solid #89453f; } .ds-btn-cancel:hover { background: #f2f2f2; } .ds-btn-danger:hover { background: #6d352f; } .ds-btn-cancel:focus-visible, .ds-btn-danger:focus-visible { outline: 3px solid #309aee; outline-offset: 1px; } .ds-btn-cancel:active, .ds-btn-danger:active { transform: scale(0.98); }"
+    },
+    {
+      "name": "Text Input",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Labelled field with the glossy top-lit band that clears on focus.",
+      "html": "<label class=\"ds-field\"><span class=\"ds-field-label\">Project name</span><input class=\"ds-input\" placeholder=\"New project name\"></label>",
+      "css": ".ds-field { display: flex; flex-direction: column; gap: 4.5px; font-family: Figtree, sans-serif; } .ds-field-label { font-size: 16px; font-weight: 600; line-height: 1.35; color: #1d1d1d; } .ds-input { font-family: Figtree, sans-serif; font-size: 16px; line-height: 1.35; color: #1d1d1d; background: #ffffff; border: 1px solid #959595; border-radius: 8px; padding: 0.75em 1em; box-shadow: inset 0 -1.25em 0 rgb(255 255 255 / 0.085), inset 0 1.125em 0 rgb(0 0 0 / 0.02); transition: box-shadow 150ms ease; } .ds-input::placeholder { color: #757575; } .ds-input:focus-visible { outline: 3px solid #309aee; outline-offset: 1px; box-shadow: none; }"
+    },
+    {
+      "name": "Status Tags",
+      "kind": "chip",
+      "refersTo": "status-tag-success",
+      "description": "The one status vocabulary: small filled tags with icons, never controls.",
+      "html": "<div class=\"ds-tags\"><span class=\"ds-tag ds-tag-success\"><svg width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.5\" stroke-linecap=\"round\" aria-hidden=\"true\"><path d=\"M2 9a15 15 0 0 1 20 0M5 12.5a10 10 0 0 1 14 0M8.5 16a5 5 0 0 1 7 0\"/><circle cx=\"12\" cy=\"19.5\" r=\"1\" fill=\"currentColor\"/></svg>Online</span><span class=\"ds-tag ds-tag-warning\"><svg width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.5\" stroke-linecap=\"round\" aria-hidden=\"true\"><path d=\"M20 11a8 8 0 0 0-14-5l-2 2M4 13a8 8 0 0 0 14 5l2-2M4 4v4h4M20 20v-4h-4\"/></svg>Sync pending</span><span class=\"ds-tag ds-tag-neutral\"><svg width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.5\" stroke-linecap=\"round\" aria-hidden=\"true\"><rect x=\"4\" y=\"5\" width=\"16\" height=\"11\" rx=\"1\"/><path d=\"M2 19h20\"/></svg>Local</span><span class=\"ds-tag ds-tag-danger\"><svg width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.5\" stroke-linecap=\"round\" aria-hidden=\"true\"><path d=\"M12 3 2 20h20L12 3zM12 10v4\"/><circle cx=\"12\" cy=\"17\" r=\"0.8\" fill=\"currentColor\"/></svg>No permission to sync</span></div>",
+      "css": ".ds-tags { display: flex; flex-wrap: wrap; gap: 9px; } .ds-tag { display: inline-flex; align-items: center; gap: 4.5px; font-family: Figtree, sans-serif; font-size: 12.5px; line-height: 1.35; border-radius: 8px; padding: 0.35em 0.75em; border: 1px solid transparent; cursor: default; } .ds-tag-success { background: #ebf6e0; color: #1b6548; } .ds-tag-warning { background: #faf3e1; color: #7f4d29; } .ds-tag-neutral { background: #f2f2f2; color: #595959; } .ds-tag-danger { background: #ffefee; color: #89453f; }"
+    },
+    {
+      "name": "Navigation",
+      "kind": "nav",
+      "refersTo": "nav-item-active",
+      "description": "Vertical icon-and-label list; the current page wears Commissioning Blue Mist.",
+      "html": "<nav class=\"ds-nav\"><a class=\"ds-nav-item\" aria-current=\"page\" href=\"#\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"currentColor\" aria-hidden=\"true\"><path d=\"M3 6a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z\"/></svg>Projects</a><a class=\"ds-nav-item\" href=\"#\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"currentColor\" aria-hidden=\"true\"><path d=\"M12 2a7 7 0 0 0-4 12.7V17h8v-2.3A7 7 0 0 0 12 2zM9 19h6v1a2 2 0 0 1-2 2h-2a2 2 0 0 1-2-2z\"/></svg>Devices</a></nav>",
+      "css": ".ds-nav { display: flex; flex-direction: column; gap: 4.5px; width: 270px; font-family: Figtree, sans-serif; } .ds-nav-item { display: flex; align-items: center; gap: 13.5px; padding: 13.5px 18px; border-radius: 8px; color: #1d1d1d; text-decoration: none; font-size: 16px; line-height: 1.35; transition: background 150ms ease; } .ds-nav-item:hover { background: #f2f2f2; } .ds-nav-item[aria-current=page] { background: #e5f6ff; color: #0152c1; } .ds-nav-item:focus-visible { outline: 3px solid #309aee; outline-offset: 1px; }"
+    },
+    {
+      "name": "Project Card",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "A layered card: softer corners, small lift, heavy title.",
+      "html": "<article class=\"ds-card\"><h2 class=\"ds-card-title\">Unser Haus</h2><button class=\"ds-card-btn\">Continue with “Unser Haus”</button></article>",
+      "css": ".ds-card { font-family: Figtree, sans-serif; background: #ffffff; border: 1px solid #e6e6e6; border-radius: 16px; padding: 22px; max-width: 600px; box-shadow: 0 0.125rem 0.375rem -0.0625rem rgb(18 18 18 / 0.2); } .ds-card-title { margin: 0 0 13.5px; font-size: 32px; font-weight: 800; line-height: 1.35; letter-spacing: -0.02em; color: #1d1d1d; } .ds-card-btn { font-family: Figtree, sans-serif; font-size: 16px; font-weight: 600; color: #fff; background: #0152c1; border: 1px solid #0152c1; border-radius: 8px; padding: 0.75em 1em; cursor: pointer; box-shadow: inset 0 0.125rem 0 rgb(255 255 255 / 0.3), inset 0 1.25em 0 rgb(255 255 255 / 0.1), inset 0 -0.0625rem 0 rgb(0 0 0 / 0.15); transition: all 75ms ease; } .ds-card-btn:hover { background: #003ea2; } .ds-card-btn:focus-visible { outline: 3px solid #309aee; outline-offset: 1px; } .ds-card-btn:active { transform: scale(0.98); }"
+    },
+    {
+      "name": "Project Row",
+      "kind": "custom",
+      "refersTo": "project-row",
+      "description": "Member-plan project slot as shipped: flat-bordered row with name, filled-outlined tags, Open and kebab.",
+      "html": "<div class=\"ds-row\"><span class=\"ds-row-name\">Wohnung Berlin</span><span class=\"ds-row-tag\">Synchronized</span><span class=\"ds-row-spacer\"></span><button class=\"ds-row-open\">Open</button><button class=\"ds-row-kebab\" aria-label=\"Actions\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"currentColor\" aria-hidden=\"true\"><circle cx=\"12\" cy=\"5\" r=\"2\"/><circle cx=\"12\" cy=\"12\" r=\"2\"/><circle cx=\"12\" cy=\"19\" r=\"2\"/></svg></button></div>",
+      "css": ".ds-row { display: flex; align-items: center; gap: 13.5px; font-family: Figtree, sans-serif; background: #ffffff; border: 1px solid #e6e6e6; border-radius: 8px; padding: 13.5px 18px; } .ds-row-name { font-size: 16px; font-weight: 600; color: #1d1d1d; } .ds-row-tag { font-size: 12.5px; background: #ebf6e0; color: #1b6548; border: 1px solid #96db86; border-radius: 8px; padding: 0.35em 0.75em; } .ds-row-spacer { flex: 1; } .ds-row-open { font-family: Figtree, sans-serif; font-size: 14px; font-weight: 600; color: #1d1d1d; background: #e6e6e6; border: 1px solid #cacaca; border-radius: 8px; padding: 0.6em 0.9em; cursor: pointer; box-shadow: inset 0 0.125rem 0 rgb(255 255 255 / 0.3), inset 0 1.25em 0 rgb(255 255 255 / 0.1), inset 0 -0.0625rem 0 rgb(0 0 0 / 0.15); transition: all 75ms ease; } .ds-row-open:active { transform: scale(0.98); } .ds-row-kebab { background: none; border: 0; border-radius: 8px; padding: 6px; color: #1d1d1d; cursor: pointer; } .ds-row-kebab:hover { background: #f2f2f2; } .ds-row-open:focus-visible, .ds-row-kebab:focus-visible { outline: 3px solid #309aee; outline-offset: 1px; }"
+    },
+    {
+      "name": "Footer Status Bar",
+      "kind": "custom",
+      "refersTo": "status-tag-warning",
+      "description": "The sticky logbook margin: network and sync tags left, site links right.",
+      "html": "<footer class=\"ds-footer\"><span class=\"ds-ftag ds-ftag-warning\">Offline</span><span class=\"ds-ftag ds-ftag-warning\">Sync pending</span><span class=\"ds-footer-spacer\"></span><a class=\"ds-footer-link\" href=\"#\">Privacy</a><a class=\"ds-footer-link\" href=\"#\">Terms</a></footer>",
+      "css": ".ds-footer { display: flex; align-items: center; gap: 9px; font-family: Figtree, sans-serif; font-size: 14px; color: #595959; background: #ffffff; border-top: 1px solid #e6e6e6; padding: 9px 18px; } .ds-ftag { font-size: 12.5px; border-radius: 8px; padding: 0.35em 0.75em; } .ds-ftag-warning { background: #faf3e1; color: #7f4d29; } .ds-footer-spacer { flex: 1; } .ds-footer-link { color: #0152c1; text-decoration: underline dotted; text-underline-offset: 0.2em; } .ds-footer-link:hover { text-decoration-style: solid; } .ds-footer-link:focus-visible { outline: 3px solid #309aee; outline-offset: 1px; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Site Logbook",
+    "overview": "**Creative North Star: \"The Site Logbook\"**\n\nMatter Manager is a tradesperson's durable logbook: plain, exact, legible in a dim basement, every entry trustworthy. The interface is the binding and the ruled page, never the story. A project is a line in the book, a device is an entry, a status is a stamp in the margin. Everything a user needs to trust the record (where a copy lives, whether it has synced, whether the network is there at all) is stamped in the same words and the same colours every time it appears.\n\nThe mood is polished, tactile and confident. Polish comes from Web Awesome Pro's glossy theme on the anodized palette: buttons carry a lit sheen and press in when tapped, surfaces are quiet whites and graphites, and one saturated blue marks the way forward. Density is moderate: rows are compact enough to scan a pro installer's project list at a desk, and generous enough to hit with a gloved thumb on site. Dark mode is \"the basement at night\": near-black pages with lamp-lit text, built for a plant room with the light off rather than as an inverted afterthought.\n\nThe component philosophy is refined and restrained. The system is stock Web Awesome, used through documented variants, utilities and tokens; the app adds layout and a handful of rules, not a parallel component kit. The app code never names a colour or a pixel: it references `--wa-*` tokens, so the user's theme, palette and scheme preferences reach every surface.",
+    "keyCharacteristics": [
+      "Web Awesome Pro, glossy theme, anodized palette, light and dark schemes; theme and palette are user preferences.",
+      "One brand colour, Commissioning Blue, for the primary action, the active navigation item and links.",
+      "One status vocabulary, stamped as small filled tags, identical in the footer status bar and on project rows.",
+      "Figtree throughout, heavy and tightly tracked in headings; Chivo Mono only for codes a person must read aloud or type.",
+      "Two radii: gently rounded controls and rows, softer-cornered panels and dialogs.",
+      "Layered surfaces as the direction: panels lift on soft shadows, buttons are glossy on top.",
+      "A sticky footer status bar on every view; the network state is never hidden."
+    ],
+    "rules": [
+      {
+        "name": "The Web Awesome First Rule",
+        "body": "Reach for a Web Awesome component first, then a layout utility (`wa-stack`, `wa-cluster`, `wa-split`, `wa-flank`, `wa-grid`, `wa-gap-*`), then a `--wa-*` token, then the component's documented styling API (attributes, CSS custom properties, `::part()`). App CSS contains no raw hex and no raw px or rem: every colour is a `--wa-color-*` token and every dimension is derived from `--wa-space-*`, so a theme or palette switch reaches everything.",
+        "section": "colors"
+      },
+      {
+        "name": "The One Status Vocabulary Rule",
+        "body": "Status is a small (size s) filled `wa-tag` with a leading icon, and the same state always uses the same words, variant and icon wherever it appears: Online (success, wifi), Offline (warning, plug-circle-xmark), Local (neutral, laptop), Sync pending (warning, arrows-rotate), Synced (success, circle-check), No permission to sync (danger, triangle-exclamation), Sync paused – signed out (neutral, circle-pause). A status is a label, never a control: it is not focusable, has no hover state, and is never styled as a button.",
+        "section": "colors"
+      },
+      {
+        "name": "The Commissioning Blue Rule",
+        "body": "The loud brand fill marks the one primary action in view. Secondary actions are outlined or neutral; the Upgrade prompt is outlined brand, not filled. Blue elsewhere means \"you are here\" (the active nav item) or \"this goes somewhere\" (a link).",
+        "section": "colors"
+      },
+      {
+        "name": "The Withheld Theme Rule",
+        "body": "Theme and palette are user preferences (glossy and anodized by default), offered only where every token pair holds WCAG 2.2 AA (4.5:1) in both schemes. Tailspin, Shoelace and Brutalist are withheld because they fail in light; all ten palettes are offered. A new theme or palette ships only after the contrast test passes for every theme, palette and scheme.",
+        "section": "colors"
+      },
+      {
+        "name": "The Tabular Figures Rule",
+        "body": "Tables use tabular numerals so dates and counts align in columns.",
+        "section": "typography"
+      },
+      {
+        "name": "The Plain Weight Rule",
+        "body": "Weight is the only emphasis: 800 for headings, 600 for names, labels and actions, 400 for everything else. No italics, no uppercase labels, no decorative faces.",
+        "section": "typography"
+      },
+      {
+        "name": "The Layered Surfaces Rule",
+        "body": "A surface that holds an entry (a card, a project row) sits above the page on the small shadow; menus and dialogs climb the scale. Depth comes from the theme's shadow tokens only, never from a hand-written shadow.",
+        "section": "elevation"
+      },
+      {
+        "name": "The Gloss Belongs To Controls Rule",
+        "body": "The sheen is for things you press (buttons, checked controls). Surfaces, tags and status never carry it.",
+        "section": "elevation"
+      },
+      {
+        "name": "The Confirm-Before-Destroy Rule",
+        "body": "Every destructive action opens a dialog that names the consequence and offers Cancel first; the confirm button is the danger variant and repeats the action's own words (\"Remove from server\").",
+        "section": "components"
+      }
+    ],
+    "dos": [
+      "**Do** reference `--wa-*` tokens and Web Awesome components, utilities and variants for everything; derive any dimension from `--wa-space-*`.",
+      "**Do** stamp state with the shared status vocabulary: a size s filled tag with its icon, the same words and variant in the footer and on rows.",
+      "**Do** keep the network and sync state visible in the sticky footer on every view.",
+      "**Do** give each view one Commissioning Blue primary action; make the rest outlined, neutral or plain.",
+      "**Do** put every destructive action behind a dialog that states the consequence, with Cancel before a danger confirm.",
+      "**Do** check every new screen in light and dark, at desktop and at 320px wide, with the 3px Focus Blue ring visible on every interactive element.",
+      "**Do** lift entry surfaces (cards, project rows) on the small shadow token when they are touched, rather than adding heavier borders."
+    ],
+    "donts": [
+      "**Don't** write raw hex, px or rem in app CSS, or hand-written box-shadows; the theme owns colour, size and depth.",
+      "**Don't** style a status as a button, make it focusable, or invent a new word or colour for a state that already has one.",
+      "**Don't** offer a theme or palette that fails WCAG 2.2 AA in either scheme; Tailspin, Shoelace and Brutalist stay withheld.",
+      "**Don't** put the glossy sheen on surfaces, tags or status.",
+      "**Don't** use pills for tags or a third radius for containers.",
+      "**Don't** fill a secondary action with Commissioning Blue."
+    ]
+  }
+}
