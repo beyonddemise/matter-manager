@@ -1,4 +1,3 @@
-import '@awesome.me/webawesome-pro/dist/components/qr-code/qr-code.js'
 import { describe, expect, it } from 'vitest'
 import { browseDevices, type DeviceDocument, type RoomDocument } from '../../../src/domain/index.js'
 import { buildInventoryPdf, type InventoryLabels } from '../../../src/ui/pdf/inventory.js'

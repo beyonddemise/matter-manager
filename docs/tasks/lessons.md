@@ -1492,3 +1492,12 @@ throwing away the thing the warning was pointing at.
 PR #221 was reported green after reading `gh pr checks 221 | tail -6`. The tail cut off the one failing row: Frontend, where `npm run test:coverage` failed a 90% branch threshold on `src/data/**`. That gate had never run locally, because `frontend` and `backend` `verify` ran `npm run test` while CI ran coverage. Two rules:
 - Judge a PR by the full `gh pr checks` output, or by its exit status. Never by a slice of it.
 - When CI runs a stricter command than `verify`, change `verify`, so the two cannot disagree. Both `verify` scripts now run `test:coverage`.
+
+## Verify a technical claim before offering it as an option
+
+**What happened.** I offered "exact match via Nayuki's qrcodegen, golden test 0/625" before running Nayuki on
+the data. It picked a different mask: 221 modules differ. The user chose the option on the strength of a claim I
+had not checked.
+
+**Rule.** Any concrete result an option promises ("matches", "0 diffs", "passes") must already be measured
+when the question is asked. Otherwise word it as a hypothesis ("expected to …, not yet verified").

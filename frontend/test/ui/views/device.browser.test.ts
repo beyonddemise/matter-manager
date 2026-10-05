@@ -3,7 +3,6 @@ import '@awesome.me/webawesome-pro/dist/components/callout/callout.js'
 import '@awesome.me/webawesome-pro/dist/components/copy-button/copy-button.js'
 import '@awesome.me/webawesome-pro/dist/components/dialog/dialog.js'
 import '@awesome.me/webawesome-pro/dist/components/icon/icon.js'
-import '@awesome.me/webawesome-pro/dist/components/qr-code/qr-code.js'
 import '@awesome.me/webawesome-pro/dist/components/tag/tag.js'
 import '@awesome.me/webawesome-pro/dist/components/textarea/textarea.js'
 import { fixture, html, waitUntil } from '@open-wc/testing-helpers'
@@ -13,6 +12,8 @@ import type { ProjectRepositories } from '../../../src/data/index.js'
 import { type DeviceDocument, decodePayload, type Unsaved } from '../../../src/domain/index.js'
 import type { DeviceView } from '../../../src/ui/views/device.js'
 import '../../../src/ui/views/device.js'
+import label from '../qr/fixtures/label-20202021-3840.txt?raw'
+import { rasterize } from '../qr/raster.js'
 import { browserDatabase, type TestDatabase } from '../support/browser-database.js'
 
 /** The verified reference device; see `test/domain/matter/payload.test.ts`. */
@@ -81,10 +82,7 @@ function slowFor(id: string, ms: number): ProjectRepositories {
 }
 
 async function page(uuid = UUID, repositories = database.repositories): Promise<DeviceView> {
-  await Promise.all([
-    customElements.whenDefined('wa-qr-code'),
-    customElements.whenDefined('wa-dialog'),
-  ])
+  await customElements.whenDefined('wa-dialog')
   const element = (await fixture(
     html`<device-view uuid=${uuid} .repositories=${repositories}></device-view>`,
   )) as DeviceView
@@ -148,7 +146,7 @@ async function seedSecond(): Promise<void> {
 }
 
 /**
- * Reads the text back out of a rendered `<wa-qr-code>`, through its canvas.
+ * Reads the text back out of a rendered QR image, through the pixels the browser paints.
  *
  * `@zxing/browser` rather than the platform's `BarcodeDetector`, and that is a deliberate
  * choice rather than an oversight: `BarcodeDetector` exists in Chromium on macOS and not on
@@ -156,11 +154,31 @@ async function seedSecond(): Promise<void> {
  * has already been bitten once by a check that meant different things in the two places.
  */
 async function decodeRendered(qr: Element): Promise<string> {
-  const element = qr as HTMLElement & { updateComplete?: Promise<unknown> }
-  await element.updateComplete
-  const canvas = element.shadowRoot?.querySelector('canvas') as HTMLCanvasElement | null
-  await waitUntil(() => (canvas?.width ?? 0) > 0, 'the QR canvas never got dimensions')
-  return new BrowserQRCodeReader().decodeFromCanvas(canvas as HTMLCanvasElement).getText()
+  return new BrowserQRCodeReader().decodeFromCanvas(await rasterize(qr as SVGSVGElement)).getText()
+}
+
+/**
+ * The rendered QR as rows of `1` (dark) and `0` (light), sampled at each module's centre from
+ * the painted pixels. The notation of `qr/fixtures/label-20202021-3840.txt`.
+ */
+async function modulesRendered(qr: Element, modules: number): Promise<string[]> {
+  const size = modules * 16
+  const canvas = await rasterize(qr as SVGSVGElement, size)
+  const margin = (canvas.width - size) / 2
+  const pixels = (canvas.getContext('2d') as CanvasRenderingContext2D).getImageData(
+    0,
+    0,
+    canvas.width,
+    canvas.height,
+  )
+  const darkAt = (row: number, column: number): boolean => {
+    const x = Math.floor(margin + (column + 0.5) * 16)
+    const y = Math.floor(margin + (row + 0.5) * 16)
+    return (pixels.data[(y * canvas.width + x) * 4] ?? 255) < 128
+  }
+  return Array.from({ length: modules }, (_, row) =>
+    Array.from({ length: modules }, (_, column) => (darkAt(row, column) ? '1' : '0')).join(''),
+  )
 }
 
 describe('when the device cannot be read', () => {
@@ -207,7 +225,7 @@ describe('the reproduced code', () => {
     await seed()
     const element = await page()
 
-    const text = await decodeRendered(element.querySelector('wa-qr-code') as Element)
+    const text = await decodeRendered(element.querySelector('svg.app-qr') as Element)
 
     expect(text).toBe(PAYLOAD)
     expect(decodePayload(text)).toEqual(decodePayload(PAYLOAD))
@@ -227,33 +245,44 @@ describe('the reproduced code', () => {
     ;(element.querySelector('[data-enlarge]') as HTMLElement).click()
     await element.updateComplete
     await waitUntil(
-      () => element.querySelectorAll('wa-qr-code').length === 2,
+      () => element.querySelectorAll('svg.app-qr').length === 2,
       'the dialog never rendered its own QR',
     )
 
-    const enlarged = [...element.querySelectorAll('wa-qr-code')].at(-1) as Element
+    const enlarged = [...element.querySelectorAll('svg.app-qr')].at(-1) as Element
     expect(await decodeRendered(enlarged)).toBe(PAYLOAD)
   })
 
-  it('is rendered dark-on-light whatever the colour scheme is', async () => {
-    // An inverted QR - light modules on a dark ground - is one many scanners will not read.
-    // `<wa-qr-code>` takes its fill from `currentColor` and leaves the canvas transparent, so
-    // without pinning these the code would invert in dark mode and fail silently.
-    await seed()
-    const element = await page()
-    const qr = element.querySelector('wa-qr-code') as HTMLElement
+  it('still decodes in the dark colour scheme', async () => {
+    // The regression this was rewritten for. `<wa-qr-code>` drew its three corner squares in
+    // the theme's text colour, whatever `fill` said, so in dark mode they came out light grey
+    // and the code was unreadable. An attribute check (`fill="black"`) passed throughout,
+    // which is why this reads pixels with the dark scheme switched on instead.
+    document.documentElement.classList.add('wa-dark')
+    try {
+      await seed()
+      const element = await page()
 
-    expect(qr.getAttribute('fill')).toBe('black')
-    expect(qr.getAttribute('background')).toBe('white')
+      expect(await decodeRendered(element.querySelector('svg.app-qr') as Element)).toBe(PAYLOAD)
+    } finally {
+      document.documentElement.classList.remove('wa-dark')
+    }
   })
 
-  it('asks for the strongest error correction, in writing', async () => {
-    // Currently the component's default too. Set explicitly so that a change to that default
-    // cannot quietly downgrade codes destined for labels inside fuse boxes.
+  it('is the same symbol as the label printed on the device', async () => {
+    // Not only the same text: the same picture. The reference is a real label for this
+    // payload, sampled from its image. Matching it needs alphanumeric mode (a Matter SHALL),
+    // level M and the mask real label tooling picks. See `qr/encode.ts`.
     await seed()
     const element = await page()
+    const expected = label.trim().split('\n')
 
-    expect(element.querySelector('wa-qr-code')?.getAttribute('error-correction')).toBe('H')
+    const rendered = await modulesRendered(
+      element.querySelector('svg.app-qr') as Element,
+      expected.length,
+    )
+
+    expect(rendered).toEqual(expected)
   })
 })
 
@@ -298,7 +327,7 @@ describe('a device filed from a pairing code', () => {
     await seed(codeOnly())
     const element = await page()
 
-    expect(element.querySelector('wa-qr-code')).toBeNull()
+    expect(element.querySelector('svg.app-qr')).toBeNull()
     expect(element.querySelector('[data-no-payload]')).not.toBeNull()
   })
 
@@ -399,7 +428,7 @@ describe('an address that names no device', () => {
   it('says so and offers a way back, rather than rendering an empty page', async () => {
     const element = await page('00000000-0000-0000-0000-000000000000')
 
-    expect(element.querySelector('wa-qr-code')).toBeNull()
+    expect(element.querySelector('svg.app-qr')).toBeNull()
     expect(element.textContent).toContain('not found')
     expect(element.querySelector('a[href="#/devices"]')).not.toBeNull()
   })
@@ -437,7 +466,7 @@ describe('taking a device out of service', () => {
     // The code has to survive on screen, not merely in storage: a device that comes off a wall
     // is exactly the one someone will need to re-commission somewhere else.
     expect((await database.repositories.devices.get(DEVICE_ID))?.payload).toBe(PAYLOAD)
-    expect(element.querySelector('wa-qr-code')).not.toBeNull()
+    expect(element.querySelector('svg.app-qr')).not.toBeNull()
   })
 
   it('puts it back into service, dropping the timestamp', async () => {

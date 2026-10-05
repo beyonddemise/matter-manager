@@ -15,13 +15,14 @@ import {
 import { PROJECT_CHANGED } from '../current-project.js'
 import { projectDatabase, projectIsEditable } from '../db/project-database.js'
 import { currentAuthor } from '../identity.js'
+import { qrSvg } from '../qr/render.js'
 import { fieldValue } from './device-form.js'
 
 /**
  * The size of the inline QR, in CSS pixels.
  *
  * Big enough to scan off a laptop screen from arm's length; the dialog exists for the times it
- * is not. A number rather than a token because `<wa-qr-code>` takes a pixel count, not CSS.
+ * is not. A number rather than a token because the SVG takes a pixel count, not CSS.
  */
 const QR_SIZE = 220
 /** The enlarged QR at its biggest. Scannable across a room, from a phone held by someone else. */
@@ -29,11 +30,6 @@ const QR_SIZE_LARGE = 420
 
 /**
  * Room to leave around the enlarged QR: the dialog's own margins and padding, plus the plate's.
- *
- * Needed because `<wa-qr-code>` writes `min-width: <size>px` onto its canvas inline, so a code
- * too big for its container is **clipped rather than scaled** — and a QR missing its right-hand
- * columns does not scan. No CSS on our side can override that from outside the shadow root, so
- * the size has to be right when it is set.
  *
  * Measured at 360px and at desktop width rather than derived: the dialog's chrome comes from
  * the theme, and a formula pretending to know it exactly would be a guess wearing arithmetic.
@@ -43,19 +39,17 @@ const DIALOG_ALLOWANCE = 128
 /**
  * The enlarged QR's size for this viewport: as big as it can be without exceeding the space.
  *
- * There is deliberately **no lower bound**. An earlier version had one, on the reasoning that
- * below some size the code is too dense to scan and overflowing was the lesser evil. That was
- * simply wrong, and it inverted the trade-off it was trying to make: a floor above `available`
- * is a code wider than its container, which `<wa-qr-code>` clips rather than scales, and a
- * clipped QR does not scan at all — whereas a small complete one usually still does. The floor
- * only ever fired in the case where it did the most damage.
+ * The SVG also carries `max-width: 100%` (`.app-qr` in `app.css`), so a size that turns out
+ * too big scales down rather than overflowing. A QR cut off at the edge does not scan, which
+ * is what `<wa-qr-code>` used to do: it pinned its canvas with an inline `min-width`. The size
+ * chosen here keeps the common case crisp. The CSS cap is the backstop.
  *
- * `Math.max(1, …)` is not a floor in that sense; it keeps the size attribute a positive number
- * on a viewport narrower than the dialog chrome itself, where no code can be shown either way.
+ * There is deliberately **no lower bound**: a small complete code usually still scans.
+ * `Math.max(1, …)` only keeps the size a positive number on a viewport narrower than the
+ * dialog chrome itself.
  *
- * Read at the moment the dialog opens. It does not follow a resize while open, which leaves one
- * case: rotating a phone with the dialog up gives a code smaller than it could be, never one
- * that is clipped, so the failure there is cosmetic rather than unscannable.
+ * Read at the moment the dialog opens. Rotating a phone with the dialog up gives a code
+ * smaller than it could be, never one that is clipped.
  */
 function enlargedSize(): number {
   const available = window.innerWidth - DIALOG_ALLOWANCE
@@ -264,36 +258,18 @@ export class DeviceView extends LitElement {
   }
 
   /**
-   * The QR, with its colours pinned rather than themed.
+   * The QR, drawn by {@link qrSvg}: the same symbol the manufacturer printed on the label.
    *
-   * `<wa-qr-code>` takes the fill from `currentColor` and leaves the canvas transparent, so in
-   * dark mode it would render light modules over a dark page. Many scanners will not read an
-   * inverted code at all, and the ones that do are the exception rather than the rule — so a
-   * themed QR is a QR that works in one colour scheme and silently fails in the other.
-   *
-   * `black` and `white` rather than tokens, deliberately, and this is the one place in the
-   * application where a colour does not come from `--wa-*`. The component takes a CSS colour
-   * string and cannot resolve a custom property, and more importantly this is not decoration:
-   * maximum contrast is what makes the thing scan. The white plate around it is the quiet zone
-   * every QR needs to be found at all.
-   *
-   * `error-correction="H"` is set explicitly even though it is currently the component's
-   * default. These codes end up on labels inside fuse boxes and behind panels; H recovers from
-   * roughly 30% damage against about 7% at L, and a 19-character payload stays small even so.
-   * Written down means a change to the component's default cannot quietly downgrade it.
+   * Alphanumeric mode at level M, as the Matter specification requires and recommends
+   * (§5.1.3.2), with the mask chosen the way real label tooling chooses it. See
+   * `qr/encode.ts`. The colours are literal black and white, and this is the one place in the
+   * application where a colour does not come from `--wa-*`. It is not decoration: maximum
+   * contrast is what makes the thing scan, and an inverted code is one many scanners refuse.
+   * The white plate around it is the quiet zone every QR needs to be found at all.
    */
   private renderQr(size: number, payload: string): TemplateResult {
     return html`
-      <div class="app-qr-plate">
-        <wa-qr-code
-          value=${payload}
-          size=${size}
-          error-correction="H"
-          fill="black"
-          background="white"
-          label=${msg('QR code for commissioning this device')}
-        ></wa-qr-code>
-      </div>
+      <div class="app-qr-plate">${qrSvg(payload, size, msg('QR code for commissioning this device'))}</div>
     `
   }
 

@@ -216,9 +216,9 @@ a.app-device:hover {
 }
 
 /* The QR's quiet zone. White regardless of the colour scheme, because an inverted QR is one
-   many scanners will not read at all - see the note in views/device.ts. This and the fill
-   passed to <wa-qr-code> are the only colours in the application that are not --wa-* tokens,
-   and the reason is that they are not decoration: they are what makes the code scan. */
+   many scanners will not read at all - see the note in views/device.ts. This and the colours
+   written into the QR image (qr/render.ts) are the only colours in the application that are
+   not --wa-* tokens, and the reason is that they are not decoration: they make the code scan. */
 .app-qr-plate {
   display: inline-flex;
   max-width: 100%;
@@ -227,16 +227,16 @@ a.app-device:hover {
   background-color: white;
 }
 
-/* Do NOT try to solve the enlarged QR's width from here. <wa-qr-code> writes
-   `min-width: <size>px` onto its canvas as an inline style, and a min-width beats any
-   max-width we can set from outside its shadow root - a code too big for the dialog is
-   CLIPPED, not scaled, and a QR missing its right-hand columns does not scan. Tried, measured
-   at 360px, and it made things worse rather than better. The size is chosen in
-   views/device.ts, where the pixel count already lives, and that is the only place it works.
-
-   Also worth knowing before deleting anything here: the browser test decodes the canvas
-   bitmap, which CSS never touches, so no test in this repository can catch the clipping. It
-   was found by opening the page at 360px wide, and that is how it will be found again. */
+/* The QR image (qr/render.ts) scales down rather than overflowing its plate: a code cut off at
+   the edge does not scan, and a smaller complete one usually does. The pixel size chosen in
+   views/device.ts keeps the usual case crisp. This is the backstop. */
+.app-qr {
+  display: block;
+  /* A flex item will not shrink below its content width without this. */
+  min-width: 0;
+  max-width: 100%;
+  height: auto;
+}
 
 .app-pairing-code {
   font-family: var(--wa-font-family-code);

@@ -31,7 +31,6 @@ const PRO_ONLY = 'data-grid'
 
 /** Components this milestone depends on. A rename upstream should fail here, not in a browser. */
 const REQUIRED = [
-  'qr-code', // the core product feature
   'button',
   'input',
   'select',
