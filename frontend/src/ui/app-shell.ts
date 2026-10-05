@@ -392,7 +392,9 @@ export class AppShell extends LitElement implements ViewHost {
     this.footerObserver = new ResizeObserver(() => {
       root.style.setProperty('--app-footer-height', `${footer.getBoundingClientRect().height}px`)
     })
-    this.footerObserver.observe(footer)
+    // The border box, because the height written above is the border box: observing the default
+    // content box would miss a change of the footer's own padding (it differs on a phone).
+    this.footerObserver.observe(footer, { box: 'border-box' })
   }
 
   override disconnectedCallback(): void {

@@ -390,11 +390,16 @@ it('keeps the footer in view, and what takes focus clear of it', async () => {
 
   // WCAG 2.4.11: the page's scroll padding is the footer's measured height.
   const root = document.documentElement
-  await waitUntil(() => root.style.getPropertyValue('--app-footer-height') !== '', 'not measured')
+  // Waited for rather than read once: the footer keeps growing after the first measurement while
+  // its status tags and fonts arrive, and the observer follows it. What matters is that the
+  // padding settles on the footer's height, not what the first callback happened to see.
   const footer = element.querySelector('footer[slot="footer"]') as HTMLElement
-  const height = footer.getBoundingClientRect().height
-  expect(height).toBeGreaterThan(0)
-  expect(Number.parseFloat(getComputedStyle(root).scrollPaddingBlockEnd)).toBeCloseTo(height, 0)
+  const padding = () => Number.parseFloat(getComputedStyle(root).scrollPaddingBlockEnd)
+  await waitUntil(
+    () => Math.abs(padding() - footer.getBoundingClientRect().height) < 0.5,
+    'the scroll padding never matched the footer',
+  )
+  expect(footer.getBoundingClientRect().height).toBeGreaterThan(0)
 
   element.remove()
   expect(root.style.getPropertyValue('--app-footer-height')).toBe('')
