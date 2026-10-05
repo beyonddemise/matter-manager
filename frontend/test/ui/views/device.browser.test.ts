@@ -12,6 +12,7 @@ import type { ProjectRepositories } from '../../../src/data/index.js'
 import { type DeviceDocument, decodePayload, type Unsaved } from '../../../src/domain/index.js'
 import type { DeviceView } from '../../../src/ui/views/device.js'
 import '../../../src/ui/views/device.js'
+import { QUIET_ZONE } from '../../../src/ui/qr/render.js'
 import label from '../qr/fixtures/label-20202021-3840.txt?raw'
 import { rasterize } from '../qr/raster.js'
 import { browserDatabase, type TestDatabase } from '../support/browser-database.js'
@@ -158,27 +159,31 @@ async function decodeRendered(qr: Element): Promise<string> {
 }
 
 /**
- * The rendered QR as rows of `1` (dark) and `0` (light), sampled at each module's centre from
- * the painted pixels. The notation of `qr/fixtures/label-20202021-3840.txt`.
+ * Reads the painted pixels of a rendered QR image, module by module.
+ *
+ * `modules` is the code's side without its quiet zone. Rows and columns count from the code's
+ * top-left module, so the quiet zone is at negative positions and at `modules` and beyond, the
+ * same coordinates `qr/render.ts` uses for its `viewBox`.
  */
-async function modulesRendered(qr: Element, modules: number): Promise<string[]> {
-  const size = modules * 16
+async function sampleRendered(
+  qr: Element,
+  modules: number,
+): Promise<(row: number, column: number) => boolean> {
+  const pitch = 16
+  const size = (modules + QUIET_ZONE * 2) * pitch
   const canvas = await rasterize(qr as SVGSVGElement, size)
-  const margin = (canvas.width - size) / 2
+  const origin = (canvas.width - size) / 2 + QUIET_ZONE * pitch
   const pixels = (canvas.getContext('2d') as CanvasRenderingContext2D).getImageData(
     0,
     0,
     canvas.width,
     canvas.height,
   )
-  const darkAt = (row: number, column: number): boolean => {
-    const x = Math.floor(margin + (column + 0.5) * 16)
-    const y = Math.floor(margin + (row + 0.5) * 16)
+  return (row, column) => {
+    const x = Math.floor(origin + (column + 0.5) * pitch)
+    const y = Math.floor(origin + (row + 0.5) * pitch)
     return (pixels.data[(y * canvas.width + x) * 4] ?? 255) < 128
   }
-  return Array.from({ length: modules }, (_, row) =>
-    Array.from({ length: modules }, (_, column) => (darkAt(row, column) ? '1' : '0')).join(''),
-  )
 }
 
 describe('when the device cannot be read', () => {
@@ -277,12 +282,35 @@ describe('the reproduced code', () => {
     const element = await page()
     const expected = label.trim().split('\n')
 
-    const rendered = await modulesRendered(
+    const darkAt = await sampleRendered(
       element.querySelector('svg.app-qr') as Element,
       expected.length,
     )
+    const rendered = expected.map((_, row) =>
+      expected.map((__, column) => (darkAt(row, column) ? '1' : '0')).join(''),
+    )
 
     expect(rendered).toEqual(expected)
+  })
+
+  it('carries its own quiet zone, four light modules on every side', async () => {
+    // ISO/IEC 18004 asks for four. The plate used to supply it as padding, a fixed length that
+    // came to about 2.5 modules at the inline size. Read from the image itself, because the
+    // margin `rasterize` adds around it would otherwise pass for one.
+    await seed()
+    const element = await page()
+    const modules = label.trim().split('\n').length
+    const darkAt = await sampleRendered(element.querySelector('svg.app-qr') as Element, modules)
+
+    const quietDark: string[] = []
+    for (let row = -QUIET_ZONE; row < modules + QUIET_ZONE; row += 1) {
+      for (let column = -QUIET_ZONE; column < modules + QUIET_ZONE; column += 1) {
+        const inside = row >= 0 && row < modules && column >= 0 && column < modules
+        if (!inside && darkAt(row, column)) quietDark.push(`${row},${column}`)
+      }
+    }
+
+    expect(quietDark).toEqual([])
   })
 })
 

@@ -19,20 +19,28 @@ import { qrSvg } from '../qr/render.js'
 import { fieldValue } from './device-form.js'
 
 /**
- * The size of the inline QR, in CSS pixels.
+ * The size of the inline QR, in CSS pixels, quiet zone included.
  *
  * Big enough to scan off a laptop screen from arm's length; the dialog exists for the times it
- * is not. A number rather than a token because the SVG takes a pixel count, not CSS.
+ * is not. 264 is eight pixels a module for the usual version 2 code (25 modules plus four on
+ * each side), so module edges land on whole pixels. A number rather than a token because the
+ * SVG takes a pixel count, not CSS.
  */
-const QR_SIZE = 220
-/** The enlarged QR at its biggest. Scannable across a room, from a phone held by someone else. */
+const QR_SIZE = 264
+/**
+ * The enlarged QR at its biggest, quiet zone included. Scannable across a room, from a phone
+ * held by someone else.
+ */
 const QR_SIZE_LARGE = 420
 
 /**
- * Room to leave around the enlarged QR: the dialog's own margins and padding, plus the plate's.
+ * Room to leave around the enlarged QR: the dialog's own margins and padding.
  *
  * Measured at 360px and at desktop width rather than derived: the dialog's chrome comes from
  * the theme, and a formula pretending to know it exactly would be a guess wearing arithmetic.
+ * It was measured while the plate still had padding of its own (the quiet zone is now inside
+ * the image), so it errs a little on the generous side, which costs a few pixels of code and
+ * never clips.
  */
 const DIALOG_ALLOWANCE = 128
 

@@ -215,14 +215,18 @@ a.app-device:hover {
   --min-column-size: calc(var(--wa-space-5xl) * 2.4);
 }
 
-/* The QR's quiet zone. White regardless of the colour scheme, because an inverted QR is one
-   many scanners will not read at all - see the note in views/device.ts. This and the colours
+/* The QR's plate. White regardless of the colour scheme, because an inverted QR is one many
+   scanners will not read at all - see the note in views/device.ts. This and the colours
    written into the QR image (qr/render.ts) are the only colours in the application that are
-   not --wa-* tokens, and the reason is that they are not decoration: they make the code scan. */
+   not --wa-* tokens, and the reason is that they are not decoration: they make the code scan.
+
+   No padding: the quiet zone is part of the image, four modules at any size (QUIET_ZONE in
+   qr/render.ts). Padding here was a fixed length, about 2.5 modules at the inline size.
+   `overflow: hidden` rounds the image's corners with the plate's, cutting only quiet zone. */
 .app-qr-plate {
   display: inline-flex;
   max-width: 100%;
-  padding: var(--wa-space-m);
+  overflow: hidden;
   border-radius: var(--wa-border-radius-m);
   background-color: white;
 }
@@ -596,15 +600,13 @@ wa-page[view="mobile"] .app-projects-table .app-cell-actions {
     border: var(--wa-border-width-s) dashed var(--wa-color-gray-50);
   }
 
-  /* The QR's quiet zone must stay white whatever the surrounding palette does — a code printed
-     as dark modules on nothing does not scan, and that is the one thing on the page nobody can
-     work around. It does not need `!important` to do that: the only other rule touching this
-     class is the `.app-qr-plate` block above, at the same specificity and earlier in the file,
-     which already sets `background-color: white` and which this overrides by order. The
-     `padding` below has always relied on exactly that and has always worked. */
+  /* The QR's plate must stay white whatever the surrounding palette does — a code printed as
+     dark modules on nothing does not scan, and that is the one thing on the page nobody can
+     work around. It does not need `!important`: the `.app-qr-plate` block above has the same
+     specificity and comes earlier, so this wins by order. The quiet zone is inside the image
+     (qr/render.ts), so there is no print-specific padding to add. */
   .app-qr-plate {
     background-color: white;
-    padding: 4mm;
   }
 
   /* Hash routes mean nothing off the device, so they print as text rather than as underlined

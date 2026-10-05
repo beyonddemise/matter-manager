@@ -21,18 +21,21 @@ function recordingPage() {
 describe('drawQr', () => {
   // The path itself is proven against the matrix in `qr/render.test.ts`, and the matrix
   // against a real label in `qr/encode.test.ts`. What is left to prove here is placement.
-  it('draws the encoded symbol, black, from the top-left corner it is given', () => {
+  it('draws the encoded symbol, black, inset by the quiet zone inside the given square', () => {
     const { page, calls } = recordingPage()
 
-    drawQr(page, PAYLOAD, { x: 40, top: 700, size: 100 })
+    // 25 modules plus four of quiet zone on each side is 33, so 132 points is four a module
+    // and the quiet zone is sixteen points. ISO/IEC 18004 asks for four modules; a label
+    // leaves less than that between the code, the die-cut edge and the text.
+    drawQr(page, PAYLOAD, { x: 40, top: 700, size: 132 })
 
     expect(calls.at(-1)).toEqual({
       method: 'drawSvgPath',
       args: [
         qrPath(encodeQr(PAYLOAD)),
         expect.objectContaining({
-          x: 40,
-          y: 700,
+          x: 56,
+          y: 684,
           scale: 4,
           color: expect.objectContaining({ red: 0, green: 0, blue: 0 }),
         }),
@@ -40,7 +43,7 @@ describe('drawQr', () => {
     })
   })
 
-  it('lays a white square under the modules, covering exactly the code', () => {
+  it('lays a white square under the code and its quiet zone, filling the given square', () => {
     const { page, calls } = recordingPage()
 
     drawQr(page, PAYLOAD, { x: 40, top: 700, size: 100 })

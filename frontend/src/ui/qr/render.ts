@@ -14,6 +14,16 @@ import { html, type TemplateResult } from 'lit'
 import { encodeQr, type QrMatrix } from './encode.js'
 
 /**
+ * The blank border every QR needs to be found, in modules, on each side. ISO/IEC 18004 asks
+ * for four.
+ *
+ * Part of the image rather than padding around it, so it is always measured in the code's
+ * own modules. Padding in CSS or PDF points is right at one size and wrong at every other:
+ * the plate's `--wa-space-m` came to about 2.5 modules at the inline size.
+ */
+export const QUIET_ZONE = 4
+
+/**
  * The dark modules as one SVG path, in module units, with the origin at the top left.
  *
  * Each horizontal run of dark modules is a single rectangle. A 25-module code becomes about
@@ -41,12 +51,12 @@ export function qrPath(matrix: QrMatrix): string {
  * A Matter payload as an inline SVG image.
  *
  * Black on white, both literal, for the reasons in `views/device.ts`: an inverted code is one
- * many scanners refuse, and maximum contrast is the whole job. The white square is part of
- * the image rather than borrowed from the surrounding plate, so the code stays correct when
- * it is copied, printed or rendered somewhere the plate's CSS does not reach.
+ * many scanners refuse, and maximum contrast is the whole job. The white square, quiet zone
+ * included, is part of the image rather than borrowed from the surrounding plate, so the code
+ * stays correct when it is copied, printed or rendered somewhere the plate's CSS does not
+ * reach.
  *
- * The quiet zone is **not** included. It belongs to the plate around the image, which sizes
- * it in the same units as the rest of the layout.
+ * The {@link QUIET_ZONE} is included, so `size` is the whole footprint: code and margin.
  *
  * @param payload the `MT:` string. A secret: it is never logged, and the accessible name is
  *   `label`, not the payload.
@@ -55,6 +65,7 @@ export function qrPath(matrix: QrMatrix): string {
  */
 export function qrSvg(payload: string, size: number, label: string): TemplateResult {
   const matrix = encodeQr(payload)
+  const extent = matrix.size + QUIET_ZONE * 2
   return html`
     <svg
       class="app-qr"
@@ -62,10 +73,10 @@ export function qrSvg(payload: string, size: number, label: string): TemplateRes
       aria-label=${label}
       width=${size}
       height=${size}
-      viewBox="0 0 ${matrix.size} ${matrix.size}"
+      viewBox="${-QUIET_ZONE} ${-QUIET_ZONE} ${extent} ${extent}"
       shape-rendering="crispEdges"
     >
-      <rect width=${matrix.size} height=${matrix.size} fill="white"></rect>
+      <rect x=${-QUIET_ZONE} y=${-QUIET_ZONE} width=${extent} height=${extent} fill="white"></rect>
       <path d=${qrPath(matrix)} fill="black"></path>
     </svg>
   `
