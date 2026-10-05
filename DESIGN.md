@@ -288,7 +288,7 @@ Glossy, pressable and few.
 
 ### Chips
 Status tags, per The One Status Vocabulary Rule.
-- **Style:** small (size s), rounded rectangle (8px), leading icon, text a step smaller than body. In the footer status bar the tag is filled: quiet fill (mist) with on-quiet text and no border. On project rows the location and sync tags use the default filled-outlined appearance: the same fill and text plus a thin edge in the variant's border colour.
+- **Style:** small (size s), rounded rectangle (8px), leading icon, text a step smaller than body. In the footer status bar the tag is filled: the quiet fill of its own status variant (success, warning, neutral or danger, per The One Status Vocabulary Rule) with that variant's on-quiet text and no border. On project rows the location and sync tags use the default filled-outlined appearance: the same fill and text plus a thin edge in the variant's border colour.
 - **State:** tags change variant, icon and words when the state changes; they never change shape, never take focus and never act on a click.
 
 ### Cards / Containers
