@@ -103,7 +103,7 @@ export function renderNetworkStatus(online: boolean): TemplateResult {
     data-network
     ?data-online=${online}
     ?data-offline=${!online}
-    variant=${online ? 'success' : 'warning'}
+    variant=${online ? 'success' : 'neutral'}
     appearance="filled"
     size="s"
   >

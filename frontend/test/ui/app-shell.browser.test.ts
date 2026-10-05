@@ -270,7 +270,7 @@ it('shows an unobtrusive indicator when the network goes', async () => {
   network.go(false)
   await (element as HTMLElement & Updatable).updateComplete
 
-  expect(element.querySelector('footer [data-offline]')?.getAttribute('variant')).toBe('warning')
+  expect(element.querySelector('footer [data-offline]')?.getAttribute('variant')).toBe('neutral')
   expect(element.querySelector('[data-online]')).toBeNull()
 })
 

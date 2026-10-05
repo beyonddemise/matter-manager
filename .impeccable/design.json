@@ -675,8 +675,8 @@
       "kind": "custom",
       "refersTo": "status-tag-warning",
       "description": "The sticky logbook margin: network and sync tags left, site links right.",
-      "html": "<footer class=\"ds-footer\"><span class=\"ds-ftag ds-ftag-warning\">Offline</span><span class=\"ds-ftag ds-ftag-warning\">Sync pending</span><span class=\"ds-footer-spacer\"></span><a class=\"ds-footer-link\" href=\"#\">Privacy</a><a class=\"ds-footer-link\" href=\"#\">Terms</a></footer>",
-      "css": ".ds-footer { display: flex; align-items: center; gap: 9px; font-family: Figtree, sans-serif; font-size: 14px; color: #595959; background: #ffffff; border-top: 1px solid #e6e6e6; padding: 9px 18px; } .ds-ftag { font-size: 12.5px; border-radius: 8px; padding: 0.35em 0.75em; } .ds-ftag-warning { background: #faf3e1; color: #7f4d29; } .ds-footer-spacer { flex: 1; } .ds-footer-link { color: #0152c1; text-decoration: underline dotted; text-underline-offset: 0.2em; } .ds-footer-link:hover { text-decoration-style: solid; } .ds-footer-link:focus-visible { outline: 3px solid #309aee; outline-offset: 1px; }"
+      "html": "<footer class=\"ds-footer\"><span class=\"ds-ftag ds-ftag-neutral\">Offline</span><span class=\"ds-ftag ds-ftag-warning\">Sync pending</span><span class=\"ds-footer-spacer\"></span><a class=\"ds-footer-link\" href=\"#\">Privacy</a><a class=\"ds-footer-link\" href=\"#\">Terms</a></footer>",
+      "css": ".ds-footer { display: flex; align-items: center; gap: 9px; font-family: Figtree, sans-serif; font-size: 14px; color: #595959; background: #ffffff; border-top: 1px solid #e6e6e6; padding: 9px 18px; } .ds-ftag { font-size: 12.5px; border-radius: 8px; padding: 0.35em 0.75em; } .ds-ftag-warning { background: #faf3e1; color: #7f4d29; } .ds-ftag-neutral { background: #f2f2f2; color: #595959; } .ds-footer-spacer { flex: 1; } .ds-footer-link { color: #0152c1; text-decoration: underline dotted; text-underline-offset: 0.2em; } .ds-footer-link:hover { text-decoration-style: solid; } .ds-footer-link:focus-visible { outline: 3px solid #309aee; outline-offset: 1px; }"
     }
   ],
   "narrative": {
@@ -699,7 +699,7 @@
       },
       {
         "name": "The One Status Vocabulary Rule",
-        "body": "Status is a small (size s) filled `wa-tag` with a leading icon, and the same state always uses the same words, variant and icon wherever it appears: Online (success, wifi), Offline (warning, plug-circle-xmark), Local (neutral, laptop), Sync pending (warning, arrows-rotate), Synced (success, circle-check), No permission to sync (danger, triangle-exclamation), Sync paused – signed out (neutral, circle-pause). A status is a label, never a control: it is not focusable, has no hover state, and is never styled as a button.",
+        "body": "Status is a small (size s) filled `wa-tag` with a leading icon, and the same state always uses the same words, variant and icon wherever it appears: Online (success, wifi), Offline (neutral, plug-circle-xmark), Local (neutral, laptop), Sync pending (warning, arrows-rotate), Synced (success, circle-check), No permission to sync (danger, triangle-exclamation), Sync paused – signed out (neutral, circle-pause). A status is a label, never a control: it is not focusable, has no hover state, and is never styled as a button.",
         "section": "colors"
       },
       {

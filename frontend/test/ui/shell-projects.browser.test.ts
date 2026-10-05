@@ -721,7 +721,7 @@ describe('the status bar', () => {
     expect(element.querySelector('[data-offline]')).toBeNull()
   })
 
-  it('says Offline as a warning on the same element, and announces it once', async () => {
+  it('says Offline as neutral on the same element, and announces it once', async () => {
     const network = fakeNetwork(true)
     const { element } = await statusShell({ network })
     const before = element.querySelector('footer [data-network]')
@@ -733,7 +733,7 @@ describe('the status bar', () => {
     const tag = element.querySelector('footer [data-offline]')
     expect(tag).toBe(before)
     expect(text(tag)).toBe('Offline')
-    expect(tag?.getAttribute('variant')).toBe('warning')
+    expect(tag?.getAttribute('variant')).toBe('neutral')
     expect(element.querySelector('[data-online]')).toBeNull()
     expect(announced(element)).toBe('Offline')
 

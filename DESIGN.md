@@ -190,7 +190,7 @@ A restrained anodized palette: white and graphite pages, one confident Commissio
 - **Page White** (#ffffff, `--wa-color-surface-default` / `-raised`, light): page, header, footer, cards and project rows.
 - **Graphite Ink** (#1d1d1d, `--wa-color-text-normal`, light): all body text and headings.
 - **Graphite Quiet** (#595959, `--wa-color-text-quiet`, light): secondary text (emails, notes, table heads, footer text, client names) and the neutral tag's text.
-- **Page Shadow Grey** (#f2f2f2, `--wa-color-surface-lowered` / `--wa-color-neutral-fill-quiet`, light): the neutral tag's fill, lowered device rows, link-row hover.
+- **Page Shadow Grey** (#f2f2f2, `--wa-color-surface-lowered` / `--wa-color-neutral-fill-quiet`, light): the neutral tag's fill (Offline, Local, Sync paused), lowered device rows, link-row hover.
 - **Page Rule** (#e6e6e6, `--wa-color-surface-border`, light): borders of rows, table rules, the footer's top rule; the row action button's fill.
 - **Control Edge** (#959595, `--wa-color-neutral-border-loud`): the 1px border of inputs and selects.
 - **Placeholder Grey** (#757575): input placeholder text in both schemes.
@@ -203,13 +203,13 @@ A restrained anodized palette: white and graphite pages, one confident Commissio
 ### Status
 Status hues come from the palette's semantic variants and are only ever used to say what state something is in.
 - **Signal Green** (#1b6548 on #ebf6e0 light; #4aa672 on #032317 dark; edge #96db86, `--wa-color-success-*`): Online, Synced, Synchronized.
-- **Caution Amber** (#7f4d29 on #faf3e1 light; #bf8b4a on #2f1809 dark; edge #eac673, `--wa-color-warning-*`): Offline, Sync pending; warning callouts.
+- **Caution Amber** (#7f4d29 on #faf3e1 light; #bf8b4a on #2f1809 dark; edge #eac673, `--wa-color-warning-*`): Sync pending; warning callouts. Offline is not here: offline is normal, so it is neutral grey.
 - **Fault Red** (#89453f fill, #89453f on #ffefee light; #d47c7e on #331512 dark; edge #fabab8, `--wa-color-danger-*`): No permission to sync; error callouts; the fill of destructive confirm buttons.
 
 ### Named Rules
 **The Web Awesome First Rule.** Reach for a Web Awesome component first, then a layout utility (`wa-stack`, `wa-cluster`, `wa-split`, `wa-flank`, `wa-grid`, `wa-gap-*`), then a `--wa-*` token, then the component's documented styling API (attributes, CSS custom properties, `::part()`). App CSS contains no raw hex and no raw px or rem: every colour is a `--wa-color-*` token and every dimension is derived from `--wa-space-*`, so a theme or palette switch reaches everything.
 
-**The One Status Vocabulary Rule.** Status is a small (size s) filled `wa-tag` with a leading icon, and the same state always uses the same words, variant and icon wherever it appears: Online (success, wifi), Offline (warning, plug-circle-xmark), Local (neutral, laptop), Sync pending (warning, arrows-rotate), Synced (success, circle-check), No permission to sync (danger, triangle-exclamation), Sync paused – signed out (neutral, circle-pause). A status is a label, never a control: it is not focusable, has no hover state, and is never styled as a button.
+**The One Status Vocabulary Rule.** Status is a small (size s) filled `wa-tag` with a leading icon, and the same state always uses the same words, variant and icon wherever it appears: Online (success, wifi), Offline (neutral, plug-circle-xmark), Local (neutral, laptop), Sync pending (warning, arrows-rotate), Synced (success, circle-check), No permission to sync (danger, triangle-exclamation), Sync paused – signed out (neutral, circle-pause). A status is a label, never a control: it is not focusable, has no hover state, and is never styled as a button.
 
 **The Commissioning Blue Rule.** The loud brand fill marks the one primary action in view. Secondary actions are outlined or neutral; the Upgrade prompt is outlined brand, not filled. Blue elsewhere means "you are here" (the active nav item) or "this goes somewhere" (a link).
 
