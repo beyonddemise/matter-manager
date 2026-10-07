@@ -1,7 +1,7 @@
 # Full QR capture and a DCL-backed vendor and product catalogue: design
 
 Date: 2026-10-05
-Status: proposed
+Status: approved 2026-10-07
 
 Related:
 - [`docs/qr-rules.md`](../../qr-rules.md), the QR format rules.
@@ -39,7 +39,7 @@ been handed over.
 | Catalogue fields copied onto the device | Vendor name, **vendor preferred name**, product name, device type, part number, product, support and manual URLs, commissioning instructions and custom-flow URL, factory-reset instructions |
 | Cache staleness | A found entry is refreshed after **90 days**; a miss is retried after **1 day**; a stale entry is served if the DCL is unreachable |
 | Refreshing on demand | An admin UI with "refresh" and "refresh all": **future**, its own issue, not planned here |
-| Who may call the lookup | **Signed-in users only**, rate-limited per user |
+| Who may call the lookup | **Signed-in users only**, rate-limited per user. **Every plan, free included**: the lookup needs no server storage of the user's own, and the names are copied into the device document wherever it lives |
 | Test vendors 0xFFF1–0xFFF4 | Never sent to the DCL (verified absent from MainNet and TestNet); answered locally as "Test vendor" |
 | Copied fields in the edit form | Read-only |
 
