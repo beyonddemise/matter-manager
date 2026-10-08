@@ -56,6 +56,18 @@ describe('a fully configured deployment', () => {
     expect(routesFor(COMPLETE)).toEqual(expect.arrayContaining(['POST /projects', 'GET /projects']))
   })
 
+  it('serves the catalogue lookup', () => {
+    expect(routesFor(COMPLETE)).toContain('POST /catalog/lookup')
+  })
+
+  it('asks DCL MainNet unless told otherwise', () => {
+    expect(serverOptions(COMPLETE).catalog?.dcl.network).toBe('mainnet')
+    expect(
+      serverOptions({ ...COMPLETE, DCL_BASE_URL: 'https://on.test-net.dcl.csa-iot.org/dcl/' })
+        .catalog?.dcl.network,
+    ).toBe('testnet')
+  })
+
   it("allows the application's own origin", () => {
     expect(serverOptions(COMPLETE).security?.origins).toEqual(['https://matter.example'])
   })
@@ -105,6 +117,12 @@ describe('a deployment that is part-way through being set up', () => {
     const { COUCHDB_URL: _url, ...withoutCouch } = COMPLETE
 
     expect(routesFor(withoutCouch)).not.toContain('POST /projects')
+  })
+
+  it('serves no catalogue lookup without CouchDB', () => {
+    const { COUCHDB_URL: _url, ...withoutCouch } = COMPLETE
+
+    expect(routesFor(withoutCouch)).not.toContain('POST /catalog/lookup')
   })
 
   it('serves no project routes without a signing key', () => {
@@ -239,6 +257,13 @@ describe('a deployment that is configured wrongly', () => {
         ...serverOptions({ ...COMPLETE, APP_ORIGIN: 'matter.example' }),
       }),
     ).toThrow(/origin/i)
+  })
+
+  it.each([
+    ['not a URL', 'on.dcl.csa-iot.org/dcl'],
+    ['plain http', 'http://on.dcl.csa-iot.org/dcl'],
+  ])('refuses to start on a DCL_BASE_URL that is %s', (_case, url) => {
+    expect(() => serverOptions({ ...COMPLETE, DCL_BASE_URL: url })).toThrow(/DCL_BASE_URL/)
   })
 
   it('refuses a signing key that is not an EC key', () => {
