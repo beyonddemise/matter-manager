@@ -342,15 +342,30 @@ there are no reparenting conflicts to resolve under offline sync.
   "roomId": "room:3fa85f64-5717-4562-b3fc-2c963f66afa6",
   "spot": "ceiling, north end",     // free text the room name cannot capture
 
-  // --- from the QR code ---
+  // --- from the QR code, decoded locally when the device is added ---
   "payload": "MT:Y.K9042C00KA0648G00",
   "manualCode": "34970112332",
   "vendorId": 65521,                // 0xFFF1
   "productId": 32768,               // 0x8000
   "discriminator": 3840,
-  "vendorName": "Example GmbH",     // from the DCL lookup, may be absent
+  "payloadVersion": 0,              // payload only
+  "commissioningFlow": "standard",  // standard | userActionRequired | custom | reserved; payload only
+  "discovery": { "softAp": false, "ble": true, "onNetwork": false },  // payload only
+
+  // --- the catalogue block: copied from the DCL lookup, written and merged as a unit ---
+  "vendorName": "Example GmbH",
+  "vendorPreferredName": "Example",
   "productName": "Smart Bulb A60",
   "deviceTypeId": 266,
+  "partNumber": "A60-E27",
+  "productUrl": "https://example.com/a60",          // https: only, as are the next three
+  "supportUrl": "https://example.com/support",
+  "userManualUrl": "https://example.com/a60.pdf",
+  "commissioningFlowUrl": "https://example.com/pair",
+  "commissioningInstructions": "Switch it on and off three times.",  // plain text
+  "factoryResetInstructions": "Switch it on and off six times.",     // plain text
+  "catalogCheckedAt": "2026-08-19T08:00:00.000Z",
+  "catalogSource": "found",         // found | missing | test-vendor | unusable
 
   // --- user metadata ---
   "serial": "SN-000123",
@@ -371,6 +386,13 @@ there are no reparenting conflicts to resolve under offline sync.
   ]
 }
 ```
+
+**Every field below `discriminator` is optional.** A device added before these fields existed,
+or from an 11-digit code, simply lacks them; nothing migrates. The catalogue block is filled when
+the device is added online, or later by backfill, and an empty DCL value is left out rather than
+stored as `""`. A `missing` result is asked again after a day. An `unusable` result means our API
+refused the stored code; it is never asked again. The copied fields are read-only in the edit
+form.
 
 `_attachments` carries device photos, downscaled client-side before saving — attachments
 replicate in full and are by far the largest driver of sync bandwidth.
@@ -414,6 +436,7 @@ it.
 |---|---|
 | `remarks` | Union by `id`, sorted by `createdAt`. Nothing is discarded. |
 | Scalars (`name`, `roomId`, `disabled`, `spot`) | Last write wins by `updatedAt`. |
+| Catalogue block (`vendorName` … `catalogSource`) | Taken whole from the revision with the newest `catalogCheckedAt`, ties by `(updatedAt, _rev)`. |
 | `room.path` | Last write wins. A deleted room still referenced by a live device is resurrected as `Unassigned/<old path>`. |
 | `audit:*` | Cannot conflict — append-only. |
 
