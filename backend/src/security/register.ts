@@ -33,6 +33,17 @@ export interface Limits {
    * throttle a sign-in attempt.
    */
   readonly token: Limit
+  /**
+   * Catalogue lookups, counted **per signed-in subject** rather than per address.
+   *
+   * Not applied by the hook below: the subject is known only once the route has verified the
+   * bearer token, so `catalog/routes.ts` counts after authenticating. Configured here anyway, so
+   * every limit the service has is set in one place (ADR 0016).
+   *
+   * Generous for a person — a whole house added in an afternoon, plus backfill — and far short
+   * of what a script using this as a free DCL proxy would want.
+   */
+  readonly catalog: Limit
 }
 
 /** How the service is protected. */
@@ -53,6 +64,7 @@ export interface SecurityOptions {
 export const DEFAULT_LIMITS: Limits = {
   auth: { max: 20, windowSeconds: 300 },
   token: { max: 60, windowSeconds: 300 },
+  catalog: { max: 120, windowSeconds: 300 },
 }
 
 /** The path prefix whose endpoints are limited. */

@@ -8,6 +8,7 @@
  * @module
  */
 
+import type { components } from '../generated/openapi.js'
 import type { ModelEntry, VendorEntry } from './store.js'
 
 /** A found entry is refreshed after 90 days: product records change rarely, and slowly. */
@@ -19,33 +20,13 @@ export const MISSING_TTL_MS = 24 * 60 * 60 * 1000
 const TEST_VENDOR_FIRST = 0xfff1
 const TEST_VENDOR_LAST = 0xfff4
 
-/** What the API answers, field for field the contract's `CatalogLookup` schema. */
-export interface CatalogLookup {
-  readonly vendorId: number
-  readonly productId: number
-  readonly source: 'dcl' | 'test-vendor' | 'missing'
-  readonly vendor: {
-    readonly name: string
-    readonly preferredName: string | null
-    readonly legalName: string | null
-    readonly landingPageUrl: string | null
-  } | null
-  readonly product: {
-    readonly name: string
-    readonly label: string | null
-    readonly partNumber: string | null
-    readonly deviceTypeId: number | null
-    readonly productUrl: string | null
-    readonly supportUrl: string | null
-    readonly userManualUrl: string | null
-    readonly commissioningCustomFlow: number
-    readonly commissioningCustomFlowUrl: string | null
-    readonly commissioningInstructions: string | null
-    readonly factoryResetInstructions: string | null
-  } | null
-  readonly fetchedAt: string
-  readonly stale: boolean
-}
+/**
+ * What the API answers: the contract's `CatalogLookup` schema, generated from `openapi.yaml`.
+ *
+ * An alias rather than a hand-written copy, so a field the contract adds, drops or retypes is a
+ * compile error here instead of a response that quietly disagrees with the contract (ADR 0015).
+ */
+export type CatalogLookup = components['schemas']['CatalogLookup']
 
 /** Whether a vendor ID is one of the four the specification reserves for testing. */
 export function isTestVendor(vendorId: number): boolean {

@@ -3,6 +3,8 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { denyList } from '../src/auth/deny-list.js'
 import { mintToken, type SigningKey } from '../src/auth/jwt.js'
 import { refreshStore } from '../src/auth/refresh-store.js'
+import { dclClient, MAINNET_URL } from '../src/catalog/dcl.js'
+import { forgetCatalogDatabase } from '../src/catalog/store.js'
 import { buildServer, type Server } from '../src/server.js'
 import { forgetUsersDatabase, USERS_DB } from '../src/users/database.js'
 import { recordEnsurer } from '../src/users/ensure.js'
@@ -76,6 +78,7 @@ const server = (): Server => {
   // what it was asserting. One instance means the server behaves like a deployment, where there
   // is one database behind both.
   forgetUsersDatabase()
+  forgetCatalogDatabase()
   const fake = fakeCouch()
   fakeInUse = fake
   const couch = fake.couch
@@ -131,6 +134,16 @@ const server = (): Server => {
       records,
       ensureRecord: recordEnsurer(records, refresh),
       validator: () => 'function (doc) { return doc }',
+    },
+    // A DCL that is never reachable: the drift pass must make no network call, and an
+    // unreachable ledger with an empty cache is what reaches the 503.
+    catalog: {
+      couch,
+      key,
+      deny,
+      dcl: dclClient(MAINNET_URL, async () => {
+        throw new TypeError('fetch failed')
+      }),
     },
   })
   return app
@@ -327,6 +340,15 @@ describe('every implemented route answers what the contract declares', () => {
           payload: { email: 'someone@example.test', plan: 'member' },
           expected: 200,
         },
+      ]
+    }
+    if (route === 'POST /catalog/lookup') {
+      // The empty-body pass reaches the 400; these reach the other declared answers. The test
+      // vendor's 200 needs no DCL; the real vendor's 503 is the unreachable DCL configured above.
+      return [
+        { headers: credentials(), payload: { code: 'MT:Y.K9042C00KA0648G00' }, expected: 200 },
+        { headers: credentials(), payload: { code: '34970112332' }, expected: 422 },
+        { headers: credentials(), payload: { code: 'MT:CUSJ0YJB00KA0648G00' }, expected: 503 },
       ]
     }
     if (route === 'POST /projects') {

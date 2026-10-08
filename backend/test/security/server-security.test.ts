@@ -16,7 +16,11 @@ function server(overrides: Parameters<typeof buildServer>[0] = {}): Server {
       origins: ['https://matter.example'],
       // Deliberately different, so that a single shared limiter would be visible rather than
       // merely present: the two endpoints are used at completely different rates.
-      limits: { auth: { max: 3, windowSeconds: 60 }, token: { max: 6, windowSeconds: 60 } },
+      limits: {
+        auth: { max: 3, windowSeconds: 60 },
+        token: { max: 6, windowSeconds: 60 },
+        catalog: { max: 9, windowSeconds: 60 },
+      },
     },
     ...overrides,
   })
@@ -365,6 +369,7 @@ describe('the rate-limit key', () => {
         limits: {
           auth: { max: 3, windowSeconds: 60, maxClients: 4 },
           token: { max: 6, windowSeconds: 60 },
+          catalog: { max: 9, windowSeconds: 60 },
         },
       },
     })
