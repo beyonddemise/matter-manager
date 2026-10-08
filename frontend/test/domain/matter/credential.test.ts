@@ -12,13 +12,17 @@ const LONG_CODE = '749701123365521327687'
 const SHORT_CODE = '34970112332'
 
 describe('a Matter payload', () => {
-  it('keeps the payload and derives the manual code', () => {
+  it('keeps the payload, derives the manual code and keeps the decoded flags', () => {
     expect(readCredential(PAYLOAD)).toEqual({
       payload: PAYLOAD,
       manualCode: LONG_CODE,
       vendorId: 0xfff1,
       productId: 0x8000,
       discriminator: 3840,
+      // Verified in `payload.test.ts`: version 0, the standard flow, BLE only (raw 0b010).
+      version: 0,
+      customFlow: 'standard',
+      discovery: { softAp: false, ble: true, onNetwork: false, raw: 0b010 },
     })
   })
 
@@ -58,6 +62,17 @@ describe('a manual pairing code', () => {
     expect(readCredential(LONG_CODE)).not.toHaveProperty('payload')
     expect(readCredential(LONG_CODE)).not.toHaveProperty('discriminator')
     expect(readCredential(SHORT_CODE)).not.toHaveProperty('vendorId')
+  })
+
+  it('carries no version, flow or discovery, because a manual code has none', () => {
+    // The same asymmetry as the discriminator: inventing "standard" or "BLE" for a typed code
+    // would state a fact about the device that nobody read off it.
+    for (const code of [LONG_CODE, SHORT_CODE]) {
+      const credential = readCredential(code)
+      expect(credential).not.toHaveProperty('version')
+      expect(credential).not.toHaveProperty('customFlow')
+      expect(credential).not.toHaveProperty('discovery')
+    }
   })
 
   it('accepts the separators a label prints and stores the digits', () => {

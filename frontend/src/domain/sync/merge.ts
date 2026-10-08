@@ -25,6 +25,7 @@
  * @module
  */
 
+import { withCatalogBlock } from '../catalog/copy.js'
 import {
   normaliseRoomPath,
   ROOM_PATH_SEPARATOR,
@@ -144,16 +145,52 @@ export function mergeRemarks(revisions: readonly RemarkBearing[]): readonly Rema
     .sort((a, b) => compareText(a.createdAt, b.createdAt) || compareText(a.id, b.id))
 }
 
+/** A revision that may carry a catalogue block (`catalog/copy.ts`). */
+export interface CatalogBearing {
+  readonly catalogCheckedAt?: string
+}
+
+/**
+ * The revision whose catalogue block wins: the newest `catalogCheckedAt`, ties broken by the
+ * same `(updatedAt, _rev)` order as scalars so that every replica picks the same one.
+ */
+function catalogueSource<T extends Revision & CatalogBearing>(
+  revisions: readonly T[],
+): T | undefined {
+  let best: T | undefined
+  for (const revision of revisions) {
+    if (revision.catalogCheckedAt === undefined) continue
+    if (
+      best === undefined ||
+      compareText(revision.catalogCheckedAt, best.catalogCheckedAt ?? '') > 0 ||
+      (revision.catalogCheckedAt === best.catalogCheckedAt && compareForWinner(revision, best) > 0)
+    ) {
+      best = revision
+    }
+  }
+  return best
+}
+
 /**
  * Merges conflicting revisions of a device.
  *
- * Scalars come from the latest revision; remarks are unioned across all of them. The result
- * does not depend on which revision arrived as `winner`, so two replicas merging the same
- * conflict independently reach the same document.
+ * Scalars come from the latest revision; remarks are unioned across all of them; the
+ * catalogue block comes, whole, from the revision that consulted the catalogue last. The block
+ * has its own clock (`catalogCheckedAt`) because it is written by backfill, not by the person
+ * editing: a newer rename that never saw the lookup must not erase what the lookup found.
+ *
+ * The result does not depend on which revision arrived as `winner`, so two replicas merging the
+ * same conflict independently reach the same document.
  */
-export function mergeDevice<T extends RemarkBearing>(winner: T, conflicts: readonly T[]): T {
+export function mergeDevice<T extends RemarkBearing & CatalogBearing>(
+  winner: T,
+  conflicts: readonly T[],
+): T {
   const revisions = [winner, ...conflicts]
-  return { ...latestRevision(revisions), remarks: mergeRemarks(revisions) }
+  const latest = latestRevision(revisions)
+  const merged = { ...latest, remarks: mergeRemarks(revisions) }
+  const source = catalogueSource(revisions)
+  return source === undefined || source === latest ? merged : withCatalogBlock(merged, source)
 }
 
 /** The most recent path any surviving revision remembers, or `undefined` if none does. */

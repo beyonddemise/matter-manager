@@ -17,6 +17,8 @@
  * @module
  */
 
+import { catalogFields } from '../catalog/copy.js'
+import type { CatalogLookup } from '../catalog/types.js'
 import { type DeviceCredential, readCredential } from '../matter/credential.js'
 import { PayloadError } from '../matter/payload.js'
 import {
@@ -52,6 +54,9 @@ export interface DeviceCreation {
  * @param rooms every room already in the project, so an existing one can be reused rather than
  *   duplicated. Passed in rather than read, because reading is I/O and this package does none.
  * @param clock the uuid source and the wall clock
+ * @param catalog the catalogue's answer for this code, when one arrived before Save. Passed in
+ *   rather than fetched, so this stays pure. Ignored when its ids are not the code's: an answer
+ *   that landed for a code since corrected would name this device after another one.
  * @returns the device, and the room to write before it when the room is new
  * @throws {DraftError} for any unusable field, naming the field. Nothing is created; there is
  *   nothing here that could create anything.
@@ -60,6 +65,7 @@ export function planNewDevice(
   draft: DeviceDraft,
   rooms: readonly RoomDocument[],
   clock: DraftClock,
+  catalog?: CatalogLookup,
 ): DeviceCreation {
   let credential: DeviceCredential
   try {
@@ -84,6 +90,14 @@ export function planNewDevice(
   const path = readRoomPath(draft.room)
   const installedAt = readInstalledAt(draft.installedAt)
   const { roomId, room } = chooseRoom(path, rooms, clock.uuid)
+  // Read once: `addedAt` and `catalogCheckedAt` are the same moment, and two reads of a real
+  // clock can straddle a second.
+  const now = clock.now()
+  const answersThisCode =
+    catalog !== undefined &&
+    catalog.vendorId === credential.vendorId &&
+    catalog.productId === credential.productId
+  const { discovery } = credential
 
   const device: Unsaved<DeviceDocument> = {
     _id: documentId('device', clock.uuid()),
@@ -98,12 +112,26 @@ export function planNewDevice(
     ...(credential.vendorId === undefined ? {} : { vendorId: credential.vendorId }),
     ...(credential.productId === undefined ? {} : { productId: credential.productId }),
     ...(credential.discriminator === undefined ? {} : { discriminator: credential.discriminator }),
+    ...(credential.version === undefined ? {} : { payloadVersion: credential.version }),
+    ...(credential.customFlow === undefined ? {} : { commissioningFlow: credential.customFlow }),
+    // The named flags only: `raw` stays in the payload, which remains the source of truth.
+    ...(discovery === undefined
+      ? {}
+      : {
+          discovery: {
+            softAp: discovery.softAp,
+            ble: discovery.ble,
+            onNetwork: discovery.onNetwork,
+          },
+        }),
     ...optionalText('spot', draft.spot),
     ...optionalText('serial', draft.serial),
     installedAt,
-    addedAt: clock.now(),
+    addedAt: now,
     disabled: false,
     remarks: [],
+    // `catalog !== undefined` repeated: a boolean held in a variable does not narrow `catalog`.
+    ...(catalog !== undefined && answersThisCode ? catalogFields(catalog, now) : {}),
   }
 
   return room === undefined ? { device } : { room, device }

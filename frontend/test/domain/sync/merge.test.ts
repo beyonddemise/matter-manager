@@ -24,7 +24,14 @@ const remark = (id: string, createdAt: string, text = `remark ${id}`): Remark =>
  * dropped `_deleted` whenever the other argument lacked it, which hid the property from the
  * compiler in precisely the tests that are about `_deleted`.
  */
-type DeviceFixture = Revision & { readonly remarks: readonly Remark[]; readonly name: string }
+type DeviceFixture = Revision & {
+  readonly remarks: readonly Remark[]
+  readonly name: string
+  readonly vendorName?: string
+  readonly supportUrl?: string
+  readonly catalogCheckedAt?: string
+  readonly catalogSource?: 'found' | 'missing' | 'test-vendor'
+}
 
 const device = (
   _rev: string,
@@ -395,5 +402,70 @@ describe('the merge consults nothing outside the documents', () => {
     // A revision timestamped in the future still wins: the rule is "latest updatedAt",
     // not "latest that is not in the future".
     expect(mergeDevice(two, [one])._rev).toBe('1-a')
+  })
+})
+
+/**
+ * The catalogue block is a unit (spec §Merging). The common case it protects: backfill on one
+ * replica fills the names while somebody renames the device on another. The rename is newer and
+ * wins the scalars; without this rule it would also carry its *absent* block and erase the names.
+ */
+describe('mergeDevice and the catalogue block', () => {
+  const FOUND = {
+    vendorName: 'Aqara',
+    supportUrl: 'https://www.aqara.com/support',
+    catalogCheckedAt: '2026-10-05T10:00:00.000Z',
+    catalogSource: 'found' as const,
+  }
+
+  it('keeps the block from the revision that looked it up, under a newer edit without one', () => {
+    const backfilled = device('2-a', '2026-10-05T10:00:01.000Z', [], FOUND)
+    const renamed = device('2-b', '2026-10-05T11:00:00.000Z', [], { name: 'Hall sensor' })
+
+    const merged = mergeDevice(renamed, [backfilled])
+
+    expect(merged.name).toBe('Hall sensor')
+    expect(merged.vendorName).toBe('Aqara')
+    expect(merged.catalogSource).toBe('found')
+  })
+
+  it('takes the whole block from the newer check, removing fields the newer one lacks', () => {
+    const older = device('2-a', '2026-10-06T00:00:00.000Z', [], FOUND)
+    const newer = device('2-b', '2026-10-05T00:00:00.000Z', [], {
+      catalogCheckedAt: '2026-10-05T12:00:00.000Z',
+      catalogSource: 'found',
+      vendorName: 'Aqara Home',
+    })
+
+    const merged = mergeDevice(older, [newer])
+
+    // `older` wins the scalars by updatedAt; `newer` wins the block by catalogCheckedAt.
+    expect(merged._rev).toBe('2-a')
+    expect(merged.vendorName).toBe('Aqara Home')
+    expect(merged).not.toHaveProperty('supportUrl')
+  })
+
+  it('breaks a tie in catalogCheckedAt by (updatedAt, _rev), so replicas agree', () => {
+    const one = device('2-a', '2026-10-05T10:00:00.000Z', [], { ...FOUND, vendorName: 'One' })
+    const two = device('2-b', '2026-10-05T10:00:00.000Z', [], { ...FOUND, vendorName: 'Two' })
+    expect(mergeDevice(one, [two]).vendorName).toBe('Two')
+    expect(mergeDevice(two, [one]).vendorName).toBe('Two')
+  })
+
+  it('leaves a document with no block on any side unchanged', () => {
+    const one = device('1-a', '2026-08-01T00:00:00.000Z')
+    const two = device('2-b', '2026-08-02T00:00:00.000Z')
+    expect(mergeDevice(one, [two])).not.toHaveProperty('catalogCheckedAt')
+  })
+
+  it('stays permutation-independent with blocks involved', () => {
+    const a = device('2-a', '2026-10-05T10:00:01.000Z', [], FOUND)
+    const b = device('2-b', '2026-10-05T11:00:00.000Z', [], { name: 'Hall sensor' })
+    const c = device('1-c', '2026-10-04T00:00:00.000Z', [], {
+      catalogCheckedAt: '2026-10-04T00:00:00.000Z',
+      catalogSource: 'missing',
+    })
+    const results = [mergeDevice(a, [b, c]), mergeDevice(b, [c, a]), mergeDevice(c, [a, b])]
+    for (const result of results) expect(result).toEqual(results[0])
   })
 })
