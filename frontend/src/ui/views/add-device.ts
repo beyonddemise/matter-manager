@@ -1,6 +1,8 @@
 import { msg } from '@lit/localize'
-import { html } from 'lit'
+import { html, type TemplateResult } from 'lit'
 import {
+  type CatalogLookup,
+  catalogNames,
   type DeviceDraft,
   DraftError,
   PayloadError,
@@ -8,9 +10,12 @@ import {
   planNewDevice,
   readCredential,
 } from '../../domain/index.js'
+import type { CatalogApi } from '../catalog.js'
+import { catalog } from '../composition.js'
 import { imageMessage } from '../i18n/problems.js'
 import { codesFromImage, type ImageProblem, ImageScanError } from '../scan/image.js'
 import { cameraSource, type ScanSource } from '../scan/source.js'
+import { accessToken } from '../tokens.js'
 import { DeviceFormView, fieldValue } from './device-form.js'
 import './scan-dialog.js'
 
@@ -22,6 +27,17 @@ function today(): string {
   // of Greenwich filing a device late in the evening would have it dated tomorrow.
   return local.toISOString().slice(0, 10)
 }
+
+/** How long typing must pause before the code is looked up (spec §Adding a device). */
+export const LOOKUP_DEBOUNCE_MS = 300
+
+/** Where the background lookup stands, and for which code. */
+type LookupState =
+  | { readonly kind: 'idle' }
+  | { readonly kind: 'pending'; readonly code: string }
+  | { readonly kind: 'found'; readonly code: string; readonly result: CatalogLookup }
+
+const IDLE: LookupState = { kind: 'idle' }
 
 /**
  * The add-a-device form.
@@ -46,6 +62,8 @@ export class AddDeviceView extends DeviceFormView {
     scanChecked: { state: true },
     scanOpen: { state: true },
     uploadProblem: { state: true },
+    catalog: { attribute: false },
+    lookupState: { state: true },
   }
 
   /** Bound by a test to a camera that is not one; the real one otherwise. */
@@ -65,6 +83,23 @@ export class AddDeviceView extends DeviceFormView {
   declare uploadProblem: ImageProblem | PayloadProblem | undefined
   /** Bound by a test to a decoder that is not one; the real one otherwise. */
   decodeImage: (file: Blob) => Promise<readonly string[]> = codesFromImage
+  /** Bound by a test to a fake; the real API otherwise. */
+  declare catalog?: CatalogApi
+  /** Where the background lookup stands. Never read by anything that saves except `onSubmit`. */
+  declare lookupState: LookupState
+  /**
+   * Whether a lookup may be attempted at all. Plain fields rather than reactive properties,
+   * like {@link decodeImage}: a test binds them, nothing renders from them.
+   *
+   * `signedIn` asks for a token rather than the shell's session state, which this view cannot
+   * see; a token is exactly what the request needs.
+   */
+  signedIn: () => boolean = () => accessToken() !== undefined
+  /** `navigator.onLine` is trusted only to say *offline* (`connectivity.ts`). */
+  online: () => boolean = () => navigator.onLine !== false
+
+  private lookupTimer: ReturnType<typeof setTimeout> | undefined
+  private lookupAbort: AbortController | undefined
 
   constructor() {
     super()
@@ -72,6 +107,7 @@ export class AddDeviceView extends DeviceFormView {
     this.scanChecked = false
     this.scanOpen = false
     this.uploadProblem = undefined
+    this.lookupState = IDLE
   }
 
   protected override firstUpdated(): void {
@@ -108,6 +144,105 @@ export class AddDeviceView extends DeviceFormView {
     }
   }
 
+  override disconnectedCallback(): void {
+    // The form closing is one of the two moments the spec aborts a lookup; the other is the
+    // code changing. Nothing reactive is set here: the element is leaving.
+    this.stopLookup()
+    super.disconnectedCallback()
+  }
+
+  /**
+   * The code as the catalogue should receive it, or `undefined` when there is nothing to ask:
+   * not a readable code, or an 11-digit code, which carries no vendor or product id.
+   *
+   * Normalised (the payload, or the digits of a manual code), so "the same code typed with a
+   * trailing space" is recognised as the same question.
+   */
+  private lookupCode(): string | undefined {
+    let credential: ReturnType<typeof readCredential>
+    try {
+      credential = readCredential(fieldValue(this, '[data-field="credential"]'))
+    } catch {
+      return undefined
+    }
+    if (credential.vendorId === undefined || credential.productId === undefined) return undefined
+    return credential.payload ?? credential.manualCode
+  }
+
+  /** Stops whatever is scheduled or in flight, without touching what is shown. */
+  private stopLookup(): void {
+    clearTimeout(this.lookupTimer)
+    this.lookupTimer = undefined
+    this.lookupAbort?.abort()
+    this.lookupAbort = undefined
+  }
+
+  /**
+   * Starts a lookup for whatever the field now holds, after the debounce.
+   *
+   * Called on every change of the field: typing, a scan, an upload. Anything already scheduled
+   * or in flight is aborted first, and the names on screen go with it, because they describe a
+   * code that is no longer there. Never awaited by anything: submit reads {@link lookupState}
+   * as it is at that moment.
+   */
+  private scheduleLookup(): void {
+    const code = this.lookupCode()
+    const state = this.lookupState
+    if (code !== undefined && state.kind !== 'idle' && state.code === code) return
+
+    this.stopLookup()
+    this.lookupState = IDLE
+    if (code === undefined || !this.signedIn() || !this.online()) return
+
+    const controller = new AbortController()
+    this.lookupAbort = controller
+    this.lookupTimer = setTimeout(() => {
+      void this.runLookup(code, controller.signal)
+    }, LOOKUP_DEBOUNCE_MS)
+  }
+
+  /** Asks the catalogue about `code` and records the answer, unless it was superseded. */
+  private async runLookup(code: string, signal: AbortSignal): Promise<void> {
+    this.lookupTimer = undefined
+    this.lookupState = { kind: 'pending', code }
+    const outcome = await (this.catalog ?? catalog()).lookup(code, signal)
+    // Aborted means a newer question replaced this one, or the form closed; either way this
+    // answer is about nothing on screen.
+    if (signal.aborted) return
+    this.lookupAbort = undefined
+    // Every failure ends the same way: no names, nothing alarming. Backfill catches up later.
+    this.lookupState =
+      outcome.kind === 'found' ? { kind: 'found', code, result: outcome.lookup } : IDLE
+  }
+
+  /**
+   * The answer to pass to `planNewDevice`, or `undefined`.
+   *
+   * Only an answer for the code in the field *now*: one that landed for the code before it was
+   * corrected must not name this device.
+   */
+  private answerForSave(): CatalogLookup | undefined {
+    const state = this.lookupState
+    return state.kind === 'found' && state.code === this.lookupCode() ? state.result : undefined
+  }
+
+  /** The hint while asking, the names once answered. Always in the tree, so it is announced. */
+  private renderLookup(): TemplateResult {
+    const state = this.lookupState
+    return html`
+      <div role="status" data-catalog-status>
+        ${
+          state.kind === 'pending'
+            ? html`<small class="app-empty" data-catalog-pending>
+                ${msg('Looking up manufacturer…')}
+              </small>`
+            : ''
+        }
+        ${state.kind === 'found' ? this.renderCatalogLines(catalogNames(state.result)) : ''}
+      </div>
+    `
+  }
+
   /**
    * Puts a scanned code into the field, exactly as if it had been typed.
    *
@@ -119,6 +254,7 @@ export class AddDeviceView extends DeviceFormView {
   private onScan(event: Event): void {
     const { credential } = (event as CustomEvent<{ credential: string }>).detail
     this.setControlValue('[data-field="credential"]', credential)
+    this.scheduleLookup()
     this.scanOpen = false
     // A code that was scanned cannot be malformed in the ways a typed one can, so an error
     // still on screen from an earlier attempt is now about text that is no longer there.
@@ -163,6 +299,7 @@ export class AddDeviceView extends DeviceFormView {
         continue
       }
       this.setControlValue('[data-field="credential"]', code)
+      this.scheduleLookup()
       this.uploadProblem = undefined
       if (this.error?.field === 'credential') this.error = undefined
       return
@@ -197,10 +334,17 @@ export class AddDeviceView extends DeviceFormView {
 
       let creation: ReturnType<typeof planNewDevice>
       try {
-        creation = planNewDevice(this.draft(), rooms, {
-          uuid: () => crypto.randomUUID(),
-          now: () => new Date().toISOString(),
-        })
+        creation = planNewDevice(
+          this.draft(),
+          rooms,
+          {
+            uuid: () => crypto.randomUUID(),
+            now: () => new Date().toISOString(),
+          },
+          // Whatever has arrived by now. Submit never waits for a lookup: saving offline, or
+          // before the answer, is the normal case, and backfill fills the names in later.
+          this.answerForSave(),
+        )
       } catch (problem) {
         if (problem instanceof DraftError) {
           this.error = problem
@@ -239,7 +383,10 @@ export class AddDeviceView extends DeviceFormView {
             hint=${this.messageFor('credential') ?? msg('The MT: code from the QR label, or the numeric pairing code beneath it.')}
             autocomplete="off"
             spellcheck="false"
+            @input=${() => this.scheduleLookup()}
           ></wa-input>
+
+          ${this.renderLookup()}
 
           <div class="wa-cluster wa-gap-s">
             <!-- Absent, not disabled, when nothing here can scan. See {@link checkScanning}. -->
