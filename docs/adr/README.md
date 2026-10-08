@@ -27,10 +27,10 @@ decision to be wrong. That is the part people need eighteen months later.
 | [0016](0016-in-process-rate-limiting.md) | Rate limiting is in-process, which constrains how the API is deployed | Accepted |
 | [0017](0017-two-halves-one-contract.md) | Two halves and one contract, not a shared package | Accepted (supersedes 0004's reasoning) |
 | [0018](0018-own-qr-encoder.md) | Our own QR encoder, so the code matches the label | Accepted (supersedes the QR passages of 0007, 0008, 0013) |
+| [0019](0019-setup-code-to-own-api.md) | A setup code may travel to our own API for the catalogue lookup | Accepted (amends 0005) |
 
 ## Writing one
 
 Copy the shape of 0001. Keep it to a page. Record what was actually true when you decided,
 including the option you nearly took and why you did not. If a decision is later reversed,
 do not edit the old record — supersede it, so the reasoning trail stays intact.
-| [0019](0019-setup-code-to-own-api.md) | A setup code may travel to our own API for the catalogue lookup | Accepted (amends 0005) |
