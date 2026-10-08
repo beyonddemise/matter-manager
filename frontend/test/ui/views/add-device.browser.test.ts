@@ -9,12 +9,14 @@ import { fixture, html, waitUntil } from '@open-wc/testing-helpers'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { ProjectRepositories } from '../../../src/data/index.js'
 import type { DeviceDocument, RoomDocument } from '../../../src/domain/index.js'
+import type { CatalogApi, LookupOutcome } from '../../../src/ui/catalog.js'
 import { ImageScanError } from '../../../src/ui/scan/image.js'
 import type { ScanSource } from '../../../src/ui/scan/source.js'
 import type { AddDeviceView } from '../../../src/ui/views/add-device.js'
 import '../../../src/ui/views/add-device.js'
 import '../../../src/ui/views/scan-dialog.js'
 import { browserDatabase, type TestDatabase } from '../support/browser-database.js'
+import { AQARA_LOOKUP, aqaraPayload, deferred, fakeCatalog } from '../support/catalog.js'
 
 /** The verified reference device; see `test/domain/matter/payload.test.ts`. */
 const PAYLOAD = 'MT:Y.K9042C00KA0648G00'
@@ -68,6 +70,7 @@ function refusingWrites(): ProjectRepositories {
 async function form(
   repositories: ProjectRepositories = database.repositories,
   scanSource: ScanSource | undefined = neverAvailable(),
+  catalog?: { api: CatalogApi; online?: boolean },
 ): Promise<AddDeviceView> {
   await Promise.all([
     customElements.whenDefined('wa-input'),
@@ -78,9 +81,22 @@ async function form(
     html`<add-device-view
       .repositories=${repositories}
       .scanSource=${scanSource}
+      .catalog=${catalog?.api}
+      .signedIn=${() => catalog !== undefined}
+      .online=${() => catalog?.online ?? true}
     ></add-device-view>`,
   )) as AddDeviceView
 }
+
+/** Types into the setup-code field the way a keyboard does: value, then an `input` event. */
+function typeCode(element: HTMLElement, code: string): void {
+  fill(element, 'credential', code)
+  element
+    .querySelector('[data-field="credential"]')
+    ?.dispatchEvent(new Event('input', { bubbles: true, composed: true }))
+}
+
+const found = (): Promise<LookupOutcome> => Promise.resolve({ kind: 'found', lookup: AQARA_LOOKUP })
 
 /**
  * A scan source that says this browser cannot scan.
@@ -578,5 +594,158 @@ describe('filling the setup code with the camera', () => {
     const [device] = await devices()
     expect(device?.payload).toBe(PAYLOAD)
     expect(device?.vendorId).toBe(0xfff1)
+  })
+})
+
+describe('looking up the manufacturer', () => {
+  it('shows a quiet hint while it asks, then the names', async () => {
+    const answer = deferred<LookupOutcome>()
+    const { api, calls } = fakeCatalog(() => answer.promise)
+    const element = await form(database.repositories, neverAvailable(), { api })
+
+    typeCode(element, aqaraPayload())
+    await waitUntil(() => element.querySelector('[data-catalog-pending]') !== null, 'no hint')
+    expect(element.querySelector('[data-catalog-status]')?.getAttribute('role')).toBe('status')
+    expect(calls[0]?.code).toBe(aqaraPayload())
+
+    answer.resolve({ kind: 'found', lookup: AQARA_LOOKUP })
+    await waitUntil(() => element.querySelector('[data-catalog]') !== null, 'no names')
+    expect(element.querySelector('[data-catalog-pending]')).toBeNull()
+    // The preferred name, not the vendor name: what people call the company.
+    expect(element.querySelector('[data-catalog-manufacturer]')?.textContent).toBe('Aqara Home')
+    expect(element.querySelector('[data-catalog-product]')?.textContent).toBe(
+      'Aqara Door and Window Sensor P2',
+    )
+  })
+
+  it('waits for typing to pause before asking', async () => {
+    const { api, calls } = fakeCatalog(found)
+    const element = await form(database.repositories, neverAvailable(), { api })
+
+    typeCode(element, aqaraPayload())
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    expect(calls).toHaveLength(0)
+    await waitUntil(() => calls.length === 1, 'never asked', { timeout: 1000 })
+  })
+
+  it('copies the answer into the saved device', async () => {
+    const { api } = fakeCatalog(found)
+    const element = await form(database.repositories, neverAvailable(), { api })
+    typeCode(element, aqaraPayload())
+    await waitUntil(() => element.querySelector('[data-catalog]') !== null, 'no names')
+
+    fill(element, 'name', 'Front door sensor')
+    typeRoom(element, 'Hall')
+    await submit(element, async () => (await devices()).length === 1)
+
+    const [device] = await devices()
+    expect(device?.vendorName).toBe('Aqara')
+    expect(device?.vendorPreferredName).toBe('Aqara Home')
+    expect(device?.partNumber).toBe('AS056')
+    expect(device?.catalogSource).toBe('found')
+    expect(device?.payloadVersion).toBe(0)
+    expect(device?.discovery).toEqual({ softAp: false, ble: true, onNetwork: false })
+  })
+
+  it('asks nothing while the browser is offline, and saves without names', async () => {
+    const { api, calls } = fakeCatalog(found)
+    const element = await form(database.repositories, neverAvailable(), { api, online: false })
+    typeCode(element, aqaraPayload())
+    fill(element, 'name', 'Front door sensor')
+    typeRoom(element, 'Hall')
+    await new Promise((resolve) => setTimeout(resolve, 400))
+
+    await submit(element, async () => (await devices()).length === 1)
+
+    expect(calls).toHaveLength(0)
+    const [device] = await devices()
+    expect(device).not.toHaveProperty('vendorName')
+    expect(device).not.toHaveProperty('catalogCheckedAt')
+  })
+
+  it('shows nothing alarming when the lookup fails, and saves without names', async () => {
+    const { api } = fakeCatalog(() => Promise.resolve({ kind: 'unavailable' }))
+    const element = await form(database.repositories, neverAvailable(), { api })
+    typeCode(element, aqaraPayload())
+    await new Promise((resolve) => setTimeout(resolve, 400))
+    await element.updateComplete
+
+    expect(element.querySelector('[data-catalog]')).toBeNull()
+    expect(element.querySelector('wa-callout')).toBeNull()
+  })
+
+  it('aborts the earlier lookup when the code changes', async () => {
+    const { api, calls } = fakeCatalog(() => new Promise<LookupOutcome>(() => {}))
+    const element = await form(database.repositories, neverAvailable(), { api })
+
+    typeCode(element, aqaraPayload())
+    await waitUntil(() => calls.length === 1, 'never asked')
+    typeCode(element, '749701123365521327687')
+
+    expect(calls[0]?.signal?.aborted).toBe(true)
+    // A 21-digit code carries the ids, so it is looked up too, by its digits.
+    await waitUntil(() => calls.length === 2, 'the new code was never asked')
+    expect(calls[1]?.code).toBe('749701123365521327687')
+  })
+
+  it('never asks about an 11-digit code, which carries no ids', async () => {
+    const { api, calls } = fakeCatalog(found)
+    const element = await form(database.repositories, neverAvailable(), { api })
+    typeCode(element, SHORT_CODE)
+    await new Promise((resolve) => setTimeout(resolve, 400))
+    expect(calls).toHaveLength(0)
+  })
+
+  it('aborts the lookup when the form closes', async () => {
+    const { api, calls } = fakeCatalog(() => new Promise<LookupOutcome>(() => {}))
+    const element = await form(database.repositories, neverAvailable(), { api })
+    typeCode(element, aqaraPayload())
+    await waitUntil(() => calls.length === 1, 'never asked')
+
+    element.remove()
+
+    expect(calls[0]?.signal?.aborted).toBe(true)
+  })
+
+  it('does not wait for a slow lookup before saving, and ignores it when it lands', async () => {
+    const answer = deferred<LookupOutcome>()
+    const { api, calls } = fakeCatalog(() => answer.promise)
+    const element = await form(database.repositories, neverAvailable(), { api })
+    typeCode(element, aqaraPayload())
+    await waitUntil(() => calls.length === 1, 'never asked')
+
+    fill(element, 'name', 'Front door sensor')
+    typeRoom(element, 'Hall')
+    await submit(element, async () => (await devices()).length === 1)
+    answer.resolve({ kind: 'found', lookup: AQARA_LOOKUP })
+    await new Promise((resolve) => setTimeout(resolve, 50))
+
+    const all = await devices()
+    expect(all).toHaveLength(1)
+    expect(all[0]).not.toHaveProperty('vendorName')
+  })
+
+  it('drops the names when the code is edited after they arrived', async () => {
+    const { api } = fakeCatalog(found)
+    const element = await form(database.repositories, neverAvailable(), { api })
+    typeCode(element, aqaraPayload())
+    await waitUntil(() => element.querySelector('[data-catalog]') !== null, 'no names')
+
+    typeCode(element, SHORT_CODE)
+    await element.updateComplete
+    expect(element.querySelector('[data-catalog]')).toBeNull()
+
+    fill(element, 'name', 'Hall sensor')
+    typeRoom(element, 'Hall')
+    await submit(element, async () => (await devices()).length === 1)
+    expect((await devices())[0]).not.toHaveProperty('vendorName')
+  })
+
+  it('looks up a code that arrives from the camera', async () => {
+    const { api, calls } = fakeCatalog(found)
+    const element = await form(database.repositories, scanningSource(aqaraPayload()), { api })
+    await waitUntil(() => element.querySelector('[data-scan]') !== null)
+    ;(element.querySelector('[data-scan]') as HTMLElement).click()
+    await waitUntil(() => calls.length === 1, 'a scanned code was never looked up')
   })
 })
