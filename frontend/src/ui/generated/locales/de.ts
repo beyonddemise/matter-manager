@@ -181,6 +181,7 @@
 'sca29d7eb0a6eddce': str`„${0}“ ist wieder da, jetzt als „${1}“, weil jemand anderes den Raum geändert hat, während Sie offline waren. Es ist nichts verloren gegangen.`,
 'sca7d152bef51d9ba': `Raum`,
 'sca80944eb187d088': `Über Matter Manager`,
+'scb320e45978d3390': `Hersteller`,
 'scc022b0740943e53': `Gerät hinzufügen`,
 'scde3342a428aaee8': `Offline`,
 'scec753705109f78a': `Ein manueller Kopplungscode enthält außer Leerzeichen und Bindestrichen nur Ziffern.`,

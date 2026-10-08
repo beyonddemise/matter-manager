@@ -3,6 +3,7 @@ import {
   CATALOG_FIELD_KEYS,
   CATALOG_MISS_RETRY_MS,
   catalogFields,
+  catalogNames,
   isHttpsUrl,
   manufacturerName,
   needsCatalogLookup,
@@ -301,5 +302,85 @@ describe('withCatalogBlock', () => {
     const device = { name: 'Hall sensor', vendorName: 'Old' }
     withCatalogBlock(device, catalogFields(AQARA, CHECKED))
     expect(device).toEqual({ name: 'Hall sensor', vendorName: 'Old' })
+  })
+})
+
+describe('catalogNames', () => {
+  const PRODUCT_ONLY = {
+    name: 'x',
+    label: null,
+    partNumber: null,
+    deviceTypeId: null,
+    productUrl: null,
+    supportUrl: null,
+    userManualUrl: null,
+    commissioningCustomFlow: 0,
+    commissioningCustomFlowUrl: null,
+    commissioningInstructions: null,
+    factoryResetInstructions: null,
+  }
+
+  it('gives the preferred manufacturer name and the product name', () => {
+    expect(catalogNames(AQARA)).toEqual({
+      manufacturer: 'Aqara Home',
+      product: 'Aqara Door and Window Sensor P2',
+    })
+  })
+
+  it('falls back to the vendor name when there is no preferred one', () => {
+    const lookup = {
+      ...AQARA,
+      vendor: { name: 'Aqara', preferredName: '  ', legalName: null, landingPageUrl: null },
+    }
+    expect(catalogNames(lookup).manufacturer).toBe('Aqara')
+  })
+
+  it('omits blank names instead of returning empty strings', () => {
+    const lookup = {
+      ...AQARA,
+      vendor: { name: '', preferredName: '', legalName: null, landingPageUrl: null },
+      product: { ...PRODUCT_ONLY, name: ' ' },
+    }
+    expect(catalogNames(lookup)).toEqual({})
+  })
+
+  it('is empty for a miss', () => {
+    expect(
+      catalogNames({
+        vendorId: 1,
+        productId: 2,
+        source: 'missing',
+        vendor: null,
+        product: null,
+        fetchedAt: CHECKED,
+        stale: false,
+      }),
+    ).toEqual({})
+  })
+
+  it('names a test vendor the way the saved device will', () => {
+    const lookup: CatalogLookup = {
+      vendorId: 0xfff1,
+      productId: 1,
+      source: 'test-vendor',
+      vendor: {
+        name: 'Server spelling',
+        preferredName: null,
+        legalName: null,
+        landingPageUrl: null,
+      },
+      product: null,
+      fetchedAt: CHECKED,
+      stale: false,
+    }
+    expect(catalogNames(lookup)).toEqual({ manufacturer: 'Test vendor' })
+  })
+
+  it('agrees with catalogFields for the same answer', () => {
+    const fields = catalogFields(AQARA, CHECKED)
+    expect(catalogNames(AQARA)).toEqual({
+      manufacturer: manufacturerName(fields),
+      product: fields.productName,
+    })
   })
 })

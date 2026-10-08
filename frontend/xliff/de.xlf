@@ -930,6 +930,10 @@
   <source>Sync paused – signed out</source>
   <target>Abgleich pausiert – abgemeldet</target>
 </trans-unit>
+<trans-unit id="scb320e45978d3390">
+  <source>Manufacturer</source>
+  <target>Hersteller</target>
+</trans-unit>
 </body>
 </file>
 </xliff>

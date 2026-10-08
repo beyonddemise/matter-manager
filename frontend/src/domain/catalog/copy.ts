@@ -120,6 +120,16 @@ function present<K extends keyof CatalogFields, V>(
 }
 
 /**
+ * The vendor name a device gets from this answer.
+ *
+ * Forced for a test vendor rather than trusted: the backend says the same today, and the name
+ * a test vendor shows must not depend on a server that may say something else tomorrow.
+ */
+function vendorNameOf(lookup: CatalogLookup): string | undefined {
+  return lookup.source === 'test-vendor' ? TEST_VENDOR_NAME : text(lookup.vendor?.name)
+}
+
+/**
  * The catalogue block for one answer.
  *
  * @param lookup what the API answered
@@ -128,9 +138,7 @@ function present<K extends keyof CatalogFields, V>(
  */
 export function catalogFields(lookup: CatalogLookup, checkedAt: string): CatalogFields {
   const { vendor, product } = lookup
-  // Forced rather than trusted: the backend says the same today, and the name a test vendor
-  // shows must not depend on a server that may say something else tomorrow.
-  const vendorName = lookup.source === 'test-vendor' ? TEST_VENDOR_NAME : text(vendor?.name)
+  const vendorName = vendorNameOf(lookup)
   const deviceTypeId = product?.deviceTypeId
   return {
     ...present('vendorName', vendorName),
@@ -192,4 +200,30 @@ export function manufacturerName(
   fields: Pick<CatalogFields, 'vendorPreferredName' | 'vendorName'>,
 ): string | undefined {
   return fields.vendorPreferredName ?? fields.vendorName
+}
+
+/** The two names a form shows from the catalogue, each omitted when unknown. */
+export interface CatalogNames {
+  readonly manufacturer?: string
+  readonly product?: string
+}
+
+/**
+ * The names a catalogue answer gives, by the same rules the saved device will get them.
+ *
+ * Shares {@link vendorNameOf} and {@link manufacturerName} with {@link catalogFields} so a form
+ * never shows a name the device would not have (a blank one, or a test vendor's server-side
+ * spelling), and without {@link catalogFields}' timestamp, which a display has no business
+ * inventing.
+ */
+export function catalogNames(lookup: CatalogLookup): CatalogNames {
+  const manufacturer = manufacturerName({
+    ...present('vendorPreferredName', text(lookup.vendor?.preferredName)),
+    ...present('vendorName', vendorNameOf(lookup)),
+  })
+  const product = text(lookup.product?.name)
+  return {
+    ...(manufacturer === undefined ? {} : { manufacturer }),
+    ...(product === undefined ? {} : { product }),
+  }
 }

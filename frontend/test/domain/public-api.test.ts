@@ -70,6 +70,7 @@ const EXPECTED: ReadonlyArray<
   ['CATALOG_MISS_RETRY_MS', 'number'],
   ['TEST_VENDOR_NAME', 'string'],
   ['catalogFields', 'function'],
+  ['catalogNames', 'function'],
   ['isHttpsUrl', 'function'],
   ['manufacturerName', 'function'],
   ['needsCatalogLookup', 'function'],
