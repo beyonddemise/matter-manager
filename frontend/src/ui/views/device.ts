@@ -6,6 +6,8 @@ import {
   type DeviceDocument,
   DraftError,
   documentId,
+  isHttpsUrl,
+  manufacturerName,
   type Remark,
   type RoomDocument,
   remarksNewestFirst,
@@ -676,11 +678,107 @@ export class DeviceView extends LitElement {
       <div class="wa-grid app-details">
         ${this.field(msg('Room'), this.room?.path ?? msg('Without a room'))}
         ${this.field(msg('Spot'), device.spot)}
-        ${this.field(msg('Vendor'), device.vendorName ?? this.hex(device.vendorId))}
+        ${this.field(msg('Manufacturer'), manufacturerName(device) ?? this.hex(device.vendorId))}
         ${this.field(msg('Product'), device.productName ?? this.hex(device.productId))}
+        ${this.field(msg('Part number'), device.partNumber)}
         ${this.field(msg('Serial number'), device.serial)}
         ${this.field(msg('Installed'), device.installedAt)}
       </div>
+    `
+  }
+
+  /**
+   * A link to the manufacturer, or nothing.
+   *
+   * `https:` is checked here again although `catalogFields` already filtered it: a device
+   * document can arrive by sync from any client, and this is where a URL becomes clickable.
+   * A new tab without an opener or a referrer, because the page is the manufacturer's. The
+   * label is fixed rather than the URL's host: `isHttpsUrl` accepts userinfo
+   * (`https://good.example@evil.example`), so a host read off the string could mislead.
+   */
+  private link(label: string, url: string | undefined, kind: string): TemplateResult | '' {
+    if (!isHttpsUrl(url)) return ''
+    return html`<a href=${url} target="_blank" rel="noopener noreferrer" data-link=${kind}>
+      ${label}<span class="wa-visually-hidden"> (${msg('opens in a new tab')})</span>
+    </a>`
+  }
+
+  /**
+   * How the device is found and whether it needs more than the usual pairing.
+   *
+   * These are facts, not statuses, so per DESIGN.md's One Status Vocabulary Rule they are
+   * neutral, small and without an icon; icons and coloured variants are reserved for status.
+   */
+  private renderPairing(device: DeviceDocument): TemplateResult | '' {
+    // Each tag written out in full: an attribute *name* cannot be a Lit binding, so a helper
+    // taking `data-discovery` vs `data-flow` as a parameter would need `unsafeStatic`.
+    const tags = [
+      device.discovery?.ble === true
+        ? html`<wa-tag size="s" variant="neutral" data-discovery="ble">${msg('BLE')}</wa-tag>`
+        : '',
+      device.discovery?.softAp === true
+        ? html`<wa-tag size="s" variant="neutral" data-discovery="soft-ap">${msg('Wi-Fi')}</wa-tag>`
+        : '',
+      device.discovery?.onNetwork === true
+        ? html`<wa-tag size="s" variant="neutral" data-discovery="on-network">${msg('On network')}</wa-tag>`
+        : '',
+      device.commissioningFlow === 'custom'
+        ? html`<wa-tag size="s" variant="neutral" data-flow="custom">${msg('Needs the manufacturer’s app')}</wa-tag>`
+        : '',
+      device.commissioningFlow === 'userActionRequired'
+        ? html`<wa-tag size="s" variant="neutral" data-flow="user-action">${msg('Needs a step on the device first')}</wa-tag>`
+        : '',
+    ].filter((entry) => entry !== '')
+    if (tags.length === 0) return ''
+    return html`
+      <div class="wa-stack wa-gap-3xs" data-pairing>
+        <small class="app-empty">${msg('Pairing')}</small>
+        <div class="wa-cluster wa-gap-2xs">${tags}</div>
+      </div>
+    `
+  }
+
+  /**
+   * Links, pairing facts and the two instruction sections; each only when it has content.
+   *
+   * DCL text is untrusted, so it goes in as a text binding (Lit escapes it), never through
+   * `unsafeHTML`. `.app-catalog-text` keeps the line breaks the manufacturer wrote and wraps a
+   * long unbroken string rather than widening a phone screen.
+   */
+  private renderCatalog(device: DeviceDocument): TemplateResult {
+    const links = [
+      this.link(msg('Product page'), device.productUrl, 'product'),
+      this.link(msg('Support'), device.supportUrl, 'support'),
+      this.link(msg('User manual'), device.userManualUrl, 'manual'),
+    ].filter((entry) => entry !== '')
+    const flowLink = this.link(
+      msg('The manufacturer’s pairing instructions'),
+      device.commissioningFlowUrl,
+      'commissioning-flow',
+    )
+    const steps = device.commissioningInstructions
+    const reset = device.factoryResetInstructions
+
+    return html`
+      ${links.length === 0 ? '' : html`<div class="wa-cluster wa-gap-m" data-links>${links}</div>`}
+      ${this.renderPairing(device)}
+      ${
+        steps === undefined && flowLink === ''
+          ? ''
+          : html`<wa-details summary=${msg('How to put it in pairing mode')} data-pairing-steps>
+              <div class="wa-stack wa-gap-s">
+                ${steps === undefined ? '' : html`<p class="app-catalog-text">${steps}</p>`}
+                ${flowLink}
+              </div>
+            </wa-details>`
+      }
+      ${
+        reset === undefined
+          ? ''
+          : html`<wa-details summary=${msg('Factory reset')} data-factory-reset>
+              <p class="app-catalog-text">${reset}</p>
+            </wa-details>`
+      }
     `
   }
 
@@ -720,7 +818,7 @@ export class DeviceView extends LitElement {
         </div>
 
         ${this.renderCode(device)} ${this.renderActions(device)} ${this.renderDetails(device)}
-        ${this.renderRemarks(device)}
+        ${this.renderCatalog(device)} ${this.renderRemarks(device)}
 
         <a class="app-back" href="#/devices">${msg('Back to devices')}</a>
 
