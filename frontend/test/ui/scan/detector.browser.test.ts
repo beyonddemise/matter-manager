@@ -1,5 +1,3 @@
-import '@awesome.me/webawesome-pro/dist/components/qr-code/qr-code.js'
-import { fixture, html, waitUntil } from '@open-wc/testing-helpers'
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
   chooseDetector,
@@ -8,32 +6,19 @@ import {
   nativeDetector,
   zxingDetector,
 } from '../../../src/ui/scan/detector.js'
+import { qrCanvas } from '../qr/raster.js'
 
 /** The verified reference payload; see `test/domain/matter/payload.test.ts`. */
 const PAYLOAD = 'MT:Y.K9042C00KA0648G00'
 
 /**
- * A canvas carrying a genuinely rendered QR code.
+ * A canvas carrying a genuinely drawn QR code, from the same encoder the app uses.
  *
- * Rendered by `<wa-qr-code>` and copied pixel for pixel, rather than assembled from a fixture
- * string. The point of a decoder test is that it decodes an *image*; handing it bytes that
- * were never drawn would test the plumbing and not the reading.
+ * Pixels rather than a fixture string. The point of a decoder test is that it decodes an
+ * *image*; handing it bytes that were never drawn would test the plumbing and not the reading.
  */
 async function canvasShowing(payload: string): Promise<HTMLCanvasElement> {
-  await customElements.whenDefined('wa-qr-code')
-  const code = (await fixture(
-    html`<wa-qr-code value=${payload} size="240" error-correction="H" fill="black" background="white"></wa-qr-code>`,
-  )) as HTMLElement & { updateComplete?: Promise<unknown> }
-  await code.updateComplete
-
-  const drawn = code.shadowRoot?.querySelector('canvas') as HTMLCanvasElement | null
-  await waitUntil(() => (drawn?.width ?? 0) > 0, 'the QR canvas never got dimensions')
-
-  const canvas = document.createElement('canvas')
-  canvas.width = (drawn as HTMLCanvasElement).width
-  canvas.height = (drawn as HTMLCanvasElement).height
-  canvas.getContext('2d')?.drawImage(drawn as HTMLCanvasElement, 0, 0)
-  return canvas
+  return qrCanvas(payload)
 }
 
 /** A blank canvas: white, and carrying nothing. */

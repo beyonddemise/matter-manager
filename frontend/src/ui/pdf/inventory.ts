@@ -6,7 +6,7 @@
  *
  * The division of labour is the one this repository uses everywhere: `core` decided *where*
  * everything goes (`pdf/layout.ts`, and every page-break invariant is tested there), and this
- * file does the impure half — rasterising codes and writing bytes.
+ * file does the impure half — drawing codes and writing bytes.
  *
  * @module
  */
@@ -21,7 +21,7 @@ import {
   type PageGeometry,
 } from '../../domain/index.js'
 import { ExportCancelled, type InventoryProgress } from './progress.js'
-import { renderQrPng } from './qr-image.js'
+import { drawQr } from './qr.js'
 import { winAnsiSafe } from './win-ansi.js'
 import { yieldToBrowser } from './yield.js'
 
@@ -119,13 +119,7 @@ export async function buildInventoryPdf(
 
       if (options.cancelled?.() === true) throw new ExportCancelled('The export was cancelled.')
 
-      await drawEntry(page, block, { yOf, geometry, regular, bold, ink, quiet, labels, pdf })
-      // `embedPng` is **lazy**: it registers an embedder and does the decoding and deflating
-      // at save time. Left alone, two hundred images are processed in one synchronous call at
-      // the end — which measured as a 5.6-second freeze *after* the last progress callback,
-      // with the loop above looking perfectly well-behaved. Flushing here does that work now,
-      // inside the loop, where the yield below can break it up.
-      await pdf.flush()
+      drawEntry(page, block, { yOf, geometry, regular, bold, ink, quiet, labels })
       done += 1
       options.onProgress?.({ done, total })
       // Once per device, and it is what makes the progress callout above actually appear.
@@ -165,8 +159,6 @@ export async function buildInventoryPdf(
   // normalisation, so whichever call ran second was fast because the first had done the work.
   // Measured properly on two documents, object streams are the faster of the two (25ms against
   // 61ms for sixty pages) as well as producing the smaller file.
-  //
-  // The real cost was the deferred image embedding flushed above.
   return pdf.save()
 }
 
@@ -205,28 +197,21 @@ function drawHeading(
   })
 }
 
-async function drawEntry(
+function drawEntry(
   page: ReturnType<PDFDocument['addPage']>,
   block: EntryBlock,
   context: Drawing & {
     readonly regular: Awaited<ReturnType<PDFDocument['embedFont']>>
     readonly bold: Awaited<ReturnType<PDFDocument['embedFont']>>
     readonly quiet: ReturnType<typeof rgb>
-    readonly pdf: PDFDocument
   },
-): Promise<void> {
-  const { yOf, geometry, regular, bold, ink, quiet, labels, pdf } = context
+): void {
+  const { yOf, geometry, regular, bold, ink, quiet, labels } = context
   const device = block.device
   const left = geometry.margin
 
   if (device.payload !== undefined) {
-    const png = await pdf.embedPng(await renderQrPng(device.payload, QR_SIZE))
-    page.drawImage(png, {
-      x: left,
-      y: yOf(block.top + QR_SIZE),
-      width: QR_SIZE,
-      height: QR_SIZE,
-    })
+    drawQr(page, device.payload, { x: left, top: yOf(block.top), size: QR_SIZE })
   } else {
     // No payload, and none can be invented: a manual code carries only the top four bits of
     // the discriminator, so a reconstructed payload would produce a QR that encodes cleanly

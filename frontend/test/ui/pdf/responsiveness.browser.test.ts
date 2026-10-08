@@ -1,4 +1,3 @@
-import '@awesome.me/webawesome-pro/dist/components/qr-code/qr-code.js'
 import { describe, expect, it } from 'vitest'
 import { browseDevices, type DeviceDocument, type RoomDocument } from '../../../src/domain/index.js'
 import {
@@ -99,8 +98,9 @@ async function longestFrameGap(work: () => Promise<unknown>): Promise<number> {
 /**
  * What counts as frozen, on an idle machine with nothing to do.
  *
- * Used only by the control below, where no work is happening and any gap this large means the
- * runner is not delivering frames at all.
+ * The control below uses it as is: no work is happening, and any gap this large means the
+ * runner is not delivering frames at all. The export tests use it as a floor; see
+ * {@link worstAllowed}.
  */
 const FROZEN = 250
 
@@ -137,6 +137,21 @@ const DEVICES = 40
  */
 const WORST_SHARE = 0.35
 
+/**
+ * The longest unbroken stretch an export of this length may contain.
+ *
+ * {@link WORST_SHARE} of the total, but never less than {@link FROZEN}. The floor is needed
+ * because the share stops meaning anything once the whole export is short. Chromium runs
+ * `scheduler.yield()` continuations ahead of rendering for up to about 100ms, so an export
+ * that finishes in 125ms is one frame gap from start to finish however well it yields:
+ * 100% of the total, and not a freeze anyone could see. It happened when QR codes became
+ * vector paths and the per-device cost fell to about a millisecond. On a slow runner, where
+ * an export takes seconds, the share is the larger bound and still does the work.
+ */
+function worstAllowed(total: number): number {
+  return Math.max(total * WORST_SHARE, FROZEN)
+}
+
 describe('the measurement itself', () => {
   it('sees frames arriving when nothing is blocking', async () => {
     // The positive control, and it is not optional here. This measurement is "the longest gap
@@ -167,7 +182,7 @@ describe('a large export', () => {
     const total = performance.now() - started
 
     expect(seen).toBe(DEVICES)
-    expect(worst).toBeLessThan(total * WORST_SHARE)
+    expect(worst).toBeLessThan(worstAllowed(total))
   }, 300_000)
 
   it('does not save up its work for one block at the end', async () => {
@@ -189,12 +204,10 @@ describe('a large export', () => {
     const total = performance.now() - started
     const afterLastDevice = performance.now() - lastProgress
 
-    // Relative for the same reason as above. Measured before the fix, the tail was 5.6 seconds
-    // against a total of 8 — about seventy per cent of the export in one unbreakable call.
     // A share of the whole, for the same reason as above. Measured before the fix, this tail
     // was 5.6 seconds against a total of 8 — sixty-nine per cent of the export in one
     // unbreakable call, after the last progress callback had already reported 100%.
-    expect(afterLastDevice).toBeLessThan(total * WORST_SHARE)
+    expect(afterLastDevice).toBeLessThan(worstAllowed(total))
     expect(lastProgress).toBeGreaterThan(started)
   }, 300_000)
 

@@ -215,28 +215,32 @@ a.app-device:hover {
   --min-column-size: calc(var(--wa-space-5xl) * 2.4);
 }
 
-/* The QR's quiet zone. White regardless of the colour scheme, because an inverted QR is one
-   many scanners will not read at all - see the note in views/device.ts. This and the fill
-   passed to <wa-qr-code> are the only colours in the application that are not --wa-* tokens,
-   and the reason is that they are not decoration: they are what makes the code scan. */
+/* The QR's plate. White regardless of the colour scheme, because an inverted QR is one many
+   scanners will not read at all - see the note in views/device.ts. This and the colours
+   written into the QR image (qr/render.ts) are the only colours in the application that are
+   not --wa-* tokens, and the reason is that they are not decoration: they make the code scan.
+
+   No padding: the quiet zone is part of the image, four modules at any size (QUIET_ZONE in
+   qr/render.ts). Padding here was a fixed length, about 2.5 modules at the inline size.
+   `overflow: hidden` rounds the image's corners with the plate's, cutting only quiet zone. */
 .app-qr-plate {
   display: inline-flex;
   max-width: 100%;
-  padding: var(--wa-space-m);
+  overflow: hidden;
   border-radius: var(--wa-border-radius-m);
   background-color: white;
 }
 
-/* Do NOT try to solve the enlarged QR's width from here. <wa-qr-code> writes
-   `min-width: <size>px` onto its canvas as an inline style, and a min-width beats any
-   max-width we can set from outside its shadow root - a code too big for the dialog is
-   CLIPPED, not scaled, and a QR missing its right-hand columns does not scan. Tried, measured
-   at 360px, and it made things worse rather than better. The size is chosen in
-   views/device.ts, where the pixel count already lives, and that is the only place it works.
-
-   Also worth knowing before deleting anything here: the browser test decodes the canvas
-   bitmap, which CSS never touches, so no test in this repository can catch the clipping. It
-   was found by opening the page at 360px wide, and that is how it will be found again. */
+/* The QR image (qr/render.ts) scales down rather than overflowing its plate: a code cut off at
+   the edge does not scan, and a smaller complete one usually does. The pixel size chosen in
+   views/device.ts keeps the usual case crisp. This is the backstop. */
+.app-qr {
+  display: block;
+  /* A flex item will not shrink below its content width without this. */
+  min-width: 0;
+  max-width: 100%;
+  height: auto;
+}
 
 .app-pairing-code {
   font-family: var(--wa-font-family-code);
@@ -596,15 +600,13 @@ wa-page[view="mobile"] .app-projects-table .app-cell-actions {
     border: var(--wa-border-width-s) dashed var(--wa-color-gray-50);
   }
 
-  /* The QR's quiet zone must stay white whatever the surrounding palette does — a code printed
-     as dark modules on nothing does not scan, and that is the one thing on the page nobody can
-     work around. It does not need `!important` to do that: the only other rule touching this
-     class is the `.app-qr-plate` block above, at the same specificity and earlier in the file,
-     which already sets `background-color: white` and which this overrides by order. The
-     `padding` below has always relied on exactly that and has always worked. */
+  /* The QR's plate must stay white whatever the surrounding palette does — a code printed as
+     dark modules on nothing does not scan, and that is the one thing on the page nobody can
+     work around. It does not need `!important`: the `.app-qr-plate` block above has the same
+     specificity and comes earlier, so this wins by order. The quiet zone is inside the image
+     (qr/render.ts), so there is no print-specific padding to add. */
   .app-qr-plate {
     background-color: white;
-    padding: 4mm;
   }
 
   /* Hash routes mean nothing off the device, so they print as text rather than as underlined

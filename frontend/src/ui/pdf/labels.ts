@@ -1,7 +1,7 @@
 /**
  * Writing a sheet of adhesive labels.
  *
- * Shares everything it can with the inventory: the same off-screen QR rasteriser, the same
+ * Shares everything it can with the inventory: the same vector QR (`qr.ts`), the same
  * progress and cancellation seams, the same rule that `core` decided where things go. What is
  * different is the target — a physical die-cut sheet — and that changes one thing about the
  * drawing: **nothing may be scaled.** The page is exactly the sheet, and the positions are
@@ -22,7 +22,7 @@ import {
   type PlacedLabel,
 } from '../../domain/index.js'
 import { ExportCancelled, type InventoryProgress } from './progress.js'
-import { renderQrPng } from './qr-image.js'
+import { drawQr } from './qr.js'
 import { winAnsiSafe } from './win-ansi.js'
 import { yieldToBrowser } from './yield.js'
 
@@ -102,10 +102,7 @@ export async function buildLabelPdf(
 
     for (const label of sheet.labels) {
       if (options.cancelled?.() === true) throw new ExportCancelled('The export was cancelled.')
-      await drawLabel(page, label, { pdf, regular, bold, ink, quiet, yOf, options })
-      // See the note in `inventory.ts`: `embedPng` defers its work to save time, and a sheet
-      // of sixty-five labels is sixty-five images to decode in one block at the end.
-      await pdf.flush()
+      drawLabel(page, label, { regular, bold, ink, quiet, yOf, options })
       done += 1
       options.onProgress?.({ done, total: subjects.length })
       await yieldToBrowser()
@@ -121,11 +118,10 @@ export async function buildLabelPdf(
   return pdf.save()
 }
 
-async function drawLabel(
+function drawLabel(
   page: ReturnType<PDFDocument['addPage']>,
   label: PlacedLabel,
   context: {
-    readonly pdf: PDFDocument
     readonly regular: Awaited<ReturnType<PDFDocument['embedFont']>>
     readonly bold: Awaited<ReturnType<PDFDocument['embedFont']>>
     readonly ink: ReturnType<typeof rgb>
@@ -133,8 +129,8 @@ async function drawLabel(
     readonly yOf: (top: number) => number
     readonly options: LabelOptions
   },
-): Promise<void> {
-  const { pdf, regular, bold, ink, quiet, yOf, options } = context
+): void {
+  const { regular, bold, ink, quiet, yOf, options } = context
   const device = label.device
 
   // Ink stays clear of the die-cut edge. Sheet-feed registration drifts by more than any
@@ -151,8 +147,7 @@ async function drawLabel(
   const qrSize = Math.min(height, label.width * 0.4)
 
   if (device.payload !== undefined) {
-    const png = await pdf.embedPng(await renderQrPng(device.payload, qrSize))
-    page.drawImage(png, { x: left, y: yOf(top + qrSize), width: qrSize, height: qrSize })
+    drawQr(page, device.payload, { x: left, top: yOf(top), size: qrSize })
   } else {
     page.drawRectangle({
       x: left,

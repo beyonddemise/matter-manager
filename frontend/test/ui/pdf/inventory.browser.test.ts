@@ -1,5 +1,3 @@
-import '@awesome.me/webawesome-pro/dist/components/qr-code/qr-code.js'
-import { BrowserQRCodeReader } from '@zxing/browser'
 import { describe, expect, it } from 'vitest'
 import { browseDevices, type DeviceDocument, type RoomDocument } from '../../../src/domain/index.js'
 import {
@@ -7,7 +5,6 @@ import {
   ExportCancelled,
   type InventoryLabels,
 } from '../../../src/ui/pdf/inventory.js'
-import { renderQrPng } from '../../../src/ui/pdf/qr-image.js'
 
 /** The verified reference device; see `test/domain/matter/payload.test.ts`. */
 const PAYLOAD = 'MT:Y.K9042C00KA0648G00'
@@ -135,43 +132,5 @@ describe('exporting an inventory', () => {
 
     expect(text).not.toContain('/Author')
     expect(text).not.toContain('/Keywords')
-  })
-})
-
-describe('the QR code that reaches the page', () => {
-  it('decodes back to the payload it was built from', async () => {
-    // The scenario the whole feature rests on. Decoded from the rendered pixels, not from the
-    // property that was set: a test asserting `value === payload` would pass against a
-    // component that drew nothing at all, and a blank code in a printed inventory is
-    // discovered years later by someone holding a phone up to it.
-    const png = await renderQrPng(PAYLOAD, 96)
-    const bitmap = await createImageBitmap(new Blob([png as BlobPart], { type: 'image/png' }))
-
-    const canvas = document.createElement('canvas')
-    canvas.width = bitmap.width
-    canvas.height = bitmap.height
-    canvas.getContext('2d')?.drawImage(bitmap, 0, 0)
-
-    expect(new BrowserQRCodeReader().decodeFromCanvas(canvas).getText()).toBe(PAYLOAD)
-  })
-
-  it('is rendered well above its printed size', async () => {
-    // Raster, not vector — `<wa-qr-code>` keeps its encoder inside the component, so there is
-    // no matrix to draw as rectangles. That makes render resolution a correctness concern:
-    // a code rendered at printed size has soft module edges on paper, and a phone at arm's
-    // length inside a fuse box is not a forgiving reader.
-    const png = await renderQrPng(PAYLOAD, 96)
-    const bitmap = await createImageBitmap(new Blob([png as BlobPart], { type: 'image/png' }))
-
-    expect(bitmap.width).toBeGreaterThanOrEqual(96 * 4)
-  })
-
-  it('leaves nothing behind in the document', async () => {
-    // The codes are rendered off-screen. An export of five hundred devices that left five
-    // hundred components in the DOM would be a leak measured in a frozen tab.
-    const before = document.querySelectorAll('wa-qr-code').length
-    await renderQrPng(PAYLOAD, 96)
-
-    expect(document.querySelectorAll('wa-qr-code').length).toBe(before)
   })
 })

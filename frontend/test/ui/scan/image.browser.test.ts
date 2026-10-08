@@ -1,32 +1,21 @@
-import '@awesome.me/webawesome-pro/dist/components/qr-code/qr-code.js'
-import { fixture, html, waitUntil } from '@open-wc/testing-helpers'
 import { describe, expect, it } from 'vitest'
 import { codesFromImage, ImageScanError } from '../../../src/ui/scan/image.js'
+import { qrCanvas } from '../qr/raster.js'
 
 /** The verified reference payload; see `test/domain/matter/payload.test.ts`. */
 const PAYLOAD = 'MT:Y.K9042C00KA0648G00'
 
 /**
- * A PNG file carrying a genuinely rendered QR code.
+ * A PNG file carrying a genuinely drawn QR code, from the same encoder the app uses.
  *
- * Drawn by `<wa-qr-code>` and encoded to a real PNG, rather than assembled from a fixture
- * string, for the reason `detector.browser.test.ts` gives about its own canvas: the point of a
- * decoder test is that it decodes an *image*. Handing it bytes that were never drawn would
- * test the plumbing and not the reading. Going through `toBlob` adds the one step this module
- * owns and `detector.ts` does not — turning a file back into pixels.
+ * Pixels encoded to a real PNG rather than a fixture string, for the reason
+ * `detector.browser.test.ts` gives about its own canvas: the point of a decoder test is that
+ * it decodes an *image*. Going through `toBlob` adds the one step this module owns and
+ * `detector.ts` does not — turning a file back into pixels.
  */
 async function pngShowing(payload: string): Promise<Blob> {
-  await customElements.whenDefined('wa-qr-code')
-  const code = (await fixture(
-    html`<wa-qr-code value=${payload} size="240" error-correction="H" fill="black" background="white"></wa-qr-code>`,
-  )) as HTMLElement & { updateComplete?: Promise<unknown> }
-  await code.updateComplete
-
-  const drawn = code.shadowRoot?.querySelector('canvas') as HTMLCanvasElement | null
-  await waitUntil(() => (drawn?.width ?? 0) > 0, 'the QR canvas never got dimensions')
-
   return await new Promise<Blob>((resolve, reject) => {
-    ;(drawn as HTMLCanvasElement).toBlob((blob) => {
+    qrCanvas(payload).toBlob((blob) => {
       if (blob === null) reject(new Error('the canvas produced no blob'))
       else resolve(blob)
     }, 'image/png')
