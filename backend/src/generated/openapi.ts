@@ -931,10 +931,106 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/catalog/lookup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Name the manufacturer and product of a setup code
+         * @description Decodes the code to its vendor and product IDs and answers what the CSA's Distributed
+         *     Compliance Ledger (DCL) says about them, from a cache the API keeps in `matter_catalog`.
+         *
+         *     **The code travels in the body**, never in the URL, so it appears in no access log. The
+         *     API decodes it in memory and never stores or logs it; **only the two IDs reach the
+         *     DCL** (ADR 0019).
+         *
+         *     Open to every plan: the answer is public catalogue data, and the client copies it into
+         *     the device document wherever that lives.
+         *
+         *     Test vendors 0xFFF1–0xFFF4 are answered locally as `test-vendor` and never sent to the
+         *     DCL. `missing` is a normal 200, not an error: the ledger simply has no record. A cached
+         *     record past its freshness is served with `stale: true` when the DCL cannot be reached.
+         */
+        post: operations["lookupCatalog"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        CatalogLookupRequest: {
+            /**
+             * @description A QR payload (`MT:` and Base-38) or a 21-digit manual pairing code, as scanned or
+             *     typed. Surrounding whitespace and digit-group separators are tolerated.
+             */
+            code: string;
+        };
+        /**
+         * @description What the catalogue knows about one vendor and product. Every text the DCL leaves empty,
+         *     and every number it leaves 0, is `null` here. DCL text is untrusted: render it as text,
+         *     and a URL only when it is `https:`.
+         */
+        CatalogLookup: {
+            /** @description The vendor ID decoded from the code. */
+            vendorId: number;
+            /** @description The product ID decoded from the code. */
+            productId: number;
+            /**
+             * @description `dcl` when the ledger has both the vendor and the model; `missing` when it lacks
+             *     either, with whichever half it has still filled in; `test-vendor` for 0xFFF1–0xFFF4.
+             * @enum {string}
+             */
+            source: "dcl" | "test-vendor" | "missing";
+            vendor: components["schemas"]["CatalogVendor"] | null;
+            product: components["schemas"]["CatalogProduct"] | null;
+            /**
+             * Format: date-time
+             * @description When the DCL was asked; the older of the two records when they differ.
+             */
+            fetchedAt: string;
+            /**
+             * @description `true` when a record past its freshness (90 days found, 1 day missing) was served
+             *     because the DCL could not be reached.
+             */
+            stale: boolean;
+        };
+        CatalogVendor: {
+            /** @description The DCL `vendorName`. */
+            name: string;
+            /** @description The DCL `companyPreferredName`. */
+            preferredName: string | null;
+            /** @description The DCL `companyLegalName`. */
+            legalName: string | null;
+            /** @description The DCL `vendorLandingPageURL`. */
+            landingPageUrl: string | null;
+        };
+        CatalogProduct: {
+            /** @description The DCL `productName`. */
+            name: string;
+            /** @description The DCL `productLabel`. */
+            label: string | null;
+            partNumber: string | null;
+            deviceTypeId: number | null;
+            productUrl: string | null;
+            supportUrl: string | null;
+            userManualUrl: string | null;
+            /** @description 0 standard, 1 user action required, 2 custom. Not nulled; 0 is a value. */
+            commissioningCustomFlow: number;
+            commissioningCustomFlowUrl: string | null;
+            /** @description The DCL `commissioningModeInitialStepsInstruction`. */
+            commissioningInstructions: string | null;
+            /** @description The DCL `factoryResetStepsInstruction`. */
+            factoryResetInstructions: string | null;
+        };
         /**
          * @description `read` and `write` map onto CouchDB's `_security`. `manage` and `owner` are
          *     enforced by this API only - CouchDB cannot express them, since it has no concept
@@ -1211,4 +1307,77 @@ export interface components {
     pathItems: never;
 }
 export type $defs = Record<string, never>;
-export type operations = Record<string, never>;
+export interface operations {
+    lookupCatalog: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CatalogLookupRequest"];
+            };
+        };
+        responses: {
+            /** @description What the catalogue knows about this vendor and product */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CatalogLookup"];
+                };
+            };
+            /** @description Not a decodable setup code. Never echoes the code. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            /**
+             * @description A valid code that carries no vendor or product ID - the 11-digit manual pairing
+             *     code. There is nothing to look up, and asking again will not change that.
+             */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /**
+             * @description Too many lookups by this account. Counted per signed-in subject, not per address,
+             *     so one account cannot use this as a free DCL proxy.
+             */
+            429: {
+                headers: {
+                    /** @description Seconds until the window resets. Never zero. */
+                    "retry-after"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /**
+             * @description The DCL is unreachable or did not answer within five seconds, and nothing is cached
+             *     for this vendor and product. Safe to retry later.
+             */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+}

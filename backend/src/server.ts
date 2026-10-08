@@ -16,6 +16,7 @@
 
 import Fastify, { type FastifyInstance } from 'fastify'
 import { type AuthDependencies, registerAuthRoutes } from './auth/routes.js'
+import { type CatalogDependencies, registerCatalogRoutes } from './catalog/routes.js'
 import type { paths } from './generated/openapi.js'
 import { redactionOptions } from './logging.js'
 import { registerCustomerRoutes } from './profile/customer.js'
@@ -26,7 +27,7 @@ import {
   registerProfileRoutes,
 } from './profile/routes.js'
 import { type ProjectDependencies, registerProjectRoutes } from './projects/routes.js'
-import { registerSecurity, type SecurityOptions } from './security/register.js'
+import { DEFAULT_LIMITS, registerSecurity, type SecurityOptions } from './security/register.js'
 
 /** The response body for an operation, straight from the contract. */
 type Response<
@@ -69,6 +70,14 @@ export interface ServerOptions {
    * as unimplemented — which is true.
    */
   readonly projects?: ProjectDependencies
+  /**
+   * The catalogue lookup (ADR 0019).
+   *
+   * Everything but the rate limit, which comes from `security.limits` so that every limit is
+   * configured in one place. Absent means the route is absent, which the contract-drift check
+   * reads as unimplemented — which is true.
+   */
+  readonly catalog?: Omit<CatalogDependencies, 'limit'>
   /**
    * Rate limits, cross-origin access and the headers on every response.
    *
@@ -191,6 +200,12 @@ export function buildServer(options: ServerOptions = {}): Server {
     })
   }
   if (options.projects !== undefined) registerProjectRoutes(app, options.projects)
+  if (options.catalog !== undefined) {
+    registerCatalogRoutes(app, {
+      ...options.catalog,
+      limit: (options.security?.limits ?? DEFAULT_LIMITS).catalog,
+    })
+  }
 
   return Object.assign(app, { registeredRoutes: () => [...routes] })
 }

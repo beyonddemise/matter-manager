@@ -54,6 +54,16 @@ describe('what must never reach a log', () => {
     expect(logLine(logged)).not.toContain(SECRET)
   })
 
+  it('redacts a setup code in a catalogue lookup body', () => {
+    // `code` was on the list for OAuth. `POST /catalog/lookup` gives it a second meaning — a
+    // Matter payload or manual code in `{ code }` — and this pins the second one, so trimming
+    // the list back to "the OAuth fields" one day cannot quietly drop it (ADR 0019).
+    expect(logLine({ body: { code: SECRET } })).not.toContain(SECRET)
+    expect(logLine({ req: { body: { code: '749701123304447081941' } } })).not.toContain(
+      '749701123304447081941',
+    )
+  })
+
   it('says a value was there', () => {
     // The positive control for the cases above: deleting the field entirely would pass every
     // one of them, and would destroy the distinction the censor exists to keep.

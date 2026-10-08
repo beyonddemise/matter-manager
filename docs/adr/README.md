@@ -13,7 +13,7 @@ decision to be wrong. That is the part people need eighteen months later.
 | [0002](0002-offline-first-pouchdb-couchdb.md) | Offline-first with PouchDB and CouchDB | Accepted |
 | [0003](0003-database-per-project.md) | One CouchDB database per project | Accepted (verified); discovery amended by 0012 |
 | [0004](0004-typescript-backend-openapi-contract.md) | TypeScript backend behind an OpenAPI contract | Accepted; amended by 0015, reasoning superseded by 0017 |
-| [0005](0005-plaintext-payload-storage.md) | Store Matter payloads unencrypted | Accepted |
+| [0005](0005-plaintext-payload-storage.md) | Store Matter payloads unencrypted | Accepted; amended by 0019 |
 | [0006](0006-materialised-path-rooms.md) | Rooms as materialised paths | Accepted |
 | [0007](0007-client-side-pdf.md) | Generate PDFs in the browser | Accepted (QR passage superseded by 0018) |
 | [0008](0008-lit-and-web-awesome.md) | Lit and Web Awesome, no SPA framework | Accepted (QR passage superseded by 0018) |
@@ -27,6 +27,7 @@ decision to be wrong. That is the part people need eighteen months later.
 | [0016](0016-in-process-rate-limiting.md) | Rate limiting is in-process, which constrains how the API is deployed | Accepted |
 | [0017](0017-two-halves-one-contract.md) | Two halves and one contract, not a shared package | Accepted (supersedes 0004's reasoning) |
 | [0018](0018-own-qr-encoder.md) | Our own QR encoder, so the code matches the label | Accepted (supersedes the QR passages of 0007, 0008, 0013) |
+| [0019](0019-setup-code-to-own-api.md) | A setup code may travel to our own API for the catalogue lookup | Accepted (amends 0005) |
 
 ## Writing one
 

@@ -74,7 +74,8 @@ export interface DeviceDocument extends RemarkBearing {
    * degraded one.
    *
    * **A secret.** It contains the setup passcode. Never log it, never send it to a third party
-   * (the DCL lookup sends vendor and product ids only), never put it in a bug report.
+   * (it may go to our own catalogue lookup, ADR 0019; only vendor and product ids reach the DCL),
+   * never put it in a bug report.
    */
   readonly manualCode: string
 

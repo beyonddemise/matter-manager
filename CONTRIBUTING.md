@@ -243,8 +243,11 @@ Setup passcodes are secrets. Within the codebase:
 
 - **Never log a payload or a passcode**, at any level, including during debugging. Log the
   device id instead.
-- Never send a payload to a third-party service. The DCL lookup sends _Vendor ID and
-  Product ID only_ — never the full payload.
+- Never send a payload to a third-party service. The one exception is our own API's
+  `POST /catalog/lookup`, in a POST body over TLS, where the code is decoded in memory and never
+  stored, logged or echoed in an error
+  ([ADR 0019](docs/adr/0019-setup-code-to-own-api.md)). Only the _Vendor ID and Product ID_
+  reach the DCL, which is still a third party.
 - Do not add analytics or error reporting that could capture document contents.
 
 ## Definition of done

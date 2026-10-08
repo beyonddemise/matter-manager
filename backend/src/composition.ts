@@ -19,6 +19,7 @@ import { couchAdmin, installSigningKey, verifyCorsOrigins } from './auth/keys.js
 import type { Provider } from './auth/oidc.js'
 import { type RefreshStore, refreshStore } from './auth/refresh-store.js'
 import type { AuthDependencies } from './auth/routes.js'
+import { dclClient, MAINNET_URL } from './catalog/dcl.js'
 import { type CouchClient, couchClient } from './couch/client.js'
 import { checkDesignDocs } from './projects/design-docs.js'
 import { acceptInvitationsOnSignIn } from './projects/invitations.js'
@@ -83,6 +84,27 @@ function couchFrom(env: Environment): CouchClient | undefined {
   const password = value(env.COUCHDB_ADMIN_PASSWORD)
   if (url === undefined || user === undefined || password === undefined) return undefined
   return couchClient({ url, user, password })
+}
+
+/**
+ * Which DCL the catalogue asks: `DCL_BASE_URL`, or MainNet when it is unset.
+ *
+ * Refused at startup unless it is an `https:` URL, for the reason a bad origin is: the
+ * alternative is a service that starts, looks healthy, and answers every lookup with a 503.
+ * And plain `http:` would let anyone on the path rewrite the names shown for every device.
+ *
+ * @throws {Error} when the value is not an `https:` URL.
+ */
+function dclBaseUrlFrom(env: Environment): string {
+  const raw = value(env.DCL_BASE_URL) ?? MAINNET_URL
+  let url: URL
+  try {
+    url = new URL(raw)
+  } catch {
+    throw new Error('DCL_BASE_URL is not a URL.')
+  }
+  if (url.protocol !== 'https:') throw new Error('DCL_BASE_URL must be an https: URL.')
+  return raw.replace(/\/+$/, '')
 }
 
 /**
@@ -203,6 +225,9 @@ export function serverOptions(env: Environment = process.env): ServerOptions {
     // Verifies the **access** token, so it takes the key CouchDB validates and needs no session
     // key: the profile is served whenever CouchDB and that key are present.
     profile: { records, ensureRecord, key, deny },
+    // The same CouchDB and the same access-token check as everything else: the lookup needs
+    // nothing a deployment with projects does not already have, so it is served whenever they are.
+    catalog: { couch, key, deny, dcl: dclClient(dclBaseUrlFrom(env)) },
     ...(auth === undefined ? {} : { auth }),
   }
 }
