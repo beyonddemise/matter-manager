@@ -664,14 +664,30 @@ describe('looking up the manufacturer', () => {
   })
 
   it('shows nothing alarming when the lookup fails, and saves without names', async () => {
-    const { api } = fakeCatalog(() => Promise.resolve({ kind: 'unavailable' }))
+    const { api, calls } = fakeCatalog(() => Promise.resolve({ kind: 'unavailable' }))
     const element = await form(database.repositories, neverAvailable(), { api })
     typeCode(element, aqaraPayload())
-    await new Promise((resolve) => setTimeout(resolve, 400))
+    await waitUntil(() => calls.length === 1, 'never asked')
+    // The hint must go once the failure is in: a state stuck at pending would leave
+    // "Looking up manufacturer…" on screen for good.
+    await waitUntil(
+      () => element.querySelector('[data-catalog-pending]') === null,
+      'the hint never went away',
+    )
     await element.updateComplete
 
+    expect(calls).toHaveLength(1)
     expect(element.querySelector('[data-catalog]')).toBeNull()
     expect(element.querySelector('wa-callout')).toBeNull()
+    expect(element.querySelector('[data-error]')).toBeNull()
+
+    fill(element, 'name', 'Front door sensor')
+    typeRoom(element, 'Hall')
+    await submit(element, async () => (await devices()).length === 1)
+
+    const [device] = await devices()
+    expect(device).not.toHaveProperty('vendorName')
+    expect(device).not.toHaveProperty('catalogCheckedAt')
   })
 
   it('aborts the earlier lookup when the code changes', async () => {
