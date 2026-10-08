@@ -1,6 +1,7 @@
 import { msg, updateWhenLocaleChanges } from '@lit/localize'
 import { html, LitElement, type TemplateResult } from 'lit'
 import { DEFAULT_PLAN } from '../domain/plan.js'
+import { type CatalogBackfill, defaultCatalogBackfill } from './catalog-backfill.js'
 import {
   beginSignIn,
   endSession,
@@ -9,6 +10,7 @@ import {
   type TokenOutcome,
 } from './composition.js'
 import { browserConnectivity, type ConnectivitySource, watchConnectivity } from './connectivity.js'
+import { PROJECT_CHANGED } from './current-project.js'
 import { localDatabase } from './db/project-database.js'
 import { negotiateLocale } from './i18n/locale.js'
 import { activateLocale } from './i18n/localization.js'
@@ -187,6 +189,7 @@ export class AppShell extends LitElement implements ViewHost {
     online: { state: true },
     updateReady: { attribute: false },
     connectivity: { attribute: false },
+    backfill: { attribute: false },
     takeUpdate: { attribute: false },
     projectStore: { attribute: false },
     signOutPushTimeoutMs: { attribute: false },
@@ -247,6 +250,29 @@ export class AppShell extends LitElement implements ViewHost {
   declare updateReady: ServiceWorker | undefined
   /** Bound by a test to a network it controls; `window` otherwise. */
   declare connectivity?: ConnectivitySource
+
+  /**
+   * Fills in manufacturer and product for devices added offline (#228). Injected by tests; the
+   * real one is built on first use, so a shell that never signs in never builds it.
+   */
+  declare backfill?: CatalogBackfill
+  private realBackfill: CatalogBackfill | undefined
+  private catalogBackfill(): CatalogBackfill {
+    this.realBackfill ??= this.backfill ?? defaultCatalogBackfill()
+    return this.realBackfill
+  }
+
+  /**
+   * Backfill follows the open project: the old run is stopped (its answers belong to a project
+   * nobody is looking at) and a new one starts over the new project, when signed in and online.
+   * The stop does not go through `catalogBackfill()`: a signed-out shell must not build a real
+   * backfill just to stop it.
+   */
+  private readonly onProjectChanged = (): void => {
+    ;(this.realBackfill ?? this.backfill)?.stop()
+    if (this.session === 'signed-in' && this.online) this.catalogBackfill().trigger()
+  }
+
   /**
    * What accepting the update does.
    *
@@ -284,6 +310,7 @@ export class AppShell extends LitElement implements ViewHost {
   override connectedCallback(): void {
     super.connectedCallback()
     window.addEventListener('hashchange', this.onHashChange)
+    window.addEventListener(PROJECT_CHANGED, this.onProjectChanged)
     this.stopWatchingNetwork = watchConnectivity(
       this.connectivity ?? browserConnectivity(),
       (online) => {
@@ -292,6 +319,8 @@ export class AppShell extends LitElement implements ViewHost {
         // The list may have changed while the connection was gone, and the page can only act on
         // a list this session heard (C-R5).
         if (regained && this.session === 'signed-in') void this.projects.refresh(true)
+        // The other half of "on connectivity becoming online" (spec §Backfill).
+        if (regained && this.session === 'signed-in') this.catalogBackfill().trigger()
       },
     )
 
@@ -318,7 +347,11 @@ export class AppShell extends LitElement implements ViewHost {
       case 'refreshed': {
         const wasSignedIn = this.session === 'signed-in'
         this.session = 'signed-in'
-        if (!wasSignedIn) this.startSyncing()
+        if (!wasSignedIn) {
+          this.startSyncing()
+          // Once after sign-in, on the transition only: `refreshed` repeats before every expiry.
+          this.catalogBackfill().trigger()
+        }
         return
       }
       case 'signed-out':
@@ -331,6 +364,7 @@ export class AppShell extends LitElement implements ViewHost {
         // refresher's. On a first answer there is nothing running, and this only records the
         // state.
         if (this.session === 'signed-in') {
+          this.catalogBackfill().stop()
           this.endReplication()
           forgetTokens()
         }
@@ -343,6 +377,7 @@ export class AppShell extends LitElement implements ViewHost {
         // Local data stays: `sessionExpired` forgets the in-memory access token and nothing
         // else. Replication is stopped because its token is now dead, and a manager retrying
         // with it would only produce 401s.
+        this.catalogBackfill().stop()
         this.endReplication()
         this.session = sessionExpired({ forgetTokens })
         this.sessionEndedNotice = true
@@ -401,6 +436,10 @@ export class AppShell extends LitElement implements ViewHost {
     this.footerObserver?.disconnect()
     this.footerObserver = undefined
     document.documentElement.style.removeProperty('--app-footer-height')
+    window.removeEventListener(PROJECT_CHANGED, this.onProjectChanged)
+    // Not `catalogBackfill()`: a shell that never signed in must not build a real backfill just
+    // to stop it. An injected one is stopped even if it was never adopted.
+    ;(this.realBackfill ?? this.backfill)?.stop()
     // Replication is ended by the projects controller, which is disconnected with the shell.
     this.tokenRefresher?.stop()
     this.tokenRefresher = undefined
@@ -590,6 +629,7 @@ export class AppShell extends LitElement implements ViewHost {
     // session that is ending - stopping what is running says nothing about what is about to
     // start.
     this.projects.end()
+    this.catalogBackfill().stop()
     // Stopped before the sign-out runs, so a refresh in flight cannot re-store a token that the
     // sign-out is about to forget.
     this.tokenRefresher?.stop()
