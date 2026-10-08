@@ -13,7 +13,7 @@ decision to be wrong. That is the part people need eighteen months later.
 | [0002](0002-offline-first-pouchdb-couchdb.md) | Offline-first with PouchDB and CouchDB | Accepted |
 | [0003](0003-database-per-project.md) | One CouchDB database per project | Accepted (verified); discovery amended by 0012 |
 | [0004](0004-typescript-backend-openapi-contract.md) | TypeScript backend behind an OpenAPI contract | Accepted; amended by 0015, reasoning superseded by 0017 |
-| [0005](0005-plaintext-payload-storage.md) | Store Matter payloads unencrypted | Accepted |
+| [0005](0005-plaintext-payload-storage.md) | Store Matter payloads unencrypted | Accepted; amended by 0019 |
 | [0006](0006-materialised-path-rooms.md) | Rooms as materialised paths | Accepted |
 | [0007](0007-client-side-pdf.md) | Generate PDFs in the browser | Accepted (QR passage superseded by 0018) |
 | [0008](0008-lit-and-web-awesome.md) | Lit and Web Awesome, no SPA framework | Accepted (QR passage superseded by 0018) |
@@ -33,3 +33,4 @@ decision to be wrong. That is the part people need eighteen months later.
 Copy the shape of 0001. Keep it to a page. Record what was actually true when you decided,
 including the option you nearly took and why you did not. If a decision is later reversed,
 do not edit the old record — supersede it, so the reasoning trail stays intact.
+| [0019](0019-setup-code-to-own-api.md) | A setup code may travel to our own API for the catalogue lookup | Accepted (amends 0005) |

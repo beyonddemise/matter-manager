@@ -4,7 +4,9 @@ Date: 2026-08-19
 
 ## Status
 
-Accepted — with mandatory compensating controls
+Accepted — with mandatory compensating controls. **Amended by
+[ADR 0019](0019-setup-code-to-own-api.md)**, which lets a setup code travel to this service's own
+API for the catalogue lookup, and adds the controls that go with it. The decision below stands.
 
 ## Context
 

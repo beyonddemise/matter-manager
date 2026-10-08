@@ -65,6 +65,36 @@ and tokens*.
 
 ---
 
+## `matter_catalog` — the DCL cache
+
+What the CSA's Distributed Compliance Ledger said about each vendor and model, and when.
+**Admin access only; never replicated.** Created by the API on the first lookup, with
+`_security` written before anything else. A cache, not a source of truth: every document can
+be fetched again. Document IDs use **decimal** IDs, as the DCL's own paths do.
+
+Each document keeps the DCL record **raw**, minus `creator`, so a field the app starts using
+later needs no re-fetch. `dcl` is present exactly when `status` is `found`.
+
+```jsonc
+{ "_id": "vendor:4447", "type": "vendor", "vid": 4447, "status": "found",
+  "fetchedAt": "2026-10-05T16:20:00.000Z", "network": "mainnet",
+  "dcl": { "vendorID": 4447, "vendorName": "Aqara", "companyLegalName": "Lumi United Technology Co., Ltd.",
+           "companyPreferredName": "", "vendorLandingPageURL": "https://www.aqara.com/", "schemaVersion": 0 } }
+
+{ "_id": "model:4447:9999", "type": "model", "vid": 4447, "pid": 9999, "status": "missing",
+  "fetchedAt": "2026-10-05T16:20:00.000Z", "network": "mainnet" }
+```
+
+A found entry is refreshed after 90 days, a miss after one day, and an old entry is served
+with `stale: true` when the DCL cannot be reached. `network` is `mainnet`, `testnet` or
+`other`, from `DCL_BASE_URL`. The view `_design/catalog/by_fetched` emits `fetchedAt`, for a
+future "refresh all".
+
+**The setup code is never stored here**, or anywhere else on the server. Only the two IDs
+decoded from it survive the request.
+
+---
+
 ## `projects` — the registry
 
 One document per project, listing who may access it. **Admin access only; never replicated
@@ -398,8 +428,10 @@ form.
 replicate in full and are by far the largest driver of sync bandwidth.
 
 **`payload` is a secret.** It contains the setup passcode. Never log it, never send it to a
-third party (the DCL lookup sends vendor and product ids only), and never include it in a
-bug report. See [SECURITY.md](../SECURITY.md).
+third party, and never include it in a bug report. See [SECURITY.md](../SECURITY.md). The one
+place it travels other than replication is `POST /catalog/lookup`: to our own API, in a POST
+body, decoded in memory and never stored. Only the vendor and product IDs reach the DCL
+([ADR 0019](adr/0019-setup-code-to-own-api.md)).
 
 **Remark ids are client-generated UUIDs**, not indices or counts. The conflict merge unions
 by id, and positional identity would make "the same remark twice" indistinguishable from

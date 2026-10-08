@@ -20,19 +20,24 @@ flowchart LR
       USERS[("matter_manager<br/>user records, admin-only")]
       REG[("projects<br/>registry, admin-only")]
       PROJ[("project_uuid × N<br/>the shared unit")]
+      CAT[("matter_catalog<br/>DCL cache, admin-only")]
     end
     CADDY --> API
     CADDY --> CDB
     API -->|admin| USERS
     API -->|admin| REG
     API -->|provision| PROJ
+    API -->|admin| CAT
   end
+
+  DCL["CSA DCL<br/>third party"]
+  API -->|"vendor and product IDs only"| DCL
 
   UI -->|"REST + Bearer JWT"| CADDY
   LOCAL <-->|"replication, Bearer JWT"| CADDY
 
   classDef store fill:#eef,stroke:#557
-  class LOCAL,USERS,REG,PROJ store
+  class LOCAL,USERS,REG,PROJ,CAT store
 ```
 
 ## The two paths, and why they are separate
@@ -47,7 +52,8 @@ a failure point for synchronisation, and gain nothing — CouchDB already enforc
 authorisation through `_security` and `validate_doc_update`.
 
 **The API handles only what replication cannot**: proving who someone is, listing projects,
-serving the profile, and creating databases the browser has no rights to create.
+serving the profile, creating databases the browser has no rights to create, and looking up
+manufacturer and product names in the DCL ([ADR 0019](adr/0019-setup-code-to-own-api.md)).
 
 This is why the OpenAPI contract has no device endpoints. Their absence is the design.
 
@@ -157,9 +163,9 @@ enforced by `validate_doc_update`. This was verified against CouchDB 3.5.2 befor
 was built on it, and the verification runs in CI
 (`infra/couchdb/verify-access-model.sh`).
 
-### Three stores, three different exposures
+### Four stores, four different exposures
 
-That same "no row-level read permission" fact governs the other two databases, and it lands
+That same "no row-level read permission" fact governs the other server-side databases, and it lands
 differently in each:
 
 | Store | Client access | Why |
@@ -167,6 +173,7 @@ differently in each:
 | `project_<uuid>` | **replicated**, per-project `_security` | The sharing boundary. One database is the only way to say "this house, not that one". |
 | `projects` | **never** — API only | It holds every project's name, address and participant list. One readable database would disclose all of them to any authenticated user. |
 | `matter_manager` | **never** — API only | One record per user (profile, plan, operator roles, refresh-token hashes), created on demand. Admin-only; profiles are served by `GET /profile`. |
+| `matter_catalog` | **never** — API only | What the DCL says about vendors and models, cached for `POST /catalog/lookup`. Public data, admin-only because no browser needs it. Never holds a setup code. |
 
 Clients never enumerate databases: `_all_dbs` is blocked at Caddy, and users discover
 projects through `GET /projects`, which reads the registry server-side.
