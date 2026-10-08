@@ -204,8 +204,8 @@ export function manufacturerName(
 
 /** The two names a form shows from the catalogue, each omitted when unknown. */
 export interface CatalogNames {
-  readonly manufacturer?: string
-  readonly product?: string
+  readonly manufacturer?: string | undefined
+  readonly product?: string | undefined
 }
 
 /**

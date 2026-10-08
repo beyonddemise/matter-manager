@@ -18,6 +18,7 @@ import {
   type EntryBlock,
   type HeadingBlock,
   layoutInventory,
+  manufacturerName,
   type PageGeometry,
 } from '../../domain/index.js'
 import { ExportCancelled, type InventoryProgress } from './progress.js'
@@ -48,6 +49,8 @@ export interface InventoryLabels {
   readonly continued: (path: string) => string
   readonly installed: string
   readonly pairingCode: string
+  /** Precedes the manufacturer's part number, e.g. "Part number". */
+  readonly partNumber: string
   /** Shown in place of a QR for a device filed from a typed pairing code. */
   readonly noQrCode: string
   readonly withoutRoom: string
@@ -66,9 +69,9 @@ export interface InventoryOptions {
 function productOf(entry: EntryBlock): string | undefined {
   const device = entry.device
   if (device.productName !== undefined) {
-    return device.vendorName === undefined
-      ? device.productName
-      : `${device.vendorName} ${device.productName}`
+    // The preferred name: what people call the company, and what the device page shows.
+    const manufacturer = manufacturerName(device)
+    return manufacturer === undefined ? device.productName : `${manufacturer} ${device.productName}`
   }
   if (device.productId === undefined) return undefined
   const hex = (value: number) => `0x${value.toString(16).toUpperCase().padStart(4, '0')}`
@@ -251,6 +254,7 @@ function drawEntry(
 
   const details = [
     productOf(block),
+    device.partNumber === undefined ? undefined : `${labels.partNumber}: ${device.partNumber}`,
     `${labels.installed}: ${device.installedAt}`,
     device.spot,
     device.serial,

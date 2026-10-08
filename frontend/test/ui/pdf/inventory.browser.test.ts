@@ -5,6 +5,7 @@ import {
   ExportCancelled,
   type InventoryLabels,
 } from '../../../src/ui/pdf/inventory.js'
+import { extractText } from './text-extraction.js'
 
 /** The verified reference device; see `test/domain/matter/payload.test.ts`. */
 const PAYLOAD = 'MT:Y.K9042C00KA0648G00'
@@ -16,6 +17,7 @@ const LABELS: InventoryLabels = {
   continued: (path) => `${path} (continued)`,
   installed: 'Installed',
   pairingCode: 'Pairing code',
+  partNumber: 'Part number',
   noQrCode: 'No QR code',
   withoutRoom: 'Without a room',
   nothingToExport: 'There is nothing to export.',
@@ -132,5 +134,24 @@ describe('exporting an inventory', () => {
 
     expect(text).not.toContain('/Author')
     expect(text).not.toContain('/Keywords')
+  })
+})
+
+describe('what the catalogue knows', () => {
+  it('prints the preferred manufacturer name and the part number', async () => {
+    const bytes = await buildInventoryPdf(
+      groupsFor([
+        device({
+          vendorName: 'Aqara',
+          vendorPreferredName: 'Aqara Home',
+          productName: 'Door and Window Sensor P2',
+          partNumber: 'AS056',
+        }),
+      ]),
+      { labels: LABELS },
+    )
+    const text = (await extractText(bytes)).join('\n')
+    expect(text).toContain('Aqara Home Door and Window Sensor P2')
+    expect(text).toContain('Part number: AS056')
   })
 })

@@ -29,6 +29,7 @@ const LABELS: InventoryLabels = {
   continued: (path) => `${path} (continued)`,
   installed: 'Installed',
   pairingCode: 'Pairing code',
+  partNumber: 'Part number',
   noQrCode: 'No QR code',
   withoutRoom: 'Without a room',
   nothingToExport: 'Nothing to export.',

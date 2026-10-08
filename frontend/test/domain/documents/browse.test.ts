@@ -149,6 +149,22 @@ describe('search', () => {
     expect(names(browseDevices(catalogue, ROOMS, { query: 'basin' }))).toEqual([['Mirror light']])
   })
 
+  it('matches a part number and a preferred manufacturer name', () => {
+    const withCatalogue = [
+      ...catalogue,
+      device('Door sensor', KITCHEN._id, {
+        partNumber: 'AS056',
+        vendorPreferredName: 'Aqara Home',
+      }),
+    ]
+    expect(names(browseDevices(withCatalogue, ROOMS, { query: 'as056' }))).toEqual([
+      ['Door sensor'],
+    ])
+    expect(names(browseDevices(withCatalogue, ROOMS, { query: 'aqara home' }))).toEqual([
+      ['Door sensor'],
+    ])
+  })
+
   it('requires every term, so two words narrow rather than widen', () => {
     // "kitchen light" must find the light in the kitchen, not everything in the kitchen plus
     // every light in the house.

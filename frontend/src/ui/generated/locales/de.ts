@@ -47,7 +47,7 @@
 's2d254be190431538': `Geben Sie den Einrichtungscode ein, der auf dem Gerät oder seiner Verpackung steht.`,
 's2d7d8669a523601c': `Vom Server entfernen?`,
 's3008e7051bd90a59': `Zu diesem Gerät wurde noch nichts erfasst.`,
-'s325e0024caf0aa2d': `Artikelnummer`,
+'s325e0024caf0aa2d': `Teilenummer`,
 's33367da9271a329e': `Hersteller wird gesucht …`,
 's3340b8b54f1707be': `Offline nicht verfügbar`,
 's33f85f24c0f5f008': `Speichern`,
