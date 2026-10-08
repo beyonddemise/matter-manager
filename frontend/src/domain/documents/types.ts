@@ -11,6 +11,7 @@
  * @module
  */
 
+import type { CustomFlow } from '../matter/payload.js'
 import type { Remark, RemarkBearing, Revision } from '../sync/merge.js'
 
 /**
@@ -26,6 +27,27 @@ import type { Remark, RemarkBearing, Revision } from '../sync/merge.js'
  */
 export type Unsaved<T extends Revision> = Omit<T, '_rev' | 'updatedAt'> & {
   readonly _rev?: string
+}
+
+/**
+ * Whether the last catalogue consultation found the product.
+ *
+ * `found` is the API's `dcl`, renamed because the document records an outcome rather than a
+ * data source; `missing` is retried after a day; `test-vendor` is answered locally and final;
+ * `unusable` means our API refused the stored code (400/422) and it is never asked again.
+ */
+export type CatalogSource = 'found' | 'missing' | 'test-vendor' | 'unusable'
+
+/**
+ * Which transports the device can be found on, from the payload.
+ *
+ * The three named flags only: the raw bitmask stays inside the stored `payload`, which is the
+ * source of truth for anything a later version learns to read.
+ */
+export interface DeviceDiscovery {
+  readonly softAp: boolean
+  readonly ble: boolean
+  readonly onNetwork: boolean
 }
 
 /**
@@ -74,10 +96,37 @@ export interface DeviceDocument extends RemarkBearing {
   /** All twelve bits, so only from a payload. See {@link payload}. */
   readonly discriminator?: number
 
+  /** Decoded from the payload when the device was added, offline. Never changes afterwards. */
+  readonly payloadVersion?: number
+  /** How commissioning begins, from the payload. Absent for a manual code. */
+  readonly commissioningFlow?: CustomFlow
+  /** From the payload. Absent for a manual code, which does not carry it. */
+  readonly discovery?: DeviceDiscovery
+
+  // The catalogue block, copied from the DCL lookup at creation or by backfill, and replaced
+  // as a unit (`withCatalogBlock`): a half-old, half-new block would pair one product's name
+  // with another product's manual. Copied rather than joined so that the record stays complete
+  // offline, in a PDF, and after hand-over.
   readonly vendorName?: string
+  /** The DCL's `companyPreferredName`, which is what people call the company. */
+  readonly vendorPreferredName?: string
   readonly productName?: string
   readonly deviceTypeId?: number
-
+  readonly partNumber?: string
+  /** `https:` only; anything else is dropped when copied. The same for every URL below. */
+  readonly productUrl?: string
+  readonly supportUrl?: string
+  readonly userManualUrl?: string
+  /** The manufacturer's page for a custom commissioning flow. */
+  readonly commissioningFlowUrl?: string
+  /** Untrusted DCL text: render as text, never as HTML. */
+  readonly commissioningInstructions?: string
+  /** Untrusted DCL text: render as text, never as HTML. */
+  readonly factoryResetInstructions?: string
+  /** When the catalogue was last consulted for this device, found or not. */
+  readonly catalogCheckedAt?: string
+  /** What that consultation found. See {@link CatalogSource}. */
+  readonly catalogSource?: CatalogSource
   readonly serial?: string
   /** A calendar date, `YYYY-MM-DD`. Defaults to the scan date. */
   readonly installedAt: string
