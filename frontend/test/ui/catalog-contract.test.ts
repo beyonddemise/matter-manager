@@ -9,8 +9,9 @@
  * Three things are tied together:
  *
  * - the **contract**: each schema's `required` list and its `properties`;
- * - the **type**: {@link FULL} is annotated `CatalogLookup`, so the compiler refuses a key the
- *   type lacks and insists on every key it has. Its keys are the type's keys;
+ * - the **type**: {@link VENDOR} and {@link PRODUCT} use `satisfies` against the type's vendor
+ *   and product, and {@link FULL} is annotated `CatalogLookup`, so the compiler refuses a key the
+ *   type lacks and insists on every key it has, at every level. Their keys are the type's keys;
  * - the **guard**: `isCatalogLookup` refuses the answer once any one required key is gone.
  */
 
@@ -42,7 +43,7 @@ const VENDOR = {
   preferredName: null,
   legalName: 'Lumi United Technology Co., Ltd.',
   landingPageUrl: 'https://www.aqara.com/',
-}
+} satisfies NonNullable<CatalogLookup['vendor']>
 
 const PRODUCT = {
   name: 'Aqara Door and Window Sensor P2',
@@ -56,7 +57,7 @@ const PRODUCT = {
   commissioningCustomFlowUrl: null,
   commissioningInstructions: '1. Please make sure you have the Matter-compatible app',
   factoryResetInstructions: null,
-}
+} satisfies NonNullable<CatalogLookup['product']>
 
 /** Every field of the type, vendor and product included. See the module note. */
 const FULL: CatalogLookup = {
