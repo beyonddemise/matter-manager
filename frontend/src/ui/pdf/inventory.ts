@@ -33,7 +33,7 @@ import { yieldToBrowser } from './yield.js'
 export { ExportCancelled, type InventoryProgress }
 
 /** How large the code is drawn, in points. About 34mm — comfortably scannable off paper. */
-const QR_SIZE = 96
+export const QR_SIZE = 96
 
 /** Text sizes, in points. */
 const HEADING_SIZE = 13
