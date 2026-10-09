@@ -121,7 +121,10 @@ export function toLookup(input: {
             commissioningInstructions: text(modelRecord.commissioningModeInitialStepsInstruction),
             factoryResetInstructions: text(modelRecord.factoryResetStepsInstruction),
           },
-    fetchedAt: vendor.fetchedAt < model.fetchedAt ? vendor.fetchedAt : model.fetchedAt,
+    fetchedAt:
+      Date.parse(vendor.fetchedAt) < Date.parse(model.fetchedAt)
+        ? vendor.fetchedAt
+        : model.fetchedAt,
     stale: input.stale,
   }
 }

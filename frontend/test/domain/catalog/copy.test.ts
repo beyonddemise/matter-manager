@@ -148,6 +148,18 @@ describe('catalogFields', () => {
     })
   })
 
+  it('overrides a vendor name the server did send for a test vendor', () => {
+    // The backend names it "Test vendor" today; the device must not depend on that staying so.
+    const test: CatalogLookup = {
+      ...AQARA,
+      vendorId: 0xfff1,
+      source: 'test-vendor',
+      vendor: { ...AQARA.vendor, name: 'Server spelling' } as NonNullable<CatalogLookup['vendor']>,
+      product: null,
+    }
+    expect(catalogFields(test, CHECKED).vendorName).toBe('Test vendor')
+  })
+
   it('drops a device type of zero, which the DCL uses for "not set"', () => {
     const zero: CatalogLookup = {
       ...AQARA,

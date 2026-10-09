@@ -152,6 +152,28 @@ describe('toLookup', () => {
     expect(lookup).toMatchObject({ source: 'missing', vendor: null, product: null })
   })
 
+  it('answers missing with the product kept when only the vendor is missing', () => {
+    const lookup = toLookup({ vendor: vendorMissing, model: modelFound, stale: false })
+    expect(lookup.source).toBe('missing')
+    expect(lookup.vendor).toBeNull()
+    expect(lookup.product?.name).toBe('Aqara Door and Window Sensor P2')
+  })
+
+  it('reports the vendor fetchedAt when the vendor is the older of the two', () => {
+    const older = { ...vendorFound, fetchedAt: '2026-07-01T00:00:00.000Z' }
+    const lookup = toLookup({ vendor: older, model: modelFound, stale: false })
+    expect(lookup.fetchedAt).toBe('2026-07-01T00:00:00.000Z')
+  })
+
+  it('compares fetchedAt as instants, not as text', () => {
+    // As text, ".500Z" sorts before "Z" ('.' < 'Z'), yet 00:00:00.500 is the later instant.
+    const whole = { ...vendorFound, fetchedAt: '2026-07-01T00:00:00Z' }
+    const half = { ...modelFound, fetchedAt: '2026-07-01T00:00:00.500Z' }
+    expect(toLookup({ vendor: whole, model: half, stale: false }).fetchedAt).toBe(
+      '2026-07-01T00:00:00Z',
+    )
+  })
+
   it('reports the older fetchedAt of the two, and passes stale through', () => {
     const older = { ...modelFound, fetchedAt: '2026-07-01T00:00:00.000Z' }
     const lookup = toLookup({ vendor: vendorFound, model: older, stale: true })

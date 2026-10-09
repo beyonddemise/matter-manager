@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { readCredential } from '../../../src/domain/matter/credential.js'
-import { PayloadError } from '../../../src/domain/matter/payload.js'
+import { decodePayload, encodePayload, PayloadError } from '../../../src/domain/matter/payload.js'
 
 /**
  * The reference device, verified in `payload.test.ts` and not to be changed without
@@ -25,6 +25,32 @@ describe('a Matter payload', () => {
       discovery: { softAp: false, ble: true, onNetwork: false, raw: 0b010 },
     })
   })
+
+  it.each([
+    ['userActionRequired', 0b001, { softAp: true, ble: false, onNetwork: false }],
+    ['custom', 0b100, { softAp: false, ble: false, onNetwork: true }],
+    ['standard', 0b111, { softAp: true, ble: true, onNetwork: true }],
+    ['reserved', 0b000, { softAp: false, ble: false, onNetwork: false }],
+  ] as const)(
+    'keeps the flow %s and the discovery flags of a payload that is not the reference one',
+    (customFlow, raw, flags) => {
+      // The reference device is standard and BLE only, so a reader that hard-coded either
+      // would pass the test above. Built by our own encoder: only the two fields vary.
+      const reference = decodePayload(PAYLOAD)
+      const payload = encodePayload({
+        ...reference,
+        version: 1,
+        customFlow,
+        discovery: { ...flags, raw },
+      })
+
+      expect(readCredential(payload)).toMatchObject({
+        version: 1,
+        customFlow,
+        discovery: { ...flags, raw },
+      })
+    },
+  )
 
   it('ignores surrounding whitespace, which a paste routinely carries', () => {
     expect(readCredential(`  ${PAYLOAD}\n`).payload).toBe(PAYLOAD)

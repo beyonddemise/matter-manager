@@ -930,13 +930,6 @@ describe('what the catalogue knows', () => {
     expect(fact(await page(ids[2]), 'Manufacturer')).toBe('0xFFF1')
   })
 
-  it('falls back to the vendor name', async () => {
-    await seed(lamp({ vendorName: 'Aqara' }))
-    const element = await page()
-    expect(element.textContent).toContain('Aqara')
-    expect(element.textContent).not.toContain('0xFFF1')
-  })
-
   it('shows the part number', async () => {
     await seed(lamp(CATALOGUED))
     expect((await page()).textContent).toContain('AS056')

@@ -70,7 +70,7 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null
 
 const stringOrNull = (value: unknown): boolean => value === null || typeof value === 'string'
-const numberOrNull = (value: unknown): boolean => value === null || typeof value === 'number'
+const integerOrNull = (value: unknown): boolean => value === null || Number.isInteger(value)
 
 function isVendor(value: unknown): boolean {
   if (value === null) return true
@@ -81,7 +81,7 @@ function isVendor(value: unknown): boolean {
 function isProduct(value: unknown): boolean {
   if (value === null) return true
   if (!isRecord(value) || typeof value.name !== 'string') return false
-  if (typeof value.commissioningCustomFlow !== 'number' || !numberOrNull(value.deviceTypeId)) {
+  if (!Number.isInteger(value.commissioningCustomFlow) || !integerOrNull(value.deviceTypeId)) {
     return false
   }
   return [
@@ -105,8 +105,8 @@ function isProduct(value: unknown): boolean {
 export function isCatalogLookup(body: unknown): body is CatalogLookup {
   return (
     isRecord(body) &&
-    typeof body.vendorId === 'number' &&
-    typeof body.productId === 'number' &&
+    Number.isInteger(body.vendorId) &&
+    Number.isInteger(body.productId) &&
     SOURCES.includes(body.source) &&
     typeof body.fetchedAt === 'string' &&
     typeof body.stale === 'boolean' &&

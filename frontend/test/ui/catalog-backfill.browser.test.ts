@@ -242,6 +242,31 @@ describe('catalogue backfill', () => {
     expect((await database.repositories.devices.get('device:a'))?.catalogCheckedAt).toBeUndefined()
   })
 
+  it('asks about no further device when stopped during the pause between requests', async () => {
+    await database.repositories.devices.save(device('a'))
+    await database.repositories.devices.save(device('b'))
+    const gap = deferred<void>()
+    const gaps: number[] = []
+    const { backfill, calls } = runner(found, {
+      wait: async (ms) => {
+        gaps.push(ms)
+        await gap.promise
+      },
+    })
+
+    backfill.trigger()
+    while (gaps.length === 0) await new Promise((resolve) => setTimeout(resolve, 5))
+    // The first device is done and the runner is sitting in the one-second gap before `b`.
+    backfill.stop()
+    // The timer would fire regardless: stopping must not rely on the wait itself noticing.
+    gap.resolve()
+    await backfill.idle()
+
+    expect(calls.map((call) => call.code)).toEqual([PAYLOAD])
+    expect((await database.repositories.devices.get('device:a'))?.vendorName).toBe('Aqara')
+    expect((await database.repositories.devices.get('device:b'))?.catalogCheckedAt).toBeUndefined()
+  })
+
   it('keeps a concurrent user edit, fills the next device in the same pass, and fills the block on the next run', async () => {
     await database.repositories.devices.save(device('a'))
     // A second device, after `a` in id order. Ruling R9's 409 half: the refused write on `a`

@@ -123,6 +123,8 @@ describe('POST /catalog/lookup: the error table', () => {
       headers: { authorization: `Bearer ${token}` },
     })
     expect(response.statusCode).toBe(401)
+    expect(response.json()).toMatchObject({ title: 'Not signed in' })
+    expectContract(response)
   })
 
   it.each([

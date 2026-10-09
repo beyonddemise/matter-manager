@@ -73,7 +73,10 @@ describe('decodeCode on malformed input', () => {
     ['a payload too short for the fixed part', 'MT:Y.K90'],
     ['a character outside Base-38', 'MT:Y.K9042C00KA0648G0$'],
     ['a lower-case letter in the body', 'MT:y.K9042C00KA0648G00'],
-    ['a trailing chunk of 3 characters', 'MT:Y.K9042C00KA0648G'],
+    // 17 characters is a valid chunking (5, 5, 5, 2): it fails only for being too short.
+    ['a payload with a valid trailing chunk of 2 but too short', 'MT:Y.K9042C00KA0648G'],
+    // 18 characters chunk as 5, 5, 5, 3, and no byte count exists for a chunk of 3.
+    ['a trailing chunk of 3 characters', 'MT:Y.K9042C00KA0648G0'],
     ['a chunk above its byte range', 'MT:.....'],
     ['the reserved padding bits set', 'MT:Y.K9042C00KA0640A30'],
     ['a wrong check digit', '749701123304447081942'],
