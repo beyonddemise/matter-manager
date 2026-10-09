@@ -250,6 +250,8 @@ export class DeviceListView extends LitElement {
       query: this.query,
       includeDisabled: this.includeDisabled,
       compare: new Intl.Collator(getLocale()).compare,
+      // The stored name is English; people search for what the interface shows (#248).
+      testVendorTerm: msg('Test vendor'),
     })
   }
 

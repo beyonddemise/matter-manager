@@ -10,6 +10,7 @@
  * @module
  */
 
+import { manufacturerName, TEST_VENDOR_NAME } from '../catalog/copy.js'
 import { compareRoomPaths } from '../rooms/path.js'
 import { foldForComparison } from '../text/fold.js'
 import type { DeviceDocument, RoomDocument } from './types.js'
@@ -40,6 +41,15 @@ export interface BrowseOptions {
    * beside `Armel` in German rather than after `Zulu`.
    */
   readonly compare?: (a: string, b: string) => number
+  /**
+   * The test vendor's name in the interface language, e.g. `Testhersteller`.
+   *
+   * The stored name is always English (`TEST_VENDOR_NAME`), but the interface shows it
+   * translated, so a person searches for what they see. Passed in rather than looked up because
+   * `core` holds no `msg()` and no ambient locale. A device whose manufacturer is the test vendor
+   * also matches this term; the stored English name keeps matching too.
+   */
+  readonly testVendorTerm?: string
 }
 
 /** Ordering for the default {@link BrowseOptions.compare}: folded, then by code point. */
@@ -55,7 +65,8 @@ function foldedOrder(a: string, b: string): number {
  *
  * Name, room, serial and product name, plus `spot`, `vendorName`, `vendorPreferredName` and
  * `partNumber`: "ceiling", "the Ikea one" and "AS056" are all how people describe a device they
- * are looking for, and no such match is ever surprising.
+ * are looking for, and no such match is ever surprising. The test vendor's shown name
+ * (`testVendorTerm`, #248) joins them for a device whose manufacturer is the test vendor.
  *
  * `payload` and `manualCode` are **deliberately absent, and this is a security decision**.
  * They encode the setup passcode. A search box that matched them would confirm a guess — type
@@ -66,7 +77,8 @@ function foldedOrder(a: string, b: string): number {
  * one: `foldForComparison` collapses every run of whitespace to a single space. That is what
  * stops a term from matching across two fields and reporting a device that contains neither.
  */
-function haystack(device: DeviceDocument, path: string): string {
+function haystack(device: DeviceDocument, path: string, testVendorTerm?: string): string {
+  const shownTestVendor = manufacturerName(device) === TEST_VENDOR_NAME ? testVendorTerm : undefined
   return [
     device.name,
     path,
@@ -76,6 +88,7 @@ function haystack(device: DeviceDocument, path: string): string {
     device.vendorName,
     device.vendorPreferredName,
     device.partNumber,
+    shownTestVendor,
   ]
     .filter((value): value is string => value !== undefined && value !== '')
     .map(foldForComparison)
@@ -116,7 +129,7 @@ export function browseDevices(
   const visible = devices.filter((device) => {
     if (device.disabled && options.includeDisabled !== true) return false
     if (terms.length === 0) return true
-    const text = haystack(device, paths.get(device.roomId) ?? '')
+    const text = haystack(device, paths.get(device.roomId) ?? '', options.testVendorTerm)
     return terms.every((term) => text.includes(term))
   })
 

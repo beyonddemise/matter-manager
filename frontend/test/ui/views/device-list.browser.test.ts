@@ -13,7 +13,8 @@ import '@awesome.me/webawesome-pro/dist/components/tag/tag.js'
 import { fixture, html, waitUntil } from '@open-wc/testing-helpers'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { page, userEvent } from 'vitest/browser'
-import type { DeviceDocument, Unsaved } from '../../../src/domain/index.js'
+import { type DeviceDocument, TEST_VENDOR_NAME, type Unsaved } from '../../../src/domain/index.js'
+import { activateLocale } from '../../../src/ui/i18n/localization.js'
 import type { DeviceListView } from '../../../src/ui/views/device-list.js'
 import '../../../src/ui/views/device-list.js'
 import { extractText } from '../pdf/text-extraction.js'
@@ -428,6 +429,25 @@ describe('sub-rooms', () => {
 })
 
 describe('search', () => {
+  it('finds the test vendor by the name the interface shows, in German', async () => {
+    await database.repositories.rooms.save({ _id: 'room:lab', type: 'room', path: 'Lab' })
+    await database.repositories.devices.save(
+      device('device:tv', 'Bench lamp', 'room:lab', { vendorName: TEST_VENDOR_NAME }),
+    )
+    await database.repositories.devices.save(device('device:other', 'Mirror light', 'room:lab'))
+    await activateLocale('de')
+    try {
+      const element = await list()
+      await search(element, 'Testhersteller')
+      expect(shown(element)).toEqual(['device:tv'])
+      // The stored English name keeps working.
+      await search(element, 'test vendor')
+      expect(shown(element)).toEqual(['device:tv'])
+    } finally {
+      await activateLocale('en')
+    }
+  })
+
   it('matches a device name', async () => {
     await seed()
     const element = await list()
