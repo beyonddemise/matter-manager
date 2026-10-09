@@ -54,6 +54,11 @@ import './views/edit-device.js'
 import './views/not-found.js'
 import './views/projects.js'
 import './views/settings.js'
+/**
+ * The application icon, as a fingerprinted /assets/ URL. `index.html` names the same file as the
+ * favicon, which is what gets it precached for offline use; see the note there.
+ */
+import brandMark from './brand/icon.svg'
 
 /**
  * The public website: what Matter Manager is, its privacy notice and its terms.
@@ -677,7 +682,12 @@ export class AppShell extends LitElement implements ViewHost {
             <wa-button data-toggle-nav appearance="plain" size="s" class="wa-mobile-only">
               <wa-icon name="bars" label=${msg('Menu')}></wa-icon>
             </wa-button>
-            <strong>${msg('Matter Manager')}</strong>
+            <!-- The mark carries the accessible name. On a phone it stands alone: the written name
+                 next to it would push the header actions onto a second row at 360-390px. On wider
+                 screens the name is shown too, hidden from assistive technology so it is not
+                 announced twice. -->
+            <img class="app-brand-mark" src=${brandMark} alt=${msg('Matter Manager')} />
+            <strong class="wa-desktop-only" aria-hidden="true">${msg('Matter Manager')}</strong>
           </div>
           <div class="wa-cluster wa-gap-xs app-header-actions">
             ${renderUpgrade(

@@ -18,13 +18,11 @@
          application, and the "installed" app is a bookmark wearing an icon. -->
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-title" content="Matter" />
-    <!-- Inline SVG favicon: avoids a network request and the console-logged 404 that comes
-         with having none. Uses currentColor so it carries no hex literal. -->
-    <link
-      rel="icon"
-      type="image/svg+xml"
-      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='12' r='11' fill='none' stroke='currentColor' stroke-width='2'/%3E%3Cpath d='M6 17V7l6 6 6-6v10' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"
-    />
+    <!-- The favicon is the application icon itself (src/ui/brand/icon.svg). Referenced from here
+         rather than served from public/ so Vite fingerprints it into /assets/: the service
+         worker precaches every /assets/ file this document names, and the header's brand mark
+         imports the same file, so it is there offline from the first visit. -->
+    <link rel="icon" type="image/svg+xml" href="/src/ui/brand/icon.svg" />
     <style>
       html,
       body {

@@ -75,6 +75,20 @@ it('renders the not-found view for an unknown path', async () => {
   expect(element.querySelector('not-found-view')).not.toBeNull()
 })
 
+it('brands the header with the application icon, named once for assistive technology', async () => {
+  // The mark carries the name; the written name beside it is for sighted users on wider
+  // screens only, and hidden from assistive technology so it is not announced twice.
+  const element = await shell()
+  const mark = element.querySelector('header img.app-brand-mark') as HTMLImageElement | null
+  const name = element.querySelector('header strong')
+
+  expect(mark?.alt).toBe('Matter Manager')
+  expect(mark?.getAttribute('src')).toMatch(/icon.*\.svg/)
+  await waitUntil(() => mark?.complete === true && mark.naturalWidth > 0, 'the mark never loaded')
+  expect(name?.getAttribute('aria-hidden')).toBe('true')
+  expect(name?.classList.contains('wa-desktop-only')).toBe(true)
+})
+
 it('renders one navigation link per labelled route, and no more', async () => {
   // Guards the duplicated-navigation trap: slot="navigation" already renders in both
   // views, so a second copy would double these.

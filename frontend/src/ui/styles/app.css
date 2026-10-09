@@ -33,6 +33,16 @@ wa-page[view="mobile"] .app-header {
   white-space: nowrap;
 }
 
+/* The house mark beside the name. The SVG carries its own light ground (it is a traced
+   image whose edges are near-white, so it cannot sit on a dark header without a fringe);
+   the rounded corners make that ground read as a deliberate tile in either scheme. */
+.app-brand-mark {
+  display: block;
+  block-size: var(--wa-space-xl);
+  inline-size: auto;
+  border-radius: var(--wa-border-radius-s);
+}
+
 .app-main {
   padding: var(--wa-space-l);
 }
