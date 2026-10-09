@@ -55,12 +55,11 @@ own API**, `POST /catalog/lookup`, under these conditions, all of them enforced:
 **Costs, accepted knowingly.**
 - **For a free-plan user, whose projects never sync, this is the first time a payload leaves
   the device.** Until now it stayed in IndexedDB. The lookup is open to every plan, so the
-  exposure is new for exactly the users who were never exposed. The mitigation is everything
-  above: the code is in our process for the length of one request, and in no file afterwards.
-- The browser reaches the API through the Cloudflare Pages Functions proxy (`/api`), where
+  exposure is new for exactly the users who were never exposed. It covers both legs: the
+  browser reaches the API through the Cloudflare Pages Functions proxy (`/api`), where
   Cloudflare terminates TLS, so the body passes through Cloudflare in transit. Synced payloads
-  already do the same through `/db`, and the proxy logs no bodies. For a free-plan user, though,
-  this is new exposure.
+  already do the same through `/db`, and the proxy logs no bodies. The mitigation is everything
+  above: the code is in our process for the length of one request, and in no file afterwards.
 - A debug log added later around this route is now a place a passcode could be written. The
   redaction list and the log-capture test are what stand in the way. Do not weaken either.
 
