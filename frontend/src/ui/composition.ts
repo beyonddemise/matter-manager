@@ -21,6 +21,7 @@
  */
 
 import PouchDB from 'pouchdb-browser'
+import { type CatalogApi, catalogApi } from './catalog.js'
 import {
   localDatabase,
   localProfileCache,
@@ -264,6 +265,16 @@ export function projects(fetchImpl: typeof fetch = fetch): ReturnType<typeof pro
 /** The profile, which carries the locale preference across devices. */
 export function profile(fetchImpl: typeof fetch = fetch): ReturnType<typeof profileApi> {
   return profileApi(API_BASE, fetchImpl)
+}
+
+/**
+ * The catalogue lookup: manufacturer and product for a setup code (#227).
+ *
+ * The same token getter as {@link projects}: a lookup made with no token held answers
+ * `signed-out` without a request.
+ */
+export function catalog(fetchImpl: typeof fetch = fetch): CatalogApi {
+  return catalogApi(API_BASE, accessToken, fetchImpl)
 }
 
 /**

@@ -4,6 +4,7 @@ import {
   type DeviceDocument,
   DraftError,
   documentId,
+  manufacturerName,
   planDeviceEdit,
   type RoomDocument,
   uuidOf,
@@ -181,6 +182,10 @@ export class EditDeviceView extends DeviceFormView {
             ${msg('The setup code cannot be changed. If it is wrong, delete this device and add it again.')}
           </small>
         </div>
+
+        <!-- From the catalogue, so read-only: a lookup replaces the block whole, and an edit here
+             would be undone without a word (spec §Editing). -->
+        ${this.renderCatalogLines({ manufacturer: manufacturerName(device), product: device.productName })}
 
         ${this.renderFields()}
 

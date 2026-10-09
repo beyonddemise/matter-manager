@@ -5,12 +5,12 @@
  * one field and this module decides. The two forms do **not** carry the same information, and
  * the asymmetry is the whole reason this file exists rather than a call to `decodePayload`:
  *
- * |                          | `MT:` payload | 21-digit code | 11-digit code |
- * |--------------------------|---------------|---------------|---------------|
- * | passcode                 | yes           | yes           | yes           |
- * | discriminator            | all 12 bits   | top 4 only    | top 4 only    |
- * | vendor and product id    | yes           | yes           | no            |
- * | discovery, flow, TLV     | yes           | no            | no            |
+ * |                               | `MT:` payload   | 21-digit code   | 11-digit code   |
+ * |-------------------------------|-----------------|-----------------|-----------------|
+ * | passcode                      | yes             | yes             | yes             |
+ * | discriminator                 | all 12 bits     | top 4 only      | top 4 only      |
+ * | vendor and product id         | yes             | yes             | no              |
+ * | version, flow, discovery, TLV | yes             | no              | no              |
  *
  * A manual code is enough to commission a device — that is what it is for — but a payload
  * cannot be rebuilt from one. The missing eight discriminator bits are unrecoverable, and
@@ -23,7 +23,13 @@
  */
 
 import { deriveManualCode, parseManualCode } from './manual-code.js'
-import { decodePayload, PAYLOAD_PREFIX, PayloadError } from './payload.js'
+import {
+  type CustomFlow,
+  type DiscoveryCapabilities,
+  decodePayload,
+  PAYLOAD_PREFIX,
+  PayloadError,
+} from './payload.js'
 
 /**
  * What a setup code turned out to contain.
@@ -35,7 +41,8 @@ export interface DeviceCredential {
   /**
    * The `MT:` payload, verbatim, when the input was one.
    *
-   * **A secret**: it encodes the setup passcode. Never log it and never send it anywhere.
+   * **A secret**: it encodes the setup passcode. Never log it. It leaves the browser only
+   * through sync and our own catalogue lookup (ADR 0019).
    */
   readonly payload?: string
   /**
@@ -48,6 +55,15 @@ export interface DeviceCredential {
   readonly productId?: number
   /** The full twelve bits. Absent for a manual code, which carries only the top four. */
   readonly discriminator?: number
+  /** The payload format version. Absent for a manual code. */
+  readonly version?: number
+  /**
+   * How commissioning begins. Absent for a manual code, which does not carry it: assuming
+   * "standard" would tell a reader the device pairs normally when nobody knows that.
+   */
+  readonly customFlow?: CustomFlow
+  /** Which transports the device can be found on. Absent for a manual code. */
+  readonly discovery?: DiscoveryCapabilities
 }
 
 /** Whitespace and hyphens, as codes are grouped on a printed label. */
@@ -92,6 +108,9 @@ export function readCredential(text: string): DeviceCredential {
       vendorId: payload.vendorId,
       productId: payload.productId,
       discriminator: payload.discriminator,
+      version: payload.version,
+      customFlow: payload.customFlow,
+      discovery: payload.discovery,
     }
   }
 

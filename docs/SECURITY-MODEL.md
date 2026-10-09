@@ -353,8 +353,8 @@ from the access token's claims and `PATCH /profile` seeds a new record from them
 (`_all_dbs` is blocked at Caddy), and cannot discover projects except through `GET /projects`,
 which the API answers from a registry the client can never read directly.
 
-**Two of the three server-side databases are unreachable from a browser**, and this is
-load-bearing rather than tidy:
+**Three of the four server-side databases are unreachable from a browser.** For the first two
+this is load-bearing rather than tidy:
 
 - **`projects`** holds every project's name, address and participant list. CouchDB has no
   row-level read permission, so making it member-readable would disclose all of it to every
@@ -362,6 +362,10 @@ load-bearing rather than tidy:
 - **`matter_manager`** holds user records: profiles, plans, roles and refresh-token hashes. It is
   admin-only, which is why profiles come from `GET /profile`. CouchDB's own `_users` is no longer
   used for profiles.
+- **`matter_catalog`** caches what the DCL says about vendors and models
+  ([ADR 0019](adr/0019-setup-code-to-own-api.md)). Nothing in it is secret; it is admin-only
+  because no browser needs it, and a database nobody else can reach is one nobody has to
+  reason about.
 
 The browser's `mm-local` cache of those responses is never consulted for an authorisation
 decision. It determines what the client will *attempt*; `_security` determines what succeeds.
@@ -376,8 +380,11 @@ passcode.
 
 - **Never log a payload or passcode.** Not at debug level, not temporarily, not while
   chasing a bug. Log the device id.
-- **Never send a payload to a third party.** The DCL lookup sends vendor and product ids
-  only.
+- **Never send a payload to a third party.** The one place a setup code leaves the browser,
+  other than replication, is `POST /catalog/lookup` to our own API, in a POST body over TLS
+  ([ADR 0019](adr/0019-setup-code-to-own-api.md)). The API decodes it in memory, never stores or
+  logs it, never echoes it in an error, and sends **only vendor and product IDs** to the DCL,
+  which is still a third party.
 - **No analytics or error reporting that can capture document contents.**
 - **Never compare against a bare owner id.** Route through `isOwner(principal, project)`
   ([ADR 0011](adr/0011-user-owned-org-ready-tenancy.md)).

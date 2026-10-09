@@ -20,6 +20,7 @@ export function inventoryLabels(): InventoryLabels {
     continued: (path) => msg(str`${path} (continued)`),
     installed: msg('Installed'),
     pairingCode: msg('Pairing code'),
+    partNumber: msg('Part number'),
     noQrCode: msg('Filed from a pairing code'),
     withoutRoom: msg('Without a room'),
     nothingToExport: msg('There are no devices to export.'),

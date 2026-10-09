@@ -13,6 +13,7 @@ const LABELS: InventoryLabels = {
   pageNumber: (page, total) => `Seite ${page} von ${total}`,
   continued: (path) => `${path} (Fortsetzung)`,
   installed: 'Eingebaut am',
+  partNumber: 'Teilenummer',
   pairingCode: 'Kopplungscode',
   noQrCode: 'Über Kopplungscode erfasst',
   withoutRoom: 'Ohne Raum',

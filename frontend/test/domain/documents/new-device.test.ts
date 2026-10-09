@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import type { CatalogLookup } from '../../../src/domain/catalog/types.js'
 import type { DraftClock, DraftError } from '../../../src/domain/documents/draft.js'
 import { type DeviceDraft, planNewDevice } from '../../../src/domain/documents/new-device.js'
 import type { RoomDocument } from '../../../src/domain/documents/types.js'
@@ -47,6 +48,10 @@ describe('a device from a payload', () => {
       vendorId: 0xfff1,
       productId: 0x8000,
       discriminator: 3840,
+      payloadVersion: 0,
+      commissioningFlow: 'standard',
+      // The three named flags only; the raw bitmask stays inside the payload.
+      discovery: { softAp: false, ble: true, onNetwork: false },
       installedAt: '2026-08-26',
       addedAt: '2026-08-26T09:00:00.000Z',
       disabled: false,
@@ -220,5 +225,65 @@ describe('refusing a draft', () => {
       message = (error as Error).message
     }
     expect(message).not.toContain('34970112331')
+  })
+})
+
+/** A catalogue answer for the reference device (a test vendor, as the backend answers it). */
+const TEST_VENDOR: CatalogLookup = {
+  vendorId: 0xfff1,
+  productId: 0x8000,
+  source: 'test-vendor',
+  vendor: { name: 'Test vendor', preferredName: null, legalName: null, landingPageUrl: null },
+  product: null,
+  fetchedAt: '2026-08-26T08:59:00.000Z',
+  stale: false,
+}
+
+describe('a device from a manual code', () => {
+  it('records no version, flow or discovery, because the code does not carry them', () => {
+    const { device } = planNewDevice(draft({ credential: LONG_CODE }), [KITCHEN], clock('d'))
+    expect(device).not.toHaveProperty('payloadVersion')
+    expect(device).not.toHaveProperty('commissioningFlow')
+    expect(device).not.toHaveProperty('discovery')
+  })
+})
+
+describe('copying a catalogue answer', () => {
+  it('copies the block, checked at the moment the device was added', () => {
+    const { device } = planNewDevice(draft(), [KITCHEN], clock('device-uuid'), TEST_VENDOR)
+    expect(device.vendorName).toBe('Test vendor')
+    expect(device.catalogSource).toBe('test-vendor')
+    expect(device.catalogCheckedAt).toBe('2026-08-26T09:00:00.000Z')
+    expect(device.addedAt).toBe(device.catalogCheckedAt)
+  })
+
+  it('writes no catalogue field without an answer', () => {
+    const { device } = planNewDevice(draft(), [KITCHEN], clock('device-uuid'))
+    expect(device).not.toHaveProperty('catalogCheckedAt')
+    expect(device).not.toHaveProperty('vendorName')
+  })
+
+  it('ignores an answer about a different device', () => {
+    // A lookup that landed for the code the user typed before correcting it. Copying it would
+    // name this device after another one, with nothing on screen to say so.
+    const other: CatalogLookup = { ...TEST_VENDOR, vendorId: 4447, productId: 8194 }
+    const { device } = planNewDevice(draft(), [KITCHEN], clock('device-uuid'), other)
+    expect(device).not.toHaveProperty('catalogCheckedAt')
+  })
+
+  it('ignores an answer for a code that carries no ids', () => {
+    const { device } = planNewDevice(
+      draft({ credential: SHORT_CODE }),
+      [KITCHEN],
+      clock('device-uuid'),
+      TEST_VENDOR,
+    )
+    expect(device).not.toHaveProperty('catalogCheckedAt')
+  })
+
+  it('still refuses an unreadable code when an answer is supplied', () => {
+    expect(() =>
+      planNewDevice(draft({ credential: 'kitchen lamp' }), [KITCHEN], clock('d'), TEST_VENDOR),
+    ).toThrow(/setup code/i)
   })
 })

@@ -65,6 +65,16 @@ const EXPECTED: ReadonlyArray<
   ['encodePayload', 'function'],
   // credential
   ['readCredential', 'function'],
+  // catalogue
+  ['CATALOG_FIELD_KEYS', 'object'],
+  ['CATALOG_MISS_RETRY_MS', 'number'],
+  ['TEST_VENDOR_NAME', 'string'],
+  ['catalogFields', 'function'],
+  ['catalogNames', 'function'],
+  ['isHttpsUrl', 'function'],
+  ['manufacturerName', 'function'],
+  ['needsCatalogLookup', 'function'],
+  ['withCatalogBlock', 'function'],
   // manual code
   ['deriveManualCode', 'function'],
   ['parseManualCode', 'function'],
@@ -161,6 +171,10 @@ describe('the public entry point', () => {
  * missing name.
  */
 describe('the public entry point reaches the implementations', () => {
+  it('decides when to ask the catalogue', () => {
+    expect(core.needsCatalogLookup({ manualCode: '34970112332' }, new Date())).toBe(false)
+  })
+
   it('decodes a payload', () => {
     expect(core.decodePayload('MT:Y.K9042C00KA0648G00').passcode).toBe(20202021)
   })

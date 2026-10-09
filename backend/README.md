@@ -96,7 +96,8 @@ redact** — which is the point. A list added after an incident is written by so
 log that already contains the thing.
 
 Besides the usual credential names it redacts `payload`, `manualCode`, `passcode` and
-`discriminator`: a Matter payload encodes a setup passcode and a manual pairing code *is* one,
+`discriminator`, and `code` covers the setup code `POST /catalog/lookup` receives as well as the
+OAuth code: a Matter payload encodes a setup passcode and a manual pairing code *is* one,
 and neither looks like a secret to a library's defaults.
 
 ## The CouchDB client
@@ -180,6 +181,25 @@ only when it is present — so a deployment missing any one of the first four an
 
 None of these are in the repository and none should be. The public half of `JWT_PRIVATE_KEY` is
 pushed into CouchDB at startup (`auth/keys.ts`), so key material never enters the image.
+
+## The catalogue lookup
+
+`POST /catalog/lookup` (`src/catalog/`) turns a setup code into a manufacturer and product name
+from the CSA's Distributed Compliance Ledger. It is the one route that receives a setup code
+([ADR 0019](../docs/adr/0019-setup-code-to-own-api.md)): the code is decoded in memory and never
+stored or logged, and only the vendor and product IDs reach the DCL.
+
+Answers are cached in the admin-only `matter_catalog` database, created on the first lookup:
+found records for 90 days and misses for a day, with an old record served as `stale` while the
+DCL is unreachable. Test vendors 0xFFF1–0xFFF4 never leave the process. Lookups are limited per
+signed-in account (`Limits.catalog`, 120 per five minutes), not per address.
+
+| Variable | |
+|---|---|
+| `DCL_BASE_URL` | The DCL REST base. Default MainNet, `https://on.dcl.csa-iot.org/dcl`; TestNet is `https://on.test-net.dcl.csa-iot.org/dcl`. Must be `https:`, or the service refuses to start |
+
+CI never calls the DCL. `npm run dcl:smoke` checks the live response shape by hand: run it when
+the DCL changes its API, or before trusting a new `DCL_BASE_URL`.
 
 ## Protecting the service
 

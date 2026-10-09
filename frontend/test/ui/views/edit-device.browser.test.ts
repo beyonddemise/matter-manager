@@ -131,6 +131,20 @@ const stored = async (): Promise<DeviceDocument> => {
 }
 const rooms = (): Promise<RoomDocument[]> => database.repositories.rooms.list()
 
+describe('the catalogue names', () => {
+  it('shows manufacturer and product read-only, and keeps them through a save', async () => {
+    await seed(lamp({ vendorName: 'Aqara', vendorPreferredName: 'Aqara Home', productName: 'P2' }))
+    const element = await form()
+
+    expect(element.querySelector('[data-catalog-manufacturer]')?.textContent).toBe('Aqara Home')
+    expect(element.querySelector('[data-catalog-product]')?.textContent).toBe('P2')
+    expect(element.querySelector('[data-catalog] wa-input, [data-catalog] input')).toBeNull()
+
+    await submit(element, async () => (await stored())._rev?.startsWith('2-') === true)
+    expect((await stored()).vendorPreferredName).toBe('Aqara Home')
+  })
+})
+
 describe('opening the edit form', () => {
   it('shows what is already recorded', async () => {
     await seed()

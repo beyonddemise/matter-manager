@@ -2,6 +2,7 @@ import { msg, updateWhenLocaleChanges } from '@lit/localize'
 import { html, LitElement, type PropertyDeclarations, type TemplateResult } from 'lit'
 import type { ProjectRepositories } from '../../data/index.js'
 import {
+  type CatalogNames,
   type DeviceDocument,
   type DeviceFields,
   type DraftError,
@@ -275,6 +276,36 @@ export abstract class DeviceFormView extends LitElement {
    */
   protected messageFor(field: DraftField): string | undefined {
     return this.error?.field === field ? problemMessage(this.error.problem) : undefined
+  }
+
+  /**
+   * The manufacturer and product, read-only, or nothing when neither is known.
+   *
+   * Read-only on both forms: these come from the catalogue and are replaced whole when it is
+   * asked again, so an edit here would be silently undone (spec, Editing).
+   */
+  protected renderCatalogLines(names: CatalogNames): TemplateResult | '' {
+    if (names.manufacturer === undefined && names.product === undefined) return ''
+    return html`
+      <div class="wa-cluster wa-gap-l" data-catalog>
+        ${
+          names.manufacturer === undefined
+            ? ''
+            : html`<div class="wa-stack wa-gap-3xs">
+                <small class="app-empty">${msg('Manufacturer')}</small>
+                <span data-catalog-manufacturer>${names.manufacturer}</span>
+              </div>`
+        }
+        ${
+          names.product === undefined
+            ? ''
+            : html`<div class="wa-stack wa-gap-3xs">
+                <small class="app-empty">${msg('Product')}</small>
+                <span data-catalog-product>${names.product}</span>
+              </div>`
+        }
+      </div>
+    `
   }
 
   /**

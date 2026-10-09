@@ -34,6 +34,8 @@ export const REDACTED_FIELDS: readonly string[] = [
   'refresh_token',
   'id_token',
   'client_secret',
+  // Twice over: the OAuth authorisation code, and the setup code `POST /catalog/lookup` takes
+  // as `{ code }` — a Matter payload or a manual pairing code, which is a passcode (ADR 0019).
   'code',
   'code_verifier',
   // Credentials this *application* is about. See the module note.

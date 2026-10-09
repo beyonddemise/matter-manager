@@ -13,6 +13,20 @@
  */
 
 export {
+  CATALOG_FIELD_KEYS,
+  CATALOG_MISS_RETRY_MS,
+  type CatalogFields,
+  type CatalogNames,
+  catalogFields,
+  catalogNames,
+  isHttpsUrl,
+  manufacturerName,
+  needsCatalogLookup,
+  TEST_VENDOR_NAME,
+  withCatalogBlock,
+} from './catalog/copy.js'
+export type { CatalogLookup } from './catalog/types.js'
+export {
   type BrowseOptions,
   browseDevices,
   type DeviceGroup,
@@ -59,7 +73,13 @@ export {
   type RemarkAuthor,
   remarksNewestFirst,
 } from './documents/remark.js'
-export type { DeviceDocument, RoomDocument, Unsaved } from './documents/types.js'
+export type {
+  CatalogSource,
+  DeviceDiscovery,
+  DeviceDocument,
+  RoomDocument,
+  Unsaved,
+} from './documents/types.js'
 export { BASE38_ALPHABET, Base38Error, decodeBase38, encodeBase38 } from './matter/base38.js'
 export { type DeviceCredential, readCredential } from './matter/credential.js'
 export {
@@ -155,6 +175,7 @@ export {
   splitRoomPath,
 } from './rooms/path.js'
 export {
+  type CatalogBearing,
   compareRevisions,
   latestRevision,
   mergeDevice,

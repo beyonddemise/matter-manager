@@ -1,10 +1,19 @@
 import { describe, expect, it } from 'vitest'
-import { browseDevices, type DeviceDocument, type RoomDocument } from '../../../src/domain/index.js'
+import {
+  A4,
+  browseDevices,
+  type DeviceDocument,
+  entriesOf,
+  layoutInventory,
+  type RoomDocument,
+} from '../../../src/domain/index.js'
 import {
   buildInventoryPdf,
   ExportCancelled,
   type InventoryLabels,
+  QR_SIZE,
 } from '../../../src/ui/pdf/inventory.js'
+import { extractPlacedText, extractText } from './text-extraction.js'
 
 /** The verified reference device; see `test/domain/matter/payload.test.ts`. */
 const PAYLOAD = 'MT:Y.K9042C00KA0648G00'
@@ -16,6 +25,7 @@ const LABELS: InventoryLabels = {
   continued: (path) => `${path} (continued)`,
   installed: 'Installed',
   pairingCode: 'Pairing code',
+  partNumber: 'Part number',
   noQrCode: 'No QR code',
   withoutRoom: 'Without a room',
   nothingToExport: 'There is nothing to export.',
@@ -132,5 +142,130 @@ describe('exporting an inventory', () => {
 
     expect(text).not.toContain('/Author')
     expect(text).not.toContain('/Keywords')
+  })
+})
+
+describe('what the catalogue knows', () => {
+  it('prints the preferred manufacturer name and the part number', async () => {
+    const bytes = await buildInventoryPdf(
+      groupsFor([
+        device({
+          vendorName: 'Aqara',
+          vendorPreferredName: 'Aqara Home',
+          productName: 'Door and Window Sensor P2',
+          partNumber: 'AS056',
+        }),
+      ]),
+      { labels: LABELS },
+    )
+    const text = (await extractText(bytes)).join('\n')
+    expect(text).toContain('Aqara Home Door and Window Sensor P2')
+    expect(text).toContain('Part number: AS056')
+  })
+
+  // Ruling R27: the device page shows the manufacturer whenever it is known, so the paper does.
+  it('prints the manufacturer beside the hex product id when the model is unknown', async () => {
+    const bytes = await buildInventoryPdf(
+      groupsFor([
+        device({ name: 'Found vendor', vendorName: 'Aqara', vendorPreferredName: 'Aqara Home' }),
+        device({ name: 'Test vendor device', vendorName: 'Test vendor' }),
+      ]),
+      { labels: LABELS },
+    )
+    const text = (await extractText(bytes)).join('\n')
+    expect(text).toContain('Aqara Home / 0x8000')
+    expect(text).toContain('Test vendor / 0x8000')
+    expect(text).not.toContain('0xFFF1')
+  })
+
+  it('prints the manufacturer alone when no product id is known either', async () => {
+    const { productId: _productId, ...noProduct } = device({ vendorName: 'Aqara' })
+    const bytes = await buildInventoryPdf(groupsFor([noProduct]), { labels: LABELS })
+    const text = (await extractText(bytes)).join('\n')
+    expect(text.split('\n')).toContain('Aqara')
+  })
+})
+
+/**
+ * Ruling R28: `A4.entryHeight` (116pt) is a fixed budget, set before the catalogue added two
+ * lines (product with manufacturer, part number). This pins that a full entry, with the longest
+ * realistic names, draws every line once (no wrap) and inside its own box, with a visible gap
+ * before the next entry, and that the QR code beside it does too.
+ */
+describe('a full catalogue entry fits its height', () => {
+  /** Helvetica's ascender and descender, as fractions of the size (the AFM's 718 and -207). */
+  const ASCENT = 0.718
+  const DESCENT = 0.207
+  /** The least white space left between one entry's content and the next entry. */
+  const GAP = 8
+  /** Where the text column starts: the margin, the QR code, and the 16pt gap. */
+  const TEXT_LEFT = A4.margin + QR_SIZE + 16
+  /** Name, product, part number, installed, spot, serial, pairing code. */
+  const LINES_PER_ENTRY = 7
+
+  const rooms: RoomDocument[] = [
+    {
+      _id: 'room:guest',
+      _rev: '1-a',
+      updatedAt: '2026-08-19T08:00:00.000Z',
+      type: 'room',
+      path: 'First Floor/Guest Bedroom/Wardrobe Corner by the Window',
+    },
+  ]
+
+  const full = (name: string, extra: Partial<DeviceDocument>): DeviceDocument =>
+    device({
+      name,
+      roomId: 'room:guest',
+      spot: 'behind the wardrobe in the guest bedroom, top left corner',
+      serial: 'SN-0123456789ABCDEF',
+      partNumber: 'LCA001 / 9290022166',
+      ...extra,
+    })
+
+  const devices = [
+    full('Hallway door contact, front entrance', {
+      vendorName: 'Lumi United Technology Co., Ltd',
+      vendorPreferredName: 'Aqara',
+      productName: 'Aqara Door and Window Sensor P2',
+    }),
+    full('Guest bedroom ceiling light, wardrobe side', {
+      vendorName: 'Signify Netherlands B.V.',
+      vendorPreferredName: 'Signify Netherlands B.V.',
+      productName: 'Philips Hue White and Color Ambiance A19 E26 Smart Bulb',
+    }),
+  ]
+
+  it('leaves room for the QR code and a gap', () => {
+    expect(QR_SIZE + GAP).toBeLessThanOrEqual(A4.entryHeight)
+  })
+
+  it('draws two full entries without a wrapped line, each inside its own box', async () => {
+    const groups = browseDevices(devices, rooms, { includeDisabled: false })
+    const bytes = await buildInventoryPdf(groups, { labels: LABELS })
+    const [page] = layoutInventory(groups, A4)
+    const tops = entriesOf(page ?? { number: 1, blocks: [] }).map((entry) => entry.top)
+    expect(tops).toHaveLength(2)
+
+    /** The layout counts down from the top of the usable area; PDF counts up from the foot. */
+    const fromTop = (y: number) => A4.height - A4.margin - y
+    const column = (await extractPlacedText(bytes))
+      .filter((line) => Math.abs(line.x - TEXT_LEFT) < 0.01)
+      .sort((a, b) => b.y - a.y)
+
+    // A wrapped line would add an entry here, and split the expected string in two.
+    expect(column).toHaveLength(LINES_PER_ENTRY * 2)
+    const texts = column.map((line) => line.text)
+    expect(texts).toContain('Aqara Aqara Door and Window Sensor P2')
+    expect(texts).toContain(
+      'Signify Netherlands B.V. Philips Hue White and Color Ambiance A19 E26 Smart Bulb',
+    )
+    expect(texts).toContain('behind the wardrobe in the guest bedroom, top left corner')
+
+    column.forEach((line, index) => {
+      const top = tops[Math.floor(index / LINES_PER_ENTRY)] ?? Number.NaN
+      expect(fromTop(line.y) - ASCENT * line.size).toBeGreaterThanOrEqual(top)
+      expect(fromTop(line.y) + DESCENT * line.size).toBeLessThanOrEqual(top + A4.entryHeight - GAP)
+    })
   })
 })

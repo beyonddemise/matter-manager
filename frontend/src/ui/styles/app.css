@@ -287,6 +287,15 @@ a.app-device:hover {
   overflow-wrap: anywhere;
 }
 
+/* Instructions from the DCL. Untrusted text, rendered as text: the manufacturer's line breaks
+   are kept (they number the steps), and a long unbroken string wraps rather than widening a
+   phone screen. Same reasoning as .app-remark-body. */
+.app-catalog-text {
+  margin: 0;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+
 /* ─── Projects ────────────────────────────────────────────────────────────────────────────── */
 
 /* The member plan's slots: one bordered row per project the plan allows, filled or not, so
