@@ -70,7 +70,7 @@ describe('signing out through the real path', () => {
 
 /** #238: the add form and backfill both get their lookups from `catalog()`. */
 describe('the catalogue lookup it hands out', () => {
-  it('answers a test-vendor code without a request, signed out or not', async () => {
+  it('answers a test-vendor code without a request, needing no token', async () => {
     const fetchImpl = vi.fn<typeof fetch>()
     const outcome = await catalog(fetchImpl).lookup('MT:Y.K9042C00KA0648G00')
 

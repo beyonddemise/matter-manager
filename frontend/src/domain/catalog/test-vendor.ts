@@ -6,7 +6,7 @@
  * here is data minimising: the answer is the same, and the code stays where it is.
  *
  * The answer mirrors the backend's `testVendorLookup` (`backend/src/catalog/policy.ts`) field for
- * field, so a device filed offline is indistinguishable from one the server answered.
+ * field, so a device answered here is indistinguishable from one the server answered.
  *
  * @module
  */

@@ -179,8 +179,9 @@ export function catalogApi(
  *
  * A wrapper rather than a branch inside {@link catalogApi}, so it sits in front of everything a
  * lookup goes through (the add form and backfill both take theirs from `composition.catalog()`)
- * and the HTTP client stays a plain HTTP client. In front of the token check too: the answer
- * needs no server, so it needs no sign-in either.
+ * and the HTTP client stays a plain HTTP client. In front of the token check too, because the
+ * answer *needs* no token or network. That does not mean it is asked for while signed out or
+ * offline: both callers gate on signed-in and online before they ask, and that is unchanged.
  *
  * @param api the lookup to fall back to
  * @param now the clock for `fetchedAt`; injected by tests
