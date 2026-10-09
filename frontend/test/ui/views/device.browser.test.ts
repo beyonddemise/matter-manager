@@ -1,6 +1,7 @@
 import '@awesome.me/webawesome-pro/dist/components/button/button.js'
 import '@awesome.me/webawesome-pro/dist/components/callout/callout.js'
 import '@awesome.me/webawesome-pro/dist/components/copy-button/copy-button.js'
+import '@awesome.me/webawesome-pro/dist/components/details/details.js'
 import '@awesome.me/webawesome-pro/dist/components/dialog/dialog.js'
 import '@awesome.me/webawesome-pro/dist/components/icon/icon.js'
 import '@awesome.me/webawesome-pro/dist/components/tag/tag.js'
@@ -12,6 +13,7 @@ import type { ProjectRepositories } from '../../../src/data/index.js'
 import { type DeviceDocument, decodePayload, type Unsaved } from '../../../src/domain/index.js'
 import type { DeviceView } from '../../../src/ui/views/device.js'
 import '../../../src/ui/views/device.js'
+import '../../../src/ui/styles/app.css'
 import { QUIET_ZONE } from '../../../src/ui/qr/render.js'
 import label from '../qr/fixtures/label-20202021-3840.txt?raw'
 import { rasterize } from '../qr/raster.js'
@@ -882,5 +884,189 @@ describe('remarks', () => {
 
     expect(shown(element)).toEqual([])
     expect(element.querySelector('[data-no-remarks]')).not.toBeNull()
+  })
+})
+
+describe('what the catalogue knows', () => {
+  const CATALOGUED: Partial<DeviceDocument> = {
+    vendorName: 'Aqara',
+    vendorPreferredName: 'Aqara Home',
+    productName: 'Aqara Door and Window Sensor P2',
+    partNumber: 'AS056',
+    productUrl: 'https://www.aqara.com/en/products.html',
+    supportUrl: 'https://www.aqara.com/support',
+    userManualUrl: 'https://www.aqara.com/manual.pdf',
+    commissioningFlowUrl: 'https://www.aqara.com/pairing',
+    commissioningInstructions: '1. Power it.\n2. Hold the button.',
+    factoryResetInstructions: 'Hold the button for 10 seconds.',
+    commissioningFlow: 'custom',
+    discovery: { softAp: true, ble: true, onNetwork: true },
+    catalogCheckedAt: '2026-10-05T16:20:00.000Z',
+    catalogSource: 'found',
+  }
+
+  /** The text of the labelled fact whose label is `label`, or undefined when it is not shown. */
+  function fact(element: HTMLElement, label: string): string | undefined {
+    const labels = [...element.querySelectorAll('.app-details small')]
+    return labels
+      .find((small) => small.textContent?.trim() === label)
+      ?.nextElementSibling?.textContent?.trim()
+  }
+
+  it('names the manufacturer by its preferred name, then the vendor name, then the id', async () => {
+    // Three devices, one per step of the fallback, each on its own page.
+    const ids = [
+      '6ba7b811-9dad-11d1-80b4-00c04fd430c8',
+      '6ba7b812-9dad-11d1-80b4-00c04fd430c8',
+      '6ba7b813-9dad-11d1-80b4-00c04fd430c8',
+    ] as const
+    await seed(lamp({ ...CATALOGUED, _id: `device:${ids[0]}` }))
+    // `seed` files the room as well, and a room can only be written once without its revision.
+    await database.repositories.devices.save(lamp({ vendorName: 'Aqara', _id: `device:${ids[1]}` }))
+    await database.repositories.devices.save(lamp({ _id: `device:${ids[2]}` }))
+
+    expect(fact(await page(ids[0]), 'Manufacturer')).toBe('Aqara Home')
+    expect(fact(await page(ids[1]), 'Manufacturer')).toBe('Aqara')
+    expect(fact(await page(ids[2]), 'Manufacturer')).toBe('0xFFF1')
+  })
+
+  it('falls back to the vendor name', async () => {
+    await seed(lamp({ vendorName: 'Aqara' }))
+    const element = await page()
+    expect(element.textContent).toContain('Aqara')
+    expect(element.textContent).not.toContain('0xFFF1')
+  })
+
+  it('shows the part number', async () => {
+    await seed(lamp(CATALOGUED))
+    expect((await page()).textContent).toContain('AS056')
+  })
+
+  it('links product, support and manual pages in a new tab, without an opener', async () => {
+    await seed(lamp(CATALOGUED))
+    const element = await page()
+    for (const kind of ['product', 'support', 'manual']) {
+      const link = element.querySelector(`a[data-link="${kind}"]`)
+      expect(link?.getAttribute('target')).toBe('_blank')
+      expect(link?.getAttribute('rel')).toBe('noopener noreferrer')
+    }
+    expect(element.querySelector('a[data-link="support"]')?.getAttribute('href')).toBe(
+      'https://www.aqara.com/support',
+    )
+  })
+
+  it('renders no link for a URL that is not https, whoever wrote it', async () => {
+    // `catalogFields` drops these, but a document can arrive by sync from any client.
+    await seed(
+      lamp({
+        productUrl: 'javascript:alert(1)',
+        supportUrl: 'http://www.aqara.com/support',
+        commissioningFlowUrl: 'data:text/html,hi',
+      }),
+    )
+    const element = await page()
+    expect(element.querySelector('[data-links]')).toBeNull()
+    expect(element.querySelector('a[href^="javascript:"]')).toBeNull()
+    expect(element.querySelector('[data-pairing-steps]')).toBeNull()
+  })
+
+  it('shows pairing steps and the factory reset as plain text in two sections', async () => {
+    await seed(
+      lamp({
+        ...CATALOGUED,
+        factoryResetInstructions: '<img src=x onerror="window.hacked=true">',
+      }),
+    )
+    const element = await page()
+    const pairing = element.querySelector('wa-details[data-pairing-steps]')
+    expect(pairing?.textContent).toContain('2. Hold the button.')
+    expect(pairing?.querySelector('a[data-link="commissioning-flow"]')).not.toBeNull()
+    const reset = element.querySelector('wa-details[data-factory-reset]')
+    expect(reset?.textContent).toContain('<img src=x')
+    expect(reset?.querySelector('img')).toBeNull()
+  })
+
+  it('shows the pairing section for a pairing link alone, without steps', async () => {
+    await seed(lamp({ commissioningFlowUrl: 'https://www.aqara.com/pairing' }))
+    const element = await page()
+    const pairing = element.querySelector('wa-details[data-pairing-steps]')
+    expect(pairing?.querySelector('a[data-link="commissioning-flow"]')).not.toBeNull()
+    expect(pairing?.querySelector('.app-catalog-text')).toBeNull()
+    expect(element.querySelector('wa-details[data-factory-reset]')).toBeNull()
+  })
+
+  it('shows neither section, no links and no tags for a device the catalogue never saw', async () => {
+    await seed(lamp())
+    const element = await page()
+    expect(element.querySelector('wa-details')).toBeNull()
+    expect(element.querySelector('[data-links]')).toBeNull()
+    expect(element.querySelector('[data-pairing]')).toBeNull()
+  })
+
+  it('tags discovery and a flow that needs the manufacturer’s app', async () => {
+    await seed(lamp(CATALOGUED))
+    const element = await page()
+    expect(element.querySelector('wa-tag[data-discovery="ble"]')?.textContent).toContain('BLE')
+    expect(element.querySelector('wa-tag[data-discovery="soft-ap"]')?.textContent).toContain(
+      'Wi-Fi',
+    )
+    expect(element.querySelector('wa-tag[data-discovery="on-network"]')).not.toBeNull()
+    expect(element.querySelector('wa-tag[data-flow="custom"]')?.textContent).toContain(
+      'Needs the manufacturer’s app',
+    )
+  })
+
+  it('tags a flow that needs a step on the device first', async () => {
+    await seed(lamp({ commissioningFlow: 'userActionRequired' }))
+    const element = await page()
+    expect(element.querySelector('wa-tag[data-flow="user-action"]')?.textContent).toContain(
+      'Needs a step on the device first',
+    )
+    expect(element.querySelector('wa-tag[data-flow="custom"]')).toBeNull()
+  })
+
+  it('tags facts, not statuses: neutral, small, no icon, never focusable', async () => {
+    await seed(lamp(CATALOGUED))
+    const element = await page()
+    const tags = [...element.querySelectorAll('[data-pairing] wa-tag')]
+    expect(tags).toHaveLength(4)
+    for (const tag of tags) {
+      expect(tag.getAttribute('variant')).toBe('neutral')
+      expect(tag.getAttribute('size')).toBe('s')
+      expect(tag.querySelector('wa-icon')).toBeNull()
+      expect(tag.hasAttribute('tabindex')).toBe(false)
+    }
+  })
+
+  it('tags no flow for the standard one', async () => {
+    await seed(
+      lamp({
+        commissioningFlow: 'standard',
+        discovery: { softAp: false, ble: true, onNetwork: false },
+      }),
+    )
+    const element = await page()
+    expect(element.querySelector('wa-tag[data-flow]')).toBeNull()
+    expect(element.querySelectorAll('wa-tag[data-discovery]')).toHaveLength(1)
+  })
+
+  it('wraps very long instructions at 360 px instead of widening the page', async () => {
+    await seed(
+      lamp({ commissioningInstructions: `${'x'.repeat(2000)} ${'Long word '.repeat(200)}` }),
+    )
+    const element = await page()
+    const frame = document.createElement('div')
+    frame.style.width = '360px'
+    element.replaceWith(frame)
+    frame.append(element)
+    const details = element.querySelector('wa-details[data-pairing-steps]') as HTMLElement & {
+      open: boolean
+      updateComplete: Promise<unknown>
+    }
+    details.open = true
+    await details.updateComplete
+    const text = element.querySelector('.app-catalog-text') as HTMLElement
+    expect(text.scrollWidth).toBeLessThanOrEqual(text.clientWidth)
+    expect(frame.scrollWidth).toBeLessThanOrEqual(360)
   })
 })

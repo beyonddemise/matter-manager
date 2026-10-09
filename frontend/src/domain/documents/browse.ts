@@ -52,8 +52,9 @@ function foldedOrder(a: string, b: string): number {
 /**
  * Everything about a device a search may look at, folded and joined.
  *
- * The issue names name, room, serial and product. `spot` and `vendorName` are here too:
- * "ceiling" and "the Ikea one" are both how people describe a device they are looking for, and
+ * The issue names name, room, serial and product. `spot`, `vendorName`,
+ * `vendorPreferredName` and `partNumber` are here too: "ceiling", "the Ikea one" and "AS056" are
+ * all how people describe a device they are looking for, and
  * neither match is ever surprising.
  *
  * `payload` and `manualCode` are **deliberately absent, and this is a security decision**.
@@ -66,7 +67,16 @@ function foldedOrder(a: string, b: string): number {
  * stops a term from matching across two fields and reporting a device that contains neither.
  */
 function haystack(device: DeviceDocument, path: string): string {
-  return [device.name, path, device.spot, device.serial, device.productName, device.vendorName]
+  return [
+    device.name,
+    path,
+    device.spot,
+    device.serial,
+    device.productName,
+    device.vendorName,
+    device.vendorPreferredName,
+    device.partNumber,
+  ]
     .filter((value): value is string => value !== undefined && value !== '')
     .map(foldForComparison)
     .join('\n')

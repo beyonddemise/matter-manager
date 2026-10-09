@@ -28,7 +28,7 @@ Success: no one who used Matter Manager ever has to factory-reset a device becau
 **"Never lose a Matter commissioning QR code again."** The tagline leads. The mechanisms behind it:
 
 - **A catalogue, not a hub.** It never commissions, controls or monitors devices, and never talks to the Matter network or fabric.
-- **The code is a string, not a picture** (`MT:` plus Base38). It is stored exactly, reproduced at any size, and its vendor and product IDs are decoded to fill in manufacturer and product name automatically.
+- **The code is a string, not a picture** (`MT:` plus Base38). It is stored exactly and reproduced at any size. Its vendor and product IDs are looked up in the CSA's Distributed Compliance Ledger when the device is added, or as soon as the app is next online and signed in, and the manufacturer, product name, links and pairing instructions are copied onto the device.
 - **Offline-first.** "The basement is exactly where you need this." Every device operation works without connectivity, and data syncs when the network returns.
 - **Hand-over.** An installer can transfer a whole house record to the homeowner and optionally keep read access.
 

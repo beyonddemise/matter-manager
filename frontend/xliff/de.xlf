@@ -154,10 +154,6 @@
   <source>Copy the pairing code</source>
   <target>Kopplungscode kopieren</target>
 </trans-unit>
-<trans-unit id="sd21a971eea208533">
-  <source>Vendor</source>
-  <target>Hersteller</target>
-</trans-unit>
 <trans-unit id="sde1f02481331134c">
   <source>Product</source>
   <target>Produkt</target>
@@ -937,6 +933,62 @@
 <trans-unit id="s33367da9271a329e">
   <source>Looking up manufacturer…</source>
   <target>Hersteller wird gesucht …</target>
+</trans-unit>
+<trans-unit id="s325e0024caf0aa2d">
+  <source>Part number</source>
+  <target>Teilenummer</target>
+</trans-unit>
+<trans-unit id="s4caffac081d7c447">
+  <source>opens in a new tab</source>
+  <target>öffnet in einem neuen Tab</target>
+</trans-unit>
+<trans-unit id="s15e62319b0a3a08a">
+  <source>BLE</source>
+  <target>BLE</target>
+</trans-unit>
+<trans-unit id="scdec9ef5c73b26a1">
+  <source>Wi-Fi</source>
+  <target>WLAN</target>
+</trans-unit>
+<trans-unit id="s75bfec52c10b0a16">
+  <source>On network</source>
+  <target>Im Netzwerk</target>
+</trans-unit>
+<trans-unit id="s9d0db3aff33286dd">
+  <source>Needs the manufacturer’s app</source>
+  <target>Erfordert die App des Herstellers</target>
+</trans-unit>
+<trans-unit id="sa950a4e89727b60b">
+  <source>Needs a step on the device first</source>
+  <target>Erfordert zuerst einen Schritt am Gerät</target>
+</trans-unit>
+<trans-unit id="saadba46653e4ffef">
+  <source>Pairing</source>
+  <target>Kopplung</target>
+</trans-unit>
+<trans-unit id="sd4bfc9d20a9a7f1f">
+  <source>Product page</source>
+  <target>Produktseite</target>
+</trans-unit>
+<trans-unit id="s3736464cf8d6fa08">
+  <source>Support</source>
+  <target>Support</target>
+</trans-unit>
+<trans-unit id="sb7e73c0ce8706498">
+  <source>User manual</source>
+  <target>Bedienungsanleitung</target>
+</trans-unit>
+<trans-unit id="s44a7f20904938966">
+  <source>The manufacturer’s pairing instructions</source>
+  <target>Kopplungsanleitung des Herstellers</target>
+</trans-unit>
+<trans-unit id="s1d1a7eafb9bb2846">
+  <source>How to put it in pairing mode</source>
+  <target>So versetzen Sie das Gerät in den Kopplungsmodus</target>
+</trans-unit>
+<trans-unit id="s2cfffbab2ce01ef6">
+  <source>Factory reset</source>
+  <target>Auf Werkseinstellungen zurücksetzen</target>
 </trans-unit>
 </body>
 </file>
