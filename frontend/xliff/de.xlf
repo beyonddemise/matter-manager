@@ -870,10 +870,6 @@
   <source>Upgrade</source>
   <target>Upgrade</target>
 </trans-unit>
-<trans-unit id="s14e9da57eecc074a">
-  <source>It's just alpha — coming soon</source>
-  <target>Dies ist erst eine Alpha-Version — bald verfügbar</target>
-</trans-unit>
 <trans-unit id="s5e8250fb85d64c23">
   <source>Close</source>
   <target>Schließen</target>
@@ -1006,6 +1002,66 @@
 <trans-unit id="s7608573759aa7525">
   <source>Test vendor</source>
   <target>Testhersteller</target>
+</trans-unit>
+<trans-unit id="s6ec872b257ae35d4">
+  <source>Under heavy development. Join the waitlist for free.</source>
+  <target>In intensiver Entwicklung. Setzen Sie sich kostenlos auf die Warteliste.</target>
+</trans-unit>
+<trans-unit id="sa6895584d61478fb">
+  <source>Free</source>
+  <target>Kostenlos</target>
+</trans-unit>
+<trans-unit id="s751678adb0aa2b23">
+  <source>Member</source>
+  <target>Mitglied</target>
+</trans-unit>
+<trans-unit id="s8e067719f45b0458">
+  <source>Pro</source>
+  <target>Pro</target>
+</trans-unit>
+<trans-unit id="s3811b3fb7445c7dc">
+  <source>To be announced</source>
+  <target>Wird noch bekannt gegeben</target>
+</trans-unit>
+<trans-unit id="se9ef1815463f8000">
+  <source>Unlimited</source>
+  <target>Unbegrenzt</target>
+</trans-unit>
+<trans-unit id="s780a51fa741984b6">
+  <source><x id="0" equiv-text="${limit}"/>, on this device</source>
+  <target><x id="0" equiv-text="${limit}"/>, auf diesem Gerät</target>
+</trans-unit>
+<trans-unit id="s2929031238d41539">
+  <source>Included</source>
+  <target>Enthalten</target>
+</trans-unit>
+<trans-unit id="sfbc4d1db0bbe6a4e">
+  <source>Not included</source>
+  <target>Nicht enthalten</target>
+</trans-unit>
+<trans-unit id="se7948d6727f2a783">
+  <source>Sync and sharing</source>
+  <target>Synchronisation und Teilen</target>
+</trans-unit>
+<trans-unit id="s180e0fd87f3179c1">
+  <source>Client name</source>
+  <target>Kundenname</target>
+</trans-unit>
+<trans-unit id="s00cc69de9754e891">
+  <source>Project transfer</source>
+  <target>Projektübergabe</target>
+</trans-unit>
+<trans-unit id="seed76e8afe9f604a">
+  <source>Price</source>
+  <target>Preis</target>
+</trans-unit>
+<trans-unit id="s11801b4b60084cc5">
+  <source>Your plan</source>
+  <target>Ihr Plan</target>
+</trans-unit>
+<trans-unit id="s2c03af9142ae0575">
+  <source>The plans compared</source>
+  <target>Die Pläne im Vergleich</target>
 </trans-unit>
 </body>
 </file>

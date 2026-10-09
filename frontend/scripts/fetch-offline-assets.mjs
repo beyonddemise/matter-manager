@@ -121,6 +121,11 @@ const ICONS = [
   // Chosen at run time: the enable/disable button in `views/device.ts`.
   'play',
   'pause',
+  // The upgrade dialog's plan comparison in `upgrade-dialog.ts`: `user` on the "Your plan" tag,
+  // and, chosen at run time, `check` or `minus` for whether a plan includes a feature.
+  'user',
+  'check',
+  'minus',
 ]
 
 /** A modern browser, so Bunny serves the woff2 stylesheet rather than a legacy one. */

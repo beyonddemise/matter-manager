@@ -1,3 +1,9 @@
+// The theme and the application's stylesheet, as `main.ts` loads them. Without them the
+// `wa-desktop-only` / `wa-mobile-only` switch is no rule at all, and a test of what is shown at
+// 360px or at 1280px would pass whichever layout the dialog drew.
+import '@awesome.me/webawesome-pro/dist/styles/webawesome.css'
+import '@awesome.me/webawesome-pro/dist/styles/themes/glossy.css'
+import '@awesome.me/webawesome-pro/dist/styles/color/palettes/anodized.css'
 import '@awesome.me/webawesome-pro/dist/components/page/page.js'
 import '@awesome.me/webawesome-pro/dist/components/button/button.js'
 import '@awesome.me/webawesome-pro/dist/components/callout/callout.js'
@@ -9,6 +15,7 @@ import '@awesome.me/webawesome-pro/dist/components/input/input.js'
 import '@awesome.me/webawesome-pro/dist/components/tag/tag.js'
 import { fixture, fixtureCleanup, html, waitUntil } from '@open-wc/testing-helpers'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { page } from 'vitest/browser'
 import type { CachedProfile, LocalProjectEntry } from '../../src/data/index.js'
 import type { AppShell } from '../../src/ui/app-shell.js'
 import '../../src/ui/app-shell.js'
@@ -18,10 +25,13 @@ import {
   projectIsEditable,
   useProjectDatabase,
 } from '../../src/ui/db/project-database.js'
+import { SOURCE_LOCALE } from '../../src/ui/i18n/locale.js'
+import { activateLocale } from '../../src/ui/i18n/localization.js'
 import type { LocalProjectDependencies } from '../../src/ui/local-projects.js'
 import { beginProjectAction, projectActionRunning } from '../../src/ui/project-busy.js'
 import type { Project } from '../../src/ui/projects.js'
 import type { SyncableProject } from '../../src/ui/sync/manager.js'
+import '../../src/ui/styles/app.css'
 import type { ProjectsView } from '../../src/ui/views/projects.js'
 import { refresherNeverAnswering, refresherReporting } from './refresher-stub.js'
 import { destroyProjectStores, isolatedProjectStore } from './support/project-store.js'
@@ -1128,19 +1138,118 @@ describe('signing out from the menu', () => {
   })
 })
 
+/** Opens the upgrade dialog from the header and waits for it. */
+async function openUpgrade(element: AppShell): Promise<HTMLElement> {
+  await waitUntil(() => element.querySelector('[data-upgrade]') !== null, 'no upgrade')
+  ;(element.querySelector('[data-upgrade]') as HTMLElement).click()
+  await waitUntil(() => element.querySelector('[data-upgrade-dialog][open]') !== null, 'no dialog')
+  return element.querySelector('[data-upgrade-dialog]') as HTMLElement
+}
+
+/** Waits for `<wa-page>` to settle on a layout after the viewport changed. */
+const pageView = (element: Element, view: 'desktop' | 'mobile') =>
+  waitUntil(
+    () => element.querySelector('wa-page')?.getAttribute('view') === view,
+    `the page never became ${view}`,
+  )
+
+/** The trimmed text of each element matching `selector` inside `root`. */
+const texts = (root: Element, selector: string): string[] =>
+  [...root.querySelectorAll(selector)].map((each) => text(each))
+
 describe('upgrading', () => {
-  it('offers an upgrade that says what there is to say', async () => {
-    const { element } = await mount({ cachedProfile: profile({ plan: 'free', projectLimit: 1 }) })
-    await waitUntil(() => element.querySelector('[data-upgrade]') !== null, 'no upgrade')
+  afterEach(async () => {
+    // Vitest's default browser viewport; one test's size must not leak into the next file.
+    await page.viewport(414, 896)
+    await activateLocale(SOURCE_LOCALE)
+  })
 
-    ;(element.querySelector('[data-upgrade]') as HTMLElement).click()
-    await waitUntil(
-      () => element.querySelector('[data-upgrade-dialog][open]') !== null,
-      'no dialog',
+  it('compares the three plans in upgrade order, the account’s own highlighted', async () => {
+    await page.viewport(1280, 800)
+    const { element } = await mount({ cachedProfile: profile({ plan: 'member', projectLimit: 5 }) })
+    await inputSettles(element, (i) => i.plan === 'member', 'plan never read')
+    await pageView(element, 'desktop')
+    const dialog = await openUpgrade(element)
+    const table = dialog.querySelector('[data-plan-table]') as HTMLElement
+
+    expect(getComputedStyle(table).display).not.toBe('none')
+    expect(
+      [...table.querySelectorAll('th[data-plan-column]')].map((th) =>
+        th.getAttribute('data-plan-column'),
+      ),
+    ).toEqual(['free', 'member', 'pro'])
+    expect(texts(table, 'th[data-plan-column]')).toEqual(['Free', 'Member Your plan', 'Pro'])
+    expect(
+      [...table.querySelectorAll('.app-plan-current')].every(
+        (cell) =>
+          cell.getAttribute('data-plan') === 'member' ||
+          cell.getAttribute('data-plan-column') === 'member',
+      ),
+    ).toBe(true)
+    expect(table.querySelectorAll('.app-plan-current')).toHaveLength(6)
+    expect(table.querySelectorAll('[data-your-plan]')).toHaveLength(1)
+
+    expect(texts(table, '[data-row="projects"] td')).toEqual([
+      '1, on this device',
+      '5',
+      'Unlimited',
+    ])
+    expect(texts(table, '[data-row="price"] td')).toEqual([
+      'Free',
+      'To be announced',
+      'To be announced',
+    ])
+    const labels = (row: string) =>
+      [...table.querySelectorAll(`[data-row="${row}"] td wa-icon`)].map((icon) =>
+        icon.getAttribute('label'),
+      )
+    expect(labels('sync')).toEqual(['Not included', 'Included', 'Included'])
+    expect(labels('client-name')).toEqual(['Not included', 'Not included', 'Included'])
+    expect(labels('transfer')).toEqual(['Not included', 'Not included', 'Included'])
+
+    expect(text(dialog.querySelector('[data-waitlist-statement]'))).toBe(
+      'Under heavy development. Join the waitlist for free.',
     )
+  })
 
-    expect(text(element.querySelector('[data-upgrade-dialog]'))).toContain(
-      "It's just alpha — coming soon",
+  it('stacks one card per plan at 360 px, with nothing to scroll sideways', async () => {
+    await page.viewport(360, 740)
+    const { element } = await mount({ cachedProfile: profile({ plan: 'free', projectLimit: 1 }) })
+    await pageView(element, 'mobile')
+    const dialog = await openUpgrade(element)
+
+    const table = dialog.querySelector('[data-plan-table]') as HTMLElement
+    expect(getComputedStyle(table).display).toBe('none')
+    const cards = [...dialog.querySelectorAll('wa-card[data-plan-card]')] as HTMLElement[]
+    expect(cards.map((card) => card.getAttribute('data-plan-card'))).toEqual([
+      'free',
+      'member',
+      'pro',
+    ])
+    expect(cards[0]?.classList.contains('app-plan-current')).toBe(true)
+    expect(cards[0]?.querySelector('[data-your-plan]')).not.toBeNull()
+    expect(cards[2]?.querySelector('[data-row="price"]')?.textContent).toContain('To be announced')
+
+    for (const card of cards) {
+      expect(card.getBoundingClientRect().width).toBeGreaterThan(0)
+      expect(card.getBoundingClientRect().right).toBeLessThanOrEqual(window.innerWidth)
+    }
+    const body = dialog.shadowRoot?.querySelector('[part~="body"]') as HTMLElement
+    expect(body.scrollWidth).toBeLessThanOrEqual(body.clientWidth)
+  })
+
+  it('speaks German, formally', async () => {
+    await activateLocale('de')
+    const { element } = await mount({ cachedProfile: profile({ plan: 'member', projectLimit: 5 }) })
+    await inputSettles(element, (i) => i.plan === 'member', 'plan never read')
+    const dialog = await openUpgrade(element)
+
+    expect(text(dialog)).toContain('Ihr Plan')
+    expect(text(dialog)).toContain('Mitglied')
+    expect(text(dialog)).toContain('Wird noch bekannt gegeben')
+    expect(text(dialog)).toContain('Synchronisation und Teilen')
+    expect(text(dialog.querySelector('[data-waitlist-statement]'))).toBe(
+      'In intensiver Entwicklung. Setzen Sie sich kostenlos auf die Warteliste.',
     )
   })
 

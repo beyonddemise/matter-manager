@@ -13,6 +13,7 @@ import { msg } from '@lit/localize'
 import { html, type TemplateResult } from 'lit'
 import { type Plan, showsUpgrade } from '../domain/plan.js'
 import type { SessionState } from './session.js'
+import { renderPlanComparison } from './upgrade-dialog.js'
 
 /**
  * The account, top right: the signed-in email, or the way to sign in, or nothing at all until
@@ -55,7 +56,7 @@ export function renderAccount(
 
 /**
  * The way to a bigger plan, while there is one (`showsUpgrade`, never a tier literal: ADR 0009).
- * There is nothing to buy yet, and the dialog says so plainly.
+ * The dialog compares the plans and offers the free waitlist (#224).
  */
 export function renderUpgrade(
   plan: Plan,
@@ -82,7 +83,12 @@ export function renderUpgrade(
               if (event.target === event.currentTarget) onClose()
             }}
           >
-            <p>${msg("It's just alpha — coming soon")}</p>
+            <div class="wa-stack wa-gap-m">
+              ${renderPlanComparison(plan)}
+              <p data-waitlist-statement>
+                ${msg('Under heavy development. Join the waitlist for free.')}
+              </p>
+            </div>
             <wa-button slot="footer" data-close-upgrade @click=${onClose}>${msg('Close')}</wa-button>
           </wa-dialog>`
         : ''

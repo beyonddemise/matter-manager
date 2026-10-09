@@ -22,7 +22,8 @@ beforeAll(() => {
  *
  * Each is a value in a lookup rather than a literal in markup: the colour-scheme toggle in
  * `app-shell.ts`, the navigation entries in `router/routes.ts`, the enable/disable button in
- * `views/device.ts`, and the network and sync status in `shell-status.ts`. They are the ones
+ * `views/device.ts`, the network and sync status in `shell-status.ts`, and the plan comparison's
+ * included/not-included marks in `upgrade-dialog.ts`. They are the ones
  * most likely to be missed when icons are bundled, because grepping for `name="` finds every
  * other icon in the application and none of these.
  */
@@ -42,6 +43,9 @@ const RUNTIME_CHOSEN = [
   'triangle-exclamation',
   'wifi',
   'plug-circle-xmark',
+  // Included or not, per plan and row, in the upgrade dialog's comparison (`upgrade-dialog.ts`).
+  'check',
+  'minus',
 ] as const
 
 /** Every source file, as text, so the templates can be searched for icon names. */
