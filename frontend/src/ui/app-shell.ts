@@ -1,5 +1,5 @@
 import { msg, updateWhenLocaleChanges } from '@lit/localize'
-import { html, LitElement, type TemplateResult } from 'lit'
+import { html, LitElement, type PropertyValues, type TemplateResult } from 'lit'
 import { DEFAULT_PLAN, type Plan } from '../domain/plan.js'
 import { BACKFILL_WANTED } from './catalog.js'
 import { type CatalogBackfill, defaultCatalogBackfill } from './catalog-backfill.js'
@@ -467,6 +467,24 @@ export class AppShell extends LitElement implements ViewHost {
     // stay set and the dialog would reopen by itself when a later request brings the button back.
     // Here rather than in `updated()`, so it lands in the same render instead of a second one.
     if (this.upgrading && !offersUpgrade(this.upgradeFacts())) this.onCloseUpgrade()
+  }
+
+  /**
+   * Gives focus back when the upgrade dialog closes (WCAG 2.4.3), whichever way it closed: Close,
+   * Escape, or leaving on the top plan. The dialog is rendered already `open`, so Web Awesome's
+   * `show()` never records a trigger to return to, and closing removes it from the page, so its
+   * own return never runs either; without this, focus falls to the page.
+   *
+   * Back to Upgrade while it is offered; otherwise to the scheme toggle, the header control that
+   * took Upgrade's place in the focus order. A button rather than a landmark, so moving focus
+   * speaks one label and does not talk over "You left the waitlist." in the live region.
+   */
+  protected override updated(changed: PropertyValues<this>): void {
+    if (changed.get('upgrading') !== true || this.upgrading) return
+    const target =
+      this.querySelector<HTMLElement>('[data-upgrade]') ??
+      this.querySelector<HTMLElement>('[data-scheme-toggle]')
+    target?.focus()
   }
 
   /** What decides whether Upgrade is offered: the cached plan and request. */

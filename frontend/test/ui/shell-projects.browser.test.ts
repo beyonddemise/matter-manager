@@ -15,7 +15,7 @@ import '@awesome.me/webawesome-pro/dist/components/input/input.js'
 import '@awesome.me/webawesome-pro/dist/components/tag/tag.js'
 import { fixture, fixtureCleanup, html, waitUntil } from '@open-wc/testing-helpers'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { page } from 'vitest/browser'
+import { page, userEvent } from 'vitest/browser'
 import type { CachedProfile, LocalProjectEntry } from '../../src/data/index.js'
 import type { Plan } from '../../src/domain/plan.js'
 import type { AppShell } from '../../src/ui/app-shell.js'
@@ -1717,6 +1717,40 @@ describe('upgrading', () => {
     await waitUntil(() => element.querySelector('[data-upgrade-dialog]') === null, 'dialog stayed')
 
     expect(text(element.querySelector('[data-status-announcement]'))).toBe('You left the waitlist.')
+    // Upgrade went with the dialog, so focus goes to the control that took its place in the
+    // header, not to the page (WCAG 2.4.3), and the announcement is still there to be heard.
+    await waitUntil(
+      () => document.activeElement === element.querySelector('[data-scheme-toggle]'),
+      'focus was lost',
+    )
+    expect(text(element.querySelector('[data-status-announcement]'))).toBe('You left the waitlist.')
+  })
+
+  it('returns focus to Upgrade when the dialog is closed', async () => {
+    const { element } = await mount({ cachedProfile: profile({ plan: 'free', projectLimit: 1 }) })
+    await inputSettles(element, (i) => i.plan === 'free', 'plan never read')
+    const dialog = await openUpgrade(element)
+
+    ;(dialog.querySelector('[data-close-upgrade]') as HTMLElement).click()
+    await waitUntil(() => element.querySelector('[data-upgrade-dialog]') === null, 'still open')
+    await waitUntil(
+      () => document.activeElement === element.querySelector('[data-upgrade]'),
+      'focus was lost',
+    )
+  })
+
+  it('returns focus to Upgrade when the dialog is dismissed with Escape', async () => {
+    const { element } = await mount({ cachedProfile: profile({ plan: 'free', projectLimit: 1 }) })
+    await inputSettles(element, (i) => i.plan === 'free', 'plan never read')
+    const dialog = await openUpgrade(element)
+    await waitUntil(() => dialog.contains(document.activeElement), 'the dialog never took focus')
+
+    await userEvent.keyboard('{Escape}')
+    await waitUntil(() => element.querySelector('[data-upgrade-dialog]') === null, 'still open')
+    await waitUntil(
+      () => document.activeElement === element.querySelector('[data-upgrade]'),
+      'focus was lost',
+    )
   })
 
   it('says so when the server took the change but this device could not store it', async () => {
