@@ -4,6 +4,8 @@ import '@awesome.me/webawesome-pro/dist/components/checkbox/checkbox.js'
 import '@awesome.me/webawesome-pro/dist/components/callout/callout.js'
 import '@awesome.me/webawesome-pro/dist/components/icon/icon.js'
 import '@awesome.me/webawesome-pro/dist/components/dialog/dialog.js'
+import '@awesome.me/webawesome-pro/dist/components/dropdown/dropdown.js'
+import '@awesome.me/webawesome-pro/dist/components/dropdown-item/dropdown-item.js'
 import '@awesome.me/webawesome-pro/dist/components/option/option.js'
 import '@awesome.me/webawesome-pro/dist/components/select/select.js'
 import '@awesome.me/webawesome-pro/dist/components/input/input.js'
@@ -14,6 +16,7 @@ import { page } from 'vitest/browser'
 import type { DeviceDocument, Unsaved } from '../../../src/domain/index.js'
 import type { DeviceListView } from '../../../src/ui/views/device-list.js'
 import '../../../src/ui/views/device-list.js'
+import { extractText } from '../pdf/text-extraction.js'
 import { browserDatabase, type TestDatabase } from '../support/browser-database.js'
 
 let database: TestDatabase
@@ -192,10 +195,12 @@ describe('sub-rooms', () => {
     await rooms.save({ _id: 'room:attic', type: 'room', path: 'Attic' })
     await rooms.save({ _id: 'room:studio', type: 'room', path: 'Attic/Studio' })
     await rooms.save({ _id: 'room:bedroom', type: 'room', path: 'Attic Bedroom' })
+    await rooms.save({ _id: 'room:kitchen', type: 'room', path: 'Ground Floor/Kitchen' })
     await rooms.save({ _id: 'room:pantry', type: 'room', path: 'Ground Floor/Kitchen/Pantry' })
     await devices.save(device('device:attic', 'Roof sensor', 'room:attic'))
     await devices.save(device('device:studio', 'Desk lamp', 'room:studio'))
     await devices.save(device('device:bedroom', 'Bedside lamp', 'room:bedroom'))
+    await devices.save(device('device:kitchen', 'Oven plug', 'room:kitchen'))
     await devices.save(device('device:pantry', 'Fridge plug', 'room:pantry'))
   }
 
@@ -211,6 +216,7 @@ describe('sub-rooms', () => {
       'Attic',
       'Attic/Studio',
       'Attic Bedroom',
+      'Ground Floor/Kitchen',
       'Ground Floor/Kitchen/Pantry',
     ])
   })
@@ -263,6 +269,90 @@ describe('sub-rooms', () => {
     await expect
       .element(view.getByRole('heading', { level: 2, name: 'Attic', exact: true }))
       .toBeInTheDocument()
+  })
+
+  /** What assistive technology reads for `node`: its text without the `aria-hidden` parts. */
+  const spoken = (node: Element): string =>
+    [...node.childNodes]
+      .map((child) => {
+        if (child.nodeType === Node.TEXT_NODE) return child.textContent ?? ''
+        if (child instanceof Element && child.getAttribute('aria-hidden') !== 'true')
+          return spoken(child)
+        return ''
+      })
+      .join('')
+      .replace(/\s+/g, ' ')
+      .trim()
+
+  /** The export items under the heading for `path`: what each exports, and what it says. */
+  const exportItems = (element: DeviceListView, path: string) =>
+    [...element.querySelectorAll(`[data-room="${path}"] wa-dropdown-item[data-export-room]`)].map(
+      (item) => [item.getAttribute('data-export-room'), spoken(item)],
+    )
+
+  it('keeps a single button on a top-level heading, saying whether sub-rooms go with it', async () => {
+    await seedAttic()
+    const element = await list()
+
+    // `Attic` has `Attic/Studio` below it, so its export takes both and says so.
+    const attic = element.querySelector('[data-room="Attic"] wa-button[data-export-room]')
+    expect(attic?.getAttribute('data-export-room')).toBe('Attic')
+    expect(spoken(attic as Element)).toBe('Export this room and its rooms')
+    expect(element.querySelector('[data-room="Attic"] wa-dropdown')).toBeNull()
+
+    // `Attic Bedroom` has nothing below it; `Attic` is not its parent.
+    const bedroom = element.querySelector('[data-room="Attic Bedroom"] [data-export-room]')
+    expect(spoken(bedroom as Element)).toBe('Export this room')
+  })
+
+  it('offers a sub-room, then each level above it, from a menu', async () => {
+    await seedAttic()
+    const element = await list()
+
+    // Ground Floor holds no devices itself and so has no heading; this menu is the only way
+    // to export it, and each item says exactly what it takes.
+    expect(exportItems(element, 'Ground Floor/Kitchen/Pantry')).toEqual([
+      ['Ground Floor/Kitchen/Pantry', 'Ground Floor/Kitchen/Pantry'],
+      ['Ground Floor/Kitchen', 'Ground Floor/Kitchen, with its rooms'],
+      ['Ground Floor', 'Ground Floor, with its rooms'],
+    ])
+    // The room itself, when it has sub-rooms, says that they come too.
+    expect(exportItems(element, 'Ground Floor/Kitchen')).toEqual([
+      ['Ground Floor/Kitchen', 'Ground Floor/Kitchen, with its rooms'],
+      ['Ground Floor', 'Ground Floor, with its rooms'],
+    ])
+    expect(exportItems(element, 'Attic/Studio')).toEqual([
+      ['Attic/Studio', 'Attic/Studio'],
+      ['Attic', 'Attic, with its rooms'],
+    ])
+    // Visibly, the items read as the heading does.
+    const item = element.querySelector(
+      '[data-room="Attic/Studio"] wa-dropdown-item[data-export-room="Attic"]',
+    )
+    expect(item?.textContent?.replace(/\s+/g, ' ').trim()).toContain('Attic, with its rooms')
+  })
+
+  it('exports a parent with all its sub-rooms from a sub-room menu', async () => {
+    await seedAttic()
+    const saved: Uint8Array[] = []
+    const element = await list()
+    ;(element as DeviceListView & { download?: unknown }).download = (bytes: Uint8Array) =>
+      saved.push(bytes)
+
+    ;(
+      element.querySelector(
+        '[data-room="Ground Floor/Kitchen/Pantry"] wa-dropdown-item[data-export-room="Ground Floor"]',
+      ) as HTMLElement
+    ).click()
+    await waitUntil(() => saved.length === 1, 'the room export never finished', { timeout: 10000 })
+
+    const lines = await extractText(saved[0] as Uint8Array)
+    expect(lines).toContain('Ground Floor › Kitchen')
+    expect(lines).toContain('Ground Floor › Kitchen › Pantry')
+    expect(lines.indexOf('Ground Floor › Kitchen')).toBeLessThan(
+      lines.indexOf('Ground Floor › Kitchen › Pantry'),
+    )
+    expect(lines).not.toContain('Attic')
   })
 
   it('keeps the room export on the full path', async () => {

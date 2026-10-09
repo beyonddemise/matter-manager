@@ -7,6 +7,7 @@ import {
   entriesOf,
   layoutInventory,
   type RoomDocument,
+  selectForExport,
 } from '../../../src/domain/index.js'
 import {
   buildInventoryPdf,
@@ -351,5 +352,32 @@ describe('sub-rooms', () => {
 
     expect(headings).toEqual(['Attic', 'Attic › Studio', 'Attic Bedroom'])
     expect(lines).not.toContain('Attic/Studio')
+  })
+
+  it('heads every sub-room of an exported parent with its breadcrumb, in order', async () => {
+    // A room export takes the room with its sub-rooms, here a parent with no devices of its
+    // own: the PDF is still one section per room, each with its full breadcrumb.
+    const house = [
+      at('room:pantry', 'Ground Floor/Kitchen/Pantry'),
+      at('room:kitchen', 'Ground Floor/Kitchen'),
+      at('room:groundling', 'Ground Floorboards'),
+      at('room:attic', 'Attic'),
+    ]
+    const inside = [
+      device({ name: 'Fridge plug', roomId: 'room:pantry' }),
+      device({ name: 'Oven plug', roomId: 'room:kitchen' }),
+      device({ name: 'Board sensor', roomId: 'room:groundling' }),
+      device({ name: 'Ceiling lamp', roomId: 'room:attic' }),
+    ]
+    const chosen = selectForExport(browseDevices(inside, house), {
+      kind: 'room',
+      path: 'Ground Floor',
+    })
+    const lines = await extractText(await buildInventoryPdf(chosen, { labels: LABELS }))
+
+    expect(lines.filter((line) => line.startsWith('Ground Floor') || line === 'Attic')).toEqual([
+      'Ground Floor › Kitchen',
+      'Ground Floor › Kitchen › Pantry',
+    ])
   })
 })

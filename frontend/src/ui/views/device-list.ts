@@ -1,5 +1,5 @@
 import { msg, str, updateWhenLocaleChanges } from '@lit/localize'
-import { html, LitElement } from 'lit'
+import { html, LitElement, nothing } from 'lit'
 import type { ProjectRepositories } from '../../data/index.js'
 import {
   browseDevices,
@@ -8,6 +8,7 @@ import {
   type DeviceGroup,
   type ExportSelection,
   FIRST_LABEL,
+  isWithinRoom,
   LABEL_STOCKS,
   type LabelStock,
   ROOM_PATH_SEPARATOR,
@@ -49,6 +50,26 @@ import { fieldValue } from './device-form.js'
  */
 const inventoryBuilder = () => import('../pdf/inventory.js')
 const labelBuilder = () => import('../pdf/labels.js')
+
+/**
+ * A room path as a breadcrumb, `Attic › Studio`, for the headings and the export menu (#242).
+ *
+ * The parents are quiet and the room's own segment carries the emphasis, because that is the
+ * part that tells two sibling groups apart. It is a heading, not navigation, so this is plain
+ * text rather than `<wa-breadcrumb>`, which renders a `<nav>` of links.
+ *
+ * The `›` is decoration and is hidden from assistive technology; in its place a visually hidden
+ * `/` makes the accessible name exactly the stored path ("Attic slash Studio"), which is also
+ * what the search box and the room field accept.
+ *
+ * Written without whitespace between the spans on purpose: any would end up in the accessible
+ * name. The visual spacing around the `›` comes from CSS.
+ */
+function breadcrumb(path: string) {
+  const segments = splitRoomPath(path)
+  const own = segments[segments.length - 1]
+  return html`${segments.slice(0, -1).map((parent) => html`<span class="app-room-parent" data-room-parent>${parent}</span><span class="app-room-crumb" aria-hidden="true">›</span><span class="wa-visually-hidden">${ROOM_PATH_SEPARATOR}</span>`)}<span data-room-own>${own}</span>`
+}
 
 /**
  * The device list: rooms, in order, with what is in them.
@@ -265,25 +286,81 @@ export class DeviceListView extends LitElement {
    *
    * A room is shown as a breadcrumb, `Attic › Studio` (#242): the groups are flat and a parent
    * with no devices of its own has no heading, so the lineage has to be in the heading itself.
-   * The parents are quiet and the room's own segment carries the emphasis, because that is the
-   * part that tells two sibling groups apart.
-   *
-   * It is a heading, not navigation, so this is plain text rather than `<wa-breadcrumb>`, which
-   * renders a `<nav>` of links. The `›` is decoration and is hidden from assistive technology;
-   * in its place a visually hidden `/` makes the accessible name exactly the stored path —
-   * "Attic slash Studio", which is also what the search box and the room field accept.
-   *
-   * Written without whitespace between the spans on purpose: any would end up in the accessible
-   * name. The visual spacing around the `›` comes from CSS.
+   * See {@link breadcrumb}.
    */
   private groupLabel(group: DeviceGroup) {
     // An empty path means the room is gone but its devices are not. Naming it rather than
     // leaving a blank heading is what stops those devices looking like a rendering fault.
-    if (group.path === '') return msg('Without a room')
+    return group.path === '' ? msg('Without a room') : breadcrumb(group.path)
+  }
 
+  /**
+   * The export control beside a room heading (#242).
+   *
+   * A room export takes the room *with its sub-rooms* (`selectForExport`). On a top-level
+   * heading that is one button, worded by whether there is anything below to take. On a
+   * sub-room heading it is a menu: the room itself, then each level above it. That menu is the
+   * only way to export a parent that holds no devices itself, because such a parent has no
+   * heading of its own to put a button on.
+   *
+   * Every item says exactly what it exports, `Ground Floor, with its rooms`, and carries the
+   * path in `data-export-room`, as the single button does.
+   *
+   * @param group the room the heading is for; nothing is offered for devices without a room
+   * @param groups everything on screen, to tell whether a room has sub-rooms to take with it
+   */
+  private renderRoomExport(group: DeviceGroup, groups: readonly DeviceGroup[]) {
+    if (group.path === '') return nothing
+
+    const hasRoomsBelow = (path: string) =>
+      groups.some(
+        (other) => other.path !== path && other.path !== '' && isWithinRoom(other.path, path),
+      )
     const segments = splitRoomPath(group.path)
-    const own = segments[segments.length - 1]
-    return html`${segments.slice(0, -1).map((parent) => html`<span class="app-room-parent" data-room-parent>${parent}</span><span class="app-room-crumb" aria-hidden="true">›</span><span class="wa-visually-hidden">${ROOM_PATH_SEPARATOR}</span>`)}<span data-room-own>${own}</span>`
+
+    if (segments.length === 1) {
+      return html`<wa-button
+        data-export-room=${group.path}
+        size="s"
+        appearance="plain"
+        ?disabled=${this.exporting}
+        @click=${() => void this.onExport({ kind: 'room', path: group.path })}
+      >
+        <wa-icon slot="start" name="file-pdf"></wa-icon>
+        ${hasRoomsBelow(group.path) ? msg('Export this room and its rooms') : msg('Export this room')}
+      </wa-button>`
+    }
+
+    // The room itself first, then each level above it, nearest first.
+    const levels = segments.map((_, index) =>
+      segments.slice(0, segments.length - index).join(ROOM_PATH_SEPARATOR),
+    )
+    return html`<wa-dropdown
+      data-export-menu=${group.path}
+      @wa-select=${(event: CustomEvent<{ item: Element }>) => {
+        const path = event.detail.item.getAttribute('data-export-room')
+        if (path !== null) void this.onExport({ kind: 'room', path })
+      }}
+    >
+      <wa-button slot="trigger" size="s" appearance="plain" with-caret ?disabled=${this.exporting}>
+        <wa-icon slot="start" name="file-pdf"></wa-icon>
+        ${msg('Export…')}
+      </wa-button>
+      ${levels.map(
+        (path) => html`<wa-dropdown-item data-export-room=${path}>
+          ${breadcrumb(path)}${
+            // A phrase after the name rather than a sentence around it: the name is markup (the
+            // breadcrumb), and the check-i18n scan reads text in an html template given to msg
+            // as unwrapped.
+            hasRoomsBelow(path)
+              ? msg(', with its rooms', {
+                  desc: 'Follows a room name in the export menu: "Ground Floor, with its rooms".',
+                })
+              : nothing
+          }
+        </wa-dropdown-item>`,
+      )}
+    </wa-dropdown>`
   }
 
   /** Ticks or unticks one device. */
@@ -318,7 +395,7 @@ export class DeviceListView extends LitElement {
     `
   }
 
-  private renderGroup(group: DeviceGroup) {
+  private renderGroup(group: DeviceGroup, groups: readonly DeviceGroup[]) {
     const count = group.devices.length
     return html`
       <section class="wa-stack wa-gap-2xs" data-room=${group.path}>
@@ -328,20 +405,7 @@ export class DeviceListView extends LitElement {
           <!-- Per room, because "print the labels for the kitchen" is the request people
                actually have, and ticking eleven boxes to make it is not an answer. Absent for
                devices whose room no longer exists: there is no room there to export. -->
-          ${
-            group.path === ''
-              ? ''
-              : html`<wa-button
-                  data-export-room=${group.path}
-                  size="s"
-                  appearance="plain"
-                  ?disabled=${this.exporting}
-                  @click=${() => void this.onExport({ kind: 'room', path: group.path })}
-                >
-                  <wa-icon slot="start" name="file-pdf"></wa-icon>
-                  ${msg('Export this room')}
-                </wa-button>`
-          }
+          ${this.renderRoomExport(group, groups)}
         </div>
         <ul class="wa-stack wa-gap-2xs app-device-list">
           ${group.devices.map((device) => this.renderDevice(device))}
@@ -674,7 +738,7 @@ export class DeviceListView extends LitElement {
           this.loaded && groups.length === 0
             ? this.renderEmpty()
             : html`<div class="wa-stack wa-gap-l">
-                ${groups.map((group) => this.renderGroup(group))}
+                ${groups.map((group) => this.renderGroup(group, groups))}
               </div>`
         }
 
