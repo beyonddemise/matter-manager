@@ -729,13 +729,20 @@ export class DeviceView extends LitElement {
     `
   }
 
-  /** One labelled fact, or nothing when there is no fact to state. */
+  /**
+   * One labelled fact, or nothing when there is no fact to state.
+   *
+   * A term and its definition, inside the description list `renderDetails` draws, so the label
+   * is tied to its value for assistive technology as well as by position (WCAG 2.2 1.3.1).
+   * The `div` around the pair is what HTML allows a `dl` to group a term with its definition
+   * by, and it is what the grid lays out.
+   */
   private field(label: string, value: string | undefined): TemplateResult | '' {
     if (value === undefined || value === '') return ''
     return html`
       <div class="wa-stack wa-gap-3xs">
-        <small class="app-empty">${label}</small>
-        <span>${value}</span>
+        <dt><small class="app-empty">${label}</small></dt>
+        <dd>${value}</dd>
       </div>
     `
   }
@@ -749,7 +756,7 @@ export class DeviceView extends LitElement {
 
   private renderDetails(device: DeviceDocument): TemplateResult {
     return html`
-      <div class="wa-grid app-details">
+      <dl class="wa-grid app-details app-facts">
         ${this.field(msg('Room'), this.room?.path ?? msg('Without a room'))}
         ${this.field(msg('Spot'), device.spot)}
         ${this.field(
@@ -761,7 +768,7 @@ export class DeviceView extends LitElement {
         ${this.field(msg('Part number'), device.partNumber)}
         ${this.field(msg('Serial number'), device.serial)}
         ${this.field(msg('Installed'), device.installedAt)}
-      </div>
+      </dl>
     `
   }
 
@@ -808,9 +815,17 @@ export class DeviceView extends LitElement {
         : '',
     ].filter((entry) => entry !== '')
     if (tags.length === 0) return ''
+    // A group named by its label, so a screen reader announces "Pairing" on entering the tags
+    // rather than reading a caption and then tags that seem unrelated to it (WCAG 2.2 1.3.1).
+    // The view renders into the light DOM, one device page at a time, so the id is unique.
     return html`
-      <div class="wa-stack wa-gap-3xs" data-pairing>
-        <small class="app-empty">${msg('Pairing')}</small>
+      <div
+        class="wa-stack wa-gap-3xs"
+        role="group"
+        aria-labelledby="device-pairing-label"
+        data-pairing
+      >
+        <small class="app-empty" id="device-pairing-label">${msg('Pairing')}</small>
         <div class="wa-cluster wa-gap-2xs">${tags}</div>
       </div>
     `

@@ -9,6 +9,7 @@ import '@awesome.me/webawesome-pro/dist/components/textarea/textarea.js'
 import { fixture, html, waitUntil } from '@open-wc/testing-helpers'
 import { BrowserQRCodeReader } from '@zxing/browser'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { page as browserPage } from 'vitest/browser'
 import type { ProjectRepositories } from '../../../src/data/index.js'
 import {
   type DeviceDocument,
@@ -913,11 +914,50 @@ describe('what the catalogue knows', () => {
 
   /** The text of the labelled fact whose label is `label`, or undefined when it is not shown. */
   function fact(element: HTMLElement, label: string): string | undefined {
-    const labels = [...element.querySelectorAll('.app-details small')]
-    return labels
-      .find((small) => small.textContent?.trim() === label)
+    const terms = [...element.querySelectorAll('dl.app-details dt')]
+    return terms
+      .find((term) => term.textContent?.trim() === label)
       ?.nextElementSibling?.textContent?.trim()
   }
+
+  /*
+   * #238, WCAG 2.2 AA 1.3.1 (Info and Relationships): a label that only sits next to its value
+   * is a relationship a sighted reader sees and a screen reader does not. The facts are a
+   * description list, so each label is a term and its value that term's definition; the
+   * pairing tags are a group named by their label.
+   */
+  it('lists the facts as terms and definitions, each label tied to its value', async () => {
+    await seed(lamp(CATALOGUED))
+    const element = await page()
+    const list = element.querySelector('.app-details')
+    expect(list?.tagName).toBe('DL')
+    // Every child of the list is one fact: a wrapper holding exactly one term, then its value.
+    for (const entry of list?.children ?? []) {
+      expect(entry.tagName).toBe('DIV')
+      expect([...entry.children].map((child) => child.tagName)).toEqual(['DT', 'DD'])
+    }
+    expect(fact(element, 'Manufacturer')).toBe('Aqara Home')
+    expect(fact(element, 'Part number')).toBe('AS056')
+
+    const view = browserPage.elementLocator(element)
+    await expect.element(view.getByRole('term').filter({ hasText: 'Manufacturer' })).toBeVisible()
+    await expect
+      .element(view.getByRole('definition').filter({ hasText: 'Aqara Home' }))
+      .toBeVisible()
+  })
+
+  it('names the pairing tags as a group by their label', async () => {
+    await seed(lamp(CATALOGUED))
+    const element = await page()
+    const view = browserPage.elementLocator(element)
+    const group = view.getByRole('group', { name: 'Pairing', exact: true })
+    await expect.element(group).toBeVisible()
+    expect(group.element().querySelectorAll('wa-tag')).toHaveLength(4)
+    // The label names the group; read again inside it, it would be announced twice.
+    const label = element.querySelector('[data-pairing] [id]')
+    expect(group.element().getAttribute('aria-labelledby')).toBe(label?.id)
+    expect(label?.textContent?.trim()).toBe('Pairing')
+  })
 
   it('names the manufacturer by its preferred name, then the vendor name, then the id', async () => {
     // Three devices, one per step of the fallback, each on its own page.
