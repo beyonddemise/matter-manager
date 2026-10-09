@@ -168,3 +168,79 @@ session, `online`, the cached profile's `planRequested`, and the callbacks (join
 ## Out of scope
 
 Payment, billing and real prices; an admin UI; email notification of joins; changing `plan` from the waitlist.
+
+## As built
+
+Implemented in one PR on `feat/waitlist-224`, following
+`docs/superpowers/plans/2026-10-09-upgrade-waitlist.md`. Where the build settled something this
+design left open:
+
+- **Plan order on the server** is `backend/src/domain/waitlist.ts`: `hasAtLeast` and
+  `isWaitlistPlan`, both tables keyed by `Plan`. The frontend order is `PLANS` and `plansAbove`
+  in `frontend/src/domain/plan.ts`, with its own `isWaitlistPlan` derived from `PLANS` (R9): the
+  profile cache and the profile parser both use it, so a cached `free` request is refused by the
+  same rule as on the server.
+- **The 409** carries `reason: already-on-plan` (`AlreadyOnPlan` in `openapi.yaml`). The 400 uses
+  the shared `BadRequest`. The client branches on the status, never the title.
+- **Both or neither.** `profileOf` reports `planRequested` and `requestedAt` only together, and
+  only for `member` or `pro`, so a hand edit in Fauxton cannot put an out-of-contract value in a
+  response.
+- **The log line** is Fastify's request log, `{ sub }` with the message `waitlist: joined <plan>`.
+  The address is not in it. An unknown stored plan is reported without the address too.
+- **The view** `by_plan_requested` emits `[planRequested, requestedAt]` valued by address for any
+  record with a `planRequested`. It is installed with `by_sub`; the API never reads it.
+- **The dialog** is `frontend/src/ui/upgrade-dialog.ts`. On desktop it is a table, at phone width
+  (`<wa-page>`'s 768 px breakpoint) it is stacked cards. Offline also disables "Sign in to join
+  the waitlist", because signing in needs the server too.
+- **German plan names** are Kostenlos, Mitglied and Pro. "Free" is one string, used both as a
+  plan name and as a price, so it has one translation.
+- **The shell** caches the profile `PUT`/`DELETE` answers with and re-reads its facts, so the
+  dialog and an offline reload agree with the server.
+
+### Rulings made during execution
+
+- **R3, Upgrade stays reachable.** The Upgrade button shows when the plan has something above it
+  or a request is pending. A raised account (for example Pro with a stale request) can still open
+  the dialog and leave the waitlist. Cost: such an account sees Upgrade until it leaves.
+- **R4, one filled brand button.** In the dialog the join for the next plan up is the only
+  filled (`accent`) brand button; further joins, "Change to" and "Leave the waitlist" are
+  outlined, following DESIGN.md's Commissioning Blue Rule.
+- **R8, commit trailer.** Every #224 commit carries the single trailer the plan's implementer
+  rules prescribe, `Co-Authored-By: Claude Opus 5.5`, whichever model implemented it.
+- **R9, `isWaitlistPlan`.** The frontend check that a cached request is a plan one can wait for
+  was folded into W5's fix as one domain function, replacing a separate "accepts free" patch.
+- **R10, W6 follow-ups.** Three W6 minors were fixed in W7 because they touch the same file and
+  test: the desktop cards-hidden assertion, a why-comment on `msg('Free')`, and the `dt` label
+  class.
+- **R11, `index.html` meta.** `frontend/index.html` gained `mobile-web-app-capable` (commit
+  `16a698c`), fixing a console warning found during the browser checks.
+- **R12, the cache write can fail.** A join the server accepted but the device could not store
+  shows the inline notice "Saved, but this device could not store it. Reload to see it." rather
+  than failing silently.
+- **R13, return focus.** The dialog gives focus back when it closes by any route (Close, Esc, or
+  the Upgrade button going away after "Leave the waitlist"), WCAG 2.4.3.
+- **R14, the fallback target.** When Upgrade is gone the target is the scheme toggle, the next
+  control in header focus order. A button announces one label and does not talk over the live
+  announcement as `<main tabindex="-1">` would.
+
+### Deferred minors
+
+None affects correctness or the contract.
+
+- A record without `sub` that holds an unknown plan is warned about with no identifier, the cost
+  of keeping the address out of the log.
+- `hasAtLeast(free, free)` is not in the matrix test, and the profile test helper uses `as never`.
+- No view test covers `planRequested` of `''` or a missing `requestedAt` (it emits `[plan, null]`).
+- The plan check runs outside `requestPlan`'s mutate, so an operator raising the plan mid-request
+  leaves a moot request. It is harmless: `DELETE` clears it and R3 keeps it reachable.
+- The 409 test asserts the absent field, not zero `putDoc` calls.
+- A `PUT` happy path makes three reads.
+- `plansAbove(unknown)` returns every plan; the type rules the input out.
+- The current plan's `th` accessible name includes "Your plan", which is accurate but repeated
+  per cell.
+- Sign-in shows while the session is still `undefined` (mandated by the brief, low impact), and
+  Sign in and Close stay enabled while a change is busy.
+- At 360 px the German signed-out header wraps to two rows (pre-existing, no overflow), and plan
+  card icons wrap below long German labels (cosmetic).
+- A focused waiting line inside `role="status"` may be read twice, and a repeated identical
+  "left the waitlist" announcement is not re-announced.

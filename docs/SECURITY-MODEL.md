@@ -278,7 +278,7 @@ refusals and fixed differently.
 
 ## User records and tokens
 
-**`matter_manager` is admin-only.** It holds plans, operator roles and refresh-token hashes, so
+**`matter_manager` is admin-only.** It holds plans, waitlist requests (`planRequested`, `requestedAt`), operator roles and refresh-token hashes, so
 no user token may read it. Its `_security` is written immediately after the database is created,
 before its view, because until it lands the database is open to every account in the
 deployment (`backend/src/users/database.ts`). Browsers never reach it; the API reads it with its
@@ -359,7 +359,7 @@ this is load-bearing rather than tidy:
 - **`projects`** holds every project's name, address and participant list. CouchDB has no
   row-level read permission, so making it member-readable would disclose all of it to every
   authenticated user.
-- **`matter_manager`** holds user records: profiles, plans, roles and refresh-token hashes. It is
+- **`matter_manager`** holds user records: profiles, plans, waitlist requests, roles and refresh-token hashes. It is
   admin-only, which is why profiles come from `GET /profile`. CouchDB's own `_users` is no longer
   used for profiles.
 - **`matter_catalog`** caches what the DCL says about vendors and models
