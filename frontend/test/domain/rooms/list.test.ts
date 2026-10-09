@@ -83,8 +83,9 @@ describe('the order rooms are shown in', () => {
   })
 
   it('keeps a never-arranged sub-room straight after its parent (#242)', () => {
-    // The same segment-wise order as the device list, so the two never disagree about where
-    // `Attic/Studio` belongs.
+    // Segment by segment, like the device list, so a space in a sibling's name no longer splits
+    // the attic in two. Only for rooms nobody arranged, and compared by code point here, where
+    // the device list uses the locale collator.
     const ordered = roomsInOrder([
       room('b', 'Attic Bedroom'),
       room('s', 'Attic/Studio'),
