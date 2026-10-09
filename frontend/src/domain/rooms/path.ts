@@ -135,6 +135,57 @@ export function isWithinRoom(path: string, root: string): boolean {
   return current === ancestor || current.startsWith(ancestor + ROOM_PATH_SEPARATOR)
 }
 
+/**
+ * Orders two room paths so that every room is followed directly by the rooms inside it.
+ *
+ * **Segment by segment, not as one string** (#242). Compared whole, a space (0x20) sorts
+ * before the separator (0x2F), so `Attic Bedroom` lands between `Attic` and `Attic/Studio` and
+ * the attic is split in two by a room that has nothing to do with it. A locale collator does
+ * not help either: it ignores punctuation differently in every locale, which is no rule at all.
+ * Comparing segments makes the hierarchy, not the alphabet, decide where a sub-room goes.
+ *
+ * When one path is a prefix of the other, the shorter (the parent) comes first.
+ *
+ * @param a one room path
+ * @param b the other
+ * @param compare how two segments order; the caller's locale collator, so `Ärmel` sits beside
+ *   `Armel` in German. Kept as a parameter because this module holds no ambient locale.
+ * @returns negative when `a` comes first, positive when `b` does, zero when they are equal
+ */
+export function compareRoomPaths(
+  a: string,
+  b: string,
+  compare: (left: string, right: string) => number,
+): number {
+  const left = splitRoomPath(a)
+  const right = splitRoomPath(b)
+  const shared = Math.min(left.length, right.length)
+  for (let index = 0; index < shared; index++) {
+    const order = compare(left[index] as string, right[index] as string)
+    if (order !== 0) return order
+  }
+  return left.length - right.length
+}
+
+/**
+ * What goes between segments when a path is shown as a breadcrumb: `Attic › Studio`.
+ *
+ * A typographic angle rather than the `/` the path is stored with, because a heading reads as a
+ * place, not as a file name. It is in WinAnsi (0x9B), so the inventory PDF can draw it with the
+ * standard fonts.
+ */
+export const ROOM_PATH_CRUMB = ' › '
+
+/**
+ * A room path written as a breadcrumb, for places that can only show plain text (the PDF).
+ *
+ * The device list builds the same thing from {@link splitRoomPath} so it can style each
+ * segment; this is the plain-text twin, and the separator is shared so the two cannot drift.
+ */
+export function roomPathBreadcrumb(path: string): string {
+  return splitRoomPath(path).join(ROOM_PATH_CRUMB)
+}
+
 /** Normalises a path for use as an endpoint of a rename, refusing anything unusable. */
 function requireUsable(path: string, role: string): string {
   const problem = roomPathProblem(path)

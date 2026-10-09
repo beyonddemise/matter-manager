@@ -163,14 +163,17 @@ export {
   roomsInOrder,
 } from './rooms/list.js'
 export {
+  compareRoomPaths,
   isNearDuplicateRoomPath,
   isValidRoomPath,
   isWithinRoom,
   normaliseRoomPath,
+  ROOM_PATH_CRUMB,
   ROOM_PATH_SEPARATOR,
   RoomPathError,
   type RoomPathProblem,
   renameRoomPath,
+  roomPathBreadcrumb,
   roomPathKey,
   roomPathProblem,
   splitRoomPath,

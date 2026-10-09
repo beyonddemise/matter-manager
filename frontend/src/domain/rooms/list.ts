@@ -21,6 +21,7 @@
 import { chooseRoom } from '../documents/draft.js'
 import type { DeviceDocument, RoomDocument, Unsaved } from '../documents/types.js'
 import {
+  compareRoomPaths,
   isNearDuplicateRoomPath,
   normaliseRoomPath,
   renameRoomPath,
@@ -64,7 +65,8 @@ export interface RoomDeletionPlan {
 const compareText = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0)
 
 /**
- * The order to show rooms in: the ones somebody arranged, then the rest by path.
+ * The order to show rooms in: the ones somebody arranged, then the rest by path, each sub-room
+ * directly after its parent.
  *
  * `sortKey` is a **manual position over the whole list**, not a position among siblings. The
  * hierarchy here is derived from the path (ADR 0006), so an intermediate level like
@@ -85,7 +87,9 @@ export function roomsInOrder(rooms: readonly RoomDocument[]): readonly RoomDocum
       if (b.sortKey === undefined) return -1
       return a.sortKey - b.sortKey
     }
-    return compareText(a.path, b.path)
+    // Segment by segment, as the device list orders them (#242): `Attic/Studio` straight after
+    // `Attic`, not after `Attic Bedroom`.
+    return compareRoomPaths(a.path, b.path, compareText)
   })
 }
 

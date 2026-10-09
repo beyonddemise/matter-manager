@@ -10,6 +10,7 @@
  * @module
  */
 
+import { compareRoomPaths } from '../rooms/path.js'
 import { foldForComparison } from '../text/fold.js'
 import type { DeviceDocument, RoomDocument } from './types.js'
 
@@ -95,7 +96,8 @@ function haystack(device: DeviceDocument, path: string): string {
  * @param devices every device in the project
  * @param rooms every room, used to resolve paths and to search on them
  * @param options see {@link BrowseOptions}
- * @returns rooms in path order, each with its devices in name order
+ * @returns rooms in path order (parents before their sub-rooms; see `compareRoomPaths`), each
+ *   with its devices in name order
  */
 export function browseDevices(
   devices: readonly DeviceDocument[],
@@ -134,8 +136,12 @@ export function browseDevices(
 
   // Rooms in path order, then the homeless. Sorting `''` in with the rest would put it first,
   // which is the one place a group nobody chose should not be.
+  //
+  // Path order is segment by segment (#242), so `Attic/Studio` follows `Attic` directly rather
+  // than after `Attic Bedroom`. The groups stay flat: a parent with no devices of its own gets
+  // no group, and the view's breadcrumb heading is what shows the lineage.
   const named = groups.filter((group) => group.path !== '')
   const unplaced = groups.filter((group) => group.path === '')
-  named.sort((a, b) => compare(a.path, b.path))
+  named.sort((a, b) => compareRoomPaths(a.path, b.path, compare))
   return [...named, ...unplaced]
 }

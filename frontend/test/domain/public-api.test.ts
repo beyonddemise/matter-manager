@@ -131,6 +131,9 @@ const EXPECTED: ReadonlyArray<
   ['roomPathKey', 'function'],
   ['roomPathProblem', 'function'],
   ['splitRoomPath', 'function'],
+  ['compareRoomPaths', 'function'],
+  ['ROOM_PATH_CRUMB', 'string'],
+  ['roomPathBreadcrumb', 'function'],
 ]
 
 /**

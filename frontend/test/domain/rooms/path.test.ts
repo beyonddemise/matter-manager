@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import {
+  compareRoomPaths,
   isNearDuplicateRoomPath,
   isValidRoomPath,
   normaliseRoomPath,
+  ROOM_PATH_CRUMB,
   ROOM_PATH_SEPARATOR,
   RoomPathError,
   renameRoomPath,
+  roomPathBreadcrumb,
   roomPathKey,
   roomPathProblem,
   splitRoomPath,
@@ -296,5 +299,85 @@ describe('renameRoomPath', () => {
 
   it('accepts valid endpoints, so the guard is not simply refusing everything', () => {
     expect(() => renameRoomPath('Floor 1/Kitchen', 'Floor 1', 'Ground Floor')).not.toThrow()
+  })
+})
+
+describe('compareRoomPaths', () => {
+  /** A plain code-point comparison, so the tests show what the segment rule adds to it. */
+  const byCodePoint = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0)
+  const sorted = (paths: readonly string[], compare = byCodePoint): readonly string[] =>
+    [...paths].sort((a, b) => compareRoomPaths(a, b, compare))
+
+  it('puts a sub-room straight after its parent, whatever its siblings are called (#242)', () => {
+    // Compared as whole strings, a space (0x20) sorts before `/` (0x2F), so `Attic Bedroom`
+    // landed between `Attic` and `Attic/Studio` and split the attic in two.
+    expect(
+      sorted([
+        'Ground Floor/Kitchen/Pantry',
+        'Attic Bedroom',
+        'Ground Floor/Kitchen',
+        'Attic/Studio',
+        'Ground Floor',
+        'Attic',
+      ]),
+    ).toEqual([
+      'Attic',
+      'Attic/Studio',
+      'Attic Bedroom',
+      'Ground Floor',
+      'Ground Floor/Kitchen',
+      'Ground Floor/Kitchen/Pantry',
+    ])
+  })
+
+  it('keeps a whole subtree together three levels deep', () => {
+    expect(
+      sorted([
+        'Ground Floor/Kitchen Annex',
+        'Ground Floor/Kitchen/Pantry',
+        'Ground Floor/Kitchen',
+        'Ground Floor/Hall',
+      ]),
+    ).toEqual([
+      'Ground Floor/Hall',
+      'Ground Floor/Kitchen',
+      'Ground Floor/Kitchen/Pantry',
+      'Ground Floor/Kitchen Annex',
+    ])
+  })
+
+  it('compares each segment with the comparator it is given', () => {
+    // A German collator puts `Ärmel` beside `Armel`; code points put it after `Zulu`.
+    const german = new Intl.Collator('de').compare
+    const paths = ['Haus/Zulu', 'Haus/Ärmel', 'Haus/Armel/Schrank', 'Haus/Armel']
+
+    expect(sorted(paths, german)).toEqual([
+      'Haus/Armel',
+      'Haus/Armel/Schrank',
+      'Haus/Ärmel',
+      'Haus/Zulu',
+    ])
+    expect(sorted(paths)).toEqual(['Haus/Armel', 'Haus/Armel/Schrank', 'Haus/Zulu', 'Haus/Ärmel'])
+  })
+
+  it('reports equal paths as equal', () => {
+    expect(compareRoomPaths('Attic/Studio', 'Attic/Studio', byCodePoint)).toBe(0)
+  })
+})
+
+describe('roomPathBreadcrumb', () => {
+  it('joins the segments with a breadcrumb separator', () => {
+    expect(roomPathBreadcrumb('Attic/Studio')).toBe(`Attic${ROOM_PATH_CRUMB}Studio`)
+    expect(ROOM_PATH_CRUMB).toBe(' › ')
+  })
+
+  it('leaves a top-level room as it is', () => {
+    expect(roomPathBreadcrumb('Attic')).toBe('Attic')
+  })
+
+  it('handles three levels', () => {
+    expect(roomPathBreadcrumb('Ground Floor/Kitchen/Pantry')).toBe(
+      'Ground Floor › Kitchen › Pantry',
+    )
   })
 })
