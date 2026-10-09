@@ -647,6 +647,22 @@ it('restarts backfill on a project switch, stopping the old run first', async ()
   )
 })
 
+it('stops the old run on a project switch while offline, and starts none', async () => {
+  // The network is the one gate a switch can meet while signed in. The old run belongs to a
+  // project nobody is in, so it stops; the reconnect trigger starts the next one.
+  const network = controllableNetwork()
+  const { play, backfill } = await driven(network.source)
+  await play({ kind: 'refreshed', expiresIn: 300 })
+  network.set(false)
+  backfill.trigger.mockClear()
+  backfill.stop.mockClear()
+
+  window.dispatchEvent(new CustomEvent(PROJECT_CHANGED))
+
+  expect(backfill.stop).toHaveBeenCalled()
+  expect(backfill.trigger).not.toHaveBeenCalled()
+})
+
 it('does not backfill a project switched to while signed out', async () => {
   const { backfill } = await driven()
   window.dispatchEvent(new CustomEvent(PROJECT_CHANGED))

@@ -125,6 +125,9 @@ async function mount(options: Options = {}) {
   for (const indexed of options.local ?? []) await store.cache().addLocalProject(indexed)
   if (options.cachedProfile !== undefined) await store.cache().writeProfile(options.cachedProfile)
   const sync = recordingSync(options.push)
+  // Injected so a signed-in shell never builds the real backfill, which would read the open
+  // project's devices and ask the real API about them: a test must not depend on either.
+  const backfill = { trigger: vi.fn(), stop: vi.fn(), idle: async () => {} }
   const list = vi.fn(options.list ?? (async () => [] as readonly Project[]))
   const signOutOf = options.signOutOf ?? vi.fn(async () => [])
   await Promise.all(
@@ -143,12 +146,13 @@ async function mount(options: Options = {}) {
       .makeSync=${() => sync.manager}
       .signOutOf=${signOutOf}
       .signIn=${() => {}}
+      .backfill=${backfill}
       .projectStore=${store}
       .signOutPushTimeoutMs=${options.signOutPushTimeoutMs}
     ></app-shell>
   `)) as AppShell
   await element.updateComplete
-  return { element, sync, list, store, signOutOf }
+  return { element, sync, list, store, signOutOf, backfill }
 }
 
 const projectsView = (element: Element) =>
@@ -263,6 +267,18 @@ describe('what the projects page is given', () => {
     await projectsView(element)?.refresh?.()
 
     expect(list.mock.calls.length).toBe(calls + 1)
+  })
+})
+
+describe('the catalogue backfill', () => {
+  it('is the one injected, so these fixtures never build a real one', async () => {
+    const { element, backfill } = await mount()
+    await inputSettles(element, (input) => input.session === 'signed-in', 'never signed in')
+
+    await waitUntil(
+      () => backfill.trigger.mock.calls.length > 0,
+      'the injected backfill was not used',
+    )
   })
 })
 
