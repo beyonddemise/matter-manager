@@ -147,11 +147,13 @@ export class AddDeviceView extends DeviceFormView {
 
   override disconnectedCallback(): void {
     // The form closing is one of the two moments the spec aborts a lookup; the other is the
-    // code changing. The state is reset too, not only the work stopped: an element that is
+    // code changing. A lookup still `pending` is forgotten as well as aborted: an element that is
     // detached and attached again (a move, not a destroy) would otherwise keep "pending" on
-    // screen for a question nobody is asking, and treat the same code as already answered.
+    // screen for a question nobody is asking, and treat the same code as already being asked.
+    // A settled `found` answer is kept: it is still true of the code in the field, and nothing
+    // would ask again, because lookups start only when the field changes.
     this.stopLookup()
-    this.lookupState = IDLE
+    if (this.lookupState.kind === 'pending') this.lookupState = IDLE
     super.disconnectedCallback()
   }
 

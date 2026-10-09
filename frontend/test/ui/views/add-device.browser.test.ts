@@ -725,6 +725,28 @@ describe('looking up the manufacturer', () => {
     element.remove()
   })
 
+  it('keeps a settled answer when the form is detached and attached again', async () => {
+    const { api, calls } = fakeCatalog(found)
+    const element = await form(database.repositories, neverAvailable(), { api })
+    typeCode(element, aqaraPayload())
+    await waitUntil(() => element.querySelector('[data-catalog]') !== null, 'no names')
+
+    // Moved rather than destroyed. Nothing changes a field afterwards, so nothing would ask again.
+    element.remove()
+    document.body.append(element)
+    await element.updateComplete
+
+    expect(element.querySelector('[data-catalog-manufacturer]')?.textContent).toBe('Aqara Home')
+    expect(element.querySelector('[data-catalog-product]')?.textContent).toBe(
+      'Aqara Door and Window Sensor P2',
+    )
+    fill(element, 'name', 'Front door sensor')
+    typeRoom(element, 'Hall')
+    await submit(element, async () => (await devices()).length === 1)
+    expect((await devices())[0]?.vendorName).toBe('Aqara')
+    expect(calls).toHaveLength(1)
+  })
+
   it('copies the answer into the saved device', async () => {
     const { api } = fakeCatalog(found)
     const element = await form(database.repositories, neverAvailable(), { api })
