@@ -21,7 +21,7 @@
  * @module
  */
 
-import type { Repository } from '../data/index.js'
+import { isConflict, type Repository } from '../data/index.js'
 import {
   type CatalogFields,
   catalogFields,
@@ -83,13 +83,6 @@ const unusableBlock = (checkedAt: string): Partial<CatalogFields> => ({
 
 /** What to send: the payload if there is one, else the digits of the manual code. */
 const codeOf = (device: DeviceDocument): string => device.payload ?? device.manualCode
-
-/** PouchDB reports a lost revision race with `status: 409`. */
-function isConflict(error: unknown): boolean {
-  return (
-    typeof error === 'object' && error !== null && (error as { status?: unknown }).status === 409
-  )
-}
 
 /**
  * Writes one catalogue block into one device, on a fresh read.

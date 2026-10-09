@@ -23,6 +23,7 @@ export {
   type WatchOptions,
   watchConflicts,
 } from './conflicts.js'
+export { isConflict } from './errors.js'
 export {
   type CachedProfile,
   type CachedProject,

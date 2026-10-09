@@ -15,6 +15,7 @@
  */
 
 import type { Revision } from '../domain/index.js'
+import { isConflict } from './errors.js'
 
 /**
  * A document as read with `conflicts: true`.
@@ -53,13 +54,6 @@ export interface ConflictResolver {
  * persistent disagreement into a spin, so it is bounded and the last failure is raised.
  */
 const RESOLUTION_ATTEMPTS = 3
-
-/** PouchDB reports a lost race with `status: 409`. */
-function isConflict(error: unknown): boolean {
-  return (
-    typeof error === 'object' && error !== null && (error as { status?: unknown }).status === 409
-  )
-}
 
 /** PouchDB reports a missing document with `status: 404`. */
 function isMissing(error: unknown): boolean {
