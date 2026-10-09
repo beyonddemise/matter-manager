@@ -10,8 +10,10 @@ import {
   FIRST_LABEL,
   LABEL_STOCKS,
   type LabelStock,
+  ROOM_PATH_SEPARATOR,
   type RoomDocument,
   selectForExport,
+  splitRoomPath,
   uuidOf,
 } from '../../domain/index.js'
 import { PROJECT_CHANGED } from '../current-project.js'
@@ -258,11 +260,30 @@ export class DeviceListView extends LitElement {
     this.includeDisabled = (event.target as { checked?: unknown }).checked === true
   }
 
-  /** The heading for a group, including the group with no room. */
-  private groupLabel(group: DeviceGroup): string {
+  /**
+   * The heading for a group, including the group with no room.
+   *
+   * A room is shown as a breadcrumb, `Attic › Studio` (#242): the groups are flat and a parent
+   * with no devices of its own has no heading, so the lineage has to be in the heading itself.
+   * The parents are quiet and the room's own segment carries the emphasis, because that is the
+   * part that tells two sibling groups apart.
+   *
+   * It is a heading, not navigation, so this is plain text rather than `<wa-breadcrumb>`, which
+   * renders a `<nav>` of links. The `›` is decoration and is hidden from assistive technology;
+   * in its place a visually hidden `/` makes the accessible name exactly the stored path —
+   * "Attic slash Studio", which is also what the search box and the room field accept.
+   *
+   * Written without whitespace between the spans on purpose: any would end up in the accessible
+   * name. The visual spacing around the `›` comes from CSS.
+   */
+  private groupLabel(group: DeviceGroup) {
     // An empty path means the room is gone but its devices are not. Naming it rather than
     // leaving a blank heading is what stops those devices looking like a rendering fault.
-    return group.path === '' ? msg('Without a room') : group.path
+    if (group.path === '') return msg('Without a room')
+
+    const segments = splitRoomPath(group.path)
+    const own = segments[segments.length - 1]
+    return html`${segments.slice(0, -1).map((parent) => html`<span class="app-room-parent" data-room-parent>${parent}</span><span class="app-room-crumb" aria-hidden="true">›</span><span class="wa-visually-hidden">${ROOM_PATH_SEPARATOR}</span>`)}<span data-room-own>${own}</span>`
   }
 
   /** Ticks or unticks one device. */

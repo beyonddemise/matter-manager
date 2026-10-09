@@ -10,6 +10,7 @@ import '@awesome.me/webawesome-pro/dist/components/input/input.js'
 import '@awesome.me/webawesome-pro/dist/components/tag/tag.js'
 import { fixture, html, waitUntil } from '@open-wc/testing-helpers'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { page } from 'vitest/browser'
 import type { DeviceDocument, Unsaved } from '../../../src/domain/index.js'
 import type { DeviceListView } from '../../../src/ui/views/device-list.js'
 import '../../../src/ui/views/device-list.js'
@@ -178,6 +179,101 @@ describe('grouping', () => {
   it('says so when there is nothing at all', async () => {
     const element = await list()
     expect(element.textContent).toContain('No devices')
+  })
+})
+
+/**
+ * #242: a sub-room follows its parent directly and its heading is a breadcrumb,
+ * `Attic › Studio`, with the parents quiet and the room itself emphasised.
+ */
+describe('sub-rooms', () => {
+  async function seedAttic(): Promise<void> {
+    const { rooms, devices } = database.repositories
+    await rooms.save({ _id: 'room:attic', type: 'room', path: 'Attic' })
+    await rooms.save({ _id: 'room:studio', type: 'room', path: 'Attic/Studio' })
+    await rooms.save({ _id: 'room:bedroom', type: 'room', path: 'Attic Bedroom' })
+    await rooms.save({ _id: 'room:pantry', type: 'room', path: 'Ground Floor/Kitchen/Pantry' })
+    await devices.save(device('device:attic', 'Roof sensor', 'room:attic'))
+    await devices.save(device('device:studio', 'Desk lamp', 'room:studio'))
+    await devices.save(device('device:bedroom', 'Bedside lamp', 'room:bedroom'))
+    await devices.save(device('device:pantry', 'Fridge plug', 'room:pantry'))
+  }
+
+  /** The heading of the group for `path`. */
+  const heading = (element: DeviceListView, path: string) =>
+    element.querySelector(`[data-room="${path}"] h2`) as HTMLHeadingElement
+
+  it('puts a sub-room straight after its parent', async () => {
+    await seedAttic()
+    const element = await list()
+
+    expect(roomsShown(element)).toEqual([
+      'Attic',
+      'Attic/Studio',
+      'Attic Bedroom',
+      'Ground Floor/Kitchen/Pantry',
+    ])
+  })
+
+  it('shows the full path as a breadcrumb, the room itself emphasised', async () => {
+    await seedAttic()
+    const element = await list()
+    const studio = heading(element, 'Attic/Studio')
+
+    // Parents quiet, the room's own segment last and emphasised.
+    expect(
+      [...studio.querySelectorAll('[data-room-parent]')].map((node) => node.textContent),
+    ).toEqual(['Attic'])
+    expect(studio.querySelector('[data-room-own]')?.textContent).toBe('Studio')
+    // What a sighted reader sees: the angle, not the slash the path is stored with.
+    const visible = [
+      ...studio.querySelectorAll('[data-room-parent], [aria-hidden], [data-room-own]'),
+    ]
+      .map((node) => node.textContent)
+      .join(' ')
+    expect(visible).toBe('Attic › Studio')
+
+    const pantry = heading(element, 'Ground Floor/Kitchen/Pantry')
+    expect(
+      [...pantry.querySelectorAll('[data-room-parent]')].map((node) => node.textContent),
+    ).toEqual(['Ground Floor', 'Kitchen'])
+    expect(pantry.querySelector('[data-room-own]')?.textContent).toBe('Pantry')
+  })
+
+  it('reads the path as typed to a screen reader, with the angle hidden', async () => {
+    await seedAttic()
+    const element = await list()
+
+    // The `›` is decoration; a screen reader hears the path the user typed (`Attic/Studio`,
+    // "Attic slash Studio"), which is also what the search box and the room field accept.
+    const separators = [...heading(element, 'Attic/Studio').querySelectorAll('[aria-hidden]')]
+    expect(separators.map((node) => [node.textContent, node.getAttribute('aria-hidden')])).toEqual([
+      ['›', 'true'],
+    ])
+    // Scoped to this list: fixtures from earlier tests can still be in the document.
+    const view = page.elementLocator(element)
+    await expect
+      .element(view.getByRole('heading', { level: 2, name: 'Attic/Studio', exact: true }))
+      .toBeInTheDocument()
+    await expect
+      .element(
+        view.getByRole('heading', { level: 2, name: 'Ground Floor/Kitchen/Pantry', exact: true }),
+      )
+      .toBeInTheDocument()
+    await expect
+      .element(view.getByRole('heading', { level: 2, name: 'Attic', exact: true }))
+      .toBeInTheDocument()
+  })
+
+  it('keeps the room export on the full path', async () => {
+    await seedAttic()
+    const element = await list()
+
+    expect(
+      element
+        .querySelector('[data-room="Attic/Studio"] [data-export-room]')
+        ?.getAttribute('data-export-room'),
+    ).toBe('Attic/Studio')
   })
 })
 

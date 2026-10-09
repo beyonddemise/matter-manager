@@ -193,6 +193,20 @@ settings-view {
 .app-room-heading h2 {
   margin: 0;
   font-size: var(--wa-font-size-l);
+  /* A long room name on a 360px phone wraps rather than pushing the page sideways. */
+  overflow-wrap: anywhere;
+}
+
+/* The breadcrumb heading of a sub-room, `Attic › Studio` (#242). The parents are context, so
+   they are quiet and regular weight; the room's own segment keeps the heading's emphasis. */
+.app-room-parent,
+.app-room-crumb {
+  color: var(--wa-color-text-quiet);
+  font-weight: var(--wa-font-weight-normal);
+}
+
+.app-room-crumb {
+  margin-inline: var(--wa-space-2xs);
 }
 
 /* Disabled devices stay legible rather than being hidden behind the filter alone: the issue
