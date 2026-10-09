@@ -118,6 +118,36 @@ describe('grouping', () => {
   })
 })
 
+/**
+ * #248: the test vendor is stored in English and shown in the interface language, so a person
+ * searching in German types "Testhersteller". The domain holds no `msg()`; the view hands the
+ * shown term in.
+ */
+describe('searching the localised test vendor', () => {
+  const lamp = device('Bench lamp', KITCHEN._id, { vendorName: 'Test vendor' })
+  const other = device('Mirror light', BATH._id, { vendorName: 'Example GmbH' })
+
+  it('does not match the localised term unless it is passed in', () => {
+    expect(browseDevices([lamp, other], ROOMS, { query: 'testhersteller' })).toEqual([])
+  })
+
+  it('matches the localised term when it is passed in, and only on test-vendor devices', () => {
+    const groups = browseDevices([lamp, other], ROOMS, {
+      query: 'testhersteller',
+      testVendorTerm: 'Testhersteller',
+    })
+    expect(names(groups)).toEqual([['Bench lamp']])
+  })
+
+  it('still matches the stored English name', () => {
+    const groups = browseDevices([lamp, other], ROOMS, {
+      query: 'test vendor',
+      testVendorTerm: 'Testhersteller',
+    })
+    expect(names(groups)).toEqual([['Bench lamp']])
+  })
+})
+
 describe('search', () => {
   const catalogue = [
     device('Ceiling light', KITCHEN._id, { serial: 'SN-000123', productName: 'Smart Bulb A60' }),

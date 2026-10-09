@@ -13,7 +13,8 @@ import '@awesome.me/webawesome-pro/dist/components/tag/tag.js'
 import { fixture, html, waitUntil } from '@open-wc/testing-helpers'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { page, userEvent } from 'vitest/browser'
-import type { DeviceDocument, Unsaved } from '../../../src/domain/index.js'
+import { type DeviceDocument, TEST_VENDOR_NAME, type Unsaved } from '../../../src/domain/index.js'
+import { activateLocale } from '../../../src/ui/i18n/localization.js'
 import type { DeviceListView } from '../../../src/ui/views/device-list.js'
 import '../../../src/ui/views/device-list.js'
 import { extractText } from '../pdf/text-extraction.js'
@@ -246,12 +247,12 @@ describe('sub-rooms', () => {
     expect(pantry.querySelector('[data-room-own]')?.textContent).toBe('Pantry')
   })
 
-  it('reads the path as typed to a screen reader, with the angle hidden', async () => {
+  it('reads the path as a place to a screen reader, with the angle hidden', async () => {
     await seedAttic()
     const element = await list()
 
-    // The `›` is decoration; a screen reader hears the path the user typed (`Attic/Studio`,
-    // "Attic slash Studio"), which is also what the search box and the room field accept.
+    // The `›` is decoration; a screen reader hears a place, `Attic, Studio` (#248): a comma
+    // reads as a pause at every punctuation level, where a slash was read out or skipped.
     const separators = [...heading(element, 'Attic/Studio').querySelectorAll('[aria-hidden]')]
     expect(separators.map((node) => [node.textContent, node.getAttribute('aria-hidden')])).toEqual([
       ['›', 'true'],
@@ -259,11 +260,11 @@ describe('sub-rooms', () => {
     // Scoped to this list: fixtures from earlier tests can still be in the document.
     const view = page.elementLocator(element)
     await expect
-      .element(view.getByRole('heading', { level: 2, name: 'Attic/Studio', exact: true }))
+      .element(view.getByRole('heading', { level: 2, name: 'Attic, Studio', exact: true }))
       .toBeInTheDocument()
     await expect
       .element(
-        view.getByRole('heading', { level: 2, name: 'Ground Floor/Kitchen/Pantry', exact: true }),
+        view.getByRole('heading', { level: 2, name: 'Ground Floor, Kitchen, Pantry', exact: true }),
       )
       .toBeInTheDocument()
     await expect
@@ -272,17 +273,17 @@ describe('sub-rooms', () => {
   })
 
   /** What assistive technology reads for `node`: its text without the `aria-hidden` parts. */
-  const spoken = (node: Element): string =>
+  const spokenRaw = (node: Element): string =>
     [...node.childNodes]
       .map((child) => {
         if (child.nodeType === Node.TEXT_NODE) return child.textContent ?? ''
         if (child instanceof Element && child.getAttribute('aria-hidden') !== 'true')
-          return spoken(child)
+          return spokenRaw(child)
         return ''
       })
       .join('')
-      .replace(/\s+/g, ' ')
-      .trim()
+  // Collapsed once, at the top: trimming each level would eat the space after a hidden comma.
+  const spoken = (node: Element): string => spokenRaw(node).replace(/\s+/g, ' ').trim()
 
   /** The export items under the heading for `path`: what each exports, and what it says. */
   const exportItems = (element: DeviceListView, path: string) =>
@@ -312,24 +313,35 @@ describe('sub-rooms', () => {
     // Ground Floor holds no devices itself and so has no heading; this menu is the only way
     // to export it, and each item says exactly what it takes.
     expect(exportItems(element, 'Ground Floor/Kitchen/Pantry')).toEqual([
-      ['Ground Floor/Kitchen/Pantry', 'Ground Floor/Kitchen/Pantry'],
-      ['Ground Floor/Kitchen', 'Ground Floor/Kitchen, with its sub-rooms'],
-      ['Ground Floor', 'Ground Floor, with its sub-rooms'],
+      ['Ground Floor/Kitchen/Pantry', 'Ground Floor, Kitchen, Pantry'],
+      ['Ground Floor/Kitchen', 'Ground Floor, Kitchen, and its sub-rooms'],
+      ['Ground Floor', 'Ground Floor, and its sub-rooms'],
     ])
     // The room itself, when it has sub-rooms, says that they come too.
     expect(exportItems(element, 'Ground Floor/Kitchen')).toEqual([
-      ['Ground Floor/Kitchen', 'Ground Floor/Kitchen, with its sub-rooms'],
-      ['Ground Floor', 'Ground Floor, with its sub-rooms'],
+      ['Ground Floor/Kitchen', 'Ground Floor, Kitchen, and its sub-rooms'],
+      ['Ground Floor', 'Ground Floor, and its sub-rooms'],
     ])
     expect(exportItems(element, 'Attic/Studio')).toEqual([
-      ['Attic/Studio', 'Attic/Studio'],
-      ['Attic', 'Attic, with its sub-rooms'],
+      ['Attic/Studio', 'Attic, Studio'],
+      ['Attic', 'Attic, and its sub-rooms'],
     ])
     // Visibly, the items read as the heading does.
     const item = element.querySelector(
       '[data-room="Attic/Studio"] wa-dropdown-item[data-export-room="Attic"]',
     )
-    expect(item?.textContent?.replace(/\s+/g, ' ').trim()).toContain('Attic, with its sub-rooms')
+    expect(item?.textContent?.replace(/\s+/g, ' ').trim()).toContain('Attic, and its sub-rooms')
+  })
+
+  it('says "samt Unterräumen" after the room in German, so it is not read as another room', async () => {
+    await seedAttic()
+    await activateLocale('de')
+    try {
+      const element = await list()
+      expect(exportItems(element, 'Attic/Studio')[1]).toEqual(['Attic', 'Attic samt Unterräumen'])
+    } finally {
+      await activateLocale('en')
+    }
   })
 
   it('exports a parent with all its sub-rooms from a sub-room menu', async () => {
@@ -362,10 +374,13 @@ describe('sub-rooms', () => {
     const element = await list()
     const view = page.elementLocator(element)
 
-    for (const path of ['Attic', 'Attic/Studio', 'Ground Floor/Kitchen/Pantry']) {
-      await expect
-        .element(view.getByRole('region', { name: path, exact: true }))
-        .toBeInTheDocument()
+    const spokenNames: Record<string, string> = {
+      Attic: 'Attic',
+      'Attic/Studio': 'Attic, Studio',
+      'Ground Floor/Kitchen/Pantry': 'Ground Floor, Kitchen, Pantry',
+    }
+    for (const [path, name] of Object.entries(spokenNames)) {
+      await expect.element(view.getByRole('region', { name, exact: true })).toBeInTheDocument()
       const section = element.querySelector(`section[data-room="${path}"]`) as HTMLElement
       const id = section.getAttribute('aria-labelledby') ?? ''
       expect(section.querySelector('h2')?.id).toBe(id)
@@ -404,6 +419,14 @@ describe('sub-rooms', () => {
     expect(lines).not.toContain('Attic Bedroom')
   })
 
+  it('still finds a sub-room by the stored path, whatever the heading reads as', async () => {
+    await seedAttic()
+    const element = await list()
+    await search(element, 'attic/studio')
+
+    expect(shown(element)).toEqual(['device:studio'])
+  })
+
   it('keeps the room export on the full path', async () => {
     await seedAttic()
     const element = await list()
@@ -417,6 +440,25 @@ describe('sub-rooms', () => {
 })
 
 describe('search', () => {
+  it('finds the test vendor by the name the interface shows, in German', async () => {
+    await database.repositories.rooms.save({ _id: 'room:lab', type: 'room', path: 'Lab' })
+    await database.repositories.devices.save(
+      device('device:tv', 'Bench lamp', 'room:lab', { vendorName: TEST_VENDOR_NAME }),
+    )
+    await database.repositories.devices.save(device('device:other', 'Mirror light', 'room:lab'))
+    await activateLocale('de')
+    try {
+      const element = await list()
+      await search(element, 'Testhersteller')
+      expect(shown(element)).toEqual(['device:tv'])
+      // The stored English name keeps working.
+      await search(element, 'test vendor')
+      expect(shown(element)).toEqual(['device:tv'])
+    } finally {
+      await activateLocale('en')
+    }
+  })
+
   it('matches a device name', async () => {
     await seed()
     const element = await list()

@@ -332,12 +332,42 @@ describe('the page', () => {
     expect(element.querySelector('wa-copy-button')?.getAttribute('value')).toBe(LONG_CODE)
   })
 
+  /*
+   * #248: the Room field is the same breadcrumb the device list headings use, so a room reads
+   * the same in both places: `Ground Floor › Kitchen` to the eye, "Ground Floor, Kitchen" to a
+   * screen reader, never the stored `Ground Floor/Kitchen`.
+   */
+  it('shows the room as a breadcrumb that reads as a place', async () => {
+    await seed()
+    const element = await page()
+    const room = [...element.querySelectorAll('dl.app-details dt')].find(
+      (term) => term.textContent?.trim() === 'Room',
+    )?.nextElementSibling as HTMLElement
+
+    expect(room.querySelector('[data-room-parent]')?.textContent).toBe('Ground Floor')
+    expect(room.querySelector('[data-room-own]')?.textContent).toBe('Kitchen')
+    const heard = (node: Node): string =>
+      [...node.childNodes]
+        .map((child) =>
+          child.nodeType === Node.TEXT_NODE
+            ? (child.textContent ?? '')
+            : child instanceof Element && child.getAttribute('aria-hidden') === 'true'
+              ? ''
+              : heard(child),
+        )
+        .join('')
+    expect(heard(room).replace(/\s+/g, ' ').trim()).toBe('Ground Floor, Kitchen')
+    expect(room.textContent).not.toContain('/')
+    const view = browserPage.elementLocator(element)
+    await expect.element(view.getByRole('definition').filter({ hasText: 'Kitchen' })).toBeVisible()
+  })
+
   it('shows what the device is and where it is', async () => {
     await seed()
     const element = await page()
 
     expect(element.textContent).toContain('Kitchen ceiling light')
-    expect(element.textContent).toContain('Ground Floor/Kitchen')
+    expect(element.textContent).toContain('Kitchen')
     expect(element.textContent).toContain('ceiling, north end')
     expect(element.textContent).toContain('SN-000123')
     // Ids as hex, the way every Matter document writes them.
@@ -944,6 +974,25 @@ describe('what the catalogue knows', () => {
     await expect
       .element(view.getByRole('definition').filter({ hasText: 'Aqara Home' }))
       .toBeVisible()
+  })
+
+  it("names each page's pairing group by its own label, so two pages cannot cross-wire (#248)", async () => {
+    await seed(lamp(CATALOGUED))
+    const first = await page()
+    const second = await page()
+
+    const wiring = [first, second].map((element) => {
+      const group = element.querySelector('[data-pairing]') as HTMLElement
+      const id = group.getAttribute('aria-labelledby') ?? ''
+      // Resolved the way `aria-labelledby` resolves it: the first match in the document.
+      return { id, label: document.getElementById(id), own: group.querySelector(`[id="${id}"]`) }
+    })
+    expect(wiring[0]?.id).not.toBe(wiring[1]?.id)
+    for (const { id, label, own } of wiring) {
+      expect(id).not.toBe('')
+      expect(label).toBe(own)
+      expect(label?.textContent?.trim()).toBe('Pairing')
+    }
   })
 
   it('names the pairing tags as a group by their label', async () => {

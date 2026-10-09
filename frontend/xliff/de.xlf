@@ -998,14 +998,14 @@
   <source>Export this room and its sub-rooms</source>
   <target>Diesen Raum mit allen Unterräumen exportieren</target>
 </trans-unit>
-<trans-unit id="s1c359a694b57cd0c">
-  <source>, with its sub-rooms</source>
-  <note from="lit-localize">Follows a room name in the export menu: "Ground Floor, with its sub-rooms".</note>
-  <target>, mit allen Unterräumen</target>
-</trans-unit>
 <trans-unit id="s7608573759aa7525">
   <source>Test vendor</source>
   <target>Testhersteller</target>
+</trans-unit>
+<trans-unit id="s7c99f63e17035e53">
+  <source>, and its sub-rooms</source>
+  <note from="lit-localize">Follows a room name in the export menu: "Ground Floor, Kitchen, and its sub-rooms".</note>
+  <target> samt Unterräumen</target>
 </trans-unit>
 </body>
 </file>
