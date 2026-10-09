@@ -20,6 +20,7 @@ import {
   layoutLabels,
   MM,
   type PlacedLabel,
+  roomPathBreadcrumb,
 } from '../../domain/index.js'
 import { ExportCancelled, type InventoryProgress } from './progress.js'
 import { drawQr } from './qr.js'
@@ -172,7 +173,9 @@ function drawLabel(
     color: ink,
   })
 
-  const room = label.roomPath === '' ? options.withoutRoom : label.roomPath
+  // A breadcrumb, as the device list and the inventory print it (#242): `Attic/Studio` reads as
+  // a file name on a fuse box, `Attic › Studio` as a place. `›` is WinAnsi, so `fitted` keeps it.
+  const room = label.roomPath === '' ? options.withoutRoom : roomPathBreadcrumb(label.roomPath)
   page.drawText(fitted(room, regular, detailSize, textWidth), {
     x: textLeft,
     y: yOf(top + nameSize + detailSize + 3),
