@@ -1501,3 +1501,16 @@ had not checked.
 
 **Rule.** Any concrete result an option promises ("matches", "0 diffs", "passes") must already be measured
 when the question is asked. Otherwise word it as a hypothesis ("expected to …, not yet verified").
+
+## Never switch branches in the shared checkout while an agent works in it
+
+**What happened:** while a dispatched implementer was editing on `fix/breadcrumb-a11y-248` in the main
+checkout, I ran `git checkout -b feat/waitlist-224` in the same directory. Its uncommitted edits moved onto
+my branch. The agent noticed, reverted them with `git apply -R` and finished in a temporary worktree.
+
+**Rule:**
+- While any implementer or fix-round agent is live, the controller runs no command in the shared checkout
+  that changes the branch, the index or the worktree. That includes `checkout`, `switch`, `pull`, `stash`,
+  `reset`, `restore`, `merge`, `rebase`, `cherry-pick`, `add` and `commit`.
+- Read-only commands such as `status`, `log`, `diff` and `show` are fine.
+- Start a parallel line of work in its own `git worktree add` directory, or wait until the agent reports.

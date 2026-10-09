@@ -15,7 +15,7 @@
 
 import type { CouchClient } from '../couch/client.js'
 import { CouchError } from '../couch/client.js'
-import { type Plan, PROJECT_LIMITS } from '../domain/index.js'
+import { isWaitlistPlan, type Plan, PROJECT_LIMITS } from '../domain/index.js'
 import { BY_SUB_DESIGN, BY_SUB_VIEW, ensureUsersDatabase, USERS_DB } from './database.js'
 import { userDocId } from './key.js'
 
@@ -58,6 +58,13 @@ export interface Profile {
    * The `-1` is a sentinel and must be tested before it is compared; see `withinLimit`.
    */
   readonly projectLimit: number
+  /** The plan this user is waiting for (#224). Absent unless they are on the waitlist. */
+  readonly planRequested?: Plan
+  /**
+   * When they joined the waitlist or last changed the plan, ISO 8601. Present exactly when
+   * {@link planRequested} is.
+   */
+  readonly requestedAt?: string
 }
 
 /** What a user may change about themselves. */
@@ -91,6 +98,10 @@ export interface UserRecord {
   /** Set by hand in Fauxton. Only `customerservice` is read. */
   readonly roles?: readonly string[]
   readonly refreshTokens?: readonly RefreshEntry[]
+  /** The plan this user asked to wait for (#224). A request, never an entitlement. */
+  readonly planRequested?: Plan
+  /** When {@link planRequested} was last set, ISO 8601. */
+  readonly requestedAt?: string
 }
 
 /** What a sign-in knows about a person. */
@@ -101,19 +112,24 @@ export interface Seed {
 }
 
 /** Where an unrecognised plan is reported. */
-export type UnknownPlanReporter = (event: { readonly email: string; readonly plan: string }) => void
+export type UnknownPlanReporter = (event: {
+  readonly sub: string | undefined
+  readonly plan: string
+}) => void
 
 /**
  * Where an unrecognised plan is reported when nobody says otherwise: one JSON line on stderr,
  * in pino's field names. A no-op default would hide operator typos, and the deployment that
  * forgot to wire a reporter would have exactly the silence this exists to end.
  */
-const reportToStderr: UnknownPlanReporter = ({ email, plan }) => {
+const reportToStderr: UnknownPlanReporter = ({ sub, plan }) => {
   console.warn(
     JSON.stringify({
       level: 'warn',
       msg: 'unknown plan on a user record; this account is being treated as free',
-      email,
+      // The subject, never the address: this line reaches the log. The record id is no help
+      // either, since it is the address in base64url.
+      sub,
       plan,
     }),
   )
@@ -130,7 +146,7 @@ export function planOf(
 ): Plan {
   if (record?.plan === undefined) return 'free'
   if (isPlan(record.plan)) return record.plan
-  report({ email: record.email, plan: record.plan })
+  report({ sub: record.sub, plan: record.plan })
   return 'free'
 }
 
@@ -145,6 +161,8 @@ export function profileOf(
   report: UnknownPlanReporter = reportToStderr,
 ): Profile {
   const plan = planOf(record, report)
+  const planRequested = record?.planRequested
+  const requestedAt = record?.requestedAt
   return {
     sub: record?.sub ?? claims.sub,
     email: record?.email ?? claims.email,
@@ -152,6 +170,12 @@ export function profileOf(
     locale: isLocale(record?.locale) ? record.locale : 'auto',
     plan,
     projectLimit: PROJECT_LIMITS[plan],
+    // Both or neither, and only a plan somebody can wait for. A hand edit in Fauxton can leave
+    // half of the pair or a tier this build does not know, and the contract promises a value
+    // from its enum.
+    ...(isWaitlistPlan(planRequested) && typeof requestedAt === 'string'
+      ? { planRequested, requestedAt }
+      : {}),
   }
 }
 
@@ -165,6 +189,13 @@ export interface UserRecords {
   update(email: string, update: ProfileUpdate): Promise<UserRecord>
   /** Creates the record when there is none. Who may call this is the route's decision. */
   setPlan(email: string, plan: Plan): Promise<UserRecord>
+  /**
+   * Joins the waitlist for `plan`, or changes the plan waited for. Overwrites both fields.
+   * @throws {Error} when there is no record; callers ensure one first.
+   */
+  requestPlan(email: string, plan: Plan, at: string): Promise<UserRecord>
+  /** Leaves the waitlist. Writes nothing, and creates nothing, when there is nothing to clear. */
+  clearRequest(email: string): Promise<UserRecord | undefined>
   /** `false` when there is no record to hold the entry. */
   addRefresh(email: string, entry: RefreshEntry): Promise<boolean>
   /** `undefined` when there is no record, so the caller knows to look in memory instead. */
@@ -256,7 +287,8 @@ export function userRecords(
     async update(email, update) {
       const written = await mutate(email, (existing) => {
         if (existing === undefined) {
-          throw new Error(`No record for ${email}; ensure one before updating it.`)
+          // No address in the message: an error reaches the log, and the address must not.
+          throw new Error('No record to update; ensure one first.')
         }
         return {
           ...existing,
@@ -273,6 +305,29 @@ export function userRecords(
         plan,
       }))
       return written as UserRecord
+    },
+
+    async requestPlan(email, plan, at) {
+      const written = await mutate(email, (existing) => {
+        // No address in the message: an error reaches the log, and the address must not.
+        if (existing === undefined) {
+          throw new Error('No record to hold the request; ensure one first.')
+        }
+        return { ...existing, planRequested: plan, requestedAt: at }
+      })
+      return written as UserRecord
+    },
+
+    async clearRequest(email) {
+      return mutate(email, (existing) => {
+        if (existing === undefined) return undefined
+        if (existing.planRequested === undefined && existing.requestedAt === undefined) {
+          return undefined
+        }
+        // Both named fields go; everything else is carried through, as every write here does.
+        const { planRequested: _planRequested, requestedAt: _requestedAt, ...kept } = existing
+        return kept
+      })
     },
 
     async addRefresh(email, entry) {

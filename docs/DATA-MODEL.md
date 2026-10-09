@@ -34,9 +34,9 @@ the whole authorisation design — see [ADR 0003](adr/0003-database-per-project.
 ## `matter_manager` — user records, not an authentication store
 
 One record per person, keyed by verified address (`user:<base64url of the lower-cased address>`)
-and **created on demand**: by accepting an invitation, `PATCH /profile`, or an operator's
-`PUT /customer`. A plain sign-in creates none; such a user is `free` and their profile is built
-from their token. Admin access only; never replicated. This replaces the earlier use of
+and **created on demand**: by accepting an invitation, `PATCH /profile`, `PUT /waitlist`, or an
+operator's `PUT /customer`. A plain sign-in creates none; such a user is `free` and their profile
+is built from their token. Admin access only; never replicated. This replaces the earlier use of
 CouchDB's built-in `_users`.
 
 **It is not what authenticates anyone.** Under JWT authentication CouchDB does not consult any
@@ -53,15 +53,20 @@ read this database, so profiles are served by `GET /profile` and cached client-s
   "displayName": "Stephan",
   "locale": "auto",             // "auto" | "en" | "de"
   "plan": "free",               // "free" | "member" | "pro"; absent means free (ADR 0009)
+  "planRequested": "pro",       // waitlist (#224): "member" | "pro"; a request, not a plan
+  "requestedAt": "2026-10-09T08:00:00.000Z", // set and cleared together with planRequested
   "roles": [],                  // set by hand in Fauxton; only "customerservice" is read
   "refreshTokens": [{ "hash": "<sha256(jti)>", "exp": 1790000000, "createdAt": 1787400000 }]
 }
 ```
 
 Writes name their fields, so no request body can set `roles`, `plan` (other than through the
-operator-gated routes), `sub`, `email` or `refreshTokens`. A `by_sub` view resolves a record by
-subject and skips records without one. See [SECURITY-MODEL.md](SECURITY-MODEL.md), *User records
-and tokens*.
+operator-gated routes), `sub`, `email` or `refreshTokens`. (The waitlist routes write only
+`planRequested` and `requestedAt`, which are a request and never an entitlement.)
+A `by_sub` view resolves a record by subject and skips records without one. A
+`by_plan_requested` view lists waiting records by `[planRequested, requestedAt]`, valued by
+address, for operators (the query is in `backend/README.md`); the API never reads it. See
+[SECURITY-MODEL.md](SECURITY-MODEL.md), *User records and tokens*.
 
 ---
 

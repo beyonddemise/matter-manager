@@ -27,6 +27,21 @@ const BY_SUB_MAP = `function (doc) {
   }
 }`
 
+/** The design document holding {@link BY_PLAN_REQUESTED_VIEW}. */
+export const BY_PLAN_REQUESTED_DESIGN = 'by_plan_requested'
+/**
+ * Waiting records by `[planRequested, requestedAt]`, valued by address (#224). For operators, in
+ * Fauxton or with curl (see the backend README); the API never reads it.
+ */
+export const BY_PLAN_REQUESTED_VIEW = 'by_plan_requested'
+
+// Only records that are waiting, so the view is the demand and nothing else.
+const BY_PLAN_REQUESTED_MAP = `function (doc) {
+  if (doc.type === 'user' && doc.planRequested) {
+    emit([doc.planRequested, doc.requestedAt], doc.email)
+  }
+}`
+
 const setup = once(async (couch: CouchClient) => {
   await couch.createDb(USERS_DB)
   await couch.putSecurity(USERS_DB, {
@@ -36,9 +51,12 @@ const setup = once(async (couch: CouchClient) => {
   await installDesign(couch, USERS_DB, `_design/${BY_SUB_DESIGN}`, {
     [BY_SUB_VIEW]: { map: BY_SUB_MAP },
   })
+  await installDesign(couch, USERS_DB, `_design/${BY_PLAN_REQUESTED_DESIGN}`, {
+    [BY_PLAN_REQUESTED_VIEW]: { map: BY_PLAN_REQUESTED_MAP },
+  })
 })
 
-/** Creates `matter_manager` if needed, locks it down, and installs its view. Once per process. */
+/** Creates `matter_manager` if needed, locks it down, and installs its views. Once per process. */
 export function ensureUsersDatabase(couch: CouchClient): Promise<void> {
   return setup.ensure(couch)
 }

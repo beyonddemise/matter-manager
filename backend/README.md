@@ -142,9 +142,9 @@ redirects, `POST /auth/token` takes the handoff cookie or a refresh token in the
 
 `src/users/` keeps one record per person in the admin-only `matter_manager` database, keyed by
 verified address (`users/key.ts`). Signing in creates **no** record; records come from
-`ensureRecord` (a redeemable invitation, or `PATCH /profile`) or `PUT /customer`. Refresh-token
-hashes (`sha256(jti)`) live on the record, or in memory while there is none (`auth/refresh-store.ts`).
-CouchDB's `_users` is not used.
+`ensureRecord`, which a redeemable invitation, `PATCH /profile` and `PUT /waitlist` call, or from
+`PUT /customer`. Refresh-token hashes (`sha256(jti)`) live on the record, or in memory while there
+is none (`auth/refresh-store.ts`). CouchDB's `_users` is not used.
 
 ### Setting a plan: `PUT /customer`
 
@@ -160,6 +160,27 @@ curl -X PUT "$API/customer" -H "authorization: Bearer $ACCESS" -H 'content-type:
 
 **The routes are absent when no provider is configured**, rather than present and answering with
 a misconfiguration error at the moment a user presses the button.
+
+### The waitlist: `PUT` and `DELETE /waitlist`
+
+A signed-in user joins the free waitlist for `member` or `pro` from the upgrade dialog (#224).
+That writes `planRequested` and `requestedAt` on their record, creating it if needed. Nothing is
+sold and `plan` does not change. A plan the account already has, or a lower one, is a 409.
+`DELETE` clears both fields and never creates a record. Each join logs
+`waitlist: joined <plan>` with the subject, never the address.
+
+Operators read the demand from the `by_plan_requested` view in `matter_manager`, in Fauxton or
+with curl, as a CouchDB admin. Everyone waiting for Pro, oldest first:
+
+```bash
+curl -s -u "admin:…" -G \
+  "<couch>/matter_manager/_design/by_plan_requested/_view/by_plan_requested" \
+  --data-urlencode 'startkey=["pro"]' --data-urlencode 'endkey=["pro",{}]'
+```
+
+`<couch>` is the CouchDB base URL and `admin:…` stands for your CouchDB admin name and
+password. Each row's `key` is `[plan, requestedAt]` and its `value`
+the address. Replace `pro` with `member` for the other plan. There is no admin UI yet (#230).
 
 ### Configuration
 
