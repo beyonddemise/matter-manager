@@ -87,6 +87,43 @@ function productOf(entry: EntryBlock): string | undefined {
   return vendor === undefined ? hex(device.productId) : `${vendor} / ${hex(device.productId)}`
 }
 
+/** What a cut line ends in. WinAnsi has it (0x85), so the standard fonts can draw it. */
+const ELLIPSIS = '…'
+
+type Font = Awaited<ReturnType<PDFDocument['embedFont']>>
+
+/**
+ * Makes text drawable and cuts it to one line of the given width.
+ *
+ * Why not `drawText`'s `maxWidth`: that *wraps*, at `pdf-lib`'s default 24pt line height, and
+ * the entry's height is a fixed budget (`A4.entryHeight`), so a long name or spot drew over the
+ * next line or the next entry (#238). Free text has no length limit; one line with an ellipsis
+ * is the honest rendering on paper, and the full text is still on the device page.
+ *
+ * @param text as stored; made WinAnsi-safe here, before it is measured
+ * @param font the font it will be drawn in, whose metrics decide the cut
+ * @param size the font size, in points
+ * @param width the column width, in points
+ * @returns the text unchanged when it fits, otherwise its longest prefix that fits with `…`
+ */
+function fitToWidth(text: string, font: Font, size: number, width: number): string {
+  const safe = winAnsiSafe(text)
+  if (font.widthOfTextAtSize(safe, size) <= width) return safe
+
+  // Binary search for the longest prefix that fits with the ellipsis: width grows with length,
+  // and a name of a few hundred characters should not cost a few hundred measurements.
+  // After `winAnsiSafe` every character is one UTF-16 unit, so slicing cannot split a pair.
+  let low = 0
+  let high = safe.length
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2)
+    const candidate = `${safe.slice(0, middle).trimEnd()}${ELLIPSIS}`
+    if (font.widthOfTextAtSize(candidate, size) <= width) low = middle
+    else high = middle - 1
+  }
+  return `${safe.slice(0, low).trimEnd()}${ELLIPSIS}`
+}
+
 /**
  * Builds the PDF.
  *
@@ -250,13 +287,12 @@ function drawEntry(
   const width = geometry.width - geometry.margin - textLeft
   let line = block.top + NAME_SIZE
 
-  page.drawText(winAnsiSafe(device.name), {
+  page.drawText(fitToWidth(device.name, bold, NAME_SIZE, width), {
     x: textLeft,
     y: yOf(line),
     size: NAME_SIZE,
     font: bold,
     color: ink,
-    maxWidth: width,
   })
 
   const details = [
@@ -267,15 +303,17 @@ function drawEntry(
     device.serial,
   ].filter((value): value is string => value !== undefined && value !== '')
 
+  // Every detail is cut to one line, not only spot and serial: the product and part number come
+  // from a catalogue this application does not control, and one line per detail is what the
+  // entry height was budgeted for.
   for (const detail of details) {
     line += DETAIL_SIZE + 4
-    page.drawText(winAnsiSafe(detail), {
+    page.drawText(fitToWidth(detail, regular, DETAIL_SIZE, width), {
       x: textLeft,
       y: yOf(line),
       size: DETAIL_SIZE,
       font: regular,
       color: quiet,
-      maxWidth: width,
     })
   }
 
