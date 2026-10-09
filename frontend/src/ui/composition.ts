@@ -21,7 +21,7 @@
  */
 
 import PouchDB from 'pouchdb-browser'
-import { type CatalogApi, catalogApi } from './catalog.js'
+import { answeringTestVendors, type CatalogApi, catalogApi } from './catalog.js'
 import {
   localDatabase,
   localProfileCache,
@@ -271,10 +271,11 @@ export function profile(fetchImpl: typeof fetch = fetch): ReturnType<typeof prof
  * The catalogue lookup: manufacturer and product for a setup code (#227).
  *
  * The same token getter as {@link projects}: a lookup made with no token held answers
- * `signed-out` without a request.
+ * `signed-out` without a request. A test-vendor code is answered before that, on the device, and
+ * is never sent (#238).
  */
 export function catalog(fetchImpl: typeof fetch = fetch): CatalogApi {
-  return catalogApi(API_BASE, accessToken, fetchImpl)
+  return answeringTestVendors(catalogApi(API_BASE, accessToken, fetchImpl))
 }
 
 /**

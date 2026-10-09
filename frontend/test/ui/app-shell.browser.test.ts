@@ -9,6 +9,7 @@ import { fixture, html, waitUntil } from '@open-wc/testing-helpers'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import type { TokenOutcome } from '../../src/ui/composition.js'
 import '../../src/ui/app-shell.js'
+import { BACKFILL_WANTED } from '../../src/ui/catalog.js'
 import type { CatalogBackfill } from '../../src/ui/catalog-backfill.js'
 import type { ConnectivitySource } from '../../src/ui/connectivity.js'
 import { PROJECT_CHANGED } from '../../src/ui/current-project.js'
@@ -458,7 +459,12 @@ function spyBackfill() {
  * @returns the element, the `report` that plays an outcome into it, and the spies for what the
  *   shell did about it
  */
-const driven = async (connectivity: ConnectivitySource = NETWORK, backfill = spyBackfill()) => {
+const driven = async (
+  connectivity: ConnectivitySource = NETWORK,
+  backfill = spyBackfill(),
+  /** False leaves `backfill` unbound, so the shell would build the real one if anything asked. */
+  injectBackfill = true,
+) => {
   // Two downloaded copies, so the projects the tests report states for are ones replication is
   // handed: states of anything else are forgotten at the next refresh.
   const store = isolatedProjectStore()
@@ -492,7 +498,7 @@ const driven = async (connectivity: ConnectivitySource = NETWORK, backfill = spy
         return { stop }
       }}
       .connectivity=${connectivity}
-      .backfill=${backfill}
+      .backfill=${injectBackfill ? backfill : undefined}
       .followLocale=${async () => undefined}
       .listProjects=${async () =>
         ['p1', 'p2'].map((projectId) => ({
@@ -671,4 +677,67 @@ it('stops backfill before signing out', async () => {
   expect(backfill.stop.mock.invocationCallOrder[0]).toBeLessThan(
     signOutOf.mock.invocationCallOrder[0] ?? 0,
   )
+})
+
+it('refuses backfill triggers that arrive while the sign-out is still running', async () => {
+  // #238: the session stays `signed-in` until `signOutOf` resolves, so a project switch or a
+  // regained connection in that window would start a run for an account that is leaving.
+  const network = controllableNetwork()
+  const { element, play, backfill, signOutOf } = await driven(network.source)
+  await play({ kind: 'refreshed', expiresIn: 300 })
+  let finish: () => void = () => {}
+  signOutOf.mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        finish = () => resolve([])
+      }),
+  )
+  await waitUntil(() => element.querySelector('[data-sign-out]') !== null, 'not signed in')
+  ;(element.querySelector('[data-sign-out]') as HTMLElement).click()
+  await waitUntil(() => element.querySelector('[data-confirm-sign-out]') !== null, 'no dialog')
+  ;(element.querySelector('[data-confirm-sign-out]') as HTMLElement).click()
+  await waitUntil(() => signOutOf.mock.calls.length > 0, 'never signed out')
+  backfill.trigger.mockClear()
+
+  window.dispatchEvent(new CustomEvent(PROJECT_CHANGED))
+  network.set(false)
+  network.set(true)
+  expect(backfill.trigger).not.toHaveBeenCalled()
+
+  finish()
+  await waitUntil(() => element.querySelector('[data-sign-in]') !== null, 'still signed in')
+  expect(backfill.trigger).not.toHaveBeenCalled()
+})
+
+it('backfills when a view asks, only while signed in and online, without stopping a run', async () => {
+  // #238: the add form asks after saving a device its lookup did not answer.
+  const network = controllableNetwork()
+  const { play, backfill } = await driven(network.source)
+  window.dispatchEvent(new CustomEvent(BACKFILL_WANTED))
+  expect(backfill.trigger).not.toHaveBeenCalled()
+
+  await play({ kind: 'refreshed', expiresIn: 300 })
+  backfill.trigger.mockClear()
+  backfill.stop.mockClear()
+  window.dispatchEvent(new CustomEvent(BACKFILL_WANTED))
+  expect(backfill.trigger).toHaveBeenCalledOnce()
+  // A run over the same project is still useful; `trigger` coalesces rather than restarting.
+  expect(backfill.stop).not.toHaveBeenCalled()
+
+  network.set(false)
+  backfill.trigger.mockClear()
+  window.dispatchEvent(new CustomEvent(BACKFILL_WANTED))
+  expect(backfill.trigger).not.toHaveBeenCalled()
+})
+
+it('builds no real backfill just to stop it, when the session ends or is signed out', async () => {
+  // #238: the stop sites go through `stopBackfill()`, which stops only a backfill that exists.
+  // `realBackfill` is where the shell keeps the one it built; it must still be empty.
+  for (const outcome of [{ kind: 'ended' }, { kind: 'signed-out' }] as const) {
+    const { element, play } = await driven(NETWORK, spyBackfill(), false)
+    await play(outcome)
+    expect((element as unknown as { realBackfill?: unknown }).realBackfill).toBeUndefined()
+    element.remove()
+    expect((element as unknown as { realBackfill?: unknown }).realBackfill).toBeUndefined()
+  }
 })

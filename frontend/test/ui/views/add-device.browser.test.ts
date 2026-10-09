@@ -9,7 +9,7 @@ import { fixture, html, waitUntil } from '@open-wc/testing-helpers'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { ProjectRepositories } from '../../../src/data/index.js'
 import type { DeviceDocument, RoomDocument } from '../../../src/domain/index.js'
-import type { CatalogApi, LookupOutcome } from '../../../src/ui/catalog.js'
+import { BACKFILL_WANTED, type CatalogApi, type LookupOutcome } from '../../../src/ui/catalog.js'
 import { ImageScanError } from '../../../src/ui/scan/image.js'
 import type { ScanSource } from '../../../src/ui/scan/source.js'
 import type { AddDeviceView } from '../../../src/ui/views/add-device.js'
@@ -763,5 +763,76 @@ describe('looking up the manufacturer', () => {
     await waitUntil(() => element.querySelector('[data-scan]') !== null)
     ;(element.querySelector('[data-scan]') as HTMLElement).click()
     await waitUntil(() => calls.length === 1, 'a scanned code was never looked up')
+  })
+})
+
+/**
+ * #238: a device saved before its lookup answered gets its names "as soon as the app is next
+ * online" (PRODUCT.md). When it is online and signed in already, that is now: the form asks the
+ * shell for a backfill run instead of leaving it to the next sign-in, reconnect or switch.
+ */
+describe('asking for backfill after a save', () => {
+  /** Counts the requests for a backfill run that reach `window`. */
+  function listen() {
+    const heard: Event[] = []
+    const record = (event: Event) => heard.push(event)
+    window.addEventListener(BACKFILL_WANTED, record)
+    return { heard, done: () => window.removeEventListener(BACKFILL_WANTED, record) }
+  }
+
+  async function save(element: AddDeviceView, code: string): Promise<void> {
+    typeCode(element, code)
+    fill(element, 'name', 'Front door sensor')
+    typeRoom(element, 'Hall')
+    await submit(element, async () => (await devices()).length === 1)
+  }
+
+  it('asks once when the device was saved without an answer, online and signed in', async () => {
+    const { api } = fakeCatalog(() => new Promise<LookupOutcome>(() => {}))
+    const element = await form(database.repositories, neverAvailable(), { api })
+    const { heard, done } = listen()
+    try {
+      await save(element, aqaraPayload())
+      expect(heard).toHaveLength(1)
+    } finally {
+      done()
+    }
+  })
+
+  it('does not ask when the answer was saved with the device', async () => {
+    const { api } = fakeCatalog(found)
+    const element = await form(database.repositories, neverAvailable(), { api })
+    const { heard, done } = listen()
+    try {
+      typeCode(element, aqaraPayload())
+      await waitUntil(() => element.querySelector('[data-catalog]') !== null, 'no names')
+      await save(element, aqaraPayload())
+      expect(heard).toHaveLength(0)
+    } finally {
+      done()
+    }
+  })
+
+  const cases: ReadonlyArray<
+    readonly [string, { readonly online?: boolean } | undefined, () => string]
+  > = [
+    ['offline', { online: false }, () => aqaraPayload()],
+    ['signed out', undefined, () => aqaraPayload()],
+    ['an 11-digit code, which has nothing to look up', {}, () => SHORT_CODE],
+  ]
+  it.each(cases)('does not ask when %s', async (_case, catalog, code) => {
+    const { api } = fakeCatalog(() => new Promise<LookupOutcome>(() => {}))
+    const element = await form(
+      database.repositories,
+      neverAvailable(),
+      catalog === undefined ? undefined : { api, ...catalog },
+    )
+    const { heard, done } = listen()
+    try {
+      await save(element, code())
+      expect(heard).toHaveLength(0)
+    } finally {
+      done()
+    }
   })
 })

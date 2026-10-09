@@ -1,6 +1,7 @@
 import { msg, updateWhenLocaleChanges } from '@lit/localize'
 import { html, LitElement, type TemplateResult } from 'lit'
 import { DEFAULT_PLAN } from '../domain/plan.js'
+import { BACKFILL_WANTED } from './catalog.js'
 import { type CatalogBackfill, defaultCatalogBackfill } from './catalog-backfill.js'
 import {
   beginSignIn,
@@ -268,14 +269,43 @@ export class AppShell extends LitElement implements ViewHost {
   }
 
   /**
+   * True from the moment a sign-out begins until `signOutOf` has finished. The session still
+   * reads `signed-in` in that window, so without this a project switch or a regained connection
+   * would start a run for an account that is leaving (#238).
+   */
+  private endingSession = false
+
+  /**
+   * Stops backfill, if one exists. Never through `catalogBackfill()`: a shell that never signed
+   * in must not build a real backfill just to stop it. An injected one is stopped even if it was
+   * never adopted.
+   */
+  private stopBackfill(): void {
+    ;(this.realBackfill ?? this.backfill)?.stop()
+  }
+
+  /** Starts a backfill run, unless a sign-out is under way. Callers check session and network. */
+  private triggerBackfill(): void {
+    if (this.endingSession) return
+    this.catalogBackfill().trigger()
+  }
+
+  /**
    * Backfill follows the open project: the old run is stopped (its answers belong to a project
    * nobody is looking at) and a new one starts over the new project, when signed in and online.
-   * The stop does not go through `catalogBackfill()`: a signed-out shell must not build a real
-   * backfill just to stop it.
    */
   private readonly onProjectChanged = (): void => {
-    ;(this.realBackfill ?? this.backfill)?.stop()
-    if (this.session === 'signed-in' && this.online) this.catalogBackfill().trigger()
+    this.stopBackfill()
+    if (this.session === 'signed-in' && this.online) this.triggerBackfill()
+  }
+
+  /**
+   * A view asked for a run (`BACKFILL_WANTED`): a device was saved without its names. Not a
+   * restart, unlike a project switch: a run already going is over the same project, and
+   * `trigger` asks it for one more pass.
+   */
+  private readonly onBackfillWanted = (): void => {
+    if (this.session === 'signed-in' && this.online) this.triggerBackfill()
   }
 
   /**
@@ -316,6 +346,7 @@ export class AppShell extends LitElement implements ViewHost {
     super.connectedCallback()
     window.addEventListener('hashchange', this.onHashChange)
     window.addEventListener(PROJECT_CHANGED, this.onProjectChanged)
+    window.addEventListener(BACKFILL_WANTED, this.onBackfillWanted)
     this.stopWatchingNetwork = watchConnectivity(
       this.connectivity ?? browserConnectivity(),
       (online) => {
@@ -325,7 +356,7 @@ export class AppShell extends LitElement implements ViewHost {
         // a list this session heard (C-R5).
         if (regained && this.session === 'signed-in') void this.projects.refresh(true)
         // The other half of "on connectivity becoming online" (spec §Backfill).
-        if (regained && this.session === 'signed-in') this.catalogBackfill().trigger()
+        if (regained && this.session === 'signed-in') this.triggerBackfill()
       },
     )
 
@@ -355,7 +386,7 @@ export class AppShell extends LitElement implements ViewHost {
         if (!wasSignedIn) {
           this.startSyncing()
           // Once after sign-in, on the transition only: `refreshed` repeats before every expiry.
-          this.catalogBackfill().trigger()
+          this.triggerBackfill()
         }
         return
       }
@@ -369,7 +400,7 @@ export class AppShell extends LitElement implements ViewHost {
         // refresher's. On a first answer there is nothing running, and this only records the
         // state.
         if (this.session === 'signed-in') {
-          this.catalogBackfill().stop()
+          this.stopBackfill()
           this.endReplication()
           forgetTokens()
         }
@@ -382,7 +413,7 @@ export class AppShell extends LitElement implements ViewHost {
         // Local data stays: `sessionExpired` forgets the in-memory access token and nothing
         // else. Replication is stopped because its token is now dead, and a manager retrying
         // with it would only produce 401s.
-        this.catalogBackfill().stop()
+        this.stopBackfill()
         this.endReplication()
         this.session = sessionExpired({ forgetTokens })
         this.sessionEndedNotice = true
@@ -442,9 +473,8 @@ export class AppShell extends LitElement implements ViewHost {
     this.footerObserver = undefined
     document.documentElement.style.removeProperty('--app-footer-height')
     window.removeEventListener(PROJECT_CHANGED, this.onProjectChanged)
-    // Not `catalogBackfill()`: a shell that never signed in must not build a real backfill just
-    // to stop it. An injected one is stopped even if it was never adopted.
-    ;(this.realBackfill ?? this.backfill)?.stop()
+    window.removeEventListener(BACKFILL_WANTED, this.onBackfillWanted)
+    this.stopBackfill()
     // Replication is ended by the projects controller, which is disconnected with the shell.
     this.tokenRefresher?.stop()
     this.tokenRefresher = undefined
@@ -634,14 +664,20 @@ export class AppShell extends LitElement implements ViewHost {
     // session that is ending - stopping what is running says nothing about what is about to
     // start.
     this.projects.end()
-    this.catalogBackfill().stop()
+    this.endingSession = true
+    this.stopBackfill()
     // Stopped before the sign-out runs, so a refresh in flight cannot re-store a token that the
     // sign-out is about to forget.
     this.tokenRefresher?.stop()
     this.tokenRefresher = undefined
 
-    await (this.signOutOf ?? endSession)(this.removeLocalProjects)
-    this.session = 'signed-out'
+    try {
+      await (this.signOutOf ?? endSession)(this.removeLocalProjects)
+      this.session = 'signed-out'
+    } finally {
+      // Cleared only once the session reads `signed-out`, which every trigger site checks.
+      this.endingSession = false
+    }
   }
 
   /**

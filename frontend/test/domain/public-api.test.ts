@@ -74,6 +74,7 @@ const EXPECTED: ReadonlyArray<
   ['isHttpsUrl', 'function'],
   ['manufacturerName', 'function'],
   ['needsCatalogLookup', 'function'],
+  ['testVendorAnswer', 'function'],
   ['withCatalogBlock', 'function'],
   // manual code
   ['deriveManualCode', 'function'],

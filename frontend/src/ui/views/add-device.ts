@@ -5,12 +5,13 @@ import {
   catalogNames,
   type DeviceDraft,
   DraftError,
+  needsCatalogLookup,
   PayloadError,
   type PayloadProblem,
   planNewDevice,
   readCredential,
 } from '../../domain/index.js'
-import type { CatalogApi } from '../catalog.js'
+import { BACKFILL_WANTED, type CatalogApi } from '../catalog.js'
 import { catalog } from '../composition.js'
 import { imageMessage } from '../i18n/problems.js'
 import { codesFromImage, type ImageProblem, ImageScanError } from '../scan/image.js'
@@ -306,6 +307,17 @@ export class AddDeviceView extends DeviceFormView {
     }
   }
 
+  /**
+   * Asks the shell for a backfill run when the device just saved still has no catalogue answer
+   * and one could be had now (#238). Offline or signed out, the shell's own triggers (network
+   * back, sign-in) already cover it, so nothing is asked.
+   */
+  private askForBackfill(device: Parameters<typeof needsCatalogLookup>[0]): void {
+    if (!this.signedIn() || !this.online()) return
+    if (!needsCatalogLookup(device, new Date())) return
+    window.dispatchEvent(new CustomEvent(BACKFILL_WANTED))
+  }
+
   private draft(): DeviceDraft {
     return { ...this.fields(), credential: fieldValue(this, '[data-field="credential"]') }
   }
@@ -362,6 +374,7 @@ export class AddDeviceView extends DeviceFormView {
       // Stay on the form when storage refuses the write: navigating to a list that does not
       // contain the device would be the application saying it saved something it did not.
       if (!(await this.write(creation))) return
+      this.askForBackfill(creation.device)
     } finally {
       this.saving = false
     }

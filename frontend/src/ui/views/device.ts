@@ -1,6 +1,6 @@
 import { msg, str, updateWhenLocaleChanges } from '@lit/localize'
 import { html, LitElement, type PropertyValues, type TemplateResult } from 'lit'
-import type { ProjectRepositories } from '../../data/index.js'
+import { isConflict, type ProjectRepositories } from '../../data/index.js'
 import {
   addRemark,
   type DeviceDocument,
@@ -12,6 +12,7 @@ import {
   type RoomDocument,
   remarksNewestFirst,
   setDeviceDisabled,
+  type Unsaved,
   uuidOf,
 } from '../../domain/index.js'
 import { PROJECT_CHANGED } from '../current-project.js'
@@ -19,6 +20,17 @@ import { projectDatabase, projectIsEditable } from '../db/project-database.js'
 import { currentAuthor } from '../identity.js'
 import { qrSvg } from '../qr/render.js'
 import { fieldValue } from './device-form.js'
+
+/**
+ * Text worth a section, or `undefined`.
+ *
+ * Typed as `unknown` on purpose: `catalogFields` never stores a blank value, but a document can
+ * arrive by sync from any client, and a `null`, `''` or whitespace-only instruction would
+ * otherwise render an empty `wa-details` (#238).
+ */
+function nonBlank(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() !== '' ? value : undefined
+}
 
 /**
  * The size of the inline QR, in CSS pixels, quiet zone included.
@@ -360,9 +372,12 @@ export class DeviceView extends LitElement {
     if (device === undefined || this.busy) return
     this.busy = true
     const token = this.request
+    // What the user asked for, decided from what they saw: a retry on a fresh copy applies the
+    // same state, rather than toggling whatever the re-read happens to hold.
+    const disabled = !device.disabled
     try {
-      const saved = await this.repos().devices.save(
-        setDeviceDisabled(device, !device.disabled, () => new Date().toISOString()),
+      const saved = await this.saveFresh(device, (current) =>
+        setDeviceDisabled(current, disabled, () => new Date().toISOString()),
       )
       if (token !== this.request) return
       this.device = saved
@@ -381,6 +396,57 @@ export class DeviceView extends LitElement {
   }
 
   /**
+   * Saves `change(device)`; on a conflict, re-reads the device and saves `change` of that, once.
+   *
+   * Why: backfill writes the catalogue block in the background (#228), so the `_rev` this page
+   * holds can be stale without the user having done anything, and the action would fail for a
+   * write they never saw (#238). Applying the change to a fresh read keeps the other writer's
+   * fields, as the edit form's re-read does. Once only: a second conflict is a real race, and
+   * reported like any refused write.
+   *
+   * @param device the copy on screen
+   * @param change builds the document to store from a copy; called again for the retry
+   * @returns the stored document, `_rev` included
+   * @throws whatever the save throws, or the conflict when the device has gone meanwhile
+   */
+  private async saveFresh(
+    device: DeviceDocument,
+    change: (current: DeviceDocument) => Unsaved<DeviceDocument>,
+  ): Promise<DeviceDocument> {
+    const devices = this.repos().devices
+    try {
+      return await devices.save(change(device))
+    } catch (error) {
+      if (!isConflict(error)) throw error
+      const fresh = await devices.get(device._id)
+      if (fresh === undefined) throw error
+      return devices.save(change(fresh))
+    }
+  }
+
+  /**
+   * Removes the device; on a conflict, re-reads it and removes the fresh revision, once.
+   *
+   * Why: `remove` needs the current `_rev`, and a background backfill write moves it on (#238),
+   * which the add form's backfill request makes likely for a device just added. The user
+   * confirmed deleting *this device*, not a revision of it, so the fresh one goes. A device
+   * already gone by the re-read was deleted elsewhere: the outcome the user asked for.
+   *
+   * @throws whatever the remove throws, other than a conflict resolved this way
+   */
+  private async removeFresh(device: DeviceDocument): Promise<void> {
+    const devices = this.repos().devices
+    try {
+      await devices.remove(device)
+    } catch (error) {
+      if (!isConflict(error)) throw error
+      const fresh = await devices.get(device._id)
+      if (fresh === undefined) return
+      await devices.remove(fresh)
+    }
+  }
+
+  /**
    * Deletes the device, and then leaves — the page it was showing no longer exists.
    *
    * Reached only from the confirmation dialog. The warning there names the irreversible part
@@ -392,7 +458,7 @@ export class DeviceView extends LitElement {
     this.busy = true
     const token = this.request
     try {
-      await this.repos().devices.remove(device)
+      await this.removeFresh(device)
     } catch {
       // The dialog stays open, now saying why. Closing it would look like the delete had
       // happened, which for the one irreversible action here is the wrong way to be wrong.
@@ -538,12 +604,17 @@ export class DeviceView extends LitElement {
     const device = this.device
     if (device === undefined || this.busy) return
 
+    // Fixed once, so a retry on a fresh copy records the same remark, not a second one.
+    const text = fieldValue(this, '[data-remark-text]')
+    const author = currentAuthor()
+    const id = crypto.randomUUID()
+    const at = new Date().toISOString()
+    const remarked = (current: DeviceDocument) =>
+      addRemark(current, text, author, { uuid: () => id, now: () => at })
+
     let updated: ReturnType<typeof addRemark>
     try {
-      updated = addRemark(device, fieldValue(this, '[data-remark-text]'), currentAuthor(), {
-        uuid: () => crypto.randomUUID(),
-        now: () => new Date().toISOString(),
-      })
+      updated = remarked(device)
     } catch (error) {
       // The only thing `addRemark` refuses is a remark with nothing in it. Rethrowing anything
       // else keeps a genuine fault visible rather than reporting it as an empty box.
@@ -555,7 +626,9 @@ export class DeviceView extends LitElement {
     this.busy = true
     const token = this.request
     try {
-      const saved = await this.repos().devices.save(updated)
+      const saved = await this.saveFresh(device, (current) =>
+        current === device ? updated : remarked(current),
+      )
       if (token !== this.request) return
       this.device = saved
       this.remarkError = undefined
@@ -756,8 +829,8 @@ export class DeviceView extends LitElement {
       device.commissioningFlowUrl,
       'commissioning-flow',
     )
-    const steps = device.commissioningInstructions
-    const reset = device.factoryResetInstructions
+    const steps = nonBlank(device.commissioningInstructions)
+    const reset = nonBlank(device.factoryResetInstructions)
 
     return html`
       ${links.length === 0 ? '' : html`<div class="wa-cluster wa-gap-m" data-links>${links}</div>`}

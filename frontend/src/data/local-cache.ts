@@ -28,6 +28,8 @@
  * @module
  */
 
+import { isConflict } from './errors.js'
+
 /** What is cached about the signed-in user. */
 export interface CachedProfile {
   /** The CouchDB user name, `google|1234`. */
@@ -243,16 +245,6 @@ export interface LocalCache {
 function isMissing(error: unknown): boolean {
   return (
     typeof error === 'object' && error !== null && (error as { status?: unknown }).status === 404
-  )
-}
-
-/** PouchDB reports a lost revision race with `status: 409` or `name: 'conflict'`. */
-function isConflict(error: unknown): boolean {
-  return (
-    typeof error === 'object' &&
-    error !== null &&
-    ((error as { status?: unknown }).status === 409 ||
-      (error as { name?: unknown }).name === 'conflict')
   )
 }
 

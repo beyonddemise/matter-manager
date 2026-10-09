@@ -25,6 +25,7 @@ export {
   TEST_VENDOR_NAME,
   withCatalogBlock,
 } from './catalog/copy.js'
+export { testVendorAnswer } from './catalog/test-vendor.js'
 export type { CatalogLookup } from './catalog/types.js'
 export {
   type BrowseOptions,

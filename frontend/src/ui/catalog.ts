@@ -5,6 +5,15 @@
  * never appears in a URL, a log or an error. The backend decodes it in memory and sends only
  * vendor and product ids to the DCL (spec §Security). Nothing here writes to the console.
  *
+ * **Test-vendor codes never leave the device** ({@link answeringTestVendors}, #238): the server
+ * would answer them without the DCL anyway, so they are answered here.
+ *
+ * **One rate-limit budget per account.** The API counts lookups per signed-in user, 120 in any
+ * 300 seconds (`catalog` in `backend/src/security/register.ts`), and the add form and backfill
+ * draw on that one budget: a long backfill pass can leave the add form `rate-limited`, and the
+ * form then saves without names, which the next backfill run fills in. Backfill's one request a
+ * second is what keeps a pass inside the budget; test-vendor codes cost nothing from it.
+ *
  * **It never throws.** Every caller treats a failed lookup the same way (save without names, let
  * backfill catch up), so a failure is an outcome to switch on, not an exception to remember to
  * catch. The status decides the outcome, never the problem title.
@@ -12,7 +21,7 @@
  * @module
  */
 
-import type { CatalogLookup } from '../domain/index.js'
+import { type CatalogLookup, testVendorAnswer } from '../domain/index.js'
 
 /** What a lookup came to. */
 export type LookupOutcome =
@@ -30,6 +39,16 @@ export type LookupOutcome =
 export interface CatalogApi {
   lookup(code: string, signal?: AbortSignal): Promise<LookupOutcome>
 }
+
+/**
+ * The `window` event a view dispatches to ask the shell for a backfill run (#238).
+ *
+ * The add form sends it after saving a device its lookup did not answer, so the names arrive
+ * now rather than at the next sign-in, reconnect or project switch. An event rather than a call
+ * because the shell owns backfill and its guards (session, network, sign-out under way), and a
+ * view cannot see them; `PROJECT_CHANGED` reaches the shell the same way.
+ */
+export const BACKFILL_WANTED = 'matter-manager:catalog-backfill-wanted'
 
 /** Used when a 429 carries no usable `retry-after` (absent, zero, or an HTTP date). */
 export const DEFAULT_RETRY_AFTER_SECONDS = 60
@@ -151,6 +170,32 @@ export function catalogApi(
         return UNAVAILABLE
       }
       return isCatalogLookup(body) ? { kind: 'found', lookup: body } : UNAVAILABLE
+    },
+  }
+}
+
+/**
+ * Answers test-vendor codes (0xFFF1–0xFFF4) locally, and passes every other code to `api`.
+ *
+ * A wrapper rather than a branch inside {@link catalogApi}, so it sits in front of everything a
+ * lookup goes through (the add form and backfill both take theirs from `composition.catalog()`)
+ * and the HTTP client stays a plain HTTP client. In front of the token check too, because the
+ * answer *needs* no token or network. That does not mean it is asked for while signed out or
+ * offline: both callers gate on signed-in and online before they ask, and that is unchanged.
+ *
+ * @param api the lookup to fall back to
+ * @param now the clock for `fetchedAt`; injected by tests
+ */
+export function answeringTestVendors(
+  api: CatalogApi,
+  now: () => Date = () => new Date(),
+): CatalogApi {
+  return {
+    lookup(code: string, signal?: AbortSignal): Promise<LookupOutcome> {
+      const local = testVendorAnswer(code, now())
+      return local === undefined
+        ? api.lookup(code, signal)
+        : Promise.resolve({ kind: 'found', lookup: local })
     },
   }
 }

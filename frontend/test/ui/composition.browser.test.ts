@@ -1,6 +1,6 @@
 import PouchDB from 'pouchdb-browser'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { API_BASE, beginSignIn, COUCH_BASE, endSession } from '../../src/ui/composition.js'
+import { API_BASE, beginSignIn, COUCH_BASE, catalog, endSession } from '../../src/ui/composition.js'
 import { forgetTokens, pouchRefreshTokenStore, rememberAccessToken } from '../../src/ui/tokens.js'
 
 /**
@@ -65,5 +65,17 @@ describe('signing out through the real path', () => {
     expect(requests[0]?.init.headers).toMatchObject({ authorization: 'Bearer access-1' })
     expect(await store.read()).toBeUndefined()
     await db.destroy()
+  })
+})
+
+/** #238: the add form and backfill both get their lookups from `catalog()`. */
+describe('the catalogue lookup it hands out', () => {
+  it('answers a test-vendor code without a request, needing no token', async () => {
+    const fetchImpl = vi.fn<typeof fetch>()
+    const outcome = await catalog(fetchImpl).lookup('MT:Y.K9042C00KA0648G00')
+
+    expect(outcome.kind).toBe('found')
+    expect(outcome.kind === 'found' ? outcome.lookup.source : undefined).toBe('test-vendor')
+    expect(fetchImpl).not.toHaveBeenCalled()
   })
 })

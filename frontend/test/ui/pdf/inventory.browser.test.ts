@@ -1,3 +1,4 @@
+import { PDFDocument, StandardFonts } from 'pdf-lib'
 import { describe, expect, it } from 'vitest'
 import {
   A4,
@@ -266,6 +267,55 @@ describe('a full catalogue entry fits its height', () => {
       const top = tops[Math.floor(index / LINES_PER_ENTRY)] ?? Number.NaN
       expect(fromTop(line.y) - ASCENT * line.size).toBeGreaterThanOrEqual(top)
       expect(fromTop(line.y) + DESCENT * line.size).toBeLessThanOrEqual(top + A4.entryHeight - GAP)
+    })
+  })
+})
+
+/**
+ * #238: name, spot and serial are free text with no length limit. Left to `pdf-lib`'s
+ * `maxWidth`, a long one wraps at the default 24pt line height and draws over the next line or
+ * the next entry. Each is cut to its column on one line, with an ellipsis, instead.
+ */
+describe('free text longer than its column', () => {
+  const TEXT_LEFT = A4.margin + QR_SIZE + 16
+  const COLUMN = A4.width - A4.margin - TEXT_LEFT
+  /** Name, product, installed, spot, serial, pairing code. */
+  const LINES_PER_ENTRY = 6
+  const LONG = 'Living room floor lamp beside the reading chair by the bay window '.repeat(4)
+
+  it('truncates each with an ellipsis, on one line that fits the column', async () => {
+    const devices = [
+      device({ name: `A ${LONG}`, spot: LONG, serial: 'SN-'.padEnd(200, '0123456789') }),
+      device({ name: `B ${LONG}`, spot: LONG, serial: 'SN-'.padEnd(200, '0123456789') }),
+    ]
+    const bytes = await buildInventoryPdf(groupsFor(devices), { labels: LABELS })
+
+    const column = (await extractPlacedText(bytes))
+      .filter((line) => Math.abs(line.x - TEXT_LEFT) < 0.01)
+      .sort((a, b) => b.y - a.y)
+
+    // A wrapped line would add an entry here.
+    expect(column).toHaveLength(LINES_PER_ENTRY * 2)
+    const cut = column.filter((line) => line.text.endsWith('…'))
+    // Name, spot and serial, in both entries.
+    expect(cut).toHaveLength(6)
+
+    const pdf = await PDFDocument.create()
+    // The fonts the entry draws in, by size: the 11pt name is bold, the 9pt details are not.
+    const fonts = new Map([
+      [11, await pdf.embedFont(StandardFonts.HelveticaBold)],
+      [9, await pdf.embedFont(StandardFonts.Helvetica)],
+    ])
+    for (const line of cut) {
+      const font = fonts.get(line.size)
+      expect(font, `a font for size ${line.size}`).toBeDefined()
+      expect(font?.widthOfTextAtSize(line.text, line.size)).toBeLessThanOrEqual(COLUMN)
+    }
+
+    // No two lines share a baseline or come closer than the smallest line step.
+    column.slice(1).forEach((line, index) => {
+      const above = column[index]?.y ?? Number.NaN
+      expect(above - line.y).toBeGreaterThanOrEqual(9)
     })
   })
 })

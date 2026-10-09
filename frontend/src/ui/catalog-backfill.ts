@@ -21,7 +21,7 @@
  * @module
  */
 
-import type { Repository } from '../data/index.js'
+import { isConflict, type Repository } from '../data/index.js'
 import {
   type CatalogFields,
   catalogFields,
@@ -84,13 +84,6 @@ const unusableBlock = (checkedAt: string): Partial<CatalogFields> => ({
 /** What to send: the payload if there is one, else the digits of the manual code. */
 const codeOf = (device: DeviceDocument): string => device.payload ?? device.manualCode
 
-/** PouchDB reports a lost revision race with `status: 409`. */
-function isConflict(error: unknown): boolean {
-  return (
-    typeof error === 'object' && error !== null && (error as { status?: unknown }).status === 409
-  )
-}
-
 /**
  * Writes one catalogue block into one device, on a fresh read.
  *
@@ -143,6 +136,8 @@ async function runOnce(deps: BackfillDependencies, signal: AbortSignal): Promise
       if (signal.aborted) return
 
       if (outcome.kind === 'rate-limited') {
+        // The budget is shared with the add form (see `catalog.ts`), so a 429 here may be the
+        // user's own lookups, not this pass; waiting as asked is right either way.
         await deps.wait(outcome.retryAfterSeconds * 1000, signal)
         // The retry-after already was the pause; the same device is asked again at once.
         first = true
