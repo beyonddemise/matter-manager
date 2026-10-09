@@ -9,6 +9,9 @@ import { fixture, html, waitUntil } from '@open-wc/testing-helpers'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import type { TokenOutcome } from '../../src/ui/composition.js'
 import '../../src/ui/app-shell.js'
+import type { CatalogBackfill } from '../../src/ui/catalog-backfill.js'
+import type { ConnectivitySource } from '../../src/ui/connectivity.js'
+import { PROJECT_CHANGED } from '../../src/ui/current-project.js'
 // The application's CSS: the sticky footer and its scroll padding are asserted below.
 import '../../src/ui/styles/app.css'
 import { NAV_ROUTES } from '../../src/ui/router/routes.js'
@@ -408,13 +411,40 @@ it('keeps the footer in view, and what takes focus clear of it', async () => {
 /** The network as a test controls it: always there, and never changing. */
 const NETWORK = { addEventListener: () => {}, removeEventListener: () => {}, onLine: true }
 
+/** A network the test can take away and give back. */
+function controllableNetwork() {
+  const listeners = new Set<() => void>()
+  const source = {
+    onLine: true,
+    addEventListener: (_type: 'online' | 'offline', listener: () => void) => {
+      listeners.add(listener)
+    },
+    removeEventListener: (_type: 'online' | 'offline', listener: () => void) => {
+      listeners.delete(listener)
+    },
+  }
+  return {
+    source,
+    set(online: boolean) {
+      source.onLine = online
+      for (const listener of listeners) listener()
+    },
+  }
+}
+
+/** A backfill that only counts. */
+function spyBackfill() {
+  const backfill = { trigger: vi.fn(), stop: vi.fn(), idle: async () => {} }
+  return backfill satisfies CatalogBackfill
+}
+
 /**
  * A shell whose refresher the test drives by hand.
  *
  * @returns the element, the `report` that plays an outcome into it, and the spies for what the
  *   shell did about it
  */
-const driven = async () => {
+const driven = async (connectivity: ConnectivitySource = NETWORK, backfill = spyBackfill()) => {
   // Two downloaded copies, so the projects the tests report states for are ones replication is
   // handed: states of anything else are forgotten at the next refresh.
   const store = isolatedProjectStore()
@@ -447,7 +477,8 @@ const driven = async () => {
         report.current = onOutcome
         return { stop }
       }}
-      .connectivity=${NETWORK}
+      .connectivity=${connectivity}
+      .backfill=${backfill}
       .followLocale=${async () => undefined}
       .listProjects=${async () =>
         ['p1', 'p2'].map((projectId) => ({
@@ -467,7 +498,7 @@ const driven = async () => {
     report.current?.(outcome)
     await element.updateComplete
   }
-  return { element, play, stop, stopAll, makeSync, signOutOf }
+  return { element, play, stop, stopAll, makeSync, signOutOf, backfill }
 }
 
 it('says the session has ended, offers sign-in, and removes no local data', async () => {
@@ -559,4 +590,71 @@ it('stops the refresher when the shell is removed', async () => {
   const { element, stop } = await driven()
   element.remove()
   expect(stop).toHaveBeenCalledOnce()
+})
+
+it('backfills once after sign-in, not on every token refresh', async () => {
+  const { play, backfill } = await driven()
+  await play({ kind: 'refreshed', expiresIn: 300 })
+  await play({ kind: 'refreshed', expiresIn: 300 })
+  expect(backfill.trigger).toHaveBeenCalledOnce()
+})
+
+it('backfills when the network comes back while signed in, and not while signed out', async () => {
+  const network = controllableNetwork()
+  const { play, backfill } = await driven(network.source)
+  network.set(false)
+  network.set(true)
+  expect(backfill.trigger).not.toHaveBeenCalled()
+
+  await play({ kind: 'refreshed', expiresIn: 300 })
+  backfill.trigger.mockClear()
+  network.set(false)
+  network.set(true)
+  expect(backfill.trigger).toHaveBeenCalledOnce()
+})
+
+it('restarts backfill on a project switch, stopping the old run first', async () => {
+  const { play, backfill } = await driven()
+  await play({ kind: 'refreshed', expiresIn: 300 })
+  backfill.trigger.mockClear()
+
+  window.dispatchEvent(new CustomEvent(PROJECT_CHANGED))
+
+  expect(backfill.stop).toHaveBeenCalled()
+  expect(backfill.trigger).toHaveBeenCalledOnce()
+  expect(backfill.stop.mock.invocationCallOrder.at(-1)).toBeLessThan(
+    backfill.trigger.mock.invocationCallOrder[0] ?? 0,
+  )
+})
+
+it('does not backfill a project switched to while signed out', async () => {
+  const { backfill } = await driven()
+  window.dispatchEvent(new CustomEvent(PROJECT_CHANGED))
+  expect(backfill.trigger).not.toHaveBeenCalled()
+})
+
+it('stops backfill when the session ends, is signed out elsewhere, or the shell goes', async () => {
+  for (const outcome of [{ kind: 'ended' }, { kind: 'signed-out' }] as const) {
+    const { element, play, backfill } = await driven()
+    await play({ kind: 'refreshed', expiresIn: 300 })
+    await play(outcome)
+    expect(backfill.stop).toHaveBeenCalled()
+    element.remove()
+  }
+  const { element, backfill } = await driven()
+  element.remove()
+  expect(backfill.stop).toHaveBeenCalled()
+})
+
+it('stops backfill before signing out', async () => {
+  const { element, play, backfill, signOutOf } = await driven()
+  await play({ kind: 'refreshed', expiresIn: 300 })
+  await waitUntil(() => element.querySelector('[data-sign-out]') !== null, 'not signed in')
+  ;(element.querySelector('[data-sign-out]') as HTMLElement).click()
+  await waitUntil(() => element.querySelector('[data-confirm-sign-out]') !== null, 'no dialog')
+  ;(element.querySelector('[data-confirm-sign-out]') as HTMLElement).click()
+  await waitUntil(() => signOutOf.mock.calls.length > 0, 'never signed out')
+  expect(backfill.stop.mock.invocationCallOrder[0]).toBeLessThan(
+    signOutOf.mock.invocationCallOrder[0] ?? 0,
+  )
 })
