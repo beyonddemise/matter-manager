@@ -1717,6 +1717,34 @@ describe('upgrading', () => {
     expect(text(element.querySelector('[data-status-announcement]'))).toBe('You left the waitlist.')
   })
 
+  it('says so when the server took the change but this device could not store it', async () => {
+    const waitlist = fakeWaitlist(() => ({
+      kind: 'done',
+      profile: serverProfile({ planRequested: 'member', requestedAt: AT }),
+    }))
+    const { element, store } = await mount({
+      cachedProfile: profile({ plan: 'free', projectLimit: 1 }),
+      waitlist: waitlist.api,
+    })
+    await inputSettles(element, (i) => i.plan === 'free', 'plan never read')
+    const dialog = await openUpgrade(element)
+    // Refused only from here on: `mount` wrote the profile above through the same cache.
+    const cache = store.cache() as { writeProfile: (...args: unknown[]) => Promise<void> }
+    cache.writeProfile = () => Promise.reject(new Error('QuotaExceededError'))
+
+    ;(dialog.querySelector('[data-join="member"]') as HTMLElement).click()
+    await waitUntil(() => dialog.querySelector('[data-waitlist-problem]') !== null, 'no notice')
+
+    const notice = dialog.querySelector('[data-waitlist-problem]') as HTMLElement
+    expect(text(notice)).toBe('Saved, but this device could not store it. Reload to see it.')
+    expect(notice.closest('[data-waitlist-status]')).not.toBeNull()
+    await waitUntil(() => !element.waitlistBusy, 'still busy')
+    const buttons = [...dialog.querySelectorAll('[data-join]')] as Array<
+      HTMLElement & { disabled: boolean }
+    >
+    expect(buttons.some((button) => button.disabled)).toBe(false)
+  })
+
   it('sends one request for two quick clicks, and holds every action until it answers', async () => {
     let release: (outcome: WaitlistOutcome) => void = () => {}
     const waitlist = fakeWaitlist(

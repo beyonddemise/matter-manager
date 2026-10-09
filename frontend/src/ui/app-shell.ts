@@ -756,12 +756,17 @@ export class AppShell extends LitElement implements ViewHost {
       this.waitlistProblem = outcome.kind
       return
     }
-    // A cache that refuses the write leaves the server right and the dialog showing the old
-    // state until the profile is next fetched; there is nothing better to do about it here.
-    await (this.projectStore ?? localProjectDefaults)
-      .cache()
-      .writeProfile(cachedProfileOf(outcome.profile, new Date().toISOString()))
-      .catch(() => undefined)
+    // The dialog reads the cache. A cache that refuses the write leaves the server right and
+    // this device showing the old state, so the reader is told rather than left to wonder
+    // (ruling R12). Nothing from the profile goes into the notice or a log.
+    try {
+      await (this.projectStore ?? localProjectDefaults)
+        .cache()
+        .writeProfile(cachedProfileOf(outcome.profile, new Date().toISOString()))
+    } catch {
+      this.waitlistProblem = 'not-stored'
+      return
+    }
     await this.projects.refresh(false)
     // Leaving a request for the top plan takes the Upgrade button away (ruling R3); the dialog
     // goes with it, and must not reopen by itself when a later request brings the button back.

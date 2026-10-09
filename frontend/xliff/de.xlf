@@ -1095,6 +1095,10 @@
   <source>You left the waitlist.</source>
   <target>Sie haben die Warteliste verlassen.</target>
 </trans-unit>
+<trans-unit id="s8de37cc986e6ce61">
+  <source>Saved, but this device could not store it. Reload to see it.</source>
+  <target>Gespeichert, aber dieses Gerät konnte es nicht ablegen. Laden Sie die Seite neu, um es zu sehen.</target>
+</trans-unit>
 </body>
 </file>
 </xliff>

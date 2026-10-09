@@ -153,6 +153,7 @@
 's8af61807443f32a4': `Aktionen`,
 's8b491ccba1cefcb0': str`„${0}“ löschen?`,
 's8b62ca15bbdcc282': `Das PDF konnte nicht erstellt werden. Es wurde nichts gespeichert; bitte erneut versuchen.`,
+'s8de37cc986e6ce61': `Gespeichert, aber dieses Gerät konnte es nicht ablegen. Laden Sie die Seite neu, um es zu sehen.`,
 's8dffe52a08dc45db': `Der Setup-Code kann nicht geändert werden. Falls er falsch ist, löschen Sie dieses Gerät und legen Sie es neu an.`,
 's8e067719f45b0458': `Pro`,
 's8e7345541678ac43': `Wartet auf die Projektliste`,

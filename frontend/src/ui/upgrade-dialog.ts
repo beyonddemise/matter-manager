@@ -173,8 +173,11 @@ export function renderPlanComparison(current: Plan): TemplateResult {
   return html`${comparisonTable(isCurrent)}${comparisonCards(isCurrent)}`
 }
 
-/** Why the last waitlist change did not happen. The client's outcomes, less `done`. */
-export type WaitlistProblem = 'already-on-plan' | 'signed-out' | 'unavailable'
+/**
+ * Why the last waitlist change did not happen, or did not reach this device: the client's
+ * outcomes less `done`, and `not-stored` when the server took the change but the cache refused it.
+ */
+export type WaitlistProblem = 'already-on-plan' | 'signed-out' | 'unavailable' | 'not-stored'
 
 /** What the waitlist part of the dialog shows. */
 export interface WaitlistState {
@@ -204,6 +207,18 @@ const PROBLEMS: Readonly<Record<WaitlistProblem, () => string>> = {
   'already-on-plan': () => msg('You already have this plan.'),
   'signed-out': () => msg('Your session has ended. Please sign in again.'),
   unavailable: () => msg('The waitlist could not be reached. Please try again.'),
+  'not-stored': () => msg('Saved, but this device could not store it. Reload to see it.'),
+}
+
+/**
+ * Each problem's callout variant (DESIGN.md): danger for a change that failed, warning for one
+ * that succeeded but left this device behind, like a sync problem.
+ */
+const PROBLEM_VARIANTS: Readonly<Record<WaitlistProblem, 'danger' | 'warning'>> = {
+  'already-on-plan': 'danger',
+  'signed-out': 'danger',
+  unavailable: 'danger',
+  'not-stored': 'warning',
 }
 
 /**
@@ -250,7 +265,7 @@ export function renderWaitlist(state: WaitlistState, handlers: WaitlistHandlers)
   const problem =
     state.problem === undefined
       ? ''
-      : html`<wa-callout variant="danger" data-waitlist-problem>
+      : html`<wa-callout variant=${PROBLEM_VARIANTS[state.problem]} data-waitlist-problem>
           <wa-icon slot="icon" name="triangle-exclamation"></wa-icon>
           ${PROBLEMS[state.problem]()}
         </wa-callout>`
