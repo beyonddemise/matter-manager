@@ -380,4 +380,31 @@ describe('sub-rooms', () => {
       'Ground Floor › Kitchen › Pantry',
     ])
   })
+
+  it('cuts a long breadcrumb heading to the text column, with an ellipsis', async () => {
+    // A three-level path of long German names is wider than A4: drawn as it was, the heading
+    // ran off the page. It is cut like any other free text, and the rule under it still fits.
+    const long = at(
+      'room:long',
+      'Nebengebäude mit Werkstatt und Garage/Obergeschoss Lagerraum für Gartenmöbel/Hinterer Abstellbereich unter der Dachschräge',
+    )
+    const bytes = await buildInventoryPdf(
+      browseDevices([device({ name: 'Shelf light', roomId: 'room:long' })], [long]),
+      { labels: LABELS },
+    )
+
+    const pdf = await PDFDocument.create()
+    const bold = await pdf.embedFont(StandardFonts.HelveticaBold)
+    const headings = (await extractPlacedText(bytes)).filter(
+      (line) => line.text.startsWith('Nebengebäude') && Math.abs(line.x - A4.margin) < 0.01,
+    )
+
+    expect(headings).toHaveLength(1)
+    const heading = headings[0] as (typeof headings)[number]
+    expect(heading.text.endsWith('…')).toBe(true)
+    expect(heading.text).toContain(' › ')
+    expect(bold.widthOfTextAtSize(heading.text, heading.size)).toBeLessThanOrEqual(
+      A4.width - 2 * A4.margin,
+    )
+  })
 })
