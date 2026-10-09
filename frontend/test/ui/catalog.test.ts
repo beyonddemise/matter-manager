@@ -8,6 +8,7 @@ import {
   isCatalogLookup,
   retryAfterSeconds,
 } from '../../src/ui/catalog.js'
+import { AQARA_LOOKUP } from './support/catalog.js'
 
 const CODE = 'MT:Y.K9042C00KA0648G00'
 
@@ -167,6 +168,38 @@ describe('isCatalogLookup', () => {
         },
       }),
     ).toBe(true)
+  })
+
+  it('accepts a missing answer with a null vendor and a null product', () => {
+    expect(isCatalogLookup({ ...ANSWER, source: 'missing', vendor: null, product: null })).toBe(
+      true,
+    )
+  })
+
+  it.each(['vendorId', 'productId', 'source', 'vendor', 'product', 'fetchedAt', 'stale'])(
+    'refuses an answer without %s',
+    (key) => {
+      const { [key as keyof CatalogLookup]: _omitted, ...rest } = ANSWER
+      expect(isCatalogLookup(rest)).toBe(false)
+    },
+  )
+
+  it.each([
+    ['vendorId', { vendorId: 4447.5 }],
+    ['productId', { productId: 1.25 }],
+  ])('refuses a non-integer %s', (_name, patch) => {
+    expect(isCatalogLookup({ ...ANSWER, ...patch })).toBe(false)
+  })
+
+  it('refuses a product whose deviceTypeId or commissioningCustomFlow is not an integer', () => {
+    const product = { ...AQARA_LOOKUP.product, deviceTypeId: 21 }
+    expect(isCatalogLookup({ ...AQARA_LOOKUP, product })).toBe(true)
+    expect(isCatalogLookup({ ...AQARA_LOOKUP, product: { ...product, deviceTypeId: 21.5 } })).toBe(
+      false,
+    )
+    expect(
+      isCatalogLookup({ ...AQARA_LOOKUP, product: { ...product, commissioningCustomFlow: 0.5 } }),
+    ).toBe(false)
   })
 
   it('refuses a product whose fields have the wrong types', () => {
