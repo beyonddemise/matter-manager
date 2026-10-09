@@ -1303,7 +1303,8 @@ describe('upgrading', () => {
     expect(element.querySelector('[data-upgrade]')).toBeNull()
   })
 
-  const AT = '2026-10-09T08:00:00.000Z'
+  // Midday UTC, so the date reads the same in every time zone a test machine might run in.
+  const AT = '2026-10-09T12:00:00.000Z'
   const joinButtons = (dialog: Element) =>
     [...dialog.querySelectorAll('[data-join]')].map((button) => button.getAttribute('data-join'))
   /** The loud brand buttons in the dialog: brand, in the default `accent` appearance. */
@@ -1593,6 +1594,54 @@ describe('upgrading', () => {
     }
     const body = dialog.shadowRoot?.querySelector('[part~="body"]') as HTMLElement
     expect(body.scrollWidth).toBeLessThanOrEqual(body.clientWidth)
+  })
+
+  /** Fails when anything in the open dialog reaches past the viewport or scrolls sideways. */
+  const fitsAt360 = (dialog: Element) => {
+    for (const button of dialog.querySelectorAll('wa-button')) {
+      expect(button.getBoundingClientRect().right).toBeLessThanOrEqual(window.innerWidth)
+    }
+    const body = dialog.shadowRoot?.querySelector('[part~="body"]') as HTMLElement
+    expect(body.scrollWidth).toBeLessThanOrEqual(body.clientWidth)
+  }
+
+  it('wraps the German sign-in button at 360 px', async () => {
+    await page.viewport(360, 740)
+    await activateLocale('de')
+    const { element } = await mount({ session: 'signed-out' })
+    await pageView(element, 'mobile')
+    await waitUntil(() => element.querySelector('[data-sign-in]') !== null, 'no sign-in')
+    const dialog = await openUpgrade(element)
+    await (
+      dialog.querySelector('[data-sign-in-waitlist]') as HTMLElement & {
+        updateComplete: Promise<unknown>
+      }
+    ).updateComplete
+
+    expect(text(dialog.querySelector('[data-sign-in-waitlist]'))).toBe(
+      'Melden Sie sich an, um sich auf die Warteliste zu setzen',
+    )
+    fitsAt360(dialog)
+  })
+
+  it('wraps the German change and leave buttons at 360 px', async () => {
+    await page.viewport(360, 740)
+    await activateLocale('de')
+    const { element } = await mount({
+      cachedProfile: profile({
+        plan: 'free',
+        projectLimit: 1,
+        planRequested: 'pro',
+        requestedAt: AT,
+      }),
+    })
+    await pageView(element, 'mobile')
+    const dialog = await openUpgrade(element)
+    await waitUntil(() => dialog.querySelector('[data-waiting]') !== null, 'not waiting')
+
+    expect(texts(dialog, '[data-join]')).toEqual(['Zu Mitglied wechseln'])
+    expect(text(dialog.querySelector('[data-leave-waitlist]'))).toBe('Warteliste verlassen')
+    fitsAt360(dialog)
   })
 
   it('sends one request for two quick clicks, and holds every action until it answers', async () => {

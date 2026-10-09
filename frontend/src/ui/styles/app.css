@@ -393,8 +393,23 @@ wa-page[view="mobile"] .app-project-slot .app-project-name {
 wa-dialog[data-upgrade-dialog] {
   --width: calc(var(--wa-space-5xl) * 8);
   /* The dialog is rendered inside `.app-header-actions`, which never wraps; without this its
-     callout and its longer German buttons inherit that and clip at phone width. */
+     callout inherits that and clips at phone width. */
   white-space: normal;
+}
+
+/* The waitlist's labels are sentences, and the German sign-in one is wider than a phone. The
+   button's own surface does not inherit the line above (its `base` part sets `nowrap` and a
+   fixed height), so it is let wrap there: the height grows with the lines, never below a
+   single-line control's. */
+wa-dialog[data-upgrade-dialog] wa-button {
+  max-width: 100%;
+}
+
+wa-dialog[data-upgrade-dialog] wa-button::part(base) {
+  white-space: normal;
+  height: auto;
+  min-height: var(--wa-form-control-height);
+  padding-block: var(--wa-space-xs);
 }
 
 /* The comparison table. Arrangement inside cells comes from utilities; only what a table needs
