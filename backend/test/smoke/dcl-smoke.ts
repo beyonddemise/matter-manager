@@ -10,11 +10,14 @@
  * @module
  */
 
-import { dclClient, MAINNET_URL } from '../../src/catalog/dcl.js'
+import { dclClient } from '../../src/catalog/dcl.js'
 import { toLookup } from '../../src/catalog/policy.js'
 import { modelEntryId, vendorEntryId, withoutCreator } from '../../src/catalog/store.js'
+import { dclBaseUrlFrom } from '../../src/composition.js'
 
-const base = process.env.DCL_BASE_URL ?? MAINNET_URL
+// The service's own rule: `https:` only, no query or fragment, MainNet when unset or empty. A
+// smoke run against a base the service would refuse to start on would prove nothing about it.
+const base = dclBaseUrlFrom(process.env)
 const dcl = dclClient(base)
 const failures: string[] = []
 

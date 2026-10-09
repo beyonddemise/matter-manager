@@ -16,7 +16,6 @@ import { bearerClaims } from '../auth/bearer.js'
 import type { DenyList } from '../auth/deny-list.js'
 import type { SigningKey } from '../auth/jwt.js'
 import type { CouchClient } from '../couch/client.js'
-import type { components } from '../generated/openapi.js'
 import { problem } from '../problem.js'
 import { type Limit, rateLimiter } from '../security/rate-limit.js'
 import type { DclClient } from './dcl.js'
@@ -41,9 +40,6 @@ export interface CatalogDependencies {
   /** The clock as a date, for freshness and `fetchedAt`. */
   readonly clock?: () => Date
 }
-
-/** The response body, as the contract declares it. A shape it does not declare will not compile. */
-type CatalogLookupBody = components['schemas']['CatalogLookup']
 
 /** Registers `POST /catalog/lookup`. */
 export function registerCatalogRoutes(app: FastifyInstance, deps: CatalogDependencies): void {
@@ -85,10 +81,9 @@ export function registerCatalogRoutes(app: FastifyInstance, deps: CatalogDepende
     // Per caller in effect: the body is public data, but the request carried a credential.
     reply.header('cache-control', 'private, no-store')
 
-    if (isTestVendor(ids.vendorId)) {
-      const body: CatalogLookupBody = testVendorLookup(ids.vendorId, ids.productId, clock())
-      return body
-    }
+    // Both answers are `CatalogLookup`, the contract's schema, by `policy.ts`'s return types: a
+    // shape the contract does not declare will not compile there.
+    if (isTestVendor(ids.vendorId)) return testVendorLookup(ids.vendorId, ids.productId, clock())
 
     const result = await lookupEntries(ids, {
       store,
@@ -101,7 +96,6 @@ export function registerCatalogRoutes(app: FastifyInstance, deps: CatalogDepende
       return problem(reply, { title: 'Catalogue unavailable', status: 503 })
     }
 
-    const body: CatalogLookupBody = toLookup(result)
-    return body
+    return toLookup(result)
   })
 }

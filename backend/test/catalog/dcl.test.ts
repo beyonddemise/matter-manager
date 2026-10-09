@@ -94,6 +94,73 @@ describe('dclClient when the ledger cannot answer', () => {
     ).rejects.toBeInstanceOf(DclUnavailable)
   })
 
+  it('throws DclUnavailable for a vendor record under a different ID', async () => {
+    // A wrong 200 would otherwise be cached under the requested ID for ninety days.
+    const other = { vendorInfo: { ...AQARA_VENDOR.vendorInfo, vendorID: 4448 } }
+    await expect(
+      vendorFailure({ '/vendorinfo/vendors/4447': { status: 200, body: other } }),
+    ).rejects.toBeInstanceOf(DclUnavailable)
+  })
+
+  it.each([
+    ['vid', { vid: 4448 }],
+    ['pid', { pid: 8195 }],
+  ])('throws DclUnavailable for a model record under a different %s', async (_field, change) => {
+    const other = { model: { ...AQARA_MODEL.model, ...change } }
+    const client = dclClient(
+      MAINNET_URL,
+      fakeDcl({ '/model/models/4447/8194': { status: 200, body: other } }).fetch,
+    )
+    await expect(client.model(4447, 8194)).rejects.toBeInstanceOf(DclUnavailable)
+  })
+
+  it('stops reading a body that grows past the cap, without a content-length', async () => {
+    // A chunked answer declares no length, so the cap has to hold while the body arrives: read
+    // to the end first, and a hostile or broken server decides how much memory this takes.
+    const chunk = new Uint8Array(64 * 1024).fill(0x20)
+    let delivered = 0
+    const endless = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        delivered += chunk.byteLength
+        // Ends eventually, so a client that reads it all fails the assertion rather than hangs.
+        if (delivered > 16 * 1024 * 1024) controller.close()
+        else controller.enqueue(chunk)
+      },
+    })
+    const streaming = (async () => new Response(endless, { status: 200 })) as typeof fetch
+    const error: unknown = await dclClient(MAINNET_URL, streaming)
+      .vendor(4447)
+      .catch((caught: unknown) => caught)
+    expect(error).toBeInstanceOf(DclUnavailable)
+    expect((error as Error).message).toContain('too large')
+    expect(delivered).toBeLessThan(1024 * 1024)
+  })
+
+  it('refuses a declared content-length past the cap without reading the body', async () => {
+    let read = false
+    // A high-water mark of zero, so nothing is pulled until somebody reads.
+    const body = new ReadableStream<Uint8Array>(
+      {
+        pull(controller) {
+          read = true
+          controller.close()
+        },
+      },
+      { highWaterMark: 0 },
+    )
+    const declared = (async () =>
+      new Response(body, {
+        status: 200,
+        headers: { 'content-length': String(10 * 1024 * 1024) },
+      })) as typeof fetch
+    const error: unknown = await dclClient(MAINNET_URL, declared)
+      .vendor(4447)
+      .catch((caught: unknown) => caught)
+    expect(error).toBeInstanceOf(DclUnavailable)
+    expect((error as Error).message).toContain('too large')
+    expect(read).toBe(false)
+  })
+
   it('throws DclUnavailable when the DCL does not answer in time', async () => {
     // A fetch that only ever ends by being aborted, which is what the timeout signal does.
     const hanging = ((_input: unknown, init?: RequestInit) =>

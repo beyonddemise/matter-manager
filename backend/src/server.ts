@@ -19,6 +19,7 @@ import { type AuthDependencies, registerAuthRoutes } from './auth/routes.js'
 import { type CatalogDependencies, registerCatalogRoutes } from './catalog/routes.js'
 import type { paths } from './generated/openapi.js'
 import { redactionOptions } from './logging.js'
+import { answerMalformedJson } from './problem.js'
 import { registerCustomerRoutes } from './profile/customer.js'
 import {
   callerClaims,
@@ -44,6 +45,13 @@ type Response<
 export interface ServerOptions {
   /** `false` in tests, so a suite does not print a request log per case. */
   readonly logger?: boolean
+  /**
+   * Where log lines go, when logging; standard output by default.
+   *
+   * For tests that must read what the service *really* writes, through its own redaction, rather
+   * than what a bare Fastify configured to look like it would.
+   */
+  readonly logStream?: { write(line: string): void }
   /**
    * Everything sign-in needs.
    *
@@ -130,6 +138,7 @@ export function buildServer(options: ServerOptions = {}): Server {
             // A request id per line, so a report of "it failed" can be traced to the request
             // that failed rather than to the minute it happened in.
             level: process.env.LOG_LEVEL ?? 'info',
+            ...(options.logStream === undefined ? {} : { stream: options.logStream }),
           },
     // Fastify's default is to trust no proxy. Behind one, that makes every client address the
     // proxy's — and the rate limiter would then see every request as coming from one client, so
@@ -165,6 +174,9 @@ export function buildServer(options: ServerOptions = {}): Server {
       if (method !== 'HEAD') routes.push({ method, url: route.url })
     }
   })
+
+  // Before any route, so every route inherits it: a body that does not parse never reaches one.
+  answerMalformedJson(app)
 
   // Before any route, so that every response carries the headers and no endpoint can be added
   // outside the limits by being registered first.

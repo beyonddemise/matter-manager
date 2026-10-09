@@ -196,10 +196,11 @@ signed-in account (`Limits.catalog`, 120 per five minutes), not per address.
 
 | Variable | |
 |---|---|
-| `DCL_BASE_URL` | The DCL REST base. Default MainNet, `https://on.dcl.csa-iot.org/dcl`; TestNet is `https://on.test-net.dcl.csa-iot.org/dcl`. Must be `https:`, or the service refuses to start |
+| `DCL_BASE_URL` | The DCL REST base. Default MainNet, `https://on.dcl.csa-iot.org/dcl`; TestNet is `https://on.test-net.dcl.csa-iot.org/dcl`. Must be `https:`, with no query or fragment, or the service refuses to start |
 
 CI never calls the DCL. `npm run dcl:smoke` checks the live response shape by hand: run it when
-the DCL changes its API, or before trusting a new `DCL_BASE_URL`.
+the DCL changes its API, or before trusting a new `DCL_BASE_URL`. It applies the service's own
+rule to the variable, so it refuses any base the service would refuse to start on.
 
 ## Protecting the service
 

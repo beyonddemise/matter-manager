@@ -1,8 +1,9 @@
 /**
  * What `POST /api/catalog/lookup` answers.
  *
- * Hand-written, because the frontend has no generated API types; the backend's `openapi.yaml`
- * (`CatalogLookup`) is the source and its drift test guards the other half. Kept in the domain
+ * Hand-written, because the frontend has no generated API types; `openapi.yaml` (`CatalogLookup`)
+ * is the source. `test/ui/catalog-contract.test.ts` ties this type and `isCatalogLookup` to it, and
+ * the backend's drift test guards the other half. Kept in the domain
  * because `catalogFields` turns it into device fields, and that decision is pure.
  *
  * `null` means "the DCL does not say". It never reaches a device document: `catalogFields`
