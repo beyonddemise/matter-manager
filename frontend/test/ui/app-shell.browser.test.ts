@@ -9,6 +9,7 @@ import { fixture, html, waitUntil } from '@open-wc/testing-helpers'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import type { TokenOutcome } from '../../src/ui/composition.js'
 import '../../src/ui/app-shell.js'
+import { BACKFILL_WANTED } from '../../src/ui/catalog.js'
 import type { CatalogBackfill } from '../../src/ui/catalog-backfill.js'
 import type { ConnectivitySource } from '../../src/ui/connectivity.js'
 import { PROJECT_CHANGED } from '../../src/ui/current-project.js'
@@ -679,11 +680,11 @@ it('refuses backfill triggers that arrive while the sign-out is still running', 
   const network = controllableNetwork()
   const { element, play, backfill, signOutOf } = await driven(network.source)
   await play({ kind: 'refreshed', expiresIn: 300 })
-  let finish: (removed: readonly string[]) => void = () => {}
+  let finish: () => void = () => {}
   signOutOf.mockImplementation(
     () =>
       new Promise((resolve) => {
-        finish = resolve
+        finish = () => resolve([])
       }),
   )
   await waitUntil(() => element.querySelector('[data-sign-out]') !== null, 'not signed in')
@@ -698,7 +699,28 @@ it('refuses backfill triggers that arrive while the sign-out is still running', 
   network.set(true)
   expect(backfill.trigger).not.toHaveBeenCalled()
 
-  finish([])
+  finish()
   await waitUntil(() => element.querySelector('[data-sign-in]') !== null, 'still signed in')
+  expect(backfill.trigger).not.toHaveBeenCalled()
+})
+
+it('backfills when a view asks, only while signed in and online, without stopping a run', async () => {
+  // #238: the add form asks after saving a device its lookup did not answer.
+  const network = controllableNetwork()
+  const { play, backfill } = await driven(network.source)
+  window.dispatchEvent(new CustomEvent(BACKFILL_WANTED))
+  expect(backfill.trigger).not.toHaveBeenCalled()
+
+  await play({ kind: 'refreshed', expiresIn: 300 })
+  backfill.trigger.mockClear()
+  backfill.stop.mockClear()
+  window.dispatchEvent(new CustomEvent(BACKFILL_WANTED))
+  expect(backfill.trigger).toHaveBeenCalledOnce()
+  // A run over the same project is still useful; `trigger` coalesces rather than restarting.
+  expect(backfill.stop).not.toHaveBeenCalled()
+
+  network.set(false)
+  backfill.trigger.mockClear()
+  window.dispatchEvent(new CustomEvent(BACKFILL_WANTED))
   expect(backfill.trigger).not.toHaveBeenCalled()
 })

@@ -34,6 +34,16 @@ export interface CatalogApi {
   lookup(code: string, signal?: AbortSignal): Promise<LookupOutcome>
 }
 
+/**
+ * The `window` event a view dispatches to ask the shell for a backfill run (#238).
+ *
+ * The add form sends it after saving a device its lookup did not answer, so the names arrive
+ * now rather than at the next sign-in, reconnect or project switch. An event rather than a call
+ * because the shell owns backfill and its guards (session, network, sign-out under way), and a
+ * view cannot see them; `PROJECT_CHANGED` reaches the shell the same way.
+ */
+export const BACKFILL_WANTED = 'matter-manager:catalog-backfill-wanted'
+
 /** Used when a 429 carries no usable `retry-after` (absent, zero, or an HTTP date). */
 export const DEFAULT_RETRY_AFTER_SECONDS = 60
 

@@ -1,6 +1,7 @@
 import { msg, updateWhenLocaleChanges } from '@lit/localize'
 import { html, LitElement, type TemplateResult } from 'lit'
 import { DEFAULT_PLAN } from '../domain/plan.js'
+import { BACKFILL_WANTED } from './catalog.js'
 import { type CatalogBackfill, defaultCatalogBackfill } from './catalog-backfill.js'
 import {
   beginSignIn,
@@ -299,6 +300,15 @@ export class AppShell extends LitElement implements ViewHost {
   }
 
   /**
+   * A view asked for a run (`BACKFILL_WANTED`): a device was saved without its names. Not a
+   * restart, unlike a project switch: a run already going is over the same project, and
+   * `trigger` asks it for one more pass.
+   */
+  private readonly onBackfillWanted = (): void => {
+    if (this.session === 'signed-in' && this.online) this.triggerBackfill()
+  }
+
+  /**
    * What accepting the update does.
    *
    * A seam, and a necessary one rather than a tidy one: the real thing schedules a reload of
@@ -336,6 +346,7 @@ export class AppShell extends LitElement implements ViewHost {
     super.connectedCallback()
     window.addEventListener('hashchange', this.onHashChange)
     window.addEventListener(PROJECT_CHANGED, this.onProjectChanged)
+    window.addEventListener(BACKFILL_WANTED, this.onBackfillWanted)
     this.stopWatchingNetwork = watchConnectivity(
       this.connectivity ?? browserConnectivity(),
       (online) => {
@@ -462,6 +473,7 @@ export class AppShell extends LitElement implements ViewHost {
     this.footerObserver = undefined
     document.documentElement.style.removeProperty('--app-footer-height')
     window.removeEventListener(PROJECT_CHANGED, this.onProjectChanged)
+    window.removeEventListener(BACKFILL_WANTED, this.onBackfillWanted)
     this.stopBackfill()
     // Replication is ended by the projects controller, which is disconnected with the shell.
     this.tokenRefresher?.stop()
