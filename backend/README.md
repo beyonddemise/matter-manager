@@ -158,6 +158,9 @@ curl -X PUT "$API/customer" -H "authorization: Bearer $ACCESS" -H 'content-type:
 
 `plan` is `free`, `member` or `pro`. A non-operator gets a 403 whatever the body says.
 
+**The routes are absent when no provider is configured**, rather than present and answering with
+a misconfiguration error at the moment a user presses the button.
+
 ### The waitlist: `PUT` and `DELETE /waitlist`
 
 A signed-in user joins the free waitlist for `member` or `pro` from the upgrade dialog (#224).
@@ -178,9 +181,6 @@ curl -s -u "admin:…" -G \
 `<couch>` is the CouchDB base URL and `admin:…` stands for your CouchDB admin name and
 password. Each row's `key` is `[plan, requestedAt]` and its `value`
 the address. Replace `pro` with `member` for the other plan. There is no admin UI yet (#230).
-
-**The routes are absent when no provider is configured**, rather than present and answering with
-a misconfiguration error at the moment a user presses the button.
 
 ### Configuration
 

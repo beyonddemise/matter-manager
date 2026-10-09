@@ -194,7 +194,7 @@ design left open:
   the waitlist", because signing in needs the server too.
 - **German plan names** are Kostenlos, Mitglied and Pro. "Free" is one string, used both as a
   plan name and as a price, so it has one translation.
-- **The shell** caches the profile `PUT`/`DELETE` answers with and re-reads its facts, so the
+- **The shell** caches the profile returned by `PUT`/`DELETE` and re-reads its facts, so the
   dialog and an offline reload agree with the server.
 
 ### Rulings made during execution

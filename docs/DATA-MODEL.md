@@ -34,9 +34,9 @@ the whole authorisation design — see [ADR 0003](adr/0003-database-per-project.
 ## `matter_manager` — user records, not an authentication store
 
 One record per person, keyed by verified address (`user:<base64url of the lower-cased address>`)
-and **created on demand**: by accepting an invitation, `PATCH /profile`, `PUT /waitlist`, or an operator's
-`PUT /customer`. A plain sign-in creates none; such a user is `free` and their profile is built
-from their token. Admin access only; never replicated. This replaces the earlier use of
+and **created on demand**: by accepting an invitation, `PATCH /profile`, `PUT /waitlist`, or an
+operator's `PUT /customer`. A plain sign-in creates none; such a user is `free` and their profile
+is built from their token. Admin access only; never replicated. This replaces the earlier use of
 CouchDB's built-in `_users`.
 
 **It is not what authenticates anyone.** Under JWT authentication CouchDB does not consult any
