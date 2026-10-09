@@ -1745,6 +1745,69 @@ describe('upgrading', () => {
     expect(buttons.some((button) => button.disabled)).toBe(false)
   })
 
+  it('closes, and stays closed, when a background refresh takes the request away', async () => {
+    // The profile is fetched again behind the dialog, and the operator's plan change lands.
+    let profileArrived: () => void = () => {}
+    const store = isolatedProjectStore()
+    const { element } = await mount({
+      store,
+      cachedProfile: profile({
+        plan: 'pro',
+        projectLimit: -1,
+        planRequested: 'pro',
+        requestedAt: AT,
+      }),
+      followLocale: async (_onLocale: unknown, onProfile?: () => void) => {
+        profileArrived = () => onProfile?.()
+      },
+    })
+    const dialog = await openUpgrade(element)
+    await waitUntil(() => dialog.querySelector('[data-waiting]') !== null, 'not waiting')
+
+    await store.cache().writeProfile(profile({ plan: 'pro', projectLimit: -1 }))
+    profileArrived()
+    await waitUntil(() => element.querySelector('[data-upgrade]') === null, 'Upgrade stayed')
+    expect(element.upgrading).toBe(false)
+
+    // A later request brings the button back, and only the button.
+    await store
+      .cache()
+      .writeProfile(
+        profile({ plan: 'pro', projectLimit: -1, planRequested: 'pro', requestedAt: AT }),
+      )
+    profileArrived()
+    await waitUntil(() => element.querySelector('[data-upgrade]') !== null, 'no Upgrade')
+    expect(element.querySelector('[data-upgrade-dialog]')).toBeNull()
+  })
+
+  it('says it is waiting, and what went wrong, in German', async () => {
+    await activateLocale('de')
+    const waitlist = fakeWaitlist(() => ({ kind: 'already-on-plan' }))
+    const { element } = await mount({
+      cachedProfile: profile({
+        plan: 'free',
+        projectLimit: 1,
+        planRequested: 'pro',
+        requestedAt: AT,
+      }),
+      waitlist: waitlist.api,
+    })
+    const dialog = await openUpgrade(element)
+    await waitUntil(() => dialog.querySelector('[data-waiting]') !== null, 'not waiting')
+
+    expect(text(dialog.querySelector('[data-waiting]'))).toBe(
+      'Sie stehen auf der Warteliste für Pro (seit 09.10.2026).',
+    )
+    ;(dialog.querySelector('[data-join="member"]') as HTMLElement).click()
+    await waitUntil(
+      () => dialog.querySelector('[data-waitlist-problem]') !== null,
+      'no problem shown',
+    )
+    expect(text(dialog.querySelector('[data-waitlist-problem]'))).toBe(
+      'Sie haben diesen Plan bereits.',
+    )
+  })
+
   it('sends one request for two quick clicks, and holds every action until it answers', async () => {
     let release: (outcome: WaitlistOutcome) => void = () => {}
     const waitlist = fakeWaitlist(

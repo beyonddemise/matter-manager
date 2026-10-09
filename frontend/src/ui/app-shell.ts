@@ -17,7 +17,7 @@ import { localDatabase } from './db/project-database.js'
 import { negotiateLocale } from './i18n/locale.js'
 import { activateLocale } from './i18n/localization.js'
 import { type LocalProjectDependencies, localProjectDefaults } from './local-projects.js'
-import { cachedProfileOf } from './profile.js'
+import { cachedProfileOf, type PlanRequest } from './profile.js'
 import { beginProjectAction } from './project-busy.js'
 import type { Project } from './projects.js'
 import { ProjectsController } from './projects-controller.js'
@@ -462,6 +462,17 @@ export class AppShell extends LitElement implements ViewHost {
     const announcement = announcementFor(this.lastStatus, status)
     if (announcement !== undefined) this.announcement = announcement
     this.lastStatus = status
+    // The dialog goes with its button, whatever took the button away: leaving on the top plan,
+    // or a background profile refresh that dropped the request. Without this `upgrading` would
+    // stay set and the dialog would reopen by itself when a later request brings the button back.
+    // Here rather than in `updated()`, so it lands in the same render instead of a second one.
+    if (this.upgrading && !offersUpgrade(this.upgradeFacts())) this.onCloseUpgrade()
+  }
+
+  /** What decides whether Upgrade is offered: the cached plan and request. */
+  private upgradeFacts(): { plan: Plan; request: PlanRequest | undefined } {
+    const facts = this.projects.facts
+    return { plan: facts?.plan ?? DEFAULT_PLAN, request: facts?.request }
   }
 
   /** Watches the sticky footer's height; see {@link firstUpdated}. */
@@ -768,14 +779,10 @@ export class AppShell extends LitElement implements ViewHost {
       return
     }
     await this.projects.refresh(false)
-    // Leaving a request for the top plan takes the Upgrade button away (ruling R3); the dialog
-    // goes with it, and must not reopen by itself when a later request brings the button back.
-    // Its status region goes with it, so the shell's own live region says what happened.
-    const facts = this.projects.facts
-    if (!offersUpgrade({ plan: facts?.plan ?? DEFAULT_PLAN, request: facts?.request })) {
-      this.onCloseUpgrade()
-      this.announcement = msg('You left the waitlist.')
-    }
+    // Leaving a request for the top plan takes the Upgrade button away (ruling R3), and
+    // `willUpdate` closes the dialog with it. Its status region goes too, so the shell's own
+    // live region says what happened.
+    if (!offersUpgrade(this.upgradeFacts())) this.announcement = msg('You left the waitlist.')
   }
 
   /** The public website, its privacy notice and its terms. */
