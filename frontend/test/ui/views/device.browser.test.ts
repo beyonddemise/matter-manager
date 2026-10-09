@@ -953,7 +953,7 @@ describe('what the catalogue knows', () => {
     const group = view.getByRole('group', { name: 'Pairing', exact: true })
     await expect.element(group).toBeVisible()
     expect(group.element().querySelectorAll('wa-tag')).toHaveLength(4)
-    // The label names the group; read again inside it, it would be announced twice.
+    // The group is named by its visible label, not by a second, hidden copy of the word.
     const label = element.querySelector('[data-pairing] [id]')
     expect(group.element().getAttribute('aria-labelledby')).toBe(label?.id)
     expect(label?.textContent?.trim()).toBe('Pairing')
