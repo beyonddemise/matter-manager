@@ -114,6 +114,21 @@ describe('a JSON body that does not parse', () => {
   })
 })
 
+describe('an empty JSON body', () => {
+  it('answers /catalog/lookup with the same problem+json 400', async () => {
+    // The contract declares problem+json for a 400 on every JSON operation; an empty body is
+    // the other way Fastify's parser refuses one before any handler runs.
+    const { app, lines } = service()
+    const response = await post(app, '/catalog/lookup', '')
+
+    expect(response.statusCode).toBe(400)
+    expect(response.headers['content-type']).toMatch(/^application\/problem\+json(;|$)/)
+    expect(response.json()).toEqual({ title: 'Malformed JSON', status: 400 })
+    expect(response.body).not.toMatch(/empty|content-type/i)
+    expect(lines.join('\n')).not.toMatch(/Body cannot be empty/)
+  })
+})
+
 describe('every other error', () => {
   it('keeps the answer it had: an unsupported media type is still Fastify’s 415', async () => {
     const { app } = service()

@@ -56,11 +56,17 @@ export function problem(reply: FastifyReply, body: Problem): FastifyReply {
   return reply.code(body.status).type(PROBLEM_JSON).send(body)
 }
 
-/** Fastify's code for a JSON body its parser refused. */
-const INVALID_JSON_BODY = 'FST_ERR_CTP_INVALID_JSON_BODY'
+/**
+ * Fastify's codes for a JSON body its parser refused: one that does not parse, and one that is
+ * empty. Both are refused before any handler runs, so both are answered here.
+ */
+const MALFORMED_JSON_BODY: ReadonlySet<unknown> = new Set([
+  'FST_ERR_CTP_INVALID_JSON_BODY',
+  'FST_ERR_CTP_EMPTY_JSON_BODY',
+])
 
 /**
- * Answers a JSON body that does not parse with a problem+json 400, service-wide.
+ * Answers a JSON body that does not parse, or is empty, with a problem+json 400, service-wide.
  *
  * Fastify refuses such a body before any handler runs, so no route can answer it in the
  * contract's terms: it sent its own `application/json` error object, on every JSON route, which
@@ -78,7 +84,7 @@ const INVALID_JSON_BODY = 'FST_ERR_CTP_INVALID_JSON_BODY'
  */
 export function answerMalformedJson(app: FastifyInstance): void {
   app.setErrorHandler((error, request, reply) => {
-    if ((error as { code?: unknown }).code !== INVALID_JSON_BODY) throw error
+    if (!MALFORMED_JSON_BODY.has((error as { code?: unknown }).code)) throw error
     request.log.info({ refused: 'malformed-json' }, 'Refused a request body that is not JSON')
     return problem(reply, { title: 'Malformed JSON', status: 400 })
   })
