@@ -72,6 +72,32 @@ function fitted(
   return kept + ellipsis
 }
 
+/** Between the code and the text column. */
+const TEXT_GAP = 3 * MM
+
+/**
+ * How a label of the given size divides into the code and the text column, in points.
+ *
+ * Exported so a test measures what was drawn against the width the drawing used, rather than
+ * against a copy of this arithmetic that would not follow a change to it.
+ *
+ * @param labelWidth the label's width, die-cut to die-cut
+ * @param labelHeight the label's height, die-cut to die-cut
+ * @returns `qrSize`, the square code's side, and `textWidth`, the width every text line is
+ *   fitted to
+ */
+export function labelColumns(
+  labelWidth: number,
+  labelHeight: number,
+): { readonly qrSize: number; readonly textWidth: number } {
+  const width = labelWidth - LABEL_SAFE_INSET * 2
+  const height = labelHeight - LABEL_SAFE_INSET * 2
+  // Square, and as tall as the label allows: the code is the reason the label exists, and a
+  // code shrunk to leave room for text is a code that does not scan off a fuse box.
+  const qrSize = Math.min(height, labelWidth * 0.4)
+  return { qrSize, textWidth: width - qrSize - TEXT_GAP }
+}
+
 /**
  * Builds the label sheet.
  *
@@ -140,12 +166,7 @@ function drawLabel(
   const inset = LABEL_SAFE_INSET
   const left = label.x + inset
   const top = label.y + inset
-  const height = label.height - inset * 2
-  const width = label.width - inset * 2
-
-  // Square, and as tall as the label allows: the code is the reason the label exists, and a
-  // code shrunk to leave room for text is a code that does not scan off a fuse box.
-  const qrSize = Math.min(height, label.width * 0.4)
+  const { qrSize, textWidth } = labelColumns(label.width, label.height)
 
   if (device.payload !== undefined) {
     drawQr(page, device.payload, { x: left, top: yOf(top), size: qrSize })
@@ -160,8 +181,7 @@ function drawLabel(
     })
   }
 
-  const textLeft = left + qrSize + 3 * MM
-  const textWidth = width - qrSize - 3 * MM
+  const textLeft = left + qrSize + TEXT_GAP
   const nameSize = 9
   const detailSize = 7
 

@@ -4,11 +4,9 @@ import {
   AVERY_L7160,
   browseDevices,
   type DeviceDocument,
-  LABEL_SAFE_INSET,
-  MM,
   type RoomDocument,
 } from '../../../src/domain/index.js'
-import { buildLabelPdf, type LabelOptions } from '../../../src/ui/pdf/labels.js'
+import { buildLabelPdf, type LabelOptions, labelColumns } from '../../../src/ui/pdf/labels.js'
 import { extractPlacedText } from './text-extraction.js'
 
 /** The verified reference device; see `test/domain/matter/payload.test.ts`. */
@@ -24,13 +22,8 @@ const OPTIONS: LabelOptions = {
 /** The room line's size, in points, as `labels.ts` draws it. */
 const DETAIL_SIZE = 7
 
-/** The width a label's text column has, by the same arithmetic `labels.ts` uses. */
-function textWidth(): number {
-  const width = AVERY_L7160.labelWidth - LABEL_SAFE_INSET * 2
-  const height = AVERY_L7160.labelHeight - LABEL_SAFE_INSET * 2
-  const qrSize = Math.min(height, AVERY_L7160.labelWidth * 0.4)
-  return width - qrSize - 3 * MM
-}
+/** The width an L7160 label's text column has, as `labels.ts` draws it. */
+const TEXT_WIDTH = labelColumns(AVERY_L7160.labelWidth, AVERY_L7160.labelHeight).textWidth
 
 const room = (path: string): RoomDocument => ({
   _id: 'room:studio',
@@ -79,6 +72,6 @@ describe('the room on a label', () => {
     expect(line?.text.endsWith('…')).toBe(true)
 
     const font = await (await PDFDocument.create()).embedFont(StandardFonts.Helvetica)
-    expect(font.widthOfTextAtSize(line?.text ?? '', DETAIL_SIZE)).toBeLessThanOrEqual(textWidth())
+    expect(font.widthOfTextAtSize(line?.text ?? '', DETAIL_SIZE)).toBeLessThanOrEqual(TEXT_WIDTH)
   })
 })
