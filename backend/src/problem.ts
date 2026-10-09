@@ -21,7 +21,7 @@
  * @module
  */
 
-import type { FastifyReply } from 'fastify'
+import type { FastifyInstance, FastifyReply } from 'fastify'
 
 /** RFC 9457. Not `application/json`; see the module note. */
 export const PROBLEM_JSON = 'application/problem+json'
@@ -54,4 +54,32 @@ export interface Problem {
  */
 export function problem(reply: FastifyReply, body: Problem): FastifyReply {
   return reply.code(body.status).type(PROBLEM_JSON).send(body)
+}
+
+/** Fastify's code for a JSON body its parser refused. */
+const INVALID_JSON_BODY = 'FST_ERR_CTP_INVALID_JSON_BODY'
+
+/**
+ * Answers a JSON body that does not parse with a problem+json 400, service-wide.
+ *
+ * Fastify refuses such a body before any handler runs, so no route can answer it in the
+ * contract's terms: it sent its own `application/json` error object, on every JSON route, which
+ * is the mismatch the module note describes. This is the one place that can answer it.
+ *
+ * **A fixed title, and nothing from the request or the parser.** The body that failed is
+ * exactly what must not come back: on `/catalog/lookup` it is a setup code with a typo in it
+ * (ADR 0019). And a parser's message is where input appears first: V8's `JSON.parse` quotes
+ * the text it choked on. The log line is fixed for the same reason.
+ *
+ * **Every other error is rethrown**, which Fastify hands to its default handler: what this
+ * service answered for those before, it still answers.
+ *
+ * @param app - The root instance, before its routes, so every route inherits the handler.
+ */
+export function answerMalformedJson(app: FastifyInstance): void {
+  app.setErrorHandler((error, request, reply) => {
+    if ((error as { code?: unknown }).code !== INVALID_JSON_BODY) throw error
+    request.log.info({ refused: 'malformed-json' }, 'Refused a request body that is not JSON')
+    return problem(reply, { title: 'Malformed JSON', status: 400 })
+  })
 }

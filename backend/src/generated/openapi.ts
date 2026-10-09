@@ -183,6 +183,7 @@ export interface paths {
                         };
                     };
                 };
+                400: components["responses"]["BadRequest"];
                 401: components["responses"]["Unauthorized"];
             };
         };
@@ -232,6 +233,7 @@ export interface paths {
                     };
                     content?: never;
                 };
+                400: components["responses"]["BadRequest"];
                 /** @description The refresh token could not be revoked; it remains valid */
                 500: {
                     headers: {
@@ -1330,7 +1332,7 @@ export interface operations {
                     "application/json": components["schemas"]["CatalogLookup"];
                 };
             };
-            /** @description Not a decodable setup code. Never echoes the code. */
+            /** @description Not a decodable setup code, or a body that is not JSON. Never echoes either. */
             400: {
                 headers: {
                     [name: string]: unknown;

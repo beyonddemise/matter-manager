@@ -10,6 +10,7 @@ import { buildServer, type Server } from '../../src/server.js'
 import { forgetUsersDatabase } from '../../src/users/database.js'
 import { recordEnsurer } from '../../src/users/ensure.js'
 import { userRecords } from '../../src/users/records.js'
+import { loadContract, operationsOf, validate } from '../support/contract.js'
 import { fakeCouch } from '../support/couch.js'
 
 function newKey(kid = 'ec-test') {
@@ -361,6 +362,30 @@ describe('a callback that was not started here', () => {
 })
 
 describe('POST /auth/token', () => {
+  it.each(['/auth/token', '/auth/signout'])(
+    'answers a body that is not JSON on %s with the declared problem+json 400',
+    async (url) => {
+      // Both read a `refreshToken` from a JSON body, so both meet a body that does not parse.
+      // The refusal is service-wide (`answerMalformedJson`); this pins that the contract says so.
+      const server = signInServer()
+      const response = await server.app.inject({
+        method: 'POST',
+        url,
+        payload: '{"refreshToken":"h.p.',
+        headers: { 'content-type': 'application/json' },
+      })
+
+      expect(response.statusCode).toBe(400)
+      expect(response.headers['content-type']).toMatch(/^application\/problem\+json(;|$)/)
+      expect(response.body).not.toContain('h.p.')
+      const operation = operationsOf(loadContract()).find(
+        (each) => each.method === 'POST' && each.path === url,
+      )
+      expect(operation?.declared).toContain('400')
+      expect(validate(response.json(), operation?.responses['400'])).toEqual([])
+    },
+  )
+
   it('exchanges the handoff cookie for both tokens, once', async () => {
     const server = signInServer()
     const cookie = await completeSignIn(server)
