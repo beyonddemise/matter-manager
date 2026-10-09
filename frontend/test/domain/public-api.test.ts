@@ -52,6 +52,9 @@ const EXPECTED: ReadonlyArray<
   ['planSyncs', 'function'],
   ['canOwnAnother', 'function'],
   ['showsUpgrade', 'function'],
+  ['PLANS', 'object'],
+  ['PLAN_FEATURES', 'object'],
+  ['plansAbove', 'function'],
   // base38
   ['BASE38_ALPHABET', 'string'],
   ['Base38Error', 'function'],
@@ -175,6 +178,10 @@ describe('the public entry point', () => {
  * missing name.
  */
 describe('the public entry point reaches the implementations', () => {
+  it('orders the plans', () => {
+    expect(core.plansAbove('member')).toEqual(['pro'])
+  })
+
   it('decides when to ask the catalogue', () => {
     expect(core.needsCatalogLookup({ manualCode: '34970112332' }, new Date())).toBe(false)
   })

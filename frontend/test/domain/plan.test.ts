@@ -6,10 +6,13 @@ import {
   isPlan,
   LAYOUTS,
   limitFor,
+  PLAN_FEATURES,
+  PLANS as PLANS_IN_ORDER,
   type Plan,
   PROJECT_LIMITS,
   planOf,
   planSyncs,
+  plansAbove,
   SYNCED_PLANS,
   showsUpgrade,
   withinLimit,
@@ -107,5 +110,35 @@ describe('whether an account owns more than its limit', () => {
     [1000, -1, false],
   ])('exceedsLimit(%i owned, limit %i) is %s', (owned, limit, expected) => {
     expect(exceedsLimit(owned, limit)).toBe(expected)
+  })
+})
+
+describe('the plans in order', () => {
+  it('lists every plan once, lowest first', () => {
+    expect(PLANS_IN_ORDER).toEqual(['free', 'member', 'pro'])
+    // Every plan the tables know, and no other: a fourth plan added to the tables but not here
+    // would be missing from the comparison.
+    expect([...PLANS_IN_ORDER].sort()).toEqual(Object.keys(PROJECT_LIMITS).sort())
+  })
+
+  it.each([
+    ['free', ['member', 'pro']],
+    ['member', ['pro']],
+    ['pro', []],
+  ] satisfies [Plan, Plan[]][])('above %s: %j', (plan, above) => {
+    expect(plansAbove(plan)).toEqual(above)
+  })
+
+  it('compares client name, transfer and price per plan', () => {
+    expect(PLAN_FEATURES).toEqual({
+      free: { clientName: false, transfer: false, price: 'free' },
+      member: { clientName: false, transfer: false, price: 'tba' },
+      pro: { clientName: true, transfer: true, price: 'tba' },
+    })
+  })
+
+  it('cannot be changed from outside', () => {
+    expect(Object.isFrozen(PLANS_IN_ORDER)).toBe(true)
+    expect(Object.isFrozen(PLAN_FEATURES)).toBe(true)
   })
 })

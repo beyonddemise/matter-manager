@@ -116,3 +116,36 @@ export function canOwnAnother(plan: Plan, owned: number, reported?: number): boo
 export function exceedsLimit(owned: number, limit: number): boolean {
   return limit >= 0 && owned > limit
 }
+
+/**
+ * The plans in upgrade order, lowest first (#224).
+ *
+ * The one place the order is written. The upgrade dialog walks it to lay out its columns and to
+ * find the plans above the account's, so the view never compares against a tier literal.
+ */
+export const PLANS: readonly Plan[] = Object.freeze(['free', 'member', 'pro'] satisfies Plan[])
+
+/** What the plan comparison says about one plan beyond its project limit and its sync. */
+export interface PlanFeatures {
+  /** Whether projects carry a client name. */
+  readonly clientName: boolean
+  /** Whether a project can be handed to another account. */
+  readonly transfer: boolean
+  /** `tba` ("to be announced") while ADR 0009 leaves billing open. */
+  readonly price: 'free' | 'tba'
+}
+
+/**
+ * The comparison's rows that no other table answers. Projects come from {@link PROJECT_LIMITS}
+ * and sync from {@link SYNCED_PLANS}, so they are not repeated here.
+ */
+export const PLAN_FEATURES: Readonly<Record<Plan, PlanFeatures>> = Object.freeze({
+  free: { clientName: false, transfer: false, price: 'free' },
+  member: { clientName: false, transfer: false, price: 'tba' },
+  pro: { clientName: true, transfer: true, price: 'tba' },
+} satisfies Record<Plan, PlanFeatures>)
+
+/** The plans above `plan`, in upgrade order: what an account on it could still wait for. */
+export function plansAbove(plan: Plan): readonly Plan[] {
+  return PLANS.slice(PLANS.indexOf(plan) + 1)
+}
