@@ -55,6 +55,7 @@ const EXPECTED: ReadonlyArray<
   ['PLANS', 'object'],
   ['PLAN_FEATURES', 'object'],
   ['plansAbove', 'function'],
+  ['isWaitlistPlan', 'function'],
   // base38
   ['BASE38_ALPHABET', 'string'],
   ['Base38Error', 'function'],

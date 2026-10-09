@@ -21,7 +21,7 @@
  */
 
 import type { CachedProfile, LocalCache } from '../data/index.js'
-import { isPlan, type Plan, planOf } from '../domain/plan.js'
+import { isPlan, isWaitlistPlan, type Plan, planOf } from '../domain/plan.js'
 import { accessToken } from './tokens.js'
 
 /** What a user may choose, matching the contract's enum. */
@@ -112,6 +112,15 @@ export interface PlanRequest {
 }
 
 /**
+ * The optional waitlist pair is all or nothing: both absent, or a plan that can be waited for
+ * with its date. A half pair would be cached as junk, so it rejects the whole body.
+ */
+function isWaitlistPair(plan: unknown, at: unknown): boolean {
+  if (plan === undefined && at === undefined) return true
+  return isWaitlistPlan(plan) && typeof at === 'string'
+}
+
+/**
  * Whether a parsed body is a profile. Checked by shape at the trust boundary, as
  * `isCatalogLookup` does: a proxy's HTML page or an older server must not be cached as one.
  */
@@ -124,7 +133,8 @@ export function isProfile(body: unknown): body is Profile {
     typeof value.displayName === 'string' &&
     isLocale(value.locale) &&
     isPlan(value.plan) &&
-    typeof value.projectLimit === 'number'
+    typeof value.projectLimit === 'number' &&
+    isWaitlistPair(value.planRequested, value.requestedAt)
   )
 }
 
@@ -155,7 +165,7 @@ export function cachedProfileOf(profile: Profile, fetchedAt: string): CachedProf
 export function cachedRequest(cached: CachedProfile | undefined): PlanRequest | undefined {
   const plan = cached?.planRequested
   const at = cached?.requestedAt
-  return isPlan(plan) && typeof at === 'string' ? { plan, at } : undefined
+  return isWaitlistPlan(plan) && typeof at === 'string' ? { plan, at } : undefined
 }
 
 /**

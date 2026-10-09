@@ -4,6 +4,7 @@ import {
   DEFAULT_PLAN,
   exceedsLimit,
   isPlan,
+  isWaitlistPlan,
   LAYOUTS,
   limitFor,
   PLAN_FEATURES,
@@ -127,6 +128,19 @@ describe('the plans in order', () => {
     ['pro', []],
   ] satisfies [Plan, Plan[]][])('above %s: %j', (plan, above) => {
     expect(plansAbove(plan)).toEqual(above)
+  })
+
+  it.each([
+    ['free', false],
+    ['member', true],
+    ['pro', true],
+    ['gold', false],
+    ['', false],
+    [undefined, false],
+    [null, false],
+    [2, false],
+  ])('can wait for %j: %s', (value, expected) => {
+    expect(isWaitlistPlan(value)).toBe(expected)
   })
 
   it('compares client name, transfer and price per plan', () => {

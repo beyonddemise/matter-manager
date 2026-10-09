@@ -393,6 +393,11 @@ describe('the waitlist request in the cache', () => {
       { sub: 'x', planRequested: 'gold', requestedAt: AT, fetchedAt },
     ],
     ['a request without a date', { sub: 'x', planRequested: 'pro', fetchedAt }],
+    ['a date without a plan', { sub: 'x', requestedAt: AT, fetchedAt }],
+    [
+      'the free plan, which cannot be waited for',
+      { sub: 'x', planRequested: 'free', requestedAt: AT, fetchedAt },
+    ],
   ])('reads no request for %s', (_case, cached) => {
     expect(cachedRequest(cached)).toBeUndefined()
   })
@@ -401,6 +406,11 @@ describe('the waitlist request in the cache', () => {
     expect(isProfile(PROFILE)).toBe(true)
     expect(isProfile({ ...PROFILE, planRequested: 'pro', requestedAt: AT })).toBe(true)
     expect(isProfile({ ...PROFILE, plan: 'gold' })).toBe(false)
+    expect(isProfile({ ...PROFILE, planRequested: 'gold', requestedAt: AT })).toBe(false)
+    expect(isProfile({ ...PROFILE, planRequested: 'free', requestedAt: AT })).toBe(false)
+    expect(isProfile({ ...PROFILE, planRequested: 'pro' })).toBe(false)
+    expect(isProfile({ ...PROFILE, requestedAt: AT })).toBe(false)
+    expect(isProfile({ ...PROFILE, planRequested: 'pro', requestedAt: 123 })).toBe(false)
     expect(isProfile({ ...PROFILE, sub: undefined })).toBe(false)
     expect(isProfile('<html>')).toBe(false)
     expect(isProfile(null)).toBe(false)

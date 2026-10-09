@@ -149,3 +149,11 @@ export const PLAN_FEATURES: Readonly<Record<Plan, PlanFeatures>> = Object.freeze
 export function plansAbove(plan: Plan): readonly Plan[] {
   return PLANS.slice(PLANS.indexOf(plan) + 1)
 }
+
+/**
+ * Whether `value` is a plan an account can wait for: one with a plan below it, so there is
+ * something to upgrade from. Derived from {@link PLANS}, never from a plan literal (ADR 0009).
+ */
+export function isWaitlistPlan(value: unknown): value is Plan {
+  return isPlan(value) && PLANS.indexOf(value) > 0
+}

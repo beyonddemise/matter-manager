@@ -51,7 +51,9 @@ describe('waitlistApi', () => {
 
   it('leaves with a DELETE that has no body and no JSON content type', async () => {
     // The API refuses an *empty* body labelled JSON with a 400, so neither may be sent.
-    const { calls, fetchImpl } = answering(json(200, { ...WAITING, planRequested: undefined }))
+    const { calls, fetchImpl } = answering(
+      json(200, { ...WAITING, planRequested: undefined, requestedAt: undefined }),
+    )
 
     await waitlistApi('/api', fetchImpl).leave()
 
@@ -100,5 +102,17 @@ describe('waitlistApi', () => {
     ).toEqual({
       kind: 'unavailable',
     })
+  })
+
+  it.each([
+    ['an unknown plan', { planRequested: 'gold' }],
+    ['the free plan', { planRequested: 'free' }],
+    ['a plan without a date', { requestedAt: undefined }],
+    ['a date without a plan', { planRequested: undefined }],
+    ['a date that is not a string', { requestedAt: 123 }],
+  ])('answers unavailable for a 200 with %s', async (_case, patch) => {
+    const { fetchImpl } = answering(json(200, { ...WAITING, ...patch }))
+
+    expect(await waitlistApi('/api', fetchImpl).join('pro')).toEqual({ kind: 'unavailable' })
   })
 })

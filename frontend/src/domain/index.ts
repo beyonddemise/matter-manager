@@ -142,6 +142,7 @@ export {
 export {
   canOwnAnother,
   isPlan,
+  isWaitlistPlan,
   LAYOUTS,
   limitFor,
   PLAN_FEATURES,
