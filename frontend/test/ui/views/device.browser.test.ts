@@ -9,8 +9,15 @@ import '@awesome.me/webawesome-pro/dist/components/textarea/textarea.js'
 import { fixture, html, waitUntil } from '@open-wc/testing-helpers'
 import { BrowserQRCodeReader } from '@zxing/browser'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { page as browserPage } from 'vitest/browser'
 import type { ProjectRepositories } from '../../../src/data/index.js'
-import { type DeviceDocument, decodePayload, type Unsaved } from '../../../src/domain/index.js'
+import {
+  type DeviceDocument,
+  decodePayload,
+  TEST_VENDOR_NAME,
+  type Unsaved,
+} from '../../../src/domain/index.js'
+import { activateLocale } from '../../../src/ui/i18n/localization.js'
 import type { DeviceView } from '../../../src/ui/views/device.js'
 import '../../../src/ui/views/device.js'
 import '../../../src/ui/styles/app.css'
@@ -907,11 +914,50 @@ describe('what the catalogue knows', () => {
 
   /** The text of the labelled fact whose label is `label`, or undefined when it is not shown. */
   function fact(element: HTMLElement, label: string): string | undefined {
-    const labels = [...element.querySelectorAll('.app-details small')]
-    return labels
-      .find((small) => small.textContent?.trim() === label)
+    const terms = [...element.querySelectorAll('dl.app-details dt')]
+    return terms
+      .find((term) => term.textContent?.trim() === label)
       ?.nextElementSibling?.textContent?.trim()
   }
+
+  /*
+   * #238, WCAG 2.2 AA 1.3.1 (Info and Relationships): a label that only sits next to its value
+   * is a relationship a sighted reader sees and a screen reader does not. The facts are a
+   * description list, so each label is a term and its value that term's definition; the
+   * pairing tags are a group named by their label.
+   */
+  it('lists the facts as terms and definitions, each label tied to its value', async () => {
+    await seed(lamp(CATALOGUED))
+    const element = await page()
+    const list = element.querySelector('.app-details')
+    expect(list?.tagName).toBe('DL')
+    // Every child of the list is one fact: a wrapper holding exactly one term, then its value.
+    for (const entry of list?.children ?? []) {
+      expect(entry.tagName).toBe('DIV')
+      expect([...entry.children].map((child) => child.tagName)).toEqual(['DT', 'DD'])
+    }
+    expect(fact(element, 'Manufacturer')).toBe('Aqara Home')
+    expect(fact(element, 'Part number')).toBe('AS056')
+
+    const view = browserPage.elementLocator(element)
+    await expect.element(view.getByRole('term').filter({ hasText: 'Manufacturer' })).toBeVisible()
+    await expect
+      .element(view.getByRole('definition').filter({ hasText: 'Aqara Home' }))
+      .toBeVisible()
+  })
+
+  it('names the pairing tags as a group by their label', async () => {
+    await seed(lamp(CATALOGUED))
+    const element = await page()
+    const view = browserPage.elementLocator(element)
+    const group = view.getByRole('group', { name: 'Pairing', exact: true })
+    await expect.element(group).toBeVisible()
+    expect(group.element().querySelectorAll('wa-tag')).toHaveLength(4)
+    // The group is named by its visible label, not by a second, hidden copy of the word.
+    const label = element.querySelector('[data-pairing] [id]')
+    expect(group.element().getAttribute('aria-labelledby')).toBe(label?.id)
+    expect(label?.textContent?.trim()).toBe('Pairing')
+  })
 
   it('names the manufacturer by its preferred name, then the vendor name, then the id', async () => {
     // Three devices, one per step of the fallback, each on its own page.
@@ -928,6 +974,19 @@ describe('what the catalogue knows', () => {
     expect(fact(await page(ids[0]), 'Manufacturer')).toBe('Aqara Home')
     expect(fact(await page(ids[1]), 'Manufacturer')).toBe('Aqara')
     expect(fact(await page(ids[2]), 'Manufacturer')).toBe('0xFFF1')
+  })
+
+  it('says "Test vendor" in the interface language, and keeps it stored in English', async () => {
+    await seed(lamp({ vendorName: TEST_VENDOR_NAME }))
+    expect(fact(await page(), 'Manufacturer')).toBe('Test vendor')
+
+    await activateLocale('de')
+    try {
+      expect(fact(await page(), 'Hersteller')).toBe('Testhersteller')
+    } finally {
+      await activateLocale('en')
+    }
+    expect((await database.repositories.devices.get(DEVICE_ID))?.vendorName).toBe(TEST_VENDOR_NAME)
   })
 
   it('shows the part number', async () => {

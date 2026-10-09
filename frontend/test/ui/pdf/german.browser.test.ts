@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { browseDevices, type DeviceDocument, type RoomDocument } from '../../../src/domain/index.js'
+import {
+  browseDevices,
+  type DeviceDocument,
+  type RoomDocument,
+  TEST_VENDOR_NAME,
+} from '../../../src/domain/index.js'
+import { activateLocale } from '../../../src/ui/i18n/localization.js'
+import { inventoryLabels } from '../../../src/ui/pdf/download.js'
 import { buildInventoryPdf, type InventoryLabels } from '../../../src/ui/pdf/inventory.js'
 import { extractText } from './text-extraction.js'
 
@@ -18,6 +25,7 @@ const LABELS: InventoryLabels = {
   noQrCode: 'Über Kopplungscode erfasst',
   withoutRoom: 'Ohne Raum',
   nothingToExport: 'Es gibt keine Geräte zum Exportieren.',
+  testVendor: 'Testhersteller',
 }
 
 const device = (name: string, extra: Partial<DeviceDocument> = {}): DeviceDocument => ({
@@ -73,6 +81,23 @@ describe('German in a generated PDF', () => {
   it('renders a room path with an umlaut', async () => {
     // Drawn as a breadcrumb since #242; the `›` is WinAnsi too, so nothing is lost around it.
     expect(await drawn([device(DEVICE)])).toContain('Erdgeschoss › Küche')
+  })
+
+  it('prints a test vendor in German, though the device stores it in English', async () => {
+    const lines = await drawn([
+      device(DEVICE, { vendorId: 0xfff1, productId: 0x8000, vendorName: TEST_VENDOR_NAME }),
+    ])
+    expect(lines).toContain('Testhersteller / 0x8000')
+    expect(lines.join('\n')).not.toContain(TEST_VENDOR_NAME)
+  })
+
+  it('takes the test vendor’s German name from the interface catalogue', async () => {
+    await activateLocale('de')
+    try {
+      expect(inventoryLabels().testVendor).toBe('Testhersteller')
+    } finally {
+      await activateLocale('en')
+    }
   })
 
   it('renders every character German uses', async () => {

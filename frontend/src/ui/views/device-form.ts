@@ -13,6 +13,7 @@ import {
 } from '../../domain/index.js'
 import { PROJECT_CHANGED } from '../current-project.js'
 import { projectDatabase } from '../db/project-database.js'
+import { shownManufacturer } from '../i18n/manufacturer.js'
 import { problemMessage } from '../i18n/problems.js'
 
 /**
@@ -282,29 +283,31 @@ export abstract class DeviceFormView extends LitElement {
    * The manufacturer and product, read-only, or nothing when neither is known.
    *
    * Read-only on both forms: these come from the catalogue and are replaced whole when it is
-   * asked again, so an edit here would be silently undone (spec, Editing).
+   * asked again, so an edit here would be silently undone (spec, Editing). A description list,
+   * as on the device page, so each label is tied to its value (WCAG 2.2 1.3.1).
    */
   protected renderCatalogLines(names: CatalogNames): TemplateResult | '' {
     if (names.manufacturer === undefined && names.product === undefined) return ''
+    const manufacturer = shownManufacturer(names.manufacturer, msg('Test vendor'))
     return html`
-      <div class="wa-cluster wa-gap-l" data-catalog>
+      <dl class="wa-cluster wa-gap-l app-facts" data-catalog>
         ${
-          names.manufacturer === undefined
+          manufacturer === undefined
             ? ''
             : html`<div class="wa-stack wa-gap-3xs">
-                <small class="app-empty">${msg('Manufacturer')}</small>
-                <span data-catalog-manufacturer>${names.manufacturer}</span>
+                <dt><small class="app-empty">${msg('Manufacturer')}</small></dt>
+                <dd data-catalog-manufacturer>${manufacturer}</dd>
               </div>`
         }
         ${
           names.product === undefined
             ? ''
             : html`<div class="wa-stack wa-gap-3xs">
-                <small class="app-empty">${msg('Product')}</small>
-                <span data-catalog-product>${names.product}</span>
+                <dt><small class="app-empty">${msg('Product')}</small></dt>
+                <dd data-catalog-product>${names.product}</dd>
               </div>`
         }
-      </div>
+      </dl>
     `
   }
 

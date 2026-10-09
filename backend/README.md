@@ -97,8 +97,8 @@ log that already contains the thing.
 
 Besides the usual credential names it redacts `payload`, `manualCode`, `passcode` and
 `discriminator`, and `code` covers the setup code `POST /catalog/lookup` receives as well as the
-OAuth code: a Matter payload encodes a setup passcode and a manual pairing code *is* one,
-and neither looks like a secret to a library's defaults.
+OAuth code. A Matter payload encodes a setup passcode and a manual pairing code *is* one, and
+neither looks like a secret to a library's defaults.
 
 ## The CouchDB client
 

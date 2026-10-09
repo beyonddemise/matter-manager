@@ -24,6 +24,7 @@ export function inventoryLabels(): InventoryLabels {
     noQrCode: msg('Filed from a pairing code'),
     withoutRoom: msg('Without a room'),
     nothingToExport: msg('There are no devices to export.'),
+    testVendor: msg('Test vendor'),
   }
 }
 

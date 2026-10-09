@@ -11,8 +11,10 @@ import {
   CATALOG_FIELD_KEYS,
   type DeviceDocument,
   type RoomDocument,
+  TEST_VENDOR_NAME,
   type Unsaved,
 } from '../../../src/domain/index.js'
+import { activateLocale } from '../../../src/ui/i18n/localization.js'
 import type { EditDeviceView } from '../../../src/ui/views/edit-device.js'
 import '../../../src/ui/views/edit-device.js'
 import { browserDatabase, type TestDatabase } from '../support/browser-database.js'
@@ -144,9 +146,33 @@ describe('the catalogue names', () => {
     expect(element.querySelector('[data-catalog-manufacturer]')?.textContent).toBe('Aqara Home')
     expect(element.querySelector('[data-catalog-product]')?.textContent).toBe('P2')
     expect(element.querySelector('[data-catalog] wa-input, [data-catalog] input')).toBeNull()
+    // #238: each read-only label is the term its value defines, not a caption beside it.
+    expect(element.querySelector('[data-catalog]')?.tagName).toBe('DL')
+    const manufacturer = element.querySelector('[data-catalog-manufacturer]')
+    expect(manufacturer?.tagName).toBe('DD')
+    expect(manufacturer?.previousElementSibling?.tagName).toBe('DT')
+    expect(manufacturer?.previousElementSibling?.textContent?.trim()).toBe('Manufacturer')
+    expect(
+      element.querySelector('[data-catalog-product]')?.previousElementSibling?.textContent,
+    ).toContain('Product')
 
     await submit(element, async () => (await stored())._rev?.startsWith('2-') === true)
     expect((await stored()).vendorPreferredName).toBe('Aqara Home')
+  })
+
+  it('says "Test vendor" in German, and saves it back in English', async () => {
+    await seed(lamp({ vendorName: TEST_VENDOR_NAME }))
+    await activateLocale('de')
+    try {
+      const element = await form()
+      expect(element.querySelector('[data-catalog-manufacturer]')?.textContent).toBe(
+        'Testhersteller',
+      )
+      await submit(element, async () => (await stored())._rev?.startsWith('2-') === true)
+    } finally {
+      await activateLocale('en')
+    }
+    expect((await stored()).vendorName).toBe(TEST_VENDOR_NAME)
   })
 })
 

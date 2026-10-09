@@ -239,6 +239,17 @@ a.app-device:hover {
   --min-column-size: calc(var(--wa-space-5xl) * 2.4);
 }
 
+/* A label/value list (#238): a description list for the semantics, drawn as the captioned
+   values it replaced. Native styles space a list like a paragraph and bold a term; here the
+   surrounding stack already spaces it, and the caption is quiet, not bold. */
+.app-facts {
+  margin: 0;
+}
+
+.app-facts dt {
+  font-weight: var(--wa-font-weight-body);
+}
+
 /* The QR's plate. White regardless of the colour scheme, because an inverted QR is one many
    scanners will not read at all - see the note in views/device.ts. This and the colours
    written into the QR image (qr/render.ts) are the only colours in the application that are
