@@ -53,10 +53,9 @@ function foldedOrder(a: string, b: string): number {
 /**
  * Everything about a device a search may look at, folded and joined.
  *
- * The issue names name, room, serial and product. `spot`, `vendorName`,
- * `vendorPreferredName` and `partNumber` are here too: "ceiling", "the Ikea one" and "AS056" are
- * all how people describe a device they are looking for, and
- * neither match is ever surprising.
+ * Name, room, serial and product name, plus `spot`, `vendorName`, `vendorPreferredName` and
+ * `partNumber`: "ceiling", "the Ikea one" and "AS056" are all how people describe a device they
+ * are looking for, and no such match is ever surprising.
  *
  * `payload` and `manualCode` are **deliberately absent, and this is a security decision**.
  * They encode the setup passcode. A search box that matched them would confirm a guess — type
