@@ -17,6 +17,9 @@
     <!-- Without this, iOS opens the pinned icon in Safari's chrome rather than as an
          application, and the "installed" app is a bookmark wearing an icon. -->
     <meta name="apple-mobile-web-app-capable" content="yes" />
+    <!-- The standard name beside it: Chromium deprecates the Apple-only one and warns on every
+         load while it stands alone. -->
+    <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-title" content="Matter" />
     <!-- The favicon is the application icon itself (src/ui/brand/icon.svg). Referenced from here
          rather than served from public/ so Vite fingerprints it into /assets/: the service
