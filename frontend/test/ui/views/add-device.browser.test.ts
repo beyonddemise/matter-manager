@@ -6,7 +6,7 @@ import '@awesome.me/webawesome-pro/dist/components/dialog/dialog.js'
 import '@awesome.me/webawesome-pro/dist/components/input/input.js'
 import '@awesome.me/webawesome-pro/dist/components/option/option.js'
 import { fixture, html, waitUntil } from '@open-wc/testing-helpers'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ProjectRepositories } from '../../../src/data/index.js'
 import type { DeviceDocument, RoomDocument } from '../../../src/domain/index.js'
 import { BACKFILL_WANTED, type CatalogApi, type LookupOutcome } from '../../../src/ui/catalog.js'
@@ -626,6 +626,103 @@ describe('looking up the manufacturer', () => {
     await new Promise((resolve) => setTimeout(resolve, 100))
     expect(calls).toHaveLength(0)
     await waitUntil(() => calls.length === 1, 'never asked', { timeout: 1000 })
+  })
+
+  it('asks exactly 300 ms after typing stops', async () => {
+    const { api, calls } = fakeCatalog(found)
+    const element = await form(database.repositories, neverAvailable(), { api })
+    await element.updateComplete
+
+    // Faked only around the typing: the form's own setup above needs real timers.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      typeCode(element, aqaraPayload())
+      vi.advanceTimersByTime(299)
+      expect(calls).toHaveLength(0)
+      vi.advanceTimersByTime(1)
+      expect(calls).toHaveLength(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('restarts the wait on every keystroke, so a burst of typing asks once', async () => {
+    const { api, calls } = fakeCatalog(found)
+    const element = await form(database.repositories, neverAvailable(), { api })
+    await element.updateComplete
+
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      typeCode(element, aqaraPayload())
+      vi.advanceTimersByTime(200)
+      typeCode(element, aqaraPayload())
+      vi.advanceTimersByTime(200)
+      // 400 ms in, and the first timer would have fired at 300: it was cancelled.
+      expect(calls).toHaveLength(0)
+      vi.advanceTimersByTime(100)
+      expect(calls).toHaveLength(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('asks nothing while signed out, and saves without names', async () => {
+    const { api, calls } = fakeCatalog(found)
+    const element = await form(database.repositories, neverAvailable(), { api })
+    element.signedIn = () => false
+    typeCode(element, aqaraPayload())
+    fill(element, 'name', 'Front door sensor')
+    typeRoom(element, 'Hall')
+    await new Promise((resolve) => setTimeout(resolve, 400))
+
+    await submit(element, async () => (await devices()).length === 1)
+
+    expect(calls).toHaveLength(0)
+    expect(element.querySelector('[data-catalog-pending]')).toBeNull()
+    expect((await devices())[0]).not.toHaveProperty('vendorName')
+  })
+
+  it('looks up a code that arrives from a picture', async () => {
+    const { api, calls } = fakeCatalog(found)
+    const element = await form(database.repositories, neverAvailable(), { api })
+    element.decodeImage = async () => [aqaraPayload()]
+    await element.updateComplete
+
+    await chooseFile(element, pngFile())
+
+    await waitUntil(() => calls.length === 1, 'a code from a picture was never looked up')
+    expect(calls[0]?.code).toBe(aqaraPayload())
+  })
+
+  it('asks nothing when the form closes during the wait', async () => {
+    const { api, calls } = fakeCatalog(found)
+    const element = await form(database.repositories, neverAvailable(), { api })
+    typeCode(element, aqaraPayload())
+
+    element.remove()
+    await new Promise((resolve) => setTimeout(resolve, 400))
+
+    expect(calls).toHaveLength(0)
+  })
+
+  it('forgets a lookup in flight when the form closes, so it asks again when it returns', async () => {
+    const { api, calls } = fakeCatalog(() => new Promise<LookupOutcome>(() => {}))
+    const element = await form(database.repositories, neverAvailable(), { api })
+    typeCode(element, aqaraPayload())
+    await waitUntil(() => calls.length === 1, 'never asked')
+    await waitUntil(() => element.querySelector('[data-catalog-pending]') !== null, 'no hint')
+
+    // Moved rather than destroyed: a router or a drag can detach and re-attach the same element.
+    element.remove()
+    document.body.append(element)
+    await element.updateComplete
+    // The aborted question is not still "pending" on screen...
+    expect(element.querySelector('[data-catalog-pending]')).toBeNull()
+
+    // ...and the same code is a new question, not one the form believes it is already asking.
+    typeCode(element, aqaraPayload())
+    await waitUntil(() => calls.length === 2, 'the code was never asked again')
+    element.remove()
   })
 
   it('copies the answer into the saved device', async () => {
