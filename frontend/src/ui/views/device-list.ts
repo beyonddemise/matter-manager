@@ -303,7 +303,7 @@ export class DeviceListView extends LitElement {
    * only way to export a parent that holds no devices itself, because such a parent has no
    * heading of its own to put a button on.
    *
-   * Every item says exactly what it exports, `Ground Floor, with its rooms`, and carries the
+   * Every item says exactly what it exports, `Ground Floor, with its sub-rooms`, and carries the
    * path in `data-export-room`, as the single button does.
    *
    * @param group the room the heading is for; nothing is offered for devices without a room
@@ -327,7 +327,7 @@ export class DeviceListView extends LitElement {
         @click=${() => void this.onExport({ kind: 'room', path: group.path })}
       >
         <wa-icon slot="start" name="file-pdf"></wa-icon>
-        ${hasRoomsBelow(group.path) ? msg('Export this room and its rooms') : msg('Export this room')}
+        ${hasRoomsBelow(group.path) ? msg('Export this room and its sub-rooms') : msg('Export this room')}
       </wa-button>`
     }
 
@@ -353,8 +353,8 @@ export class DeviceListView extends LitElement {
             // breadcrumb), and the check-i18n scan reads text in an html template given to msg
             // as unwrapped.
             hasRoomsBelow(path)
-              ? msg(', with its rooms', {
-                  desc: 'Follows a room name in the export menu: "Ground Floor, with its rooms".',
+              ? msg(', with its sub-rooms', {
+                  desc: 'Follows a room name in the export menu: "Ground Floor, with its sub-rooms".',
                 })
               : nothing
           }
@@ -362,6 +362,23 @@ export class DeviceListView extends LitElement {
       )}
     </wa-dropdown>`
   }
+
+  /**
+   * A stable id for a group's heading, for the section's `aria-labelledby`.
+   *
+   * From the room id rather than the path, because a path holds spaces and slashes. Prefixed per
+   * list instance, so two lists on one page (a test, or a future split view) cannot point a
+   * section at the other list's heading — `aria-labelledby` resolves the first match.
+   */
+  private headingId(group: DeviceGroup): string {
+    return `${this.instanceId}-room-${group.roomId}`
+  }
+
+  /** Distinguishes this list's ids from another's. See {@link headingId}. */
+  private readonly instanceId = `device-list-${++DeviceListView.instances}`
+
+  /** How many lists have been made, for {@link instanceId}. */
+  private static instances = 0
 
   /** Ticks or unticks one device. */
   private toggleSelected(id: string): void {
@@ -398,9 +415,15 @@ export class DeviceListView extends LitElement {
   private renderGroup(group: DeviceGroup, groups: readonly DeviceGroup[]) {
     const count = group.devices.length
     return html`
-      <section class="wa-stack wa-gap-2xs" data-room=${group.path}>
+      <!-- Named by its heading, so the export control inside is announced in context: every
+           sub-room's trigger says "Export…", and the section says which room it belongs to. -->
+      <section
+        class="wa-stack wa-gap-2xs"
+        data-room=${group.path}
+        aria-labelledby=${this.headingId(group)}
+      >
         <div class="wa-cluster wa-gap-s app-room-heading">
-          <h2>${this.groupLabel(group)}</h2>
+          <h2 id=${this.headingId(group)}>${this.groupLabel(group)}</h2>
           <wa-badge variant="neutral">${count}</wa-badge>
           <!-- Per room, because "print the labels for the kitchen" is the request people
                actually have, and ticking eleven boxes to make it is not an answer. Absent for

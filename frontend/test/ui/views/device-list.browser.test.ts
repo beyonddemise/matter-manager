@@ -12,7 +12,7 @@ import '@awesome.me/webawesome-pro/dist/components/input/input.js'
 import '@awesome.me/webawesome-pro/dist/components/tag/tag.js'
 import { fixture, html, waitUntil } from '@open-wc/testing-helpers'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { page } from 'vitest/browser'
+import { page, userEvent } from 'vitest/browser'
 import type { DeviceDocument, Unsaved } from '../../../src/domain/index.js'
 import type { DeviceListView } from '../../../src/ui/views/device-list.js'
 import '../../../src/ui/views/device-list.js'
@@ -297,7 +297,7 @@ describe('sub-rooms', () => {
     // `Attic` has `Attic/Studio` below it, so its export takes both and says so.
     const attic = element.querySelector('[data-room="Attic"] wa-button[data-export-room]')
     expect(attic?.getAttribute('data-export-room')).toBe('Attic')
-    expect(spoken(attic as Element)).toBe('Export this room and its rooms')
+    expect(spoken(attic as Element)).toBe('Export this room and its sub-rooms')
     expect(element.querySelector('[data-room="Attic"] wa-dropdown')).toBeNull()
 
     // `Attic Bedroom` has nothing below it; `Attic` is not its parent.
@@ -313,23 +313,23 @@ describe('sub-rooms', () => {
     // to export it, and each item says exactly what it takes.
     expect(exportItems(element, 'Ground Floor/Kitchen/Pantry')).toEqual([
       ['Ground Floor/Kitchen/Pantry', 'Ground Floor/Kitchen/Pantry'],
-      ['Ground Floor/Kitchen', 'Ground Floor/Kitchen, with its rooms'],
-      ['Ground Floor', 'Ground Floor, with its rooms'],
+      ['Ground Floor/Kitchen', 'Ground Floor/Kitchen, with its sub-rooms'],
+      ['Ground Floor', 'Ground Floor, with its sub-rooms'],
     ])
     // The room itself, when it has sub-rooms, says that they come too.
     expect(exportItems(element, 'Ground Floor/Kitchen')).toEqual([
-      ['Ground Floor/Kitchen', 'Ground Floor/Kitchen, with its rooms'],
-      ['Ground Floor', 'Ground Floor, with its rooms'],
+      ['Ground Floor/Kitchen', 'Ground Floor/Kitchen, with its sub-rooms'],
+      ['Ground Floor', 'Ground Floor, with its sub-rooms'],
     ])
     expect(exportItems(element, 'Attic/Studio')).toEqual([
       ['Attic/Studio', 'Attic/Studio'],
-      ['Attic', 'Attic, with its rooms'],
+      ['Attic', 'Attic, with its sub-rooms'],
     ])
     // Visibly, the items read as the heading does.
     const item = element.querySelector(
       '[data-room="Attic/Studio"] wa-dropdown-item[data-export-room="Attic"]',
     )
-    expect(item?.textContent?.replace(/\s+/g, ' ').trim()).toContain('Attic, with its rooms')
+    expect(item?.textContent?.replace(/\s+/g, ' ').trim()).toContain('Attic, with its sub-rooms')
   })
 
   it('exports a parent with all its sub-rooms from a sub-room menu', async () => {
@@ -353,6 +353,55 @@ describe('sub-rooms', () => {
       lines.indexOf('Ground Floor › Kitchen › Pantry'),
     )
     expect(lines).not.toContain('Attic')
+  })
+
+  it('names each room section by its heading, so its export control is heard in context', async () => {
+    // Every sub-room's trigger says "Export…"; inside a section named for the room, a screen
+    // reader announces which room's export it is.
+    await seedAttic()
+    const element = await list()
+    const view = page.elementLocator(element)
+
+    for (const path of ['Attic', 'Attic/Studio', 'Ground Floor/Kitchen/Pantry']) {
+      await expect
+        .element(view.getByRole('region', { name: path, exact: true }))
+        .toBeInTheDocument()
+      const section = element.querySelector(`section[data-room="${path}"]`) as HTMLElement
+      const id = section.getAttribute('aria-labelledby') ?? ''
+      expect(section.querySelector('h2')?.id).toBe(id)
+    }
+    // Ids differ between rooms and between two lists on one page.
+    const ids = [...document.querySelectorAll('section[data-room]')].map((s) =>
+      s.getAttribute('aria-labelledby'),
+    )
+    expect(new Set(ids).size).toBe(ids.length)
+  })
+
+  it('exports an ancestor chosen from the menu with the keyboard', async () => {
+    await seedAttic()
+    const saved: Uint8Array[] = []
+    const element = await list()
+    ;(element as DeviceListView & { download?: unknown }).download = (bytes: Uint8Array) =>
+      saved.push(bytes)
+
+    const menu = element.querySelector('[data-export-menu="Attic/Studio"]') as HTMLElement & {
+      open: boolean
+    }
+    const trigger = menu.querySelector('wa-button[slot="trigger"]') as HTMLElement
+    trigger.focus()
+    await userEvent.keyboard('{Enter}')
+    await waitUntil(() => menu.open, 'Enter on the trigger never opened the menu')
+    // The first item is the room itself; one step down is its parent, `Attic`.
+    await userEvent.keyboard('{ArrowDown}')
+    await userEvent.keyboard('{Enter}')
+    await waitUntil(() => saved.length === 1, 'the keyboard export never finished', {
+      timeout: 10000,
+    })
+
+    const lines = await extractText(saved[0] as Uint8Array)
+    expect(lines).toContain('Attic')
+    expect(lines).toContain('Attic › Studio')
+    expect(lines).not.toContain('Attic Bedroom')
   })
 
   it('keeps the room export on the full path', async () => {
