@@ -40,7 +40,7 @@ const PLAN_NAMES: Readonly<Record<Plan, () => string>> = {
 }
 
 /** A plan's name in the current language. */
-export function planName(plan: Plan): string {
+function planName(plan: Plan): string {
   return PLAN_NAMES[plan]()
 }
 
@@ -185,12 +185,22 @@ export interface WaitlistState {
   readonly plan: Plan
   readonly session: SessionState | undefined
   readonly online: boolean
+  /**
+   * The cache holds an account: its profile, with an email, was heard on this device. Offline,
+   * before the session is known, this is the account the dialog speaks to.
+   */
+  readonly cachedAccount: boolean
   /** The cached request, when the account is waiting. */
   readonly request: PlanRequest | undefined
   /** A change is on its way to the server: every action waits for it. */
   readonly busy: boolean
   /** Why the last change did not happen, until the dialog closes or another is tried. */
   readonly problem: WaitlistProblem | undefined
+  /**
+   * The last change left the waitlist and the dialog stayed open; until it closes or another
+   * change is tried.
+   */
+  readonly left: boolean
 }
 
 /** What the waitlist part of the dialog calls back with. */
@@ -232,6 +242,25 @@ function since(at: string): string {
   return new Intl.DateTimeFormat(getLocale(), { dateStyle: 'medium' }).format(time)
 }
 
+/**
+ * What leaving the waitlist says: in the dialog's status region while it stays open, in the
+ * shell's own live region when leaving takes the dialog away. One `msg()` for both.
+ */
+export function leftWaitlistText(): string {
+  return msg('You left the waitlist.')
+}
+
+/**
+ * Whether the dialog speaks to an account rather than asking for a sign-in: signed in, or
+ * offline before the session is known with an account in the cache. Offline the refresher
+ * answers only `unreachable`, which leaves the session unknown for the whole outage; the cache
+ * is all there is then, and it is that account's.
+ */
+function knownAccount(state: WaitlistState): boolean {
+  if (state.session === 'signed-in') return true
+  return state.session === undefined && !state.online && state.cachedAccount
+}
+
 function joinLabel(plan: Plan): string {
   const name = planName(plan)
   return msg(str`Join the waitlist for ${name}`)
@@ -251,7 +280,9 @@ function waitingText(request: PlanRequest): string {
 /**
  * The waitlist's actions for the reader's state.
  *
- * - **Signed out** (or not yet known): one button, the shell's sign-in.
+ * - **Signed out** (or not yet known, online): one button, the shell's sign-in.
+ * - **Offline, session not yet known, an account in the cache:** that account's actions, below,
+ *   all disabled.
  * - **Signed in, not waiting:** "Join the waitlist for …", for each plan above the account's.
  *   The next plan up is the one loud brand button (DESIGN.md's Commissioning Blue Rule); any
  *   further one is outlined.
@@ -259,6 +290,7 @@ function waitingText(request: PlanRequest): string {
  *   and "Leave the waitlist", all outlined: nothing is the obvious next step. Leaving asks
  *   nothing first: it is not destructive and can be redone at once.
  * - **Offline:** everything that needs the server is disabled, and the reader is told why.
+ * - **Just left, dialog still open:** "You left the waitlist." in the status region.
  */
 export function renderWaitlist(state: WaitlistState, handlers: WaitlistHandlers): TemplateResult {
   const disabled = !state.online || state.busy
@@ -269,10 +301,14 @@ export function renderWaitlist(state: WaitlistState, handlers: WaitlistHandlers)
           <wa-icon slot="icon" name="triangle-exclamation"></wa-icon>
           ${PROBLEMS[state.problem]()}
         </wa-callout>`
+  // The cached request stands until the session is known to have ended: hiding it while the
+  // session is merely unknown would hide what the account waits for whenever it opens offline.
+  const ended = state.session === 'signed-out' || state.session === 'expired'
   const waiting =
-    state.session === 'signed-in' && state.request !== undefined
+    !ended && state.request !== undefined
       ? html`<p data-waiting>${waitingText(state.request)}</p>`
       : ''
+  const left = state.left ? html`<p data-waitlist-left>${leftWaitlistText()}</p>` : ''
   const offline = state.online
     ? ''
     : html`<p data-needs-connection data-note>${msg('Needs a connection')}</p>`
@@ -280,7 +316,9 @@ export function renderWaitlist(state: WaitlistState, handlers: WaitlistHandlers)
   // One outer template for every state, so the status region is the same element before and
   // after a change: a live region that arrives together with its content is not announced.
   return html`<div data-waitlist class="wa-stack wa-gap-s">
-    <div data-waitlist-status role="status" class="wa-stack wa-gap-s">${problem}${waiting}</div>
+    <div data-waitlist-status role="status" class="wa-stack wa-gap-s">
+      ${problem}${waiting}${left}
+    </div>
     <div class="wa-cluster wa-gap-s">${actions(state, handlers, disabled)}</div>
     ${offline}
   </div>`
@@ -292,7 +330,7 @@ function actions(
   handlers: WaitlistHandlers,
   disabled: boolean,
 ): TemplateResult {
-  if (state.session !== 'signed-in') {
+  if (!knownAccount(state)) {
     return html`<wa-button
       data-sign-in-waitlist
       variant="brand"

@@ -36,7 +36,11 @@ import '../../src/ui/styles/app.css'
 import type { Profile } from '../../src/ui/profile.js'
 import type { ProjectsView } from '../../src/ui/views/projects.js'
 import type { WaitlistApi, WaitlistOutcome } from '../../src/ui/waitlist.js'
-import { refresherNeverAnswering, refresherReporting } from './refresher-stub.js'
+import {
+  refresherNeverAnswering,
+  refresherReporting,
+  refresherUnreachable,
+} from './refresher-stub.js'
 import { destroyProjectStores, isolatedProjectStore } from './support/project-store.js'
 
 /**
@@ -149,7 +153,8 @@ function recordingSync(
 }
 
 interface Options {
-  readonly session?: 'signed-in' | 'signed-out' | 'expired' | 'unanswered'
+  /** `unreachable`: the refresher answers only that, as it does when the app opens offline. */
+  readonly session?: 'signed-in' | 'signed-out' | 'expired' | 'unanswered' | 'unreachable'
   readonly local?: readonly LocalProjectEntry[]
   readonly cachedProfile?: CachedProfile
   readonly list?: () => Promise<readonly Project[]>
@@ -165,6 +170,8 @@ interface Options {
   readonly waitlist?: WaitlistApi
   /** What "Sign in" does; nothing by default. */
   readonly signIn?: () => void
+  /** What the server answers for the profile; nothing (no token) by default. */
+  readonly readProfile?: () => Promise<Profile | undefined>
 }
 
 /** The shell, wired to fakes, settled past its first refresh. */
@@ -186,7 +193,9 @@ async function mount(options: Options = {}) {
       .refresher=${
         options.session === 'unanswered'
           ? refresherNeverAnswering
-          : refresherReporting(options.session ?? 'signed-in')
+          : options.session === 'unreachable'
+            ? refresherUnreachable
+            : refresherReporting(options.session ?? 'signed-in')
       }
       .connectivity=${options.network ?? fakeNetwork(true)}
       .followLocale=${options.followLocale ?? (async () => undefined)}
@@ -195,6 +204,7 @@ async function mount(options: Options = {}) {
       .signOutOf=${signOutOf}
       .signIn=${options.signIn ?? (() => {})}
       .waitlist=${options.waitlist}
+      .readProfile=${options.readProfile ?? (async () => undefined)}
       .backfill=${backfill}
       .projectStore=${store}
       .signOutPushTimeoutMs=${options.signOutPushTimeoutMs}
@@ -1493,6 +1503,137 @@ describe('upgrading', () => {
         .disabled,
     ).toBe(true)
     expect(dialog.querySelector('[data-needs-connection]')).not.toBeNull()
+  })
+
+  it('shows a waiting account its request when it opens offline', async () => {
+    // The refresher cannot reach the server, so the session stays unknown for the whole outage;
+    // the cache still knows the account and what it waits for.
+    const { element } = await mount({
+      session: 'unreachable',
+      network: fakeNetwork(false),
+      cachedProfile: profile({
+        plan: 'free',
+        projectLimit: 1,
+        planRequested: 'pro',
+        requestedAt: AT,
+      }),
+    })
+    await inputSettles(element, (i) => i.online === false, 'never offline')
+    const dialog = await openUpgrade(element)
+    await waitUntil(() => dialog.querySelector('[data-waiting]') !== null, 'not waiting')
+
+    expect(element.session).toBeUndefined()
+    expect(text(dialog.querySelector('[data-waiting]'))).toBe(
+      'You are on the waitlist for Pro (since Oct 9, 2026).',
+    )
+    expect(dialog.querySelector('[data-sign-in-waitlist]')).toBeNull()
+    const actions = [...dialog.querySelectorAll('[data-join], [data-leave-waitlist]')] as Array<
+      HTMLElement & { disabled: boolean }
+    >
+    expect(actions.map((button) => button.getAttribute('data-join') ?? 'leave')).toEqual([
+      'member',
+      'leave',
+    ])
+    expect(actions.every((button) => button.disabled)).toBe(true)
+    expect(text(dialog.querySelector('[data-needs-connection]'))).toBe('Needs a connection')
+  })
+
+  it('offers a known account its joins, disabled, when it opens offline', async () => {
+    const { element } = await mount({
+      session: 'unreachable',
+      network: fakeNetwork(false),
+      cachedProfile: profile({ plan: 'free', projectLimit: 1 }),
+    })
+    await inputSettles(element, (i) => i.online === false, 'never offline')
+    const dialog = await openUpgrade(element)
+    await waitUntil(() => dialog.querySelector('[data-join]') !== null, 'no joins')
+
+    expect(dialog.querySelector('[data-sign-in-waitlist]')).toBeNull()
+    expect(joinButtons(dialog)).toEqual(['member', 'pro'])
+    const buttons = [...dialog.querySelectorAll('[data-join]')] as Array<
+      HTMLElement & { disabled: boolean }
+    >
+    expect(buttons.every((button) => button.disabled)).toBe(true)
+    expect(text(dialog.querySelector('[data-needs-connection]'))).toBe('Needs a connection')
+  })
+
+  it('corrects the plan it shows when the server says the plan is already held', async () => {
+    // The cache still says free; the server knows better, and its profile is read again.
+    const waitlist = fakeWaitlist(() => ({ kind: 'already-on-plan' }))
+    const readProfile = vi.fn(async () => serverProfile({ plan: 'member', projectLimit: 5 }))
+    const { element, store } = await mount({
+      cachedProfile: profile({ plan: 'free', projectLimit: 1 }),
+      waitlist: waitlist.api,
+      readProfile,
+    })
+    await inputSettles(element, (i) => i.plan === 'free', 'plan never read')
+    const dialog = await openUpgrade(element)
+    const current = () =>
+      [...dialog.querySelectorAll('[data-plan-card].app-plan-current')].map((card) =>
+        card.getAttribute('data-plan-card'),
+      )
+    expect(current()).toEqual(['free'])
+
+    ;(dialog.querySelector('[data-join="member"]') as HTMLElement).click()
+    await waitUntil(() => current()[0] === 'member', 'the highlight never moved')
+
+    expect(readProfile).toHaveBeenCalledTimes(1)
+    expect(text(dialog.querySelector('[data-waitlist-problem]'))).toBe(
+      'You already have this plan.',
+    )
+    expect(await store.cache().readProfile()).toMatchObject({ plan: 'member' })
+  })
+
+  it('keeps the problem, and stays quiet, when that read fails', async () => {
+    const waitlist = fakeWaitlist(() => ({ kind: 'already-on-plan' }))
+    const readProfile = vi.fn(async () => {
+      throw new Error('offline')
+    })
+    const { element } = await mount({
+      cachedProfile: profile({ plan: 'free', projectLimit: 1 }),
+      waitlist: waitlist.api,
+      readProfile,
+    })
+    await inputSettles(element, (i) => i.plan === 'free', 'plan never read')
+    const dialog = await openUpgrade(element)
+
+    ;(dialog.querySelector('[data-join="member"]') as HTMLElement).click()
+    await waitUntil(() => readProfile.mock.calls.length === 1, 'never read again')
+    await waitUntil(() => !element.waitlistBusy, 'still busy')
+
+    expect(text(dialog.querySelector('[data-waitlist-problem]'))).toBe(
+      'You already have this plan.',
+    )
+    expect(element.querySelector('[data-plan-card="free"].app-plan-current')).not.toBeNull()
+  })
+
+  it('says it left the waitlist in the dialog when the dialog stays open', async () => {
+    const waitlist = fakeWaitlist(() => ({ kind: 'done', profile: serverProfile() }))
+    const { element } = await mount({
+      cachedProfile: profile({
+        plan: 'free',
+        projectLimit: 1,
+        planRequested: 'pro',
+        requestedAt: AT,
+      }),
+      waitlist: waitlist.api,
+    })
+    const dialog = await openUpgrade(element)
+    await waitUntil(() => dialog.querySelector('[data-waiting]') !== null, 'not waiting')
+    const status = dialog.querySelector('[data-waitlist-status]') as HTMLElement
+
+    ;(dialog.querySelector('[data-leave-waitlist]') as HTMLElement).click()
+    await waitUntil(() => dialog.querySelector('[data-waiting]') === null, 'never left')
+
+    expect(dialog.querySelector('[data-waitlist-status]')).toBe(status)
+    expect(text(status)).toBe('You left the waitlist.')
+    // Said once: the shell's region speaks only when the dialog goes away.
+    expect(text(element.querySelector('[data-status-announcement]'))).toBe('')
+
+    // The same words as the shell's own announcement, in German too.
+    await activateLocale('de')
+    await element.updateComplete
+    expect(text(status)).toBe('Sie haben die Warteliste verlassen.')
   })
 
   it('joins, then shows the request and caches it', async () => {
