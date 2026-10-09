@@ -1003,6 +1003,10 @@
   <note from="lit-localize">Follows a room name in the export menu: "Ground Floor, with its sub-rooms".</note>
   <target>, mit allen Unterräumen</target>
 </trans-unit>
+<trans-unit id="s7608573759aa7525">
+  <source>Test vendor</source>
+  <target>Testhersteller</target>
+</trans-unit>
 </body>
 </file>
 </xliff>

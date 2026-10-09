@@ -33,6 +33,7 @@ const LABELS: InventoryLabels = {
   noQrCode: 'No QR code',
   withoutRoom: 'Without a room',
   nothingToExport: 'Nothing to export.',
+  testVendor: 'Test vendor',
 }
 
 const ROOMS: readonly RoomDocument[] = [

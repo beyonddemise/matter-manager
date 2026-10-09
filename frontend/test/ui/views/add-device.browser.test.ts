@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ProjectRepositories } from '../../../src/data/index.js'
 import type { DeviceDocument, RoomDocument } from '../../../src/domain/index.js'
 import { BACKFILL_WANTED, type CatalogApi, type LookupOutcome } from '../../../src/ui/catalog.js'
+import { activateLocale } from '../../../src/ui/i18n/localization.js'
 import { ImageScanError } from '../../../src/ui/scan/image.js'
 import type { ScanSource } from '../../../src/ui/scan/source.js'
 import type { AddDeviceView } from '../../../src/ui/views/add-device.js'
@@ -723,6 +724,34 @@ describe('looking up the manufacturer', () => {
     typeCode(element, aqaraPayload())
     await waitUntil(() => calls.length === 2, 'the code was never asked again')
     element.remove()
+  })
+
+  it('says "Test vendor" in German for a test vendor’s answer', async () => {
+    const testVendor: LookupOutcome = {
+      kind: 'found',
+      lookup: {
+        vendorId: 0xfff1,
+        productId: 0x8000,
+        source: 'test-vendor',
+        vendor: { name: 'Test vendor', preferredName: null, legalName: null, landingPageUrl: null },
+        product: null,
+        fetchedAt: '2026-10-05T16:20:00.000Z',
+        stale: false,
+      },
+    }
+    const { api } = fakeCatalog(() => Promise.resolve(testVendor))
+    await activateLocale('de')
+    try {
+      const element = await form(database.repositories, neverAvailable(), { api })
+      typeCode(element, PAYLOAD)
+      await waitUntil(() => element.querySelector('[data-catalog]') !== null, 'no names')
+      expect(element.querySelector('[data-catalog-manufacturer]')?.textContent).toBe(
+        'Testhersteller',
+      )
+      element.remove()
+    } finally {
+      await activateLocale('en')
+    }
   })
 
   it('keeps a settled answer when the form is detached and attached again', async () => {

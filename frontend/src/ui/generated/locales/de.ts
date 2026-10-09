@@ -120,6 +120,7 @@
 's723b96896cf3ae07': `Matter Manager`,
 's75a9cb5fe18cff15': `Vergrößern`,
 's75bfec52c10b0a16': `Im Netzwerk`,
+'s7608573759aa7525': `Testhersteller`,
 's7a90628d47e6474f': `Dies ist kein Matter-Einrichtungscode, den diese Version lesen kann.`,
 's7aa73a226fe11914': `Zurück zu den Geräten`,
 's7cf69b5464066504': `Von diesem Gerät löschen`,

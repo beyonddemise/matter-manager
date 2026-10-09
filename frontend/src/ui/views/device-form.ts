@@ -13,6 +13,7 @@ import {
 } from '../../domain/index.js'
 import { PROJECT_CHANGED } from '../current-project.js'
 import { projectDatabase } from '../db/project-database.js'
+import { shownManufacturer } from '../i18n/manufacturer.js'
 import { problemMessage } from '../i18n/problems.js'
 
 /**
@@ -286,14 +287,15 @@ export abstract class DeviceFormView extends LitElement {
    */
   protected renderCatalogLines(names: CatalogNames): TemplateResult | '' {
     if (names.manufacturer === undefined && names.product === undefined) return ''
+    const manufacturer = shownManufacturer(names.manufacturer, msg('Test vendor'))
     return html`
       <div class="wa-cluster wa-gap-l" data-catalog>
         ${
-          names.manufacturer === undefined
+          manufacturer === undefined
             ? ''
             : html`<div class="wa-stack wa-gap-3xs">
                 <small class="app-empty">${msg('Manufacturer')}</small>
-                <span data-catalog-manufacturer>${names.manufacturer}</span>
+                <span data-catalog-manufacturer>${manufacturer}</span>
               </div>`
         }
         ${

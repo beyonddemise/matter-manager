@@ -17,6 +17,7 @@ import {
 } from '../../domain/index.js'
 import { PROJECT_CHANGED } from '../current-project.js'
 import { projectDatabase, projectIsEditable } from '../db/project-database.js'
+import { shownManufacturer } from '../i18n/manufacturer.js'
 import { currentAuthor } from '../identity.js'
 import { qrSvg } from '../qr/render.js'
 import { fieldValue } from './device-form.js'
@@ -751,7 +752,11 @@ export class DeviceView extends LitElement {
       <div class="wa-grid app-details">
         ${this.field(msg('Room'), this.room?.path ?? msg('Without a room'))}
         ${this.field(msg('Spot'), device.spot)}
-        ${this.field(msg('Manufacturer'), manufacturerName(device) ?? this.hex(device.vendorId))}
+        ${this.field(
+          msg('Manufacturer'),
+          shownManufacturer(manufacturerName(device), msg('Test vendor')) ??
+            this.hex(device.vendorId),
+        )}
         ${this.field(msg('Product'), device.productName ?? this.hex(device.productId))}
         ${this.field(msg('Part number'), device.partNumber)}
         ${this.field(msg('Serial number'), device.serial)}

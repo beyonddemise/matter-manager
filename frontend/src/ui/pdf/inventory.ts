@@ -22,6 +22,7 @@ import {
   type PageGeometry,
   roomPathBreadcrumb,
 } from '../../domain/index.js'
+import { shownManufacturer } from '../i18n/manufacturer.js'
 import { ExportCancelled, type InventoryProgress } from './progress.js'
 import { drawQr } from './qr.js'
 import { winAnsiSafe } from './win-ansi.js'
@@ -56,6 +57,8 @@ export interface InventoryLabels {
   readonly noQrCode: string
   readonly withoutRoom: string
   readonly nothingToExport: string
+  /** The test vendors' manufacturer name, stored in English as `TEST_VENDOR_NAME`. */
+  readonly testVendor: string
 }
 
 export interface InventoryOptions {
@@ -76,10 +79,10 @@ const hex = (value: number): string => `0x${value.toString(16).toUpperCase().pad
  * the model name, or beside the hex product id when the catalogue named the vendor but not the
  * model (and for every test vendor). It then takes the place of the hex vendor id it names.
  */
-function productOf(entry: EntryBlock): string | undefined {
+function productOf(entry: EntryBlock, labels: InventoryLabels): string | undefined {
   const device = entry.device
   // The preferred name: what people call the company, and what the device page shows.
-  const manufacturer = manufacturerName(device)
+  const manufacturer = shownManufacturer(manufacturerName(device), labels.testVendor)
   if (device.productName !== undefined) {
     return manufacturer === undefined ? device.productName : `${manufacturer} ${device.productName}`
   }
@@ -300,7 +303,7 @@ function drawEntry(
   })
 
   const details = [
-    productOf(block),
+    productOf(block, labels),
     device.partNumber === undefined ? undefined : `${labels.partNumber}: ${device.partNumber}`,
     `${labels.installed}: ${device.installedAt}`,
     device.spot,

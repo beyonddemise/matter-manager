@@ -11,8 +11,10 @@ import {
   CATALOG_FIELD_KEYS,
   type DeviceDocument,
   type RoomDocument,
+  TEST_VENDOR_NAME,
   type Unsaved,
 } from '../../../src/domain/index.js'
+import { activateLocale } from '../../../src/ui/i18n/localization.js'
 import type { EditDeviceView } from '../../../src/ui/views/edit-device.js'
 import '../../../src/ui/views/edit-device.js'
 import { browserDatabase, type TestDatabase } from '../support/browser-database.js'
@@ -147,6 +149,21 @@ describe('the catalogue names', () => {
 
     await submit(element, async () => (await stored())._rev?.startsWith('2-') === true)
     expect((await stored()).vendorPreferredName).toBe('Aqara Home')
+  })
+
+  it('says "Test vendor" in German, and saves it back in English', async () => {
+    await seed(lamp({ vendorName: TEST_VENDOR_NAME }))
+    await activateLocale('de')
+    try {
+      const element = await form()
+      expect(element.querySelector('[data-catalog-manufacturer]')?.textContent).toBe(
+        'Testhersteller',
+      )
+      await submit(element, async () => (await stored())._rev?.startsWith('2-') === true)
+    } finally {
+      await activateLocale('en')
+    }
+    expect((await stored()).vendorName).toBe(TEST_VENDOR_NAME)
   })
 })
 

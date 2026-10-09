@@ -10,7 +10,13 @@ import { fixture, html, waitUntil } from '@open-wc/testing-helpers'
 import { BrowserQRCodeReader } from '@zxing/browser'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { ProjectRepositories } from '../../../src/data/index.js'
-import { type DeviceDocument, decodePayload, type Unsaved } from '../../../src/domain/index.js'
+import {
+  type DeviceDocument,
+  decodePayload,
+  TEST_VENDOR_NAME,
+  type Unsaved,
+} from '../../../src/domain/index.js'
+import { activateLocale } from '../../../src/ui/i18n/localization.js'
 import type { DeviceView } from '../../../src/ui/views/device.js'
 import '../../../src/ui/views/device.js'
 import '../../../src/ui/styles/app.css'
@@ -928,6 +934,19 @@ describe('what the catalogue knows', () => {
     expect(fact(await page(ids[0]), 'Manufacturer')).toBe('Aqara Home')
     expect(fact(await page(ids[1]), 'Manufacturer')).toBe('Aqara')
     expect(fact(await page(ids[2]), 'Manufacturer')).toBe('0xFFF1')
+  })
+
+  it('says "Test vendor" in the interface language, and keeps it stored in English', async () => {
+    await seed(lamp({ vendorName: TEST_VENDOR_NAME }))
+    expect(fact(await page(), 'Manufacturer')).toBe('Test vendor')
+
+    await activateLocale('de')
+    try {
+      expect(fact(await page(), 'Hersteller')).toBe('Testhersteller')
+    } finally {
+      await activateLocale('en')
+    }
+    expect((await database.repositories.devices.get(DEVICE_ID))?.vendorName).toBe(TEST_VENDOR_NAME)
   })
 
   it('shows the part number', async () => {

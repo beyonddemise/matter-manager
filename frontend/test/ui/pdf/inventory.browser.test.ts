@@ -31,6 +31,7 @@ const LABELS: InventoryLabels = {
   noQrCode: 'No QR code',
   withoutRoom: 'Without a room',
   nothingToExport: 'There is nothing to export.',
+  testVendor: 'Test vendor',
 }
 
 const device = (extra: Partial<DeviceDocument> = {}): DeviceDocument => ({
