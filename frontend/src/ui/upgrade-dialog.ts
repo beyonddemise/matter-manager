@@ -271,8 +271,7 @@ export function renderWaitlist(state: WaitlistState, handlers: WaitlistHandlers)
         </wa-callout>`
   const waiting =
     state.session === 'signed-in' && state.request !== undefined
-      ? // Focusable by script only: it is where focus goes once a change has landed.
-        html`<p data-waiting tabindex="-1">${waitingText(state.request)}</p>`
+      ? html`<p data-waiting>${waitingText(state.request)}</p>`
       : ''
   const offline = state.online
     ? ''
@@ -345,7 +344,11 @@ export async function focusWaitlist(root: ParentNode): Promise<void> {
     root.querySelector<HTMLElement & { updateComplete?: Promise<unknown> }>(
       '[data-waitlist] wa-button:not([disabled])',
     )
+  if (target === null) return
+  // Made focusable only now, by script: rendered with a tabindex, the line would be what the
+  // dialog itself focuses first whenever it opens.
+  if (target.matches('[data-waiting]')) target.tabIndex = -1
   // A button enabled by this render has not yet enabled its inner control, which refuses focus.
-  await target?.updateComplete
-  target?.focus()
+  await target.updateComplete
+  target.focus()
 }

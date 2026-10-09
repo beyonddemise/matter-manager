@@ -1404,6 +1404,8 @@ describe('upgrading', () => {
     expect(joinButtons(dialog)).toEqual(['member'])
     expect(texts(dialog, '[data-join]')).toEqual(['Change to Member'])
     expect(text(dialog.querySelector('[data-leave-waitlist]'))).toBe('Leave the waitlist')
+    // Not focusable until a change lands on it: the dialog's own first focus must not pick it.
+    expect(dialog.querySelector('[data-waiting]')?.hasAttribute('tabindex')).toBe(false)
   })
 
   it('still lets an account leave a waitlist for a plan it now has', async () => {
