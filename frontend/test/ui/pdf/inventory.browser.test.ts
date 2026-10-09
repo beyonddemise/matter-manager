@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest'
 import { PDFDocument, StandardFonts } from 'pdf-lib'
+import { describe, expect, it } from 'vitest'
 import {
   A4,
   browseDevices,
@@ -301,12 +301,13 @@ describe('free text longer than its column', () => {
     expect(cut).toHaveLength(6)
 
     const pdf = await PDFDocument.create()
-    const fonts = {
-      [11]: await pdf.embedFont(StandardFonts.HelveticaBold),
-      [9]: await pdf.embedFont(StandardFonts.Helvetica),
-    } as Record<number, Awaited<ReturnType<typeof pdf.embedFont>>>
+    // The fonts the entry draws in, by size: the 11pt name is bold, the 9pt details are not.
+    const fonts = new Map([
+      [11, await pdf.embedFont(StandardFonts.HelveticaBold)],
+      [9, await pdf.embedFont(StandardFonts.Helvetica)],
+    ])
     for (const line of cut) {
-      const font = fonts[line.size]
+      const font = fonts.get(line.size)
       expect(font, `a font for size ${line.size}`).toBeDefined()
       expect(font?.widthOfTextAtSize(line.text, line.size)).toBeLessThanOrEqual(COLUMN)
     }
