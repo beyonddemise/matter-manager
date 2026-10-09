@@ -43,7 +43,7 @@
 's299f5d18909ac362': `Dieser manuelle Kopplungscode verwendet ein Format, das diese Version nicht kennt.`,
 's2c188ac763f8e84c': `Wo genau im Raum, falls das hilft: „Decke, Nordseite“.`,
 's2ceb11be2290bb1b': `Abbrechen`,
-'s2cfffbab2ce01ef6': `Auf Werkseinstellungen zurücksetzen`,
+'s2cfffbab2ce01ef6': `Zurücksetzen auf Werkseinstellungen`,
 's2d21e03305254dd8': str`„${0}“ wird mit allem, was es enthält, von diesem Gerät gelöscht. Das lässt sich nicht rückgängig machen.`,
 's2d254be190431538': `Geben Sie den Einrichtungscode ein, der auf dem Gerät oder seiner Verpackung steht.`,
 's2d7d8669a523601c': `Vom Server entfernen?`,
