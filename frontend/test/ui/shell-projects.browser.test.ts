@@ -1718,8 +1718,12 @@ describe('upgrading', () => {
 
     expect(waitlist.calls).toEqual([{ kind: 'join', plan: 'member' }])
     expect(text(dialog.querySelector('[data-waiting]'))).toContain('Member')
-    // Focus lands on what changed, not on the page behind the dialog (WCAG 2.4.3).
-    expect(document.activeElement).toBe(dialog.querySelector('[data-waiting]'))
+    // Focus lands on what changed, not on the page behind the dialog (WCAG 2.4.3). Waited for:
+    // the line renders a moment before the shell moves focus to it.
+    await waitUntil(
+      () => document.activeElement === dialog.querySelector('[data-waiting]'),
+      'focus never reached the waiting line',
+    )
     expect(await store.cache().readProfile()).toMatchObject({
       planRequested: 'member',
       requestedAt: AT,
