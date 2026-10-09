@@ -192,10 +192,17 @@ design left open:
 - **The dialog** is `frontend/src/ui/upgrade-dialog.ts`. On desktop it is a table, at phone width
   (`<wa-page>`'s 768 px breakpoint) it is stacked cards. Offline also disables "Sign in to join
   the waitlist", because signing in needs the server too.
+- **Opening offline.** The refresher then answers only `unreachable`, so the session stays
+  unknown for the whole outage. The dialog trusts the cache: a cached request is shown unless the
+  session is known to be signed out or expired, and an account in the cache (an email was heard)
+  gets its join, change and leave buttons, disabled with "Needs a connection", not the sign-in.
 - **German plan names** are Kostenlos, Mitglied and Pro. "Free" is one string, used both as a
   plan name and as a price, so it has one translation.
 - **The shell** caches the profile returned by `PUT`/`DELETE` and re-reads its facts, so the
-  dialog and an offline reload agree with the server.
+  dialog and an offline reload agree with the server. After a 409 it fetches the profile again in
+  the background, as startup does, so a stale "Your plan" corrects itself.
+- **Leaving** says "You left the waitlist." in the dialog's status region while the dialog stays
+  open, and in the shell's live region when leaving the top plan takes the dialog away.
 
 ### Rulings made during execution
 
@@ -238,7 +245,8 @@ None affects correctness or the contract.
 - `plansAbove(unknown)` returns every plan; the type rules the input out.
 - The current plan's `th` accessible name includes "Your plan", which is accurate but repeated
   per cell.
-- Sign-in shows while the session is still `undefined` (mandated by the brief, low impact), and
+- Sign-in shows while the session is still `undefined` and the app is online (mandated by the
+  brief, low impact), and
   Sign in and Close stay enabled while a change is busy.
 - At 360 px the German signed-out header wraps to two rows (pre-existing, no overflow), and plan
   card icons wrap below long German labels (cosmetic).

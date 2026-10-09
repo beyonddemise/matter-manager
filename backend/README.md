@@ -142,7 +142,7 @@ redirects, `POST /auth/token` takes the handoff cookie or a refresh token in the
 
 `src/users/` keeps one record per person in the admin-only `matter_manager` database, keyed by
 verified address (`users/key.ts`). Signing in creates **no** record; records come from
-`ensureRecord` (a redeemable invitation, or `PATCH /profile`), `PUT /waitlist`, or
+`ensureRecord`, which a redeemable invitation, `PATCH /profile` and `PUT /waitlist` call, or from
 `PUT /customer`. Refresh-token hashes (`sha256(jti)`) live on the record, or in memory while there
 is none (`auth/refresh-store.ts`). CouchDB's `_users` is not used.
 

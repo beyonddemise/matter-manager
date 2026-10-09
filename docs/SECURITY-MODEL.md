@@ -361,8 +361,8 @@ this is load-bearing rather than tidy:
   row-level read permission, so making it member-readable would disclose all of it to every
   authenticated user.
 - **`matter_manager`** holds user records: profiles, plans, waitlist requests, roles and
-  refresh-token hashes. It is admin-only, which is why profiles come from `GET /profile`. CouchDB's own `_users` is no longer
-  used for profiles.
+  refresh-token hashes. It is admin-only, which is why profiles come from `GET /profile`.
+  CouchDB's own `_users` is no longer used for profiles.
 - **`matter_catalog`** caches what the DCL says about vendors and models
   ([ADR 0019](adr/0019-setup-code-to-own-api.md)). Nothing in it is secret; it is admin-only
   because no browser needs it, and a database nobody else can reach is one nobody has to
