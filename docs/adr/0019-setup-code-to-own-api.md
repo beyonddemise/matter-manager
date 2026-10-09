@@ -55,7 +55,7 @@ own API**, `POST /catalog/lookup`, under these conditions, all of them enforced:
 **Costs, accepted knowingly.**
 - **For a free-plan user, whose projects never sync, this is the first time a payload leaves
   the device.** Until now it stayed in IndexedDB. The lookup is open to every plan, so the
-  exposure is new for exactly the users who were never exposed. It covers both legs: the
+  exposure is new for exactly the users who were never exposed. Cloudflare is part of it: the
   browser reaches the API through the Cloudflare Pages Functions proxy (`/api`), where
   Cloudflare terminates TLS, so the body passes through Cloudflare in transit. Synced payloads
   already do the same through `/db`, and the proxy logs no bodies. The mitigation is everything
