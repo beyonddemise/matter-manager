@@ -7,7 +7,12 @@ import '@awesome.me/webawesome-pro/dist/components/option/option.js'
 import { fixture, html, waitUntil } from '@open-wc/testing-helpers'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { ProjectRepositories } from '../../../src/data/index.js'
-import type { DeviceDocument, RoomDocument, Unsaved } from '../../../src/domain/index.js'
+import {
+  CATALOG_FIELD_KEYS,
+  type DeviceDocument,
+  type RoomDocument,
+  type Unsaved,
+} from '../../../src/domain/index.js'
 import type { EditDeviceView } from '../../../src/ui/views/edit-device.js'
 import '../../../src/ui/views/edit-device.js'
 import { browserDatabase, type TestDatabase } from '../support/browser-database.js'
@@ -142,6 +147,38 @@ describe('the catalogue names', () => {
 
     await submit(element, async () => (await stored())._rev?.startsWith('2-') === true)
     expect((await stored()).vendorPreferredName).toBe('Aqara Home')
+  })
+})
+
+describe('the catalogue block', () => {
+  /** Every field a lookup writes, each with a value that cannot be mistaken for another. */
+  const BLOCK = {
+    vendorName: 'Aqara',
+    vendorPreferredName: 'Aqara Home',
+    productName: 'Aqara Door and Window Sensor P2',
+    deviceTypeId: 21,
+    partNumber: 'AS056',
+    productUrl: 'https://www.aqara.com/en/products.html',
+    supportUrl: 'https://www.aqara.com/support',
+    userManualUrl: 'https://www.aqara.com/manual.pdf',
+    commissioningFlowUrl: 'https://www.aqara.com/pairing',
+    commissioningInstructions: '1. Power it.',
+    factoryResetInstructions: 'Hold the button.',
+    catalogCheckedAt: '2026-10-05T16:20:00.000Z',
+    catalogSource: 'found',
+  } as const satisfies Pick<DeviceDocument, (typeof CATALOG_FIELD_KEYS)[number]>
+
+  it('is not rewritten by an edit: every field survives a rename, as it was', async () => {
+    await seed(lamp(BLOCK))
+    const element = await form()
+    fill(element, 'name', 'Kitchen spotlight')
+
+    await submit(element, async () => (await stored()).name === 'Kitchen spotlight')
+
+    const device = await stored()
+    // The positive control: the block under test is the whole block, not a sample of it.
+    expect(Object.keys(BLOCK).sort()).toEqual([...CATALOG_FIELD_KEYS].sort())
+    for (const key of CATALOG_FIELD_KEYS) expect(device[key], key).toEqual(BLOCK[key])
   })
 })
 
