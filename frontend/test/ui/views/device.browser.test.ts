@@ -1153,3 +1153,35 @@ describe('a revision another writer moved on', () => {
     expect(saves()).toBe(2)
   })
 })
+
+/**
+ * #238: `catalogFields` never stores a blank instruction, but a document can arrive by sync from
+ * any client. `null`, `''` or whitespace must not render an empty section.
+ */
+describe('blank instruction text from another client', () => {
+  it.each([
+    ['null', null],
+    ['empty', ''],
+    ['blank', '  \n\t '],
+  ])('renders no section for %s instructions', async (_case, value) => {
+    await seed(
+      lamp({
+        commissioningInstructions: value as unknown as string,
+        factoryResetInstructions: value as unknown as string,
+      }),
+    )
+    const element = await page()
+    expect(element.querySelector('wa-details[data-pairing-steps]')).toBeNull()
+    expect(element.querySelector('wa-details[data-factory-reset]')).toBeNull()
+  })
+
+  it('keeps the pairing link, without an empty paragraph, when only the steps are blank', async () => {
+    await seed(
+      lamp({ commissioningInstructions: '   ', commissioningFlowUrl: 'https://example.com/pair' }),
+    )
+    const element = await page()
+    const pairing = element.querySelector('wa-details[data-pairing-steps]')
+    expect(pairing?.querySelector('a[data-link="commissioning-flow"]')).not.toBeNull()
+    expect(pairing?.querySelector('.app-catalog-text')).toBeNull()
+  })
+})

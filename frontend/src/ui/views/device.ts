@@ -22,6 +22,17 @@ import { qrSvg } from '../qr/render.js'
 import { fieldValue } from './device-form.js'
 
 /**
+ * Text worth a section, or `undefined`.
+ *
+ * Typed as `unknown` on purpose: `catalogFields` never stores a blank value, but a document can
+ * arrive by sync from any client, and a `null`, `''` or whitespace-only instruction would
+ * otherwise render an empty `wa-details` (#238).
+ */
+function nonBlank(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() !== '' ? value : undefined
+}
+
+/**
  * The size of the inline QR, in CSS pixels, quiet zone included.
  *
  * Big enough to scan off a laptop screen from arm's length; the dialog exists for the times it
@@ -796,8 +807,8 @@ export class DeviceView extends LitElement {
       device.commissioningFlowUrl,
       'commissioning-flow',
     )
-    const steps = device.commissioningInstructions
-    const reset = device.factoryResetInstructions
+    const steps = nonBlank(device.commissioningInstructions)
+    const reset = nonBlank(device.factoryResetInstructions)
 
     return html`
       ${links.length === 0 ? '' : html`<div class="wa-cluster wa-gap-m" data-links>${links}</div>`}
