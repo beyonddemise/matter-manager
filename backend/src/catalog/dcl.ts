@@ -24,12 +24,12 @@ export type DclNetwork = 'mainnet' | 'testnet' | 'other'
 export const DCL_TIMEOUT_MS = 5000
 
 /**
- * The largest DCL response body this service reads.
+ * The largest DCL response body this service reads, in bytes.
  *
  * A vendor or model record is about a kilobyte. The DCL is a third party, and an answer a
  * thousand times larger than any real one is not a record worth parsing.
  */
-const MAX_BODY_CHARS = 256 * 1024
+const MAX_BODY_BYTES = 256 * 1024
 
 /** A vendor record as the DCL holds it. Kept raw; `policy.ts` decides what the API exposes. */
 export interface DclVendor {
@@ -73,6 +73,39 @@ export function networkOf(baseUrl: string): DclNetwork {
 const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
+/** Thrown inside {@link readCapped}, and turned into {@link DclUnavailable} by its caller. */
+class BodyTooLarge extends Error {}
+
+/**
+ * A response body as text, refusing it **while it arrives** once it passes `maxBytes`.
+ *
+ * Why not `response.text()` and a length check after: a chunked answer declares no length, so
+ * that would buffer whatever the server chose to send before the check ever ran. Reading chunk
+ * by chunk means memory is bounded by the cap plus one chunk, whoever is on the other end.
+ *
+ * @param response the response whose body to read; a missing body reads as `''`.
+ * @param maxBytes the most bytes accepted.
+ * @throws {BodyTooLarge} once more than `maxBytes` have arrived; the stream is cancelled.
+ */
+async function readCapped(response: Response, maxBytes: number): Promise<string> {
+  if (response.body === null) return ''
+  const reader = response.body.getReader()
+  const chunks: Uint8Array[] = []
+  let total = 0
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    total += value.byteLength
+    if (total > maxBytes) {
+      // Its own failure is ignored: the body is being abandoned either way.
+      await reader.cancel().catch(() => undefined)
+      throw new BodyTooLarge()
+    }
+    chunks.push(value)
+  }
+  return new TextDecoder().decode(Buffer.concat(chunks))
+}
+
 /**
  * Builds the client.
  *
@@ -105,15 +138,16 @@ export function dclClient(
         signal: AbortSignal.timeout(timeoutMs),
       })
       status = response.status
-      if (Number(response.headers.get('content-length') ?? '0') > MAX_BODY_CHARS) {
-        throw new DclUnavailable(`DCL ${path}: body too large`)
+      // A declared length past the cap is refused before a byte of the body is read.
+      if (Number(response.headers.get('content-length') ?? '0') > MAX_BODY_BYTES) {
+        await response.body?.cancel().catch(() => undefined)
+        throw new BodyTooLarge()
       }
-      text = await response.text()
+      text = await readCapped(response, MAX_BODY_BYTES)
     } catch (error) {
-      if (error instanceof DclUnavailable) throw error
+      if (error instanceof BodyTooLarge) throw new DclUnavailable(`DCL ${path}: body too large`)
       throw new DclUnavailable(`DCL ${path}: unreachable`, { cause: error })
     }
-    if (text.length > MAX_BODY_CHARS) throw new DclUnavailable(`DCL ${path}: body too large`)
 
     let body: unknown
     try {
@@ -140,11 +174,9 @@ export function dclClient(
       const record = isObject(body) ? body.vendorInfo : undefined
       // A 200 that does not hold a vendor is a ledger answering something else, not a vendor
       // with no name. Treated as an outage, so a cached entry is served rather than overwritten.
-      if (
-        !isObject(record) ||
-        typeof record.vendorID !== 'number' ||
-        typeof record.vendorName !== 'string'
-      ) {
+      // That includes **another** vendor: cached under the requested ID, it would name every
+      // device of this vendor wrongly for ninety days.
+      if (!isObject(record) || record.vendorID !== vid || typeof record.vendorName !== 'string') {
         throw new DclUnavailable(`DCL ${path}: answered an unexpected shape`)
       }
       return record as DclVendor
@@ -157,8 +189,8 @@ export function dclClient(
       const record = isObject(body) ? body.model : undefined
       if (
         !isObject(record) ||
-        typeof record.vid !== 'number' ||
-        typeof record.pid !== 'number' ||
+        record.vid !== vid ||
+        record.pid !== pid ||
         typeof record.productName !== 'string'
       ) {
         throw new DclUnavailable(`DCL ${path}: answered an unexpected shape`)
