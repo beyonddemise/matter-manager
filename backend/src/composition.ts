@@ -93,9 +93,17 @@ function couchFrom(env: Environment): CouchClient | undefined {
  * alternative is a service that starts, looks healthy, and answers every lookup with a 503.
  * And plain `http:` would let anyone on the path rewrite the names shown for every device.
  *
- * @throws {Error} when the value is not an `https:` URL.
+ * A query or fragment is refused too. The client appends `/vendorinfo/…` to this base, so
+ * either would land in the middle of every request URL and turn the path into something else.
+ *
+ * Exported so `npm run dcl:smoke` applies the same rule to the same variable, rather than
+ * smoke-testing a base URL the service itself would refuse to start on.
+ *
+ * @param env the environment to read `DCL_BASE_URL` from.
+ * @returns the base URL without a trailing slash.
+ * @throws {Error} when the value is not an `https:` URL, or carries a query or fragment.
  */
-function dclBaseUrlFrom(env: Environment): string {
+export function dclBaseUrlFrom(env: Environment): string {
   const raw = value(env.DCL_BASE_URL) ?? MAINNET_URL
   let url: URL
   try {
@@ -104,6 +112,8 @@ function dclBaseUrlFrom(env: Environment): string {
     throw new Error('DCL_BASE_URL is not a URL.')
   }
   if (url.protocol !== 'https:') throw new Error('DCL_BASE_URL must be an https: URL.')
+  // The raw text, not `url.search`: an empty query (`…/dcl?`) parses to `search === ''`.
+  if (/[?#]/.test(raw)) throw new Error('DCL_BASE_URL must not carry a query or fragment.')
   return raw.replace(/\/+$/, '')
 }
 

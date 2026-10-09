@@ -1,6 +1,11 @@
 import { createPrivateKey, generateKeyPairSync } from 'node:crypto'
 import { afterEach, describe, expect, it } from 'vitest'
-import { type Environment, prepareCouchDb, serverOptions } from '../src/composition.js'
+import {
+  dclBaseUrlFrom,
+  type Environment,
+  prepareCouchDb,
+  serverOptions,
+} from '../src/composition.js'
 import { buildServer, type Server } from '../src/server.js'
 
 const PEM = generateKeyPairSync('ec', {
@@ -262,8 +267,21 @@ describe('a deployment that is configured wrongly', () => {
   it.each([
     ['not a URL', 'on.dcl.csa-iot.org/dcl'],
     ['plain http', 'http://on.dcl.csa-iot.org/dcl'],
+    // The client appends `/vendorinfo/...` to the base, so a query or fragment would end up in
+    // the middle of every request URL: a lookup that quietly asks for something else.
+    ['carrying a query', 'https://on.dcl.csa-iot.org/dcl?x=1'],
+    ['carrying a fragment', 'https://on.dcl.csa-iot.org/dcl#x'],
+    ['carrying an empty query', 'https://on.dcl.csa-iot.org/dcl?'],
   ])('refuses to start on a DCL_BASE_URL that is %s', (_case, url) => {
     expect(() => serverOptions({ ...COMPLETE, DCL_BASE_URL: url })).toThrow(/DCL_BASE_URL/)
+  })
+
+  it('exports the DCL_BASE_URL rule, so `dcl:smoke` reads the variable the service does', () => {
+    expect(dclBaseUrlFrom({})).toBe('https://on.dcl.csa-iot.org/dcl')
+    expect(dclBaseUrlFrom({ DCL_BASE_URL: '' })).toBe('https://on.dcl.csa-iot.org/dcl')
+    expect(() => dclBaseUrlFrom({ DCL_BASE_URL: 'http://on.dcl.csa-iot.org/dcl' })).toThrow(
+      /https:/,
+    )
   })
 
   it('refuses a signing key that is not an EC key', () => {
