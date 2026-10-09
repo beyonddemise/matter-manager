@@ -287,7 +287,8 @@ export function userRecords(
     async update(email, update) {
       const written = await mutate(email, (existing) => {
         if (existing === undefined) {
-          throw new Error(`No record for ${email}; ensure one before updating it.`)
+          // No address in the message: an error reaches the log, and the address must not.
+          throw new Error('No record to update; ensure one first.')
         }
         return {
           ...existing,

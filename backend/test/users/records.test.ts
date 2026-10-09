@@ -336,3 +336,20 @@ describe('the waitlist fields in the profile', () => {
     expect(profile).not.toHaveProperty('requestedAt')
   })
 })
+
+describe('update without a record', () => {
+  it('refuses, and the error names neither the address nor the record id', async () => {
+    const { couch } = fakeCouch()
+    const error = await userRecords(couch, () => 0)
+      .update(ADA.email, { locale: 'de' })
+      .catch((caught: unknown) => caught)
+
+    expect(error).toBeInstanceOf(Error)
+    // Errors reach the log, and neither the address nor its base64url id may.
+    const message = (error as Error).message
+    expect(message).toMatch(/ensure one first/)
+    expect(message).not.toContain('@')
+    expect(message).not.toContain(ADA.email)
+    expect(message).not.toContain(userDocId(ADA.email))
+  })
+})
