@@ -200,7 +200,8 @@ design left open:
   plan name and as a price, so it has one translation.
 - **The shell** caches the profile returned by `PUT`/`DELETE` and re-reads its facts, so the
   dialog and an offline reload agree with the server. After a 409 it fetches the profile again in
-  the background, as startup does, so a stale "Your plan" corrects itself.
+  the background, as startup does, so a stale "Your plan" corrects itself. That read is dropped
+  when a later change lands first, and any answer arriving after a sign-out is not cached.
 - **Leaving** says "You left the waitlist." in the dialog's status region while the dialog stays
   open, and in the shell's live region when leaving the top plan takes the dialog away.
 

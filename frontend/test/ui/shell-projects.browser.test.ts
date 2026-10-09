@@ -1607,6 +1607,71 @@ describe('upgrading', () => {
     expect(element.querySelector('[data-plan-card="free"].app-plan-current')).not.toBeNull()
   })
 
+  it('drops a re-read that a later change overtook', async () => {
+    // The 409's profile read is slow; a join that succeeds meanwhile must not be overwritten.
+    let readArrives: (fresh: Profile) => void = () => {}
+    const readProfile = vi.fn(
+      () =>
+        new Promise<Profile | undefined>((resolve) => {
+          readArrives = resolve
+        }),
+    )
+    const waitlist = fakeWaitlist((call) =>
+      call.kind === 'join' && call.plan === 'member'
+        ? { kind: 'already-on-plan' }
+        : { kind: 'done', profile: serverProfile({ planRequested: 'pro', requestedAt: AT }) },
+    )
+    const { element, store } = await mount({
+      cachedProfile: profile({ plan: 'free', projectLimit: 1 }),
+      waitlist: waitlist.api,
+      readProfile,
+    })
+    await inputSettles(element, (i) => i.plan === 'free', 'plan never read')
+    const dialog = await openUpgrade(element)
+
+    ;(dialog.querySelector('[data-join="member"]') as HTMLElement).click()
+    await waitUntil(() => readProfile.mock.calls.length === 1, 'never read again')
+    await waitUntil(() => !element.waitlistBusy, 'still busy')
+    ;(dialog.querySelector('[data-join="pro"]') as HTMLElement).click()
+    await waitUntil(() => dialog.querySelector('[data-waiting]') !== null, 'the join never showed')
+
+    readArrives(serverProfile())
+    await element.updateComplete
+    await new Promise((settle) => setTimeout(settle, 50))
+
+    expect(await store.cache().readProfile()).toMatchObject({ planRequested: 'pro' })
+    expect(dialog.querySelector('[data-waiting]')).not.toBeNull()
+  })
+
+  it('caches nothing a change brings back after the account signed out', async () => {
+    let answer: (outcome: WaitlistOutcome) => void = () => {}
+    const waitlist = fakeWaitlist(
+      () =>
+        new Promise<WaitlistOutcome>((resolve) => {
+          answer = resolve
+        }),
+    )
+    const { element, store } = await mount({
+      cachedProfile: profile({ plan: 'free', projectLimit: 1 }),
+      waitlist: waitlist.api,
+    })
+    await inputSettles(element, (i) => i.plan === 'free', 'plan never read')
+    const dialog = await openUpgrade(element)
+    ;(dialog.querySelector('[data-join="member"]') as HTMLElement).click()
+    await waitUntil(() => waitlist.calls.length === 1, 'never asked')
+
+    await waitUntil(() => element.querySelector('nav [data-sign-out]') !== null, 'not in the menu')
+    ;(element.querySelector('nav [data-sign-out]') as HTMLElement).click()
+    await waitUntil(() => element.querySelector('[data-confirm-sign-out]') !== null, 'no dialog')
+    ;(element.querySelector('[data-confirm-sign-out]') as HTMLElement).click()
+    await waitUntil(() => element.session === 'signed-out', 'never signed out')
+
+    answer({ kind: 'done', profile: serverProfile({ planRequested: 'member', requestedAt: AT }) })
+    await waitUntil(() => !element.waitlistBusy, 'still busy')
+
+    expect(await store.cache().readProfile()).not.toHaveProperty('planRequested')
+  })
+
   it('says it left the waitlist in the dialog when the dialog stays open', async () => {
     const waitlist = fakeWaitlist(() => ({ kind: 'done', profile: serverProfile() }))
     const { element } = await mount({

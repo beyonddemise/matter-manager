@@ -238,6 +238,11 @@ export class AppShell extends LitElement implements ViewHost {
   declare waitlistLeft: boolean
   /** Injected by tests. Unset in the application, where it reaches the real API. */
   declare waitlist?: WaitlistApi
+  /**
+   * Counts waitlist changes, so a background profile read started by one can tell that a later
+   * change has landed since, and drop its older answer.
+   */
+  private waitlistChanges = 0
   /** Reads the account's profile from the server; injected by tests, the real API otherwise. */
   declare readProfile?: () => Promise<Profile | undefined>
   /** Whether the "session ended" notice is showing. Dismissed by the reader, never by timeout. */
@@ -781,8 +786,13 @@ export class AppShell extends LitElement implements ViewHost {
     this.waitlistBusy = true
     this.waitlistProblem = undefined
     this.waitlistLeft = false
+    this.waitlistChanges += 1
+    // As in `startSyncing`: an answer arriving after a sign-out belongs to the account that left,
+    // and must not be cached for whoever comes next.
+    const generation = this.projects.generation
     try {
-      await this.settleWaitlist(await change(this.waitlist ?? waitlistClient()), leaving)
+      const outcome = await change(this.waitlist ?? waitlistClient())
+      if (this.projects.isCurrent(generation)) await this.settleWaitlist(outcome, leaving)
     } finally {
       this.waitlistBusy = false
     }
@@ -828,12 +838,14 @@ export class AppShell extends LitElement implements ViewHost {
    * dialog already shows stands, and nothing from the profile goes into a log.
    */
   private async rereadProfile(): Promise<void> {
-    // As in `startSyncing`: a sign-out while the read is in flight must not cache the account
-    // that was left.
+    // Dropped if the account signed out meanwhile, or if a later change landed: its answer is
+    // newer than this read's, and writing this one over it would undo it.
     const generation = this.projects.generation
+    const change = this.waitlistChanges
+    const overtaken = () => !this.projects.isCurrent(generation) || change !== this.waitlistChanges
     try {
       const fresh = await (this.readProfile ?? (() => profile().read()))()
-      if (fresh === undefined || !this.projects.isCurrent(generation)) return
+      if (fresh === undefined || overtaken()) return
       await (this.projectStore ?? localProjectDefaults)
         .cache()
         .writeProfile(cachedProfileOf(fresh, new Date().toISOString()))
