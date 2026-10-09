@@ -288,6 +288,7 @@ describe('every implemented route answers what the contract declares', () => {
    *   a refresh token back, which is then presented the way every later call does.
    * - `POST /auth/signout` **with a body**, so the revoke path runs and not only the no-body one.
    * - `PUT /customer` **with an `email`**, which reaches the operator's 200.
+   * - `PUT /waitlist` **with a plan**, which reaches the 200, and a pro caller's 409.
    *
    * Async because the refresh token is a real one, issued by this same server.
    */
@@ -340,6 +341,31 @@ describe('every implemented route answers what the contract declares', () => {
           payload: { email: 'someone@example.test', plan: 'member' },
           expected: 200,
         },
+      ]
+    }
+    if (route === 'PUT /waitlist') {
+      // The empty-body pass reaches the 400. The credentialed caller is free, so asking for
+      // `member` reaches the 200; a pro account asking for `member` reaches the 409.
+      const email = 'drift-pro@example.test'
+      const sub = 'drift-pro'
+      const fake = fakeInUse
+      if (fake === undefined) throw new Error('the drift fixture lost its fake CouchDB')
+      fake.documents.set(`${USERS_DB}/${userDocId(email)}`, {
+        _id: userDocId(email),
+        type: 'user',
+        sub,
+        email,
+        plan: 'pro',
+      })
+      const pro = mintToken(SIGNING, {
+        purpose: 'access',
+        sub,
+        exp: Math.floor(Date.now() / 1000) + 3600,
+        email,
+      })
+      return [
+        { headers: credentials(), payload: { plan: 'member' }, expected: 200 },
+        { headers: { authorization: `Bearer ${pro}` }, payload: { plan: 'member' }, expected: 409 },
       ]
     }
     if (route === 'POST /catalog/lookup') {

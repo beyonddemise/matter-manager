@@ -321,6 +321,56 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/NotAnOperator' }
 
+  /waitlist:
+    put:
+      tags: [profile]
+      summary: Join the waitlist for a plan, or change the plan waited for
+      description: |
+        Records which plan the caller would like, so an operator can see the demand (#224).
+        Nothing is sold and no entitlement changes: `planRequested` is a request, not a plan, and
+        `plan` is still set only by an operator through `PUT /customer`.
+
+        Joining again overwrites `planRequested` and `requestedAt`. The caller's record is
+        created if it has none, because the server is now keeping something for them.
+
+        Whether the caller already has the plan is judged by plan order, never by comparing
+        against a tier (ADR 0009).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WaitlistRequest' }
+      responses:
+        '200':
+          description: The caller's profile, now carrying `planRequested` and `requestedAt`
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Profile' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409':
+          description: |
+            The caller already has the requested plan or a higher one. Nothing was written and no
+            record was created.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/AlreadyOnPlan' }
+
+    delete:
+      tags: [profile]
+      summary: Leave the waitlist
+      description: |
+        Removes `planRequested` and `requestedAt`. Idempotent: a caller who is not waiting, or has
+        no record, is answered with their profile and nothing is written. It never creates a
+        record. Takes no body.
+      responses:
+        '200':
+          description: The caller's profile, without `planRequested` and `requestedAt`
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Profile' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
   /projects:
     get:
       tags: [projects]
@@ -885,6 +935,18 @@ components:
             A number rather than a null or an absence, so one fact arrives in one shape.
             Reported at all so a page can say "3 of 5 used" without a second copy of the policy
             table, which is the duplication ADR 0009 exists to prevent.
+        planRequested:
+          type: string
+          enum: [member, pro]
+          description: |
+            The plan the account is waiting for (`PUT /waitlist`). Absent unless it is waiting. A
+            request, never an entitlement: `plan` is what the account may do.
+        requestedAt:
+          type: string
+          format: date-time
+          description: >-
+            When the account joined the waitlist or last changed the plan it waits for. Present
+            exactly when `planRequested` is.
 
     ProjectSummary:
       type: object
@@ -1035,6 +1097,33 @@ components:
         reason:
           type: string
           const: project-limit-reached
+          description: >-
+            Pinned, so a handler that renamed it or stopped sending it fails the contract check
+            rather than silently becoming a refusal no client recognises.
+
+    WaitlistRequest:
+      type: object
+      required: [plan]
+      properties:
+        plan:
+          type: string
+          enum: [member, pro]
+          description: The plan to wait for. `free` is refused with 400, because everybody has it.
+
+    AlreadyOnPlan:
+      type: object
+      description: |
+        Joining the waitlist was refused: the caller already has the requested plan or a higher
+        one.
+      required: [title, status, reason]
+      properties:
+        type: { type: string, format: uri }
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: string }
+        reason:
+          type: string
+          const: already-on-plan
           description: >-
             Pinned, so a handler that renamed it or stopped sending it fails the contract check
             rather than silently becoming a refusal no client recognises.
