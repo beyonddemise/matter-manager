@@ -21,7 +21,7 @@
  */
 
 import type { CachedProfile, LocalCache } from '../data/index.js'
-import { type Plan, planOf } from '../domain/plan.js'
+import { isPlan, type Plan, planOf } from '../domain/plan.js'
 import { accessToken } from './tokens.js'
 
 /** What a user may choose, matching the contract's enum. */
@@ -37,6 +37,10 @@ export interface Profile {
   readonly plan: Plan
   /** Projects the account may own; `-1` is unlimited. */
   readonly projectLimit: number
+  /** The plan the account is waiting for (#224); absent unless it is on the waitlist. */
+  readonly planRequested?: Plan
+  /** When it joined the waitlist or last changed the plan, ISO-8601. */
+  readonly requestedAt?: string
 }
 
 const LOCALES: readonly string[] = ['auto', 'en', 'de']
@@ -100,6 +104,60 @@ export function cachedPlan(cached: CachedProfile | undefined): Plan {
   return planOf(cached?.plan)
 }
 
+/** A plan the account is waiting for, and since when (#224). */
+export interface PlanRequest {
+  readonly plan: Plan
+  /** ISO-8601, as the server wrote it. */
+  readonly at: string
+}
+
+/**
+ * Whether a parsed body is a profile. Checked by shape at the trust boundary, as
+ * `isCatalogLookup` does: a proxy's HTML page or an older server must not be cached as one.
+ */
+export function isProfile(body: unknown): body is Profile {
+  if (typeof body !== 'object' || body === null) return false
+  const value = body as Record<string, unknown>
+  return (
+    typeof value.sub === 'string' &&
+    typeof value.email === 'string' &&
+    typeof value.displayName === 'string' &&
+    isLocale(value.locale) &&
+    isPlan(value.plan) &&
+    typeof value.projectLimit === 'number'
+  )
+}
+
+/**
+ * A profile in the shape `mm-local` caches it. `auto` is stored as no locale, and the waitlist
+ * pair is stored only when both halves are present.
+ */
+export function cachedProfileOf(profile: Profile, fetchedAt: string): CachedProfile {
+  return {
+    sub: profile.sub,
+    ...(profile.locale === 'auto' ? {} : { locale: profile.locale }),
+    email: profile.email,
+    name: profile.displayName,
+    plan: profile.plan,
+    projectLimit: profile.projectLimit,
+    ...(profile.planRequested === undefined || profile.requestedAt === undefined
+      ? {}
+      : { planRequested: profile.planRequested, requestedAt: profile.requestedAt }),
+    fetchedAt,
+  }
+}
+
+/**
+ * The cached waitlist request, or `undefined` when the account is not waiting or the cache holds
+ * something this build cannot read. Unlike {@link cachedPlan}, an unknown value is no request
+ * rather than a default: there is nothing safe to wait for in its place.
+ */
+export function cachedRequest(cached: CachedProfile | undefined): PlanRequest | undefined {
+  const plan = cached?.planRequested
+  const at = cached?.requestedAt
+  return isPlan(plan) && typeof at === 'string' ? { plan, at } : undefined
+}
+
 /**
  * Loads the profile, preferring the cache and correcting it from the server.
  *
@@ -141,19 +199,9 @@ export async function resolveProfileLocale(
     }
     if (profile === undefined) return
 
-    await cache
-      .writeProfile({
-        sub: profile.sub,
-        ...(profile.locale === 'auto' ? {} : { locale: profile.locale }),
-        email: profile.email,
-        name: profile.displayName,
-        plan: profile.plan,
-        projectLimit: profile.projectLimit,
-        fetchedAt: now(),
-      })
-      .catch(() => {
-        // A cache that will not accept a write still leaves this session correct.
-      })
+    await cache.writeProfile(cachedProfileOf(profile, now())).catch(() => {
+      // A cache that will not accept a write still leaves this session correct.
+    })
 
     onCached?.()
     if (profile.locale !== (immediate ?? 'auto')) onChange(profile.locale)

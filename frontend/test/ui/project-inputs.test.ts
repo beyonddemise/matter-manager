@@ -166,3 +166,26 @@ describe('the facts the page is computed from', () => {
     expect(facts).toEqual({ local: [], server: undefined, serverStale: true, plan: 'free' })
   })
 })
+
+describe('the waitlist request in the facts', () => {
+  it('is read from the cached profile', async () => {
+    await cache.writeProfile({
+      sub: 'google|1',
+      plan: 'free',
+      planRequested: 'member',
+      requestedAt: '2026-10-09T08:00:00.000Z',
+      fetchedAt: FETCHED,
+    })
+
+    expect((await readProjectFacts(cache, undefined)).request).toEqual({
+      plan: 'member',
+      at: '2026-10-09T08:00:00.000Z',
+    })
+  })
+
+  it('is absent when the account is not waiting', async () => {
+    await cache.writeProfile({ sub: 'google|1', plan: 'free', fetchedAt: FETCHED })
+
+    expect(await readProjectFacts(cache, undefined)).not.toHaveProperty('request')
+  })
+})

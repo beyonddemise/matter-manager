@@ -3,6 +3,9 @@ import type { CachedProfile, LocalCache } from '../../src/data/index.js'
 import {
   cachedLocale,
   cachedPlan,
+  cachedProfileOf,
+  cachedRequest,
+  isProfile,
   type Locale,
   type Profile,
   profileApi,
@@ -344,5 +347,76 @@ describe('talking to the profile endpoint', () => {
     await profileApi('https://api.test/', impl).read()
 
     expect(calls[0]?.url).toBe('https://api.test/profile')
+  })
+})
+
+describe('the waitlist request in the cache', () => {
+  const AT = '2026-10-09T08:00:00.000Z'
+  const fetchedAt = '2026-10-09T09:00:00.000Z'
+
+  it('caches the plan waited for and when, with everything else', () => {
+    expect(
+      cachedProfileOf({ ...PROFILE, planRequested: 'pro', requestedAt: AT }, fetchedAt),
+    ).toEqual({
+      sub: 'google|1234',
+      locale: 'de',
+      email: 'ada@example.com',
+      name: 'Ada',
+      plan: 'member',
+      projectLimit: 5,
+      planRequested: 'pro',
+      requestedAt: AT,
+      fetchedAt,
+    })
+  })
+
+  it('caches no request for a profile that is not waiting, and no `auto` locale', () => {
+    const cached = cachedProfileOf({ ...PROFILE, locale: 'auto' }, fetchedAt)
+
+    expect(cached).not.toHaveProperty('planRequested')
+    expect(cached).not.toHaveProperty('requestedAt')
+    expect(cached).not.toHaveProperty('locale')
+  })
+
+  it('reads the request back as a plan and a date', () => {
+    expect(cachedRequest({ sub: 'x', planRequested: 'pro', requestedAt: AT, fetchedAt })).toEqual({
+      plan: 'pro',
+      at: AT,
+    })
+  })
+
+  it.each([
+    ['nothing cached', undefined],
+    ['not waiting', { sub: 'x', fetchedAt }],
+    [
+      'a plan this build does not know',
+      { sub: 'x', planRequested: 'gold', requestedAt: AT, fetchedAt },
+    ],
+    ['a request without a date', { sub: 'x', planRequested: 'pro', fetchedAt }],
+  ])('reads no request for %s', (_case, cached) => {
+    expect(cachedRequest(cached)).toBeUndefined()
+  })
+
+  it('recognises a profile by its shape', () => {
+    expect(isProfile(PROFILE)).toBe(true)
+    expect(isProfile({ ...PROFILE, planRequested: 'pro', requestedAt: AT })).toBe(true)
+    expect(isProfile({ ...PROFILE, plan: 'gold' })).toBe(false)
+    expect(isProfile({ ...PROFILE, sub: undefined })).toBe(false)
+    expect(isProfile('<html>')).toBe(false)
+    expect(isProfile(null)).toBe(false)
+  })
+
+  it('caches the server’s request when the locale is resolved', async () => {
+    const { cache, current } = fakeCache()
+    const waiting = { ...PROFILE, planRequested: 'pro' as const, requestedAt: AT }
+
+    await resolveProfileLocale(
+      { read: async () => waiting, update: async () => waiting },
+      cache,
+      () => {},
+    )
+    await settled()
+
+    expect(current()).toMatchObject({ planRequested: 'pro', requestedAt: AT })
   })
 })
