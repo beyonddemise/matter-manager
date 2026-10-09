@@ -459,7 +459,12 @@ function spyBackfill() {
  * @returns the element, the `report` that plays an outcome into it, and the spies for what the
  *   shell did about it
  */
-const driven = async (connectivity: ConnectivitySource = NETWORK, backfill = spyBackfill()) => {
+const driven = async (
+  connectivity: ConnectivitySource = NETWORK,
+  backfill = spyBackfill(),
+  /** False leaves `backfill` unbound, so the shell would build the real one if anything asked. */
+  injectBackfill = true,
+) => {
   // Two downloaded copies, so the projects the tests report states for are ones replication is
   // handed: states of anything else are forgotten at the next refresh.
   const store = isolatedProjectStore()
@@ -493,7 +498,7 @@ const driven = async (connectivity: ConnectivitySource = NETWORK, backfill = spy
         return { stop }
       }}
       .connectivity=${connectivity}
-      .backfill=${backfill}
+      .backfill=${injectBackfill ? backfill : undefined}
       .followLocale=${async () => undefined}
       .listProjects=${async () =>
         ['p1', 'p2'].map((projectId) => ({
@@ -723,4 +728,16 @@ it('backfills when a view asks, only while signed in and online, without stoppin
   backfill.trigger.mockClear()
   window.dispatchEvent(new CustomEvent(BACKFILL_WANTED))
   expect(backfill.trigger).not.toHaveBeenCalled()
+})
+
+it('builds no real backfill just to stop it, when the session ends or is signed out', async () => {
+  // #238: the stop sites go through `stopBackfill()`, which stops only a backfill that exists.
+  // `realBackfill` is where the shell keeps the one it built; it must still be empty.
+  for (const outcome of [{ kind: 'ended' }, { kind: 'signed-out' }] as const) {
+    const { element, play } = await driven(NETWORK, spyBackfill(), false)
+    await play(outcome)
+    expect((element as unknown as { realBackfill?: unknown }).realBackfill).toBeUndefined()
+    element.remove()
+    expect((element as unknown as { realBackfill?: unknown }).realBackfill).toBeUndefined()
+  }
 })
