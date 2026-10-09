@@ -82,6 +82,19 @@ describe('the order rooms are shown in', () => {
     expect(ordered.map((entry) => entry.path)).toEqual(['Attic', 'Ground Floor/Kitchen'])
   })
 
+  it('keeps a never-arranged sub-room straight after its parent (#242)', () => {
+    // Segment by segment, like the device list, so a space in a sibling's name no longer splits
+    // the attic in two. Only for rooms nobody arranged, and compared by code point here, where
+    // the device list uses the locale collator.
+    const ordered = roomsInOrder([
+      room('b', 'Attic Bedroom'),
+      room('s', 'Attic/Studio'),
+      room('a', 'Attic'),
+    ])
+
+    expect(ordered.map((entry) => entry.path)).toEqual(['Attic', 'Attic/Studio', 'Attic Bedroom'])
+  })
+
   it('does not modify the list it was given', () => {
     // `sort` is in place, and a comparator applied to the caller's array would reorder a room
     // list somebody else is rendering.

@@ -136,7 +136,12 @@ describe('printing the device list', () => {
     expect(row).not.toBeNull()
     expect(getComputedStyle(row as Element).display).not.toBe('none')
     expect(element.textContent).toContain('Ceiling light')
-    expect(element.textContent).toContain('Ground Floor/Kitchen')
+    // The room heading prints too, as its breadcrumb (#242): `Ground Floor › Kitchen`.
+    const heading = element.querySelector('[data-room="Ground Floor/Kitchen"] h2')
+    expect(heading).not.toBeNull()
+    expect(getComputedStyle(heading as Element).display).not.toBe('none')
+    expect(heading?.querySelector('[data-room-parent]')?.textContent).toBe('Ground Floor')
+    expect(heading?.querySelector('[data-room-own]')?.textContent).toBe('Kitchen')
   })
 
   it('does not split a device across a page boundary', async () => {

@@ -289,3 +289,62 @@ describe('ordering', () => {
     expect(devices.map((d) => d.name)).toEqual(['Zulu', 'Alpha'])
   })
 })
+
+describe('room hierarchy (#242)', () => {
+  const ATTIC = room('room:attic', 'Attic')
+  const STUDIO = room('room:studio', 'Attic/Studio')
+  const ATTIC_BEDROOM = room('room:attic-bedroom', 'Attic Bedroom')
+  const GROUND = room('room:ground', 'Ground Floor')
+  const GROUND_KITCHEN = room('room:ground-kitchen', 'Ground Floor/Kitchen')
+  const PANTRY = room('room:pantry', 'Ground Floor/Kitchen/Pantry')
+  const HOUSE = [PANTRY, ATTIC_BEDROOM, GROUND_KITCHEN, STUDIO, GROUND, ATTIC]
+
+  /** One device in each of the given rooms, named after the room so a failure is readable. */
+  const oneIn = (...rooms: readonly RoomDocument[]) =>
+    rooms.map((entry) => device(`Lamp in ${entry.path}`, entry._id))
+
+  it('puts sub-rooms straight after their parent, before a sibling with a longer name', () => {
+    expect(paths(browseDevices(oneIn(...HOUSE), HOUSE))).toEqual([
+      'Attic',
+      'Attic/Studio',
+      'Attic Bedroom',
+      'Ground Floor',
+      'Ground Floor/Kitchen',
+      'Ground Floor/Kitchen/Pantry',
+    ])
+  })
+
+  it('produces no heading for a parent that holds no devices itself', () => {
+    // The breadcrumb on `Attic › Studio` already says where it is; an empty `Attic` group
+    // would break the "never empty" promise every consumer relies on.
+    expect(paths(browseDevices(oneIn(STUDIO, ATTIC_BEDROOM), HOUSE))).toEqual([
+      'Attic/Studio',
+      'Attic Bedroom',
+    ])
+  })
+
+  it('keeps three levels in order when the middle one is empty', () => {
+    expect(paths(browseDevices(oneIn(PANTRY, GROUND, ATTIC_BEDROOM), HOUSE))).toEqual([
+      'Attic Bedroom',
+      'Ground Floor',
+      'Ground Floor/Kitchen/Pantry',
+    ])
+  })
+
+  it('collates each segment with the supplied comparator', () => {
+    const armel = room('room:armel', 'Haus/Armel')
+    const aermel = room('room:aermel', 'Haus/Ärmel')
+    const zulu = room('room:zulu', 'Haus/Zulu')
+    const rooms = [zulu, aermel, armel]
+
+    expect(
+      paths(browseDevices(oneIn(...rooms), rooms, { compare: new Intl.Collator('de').compare })),
+    ).toEqual(['Haus/Armel', 'Haus/Ärmel', 'Haus/Zulu'])
+  })
+
+  it('still puts devices without a room last', () => {
+    const groups = browseDevices([device('Orphan', 'room:gone'), ...oneIn(STUDIO, ATTIC)], HOUSE)
+
+    expect(paths(groups)).toEqual(['Attic', 'Attic/Studio', ''])
+  })
+})

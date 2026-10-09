@@ -7,6 +7,7 @@ import {
   entriesOf,
   layoutInventory,
   type RoomDocument,
+  selectForExport,
 } from '../../../src/domain/index.js'
 import {
   buildInventoryPdf,
@@ -317,5 +318,93 @@ describe('free text longer than its column', () => {
       const above = column[index]?.y ?? Number.NaN
       expect(above - line.y).toBeGreaterThanOrEqual(9)
     })
+  })
+})
+
+/**
+ * #242: the PDF consumes `browseDevices`, so it inherits the segment-wise room order, and it
+ * draws the same breadcrumb heading as the device list. A heading of `Attic/Studio` would read
+ * as a file name on paper; `Attic › Studio` reads as a place.
+ */
+describe('sub-rooms', () => {
+  const at = (id: string, path: string): RoomDocument => ({
+    _id: id,
+    _rev: '1-a',
+    updatedAt: '2026-08-19T08:00:00.000Z',
+    type: 'room',
+    path,
+  })
+  const rooms = [
+    at('room:bedroom', 'Attic Bedroom'),
+    at('room:studio', 'Attic/Studio'),
+    at('room:attic', 'Attic'),
+  ]
+  const devices = [
+    device({ name: 'Bedroom lamp', roomId: 'room:bedroom' }),
+    device({ name: 'Studio lamp', roomId: 'room:studio' }),
+    device({ name: 'Ceiling lamp', roomId: 'room:attic' }),
+  ]
+
+  it('heads each room with its breadcrumb, sub-rooms straight after their parent', async () => {
+    const bytes = await buildInventoryPdf(browseDevices(devices, rooms), { labels: LABELS })
+    const lines = await extractText(bytes)
+    const headings = lines.filter((line) => line.startsWith('Attic'))
+
+    expect(headings).toEqual(['Attic', 'Attic › Studio', 'Attic Bedroom'])
+    expect(lines).not.toContain('Attic/Studio')
+  })
+
+  it('heads every sub-room of an exported parent with its breadcrumb, in order', async () => {
+    // A room export takes the room with its sub-rooms, here a parent with no devices of its
+    // own: the PDF is still one section per room, each with its full breadcrumb.
+    const house = [
+      at('room:pantry', 'Ground Floor/Kitchen/Pantry'),
+      at('room:kitchen', 'Ground Floor/Kitchen'),
+      at('room:groundling', 'Ground Floorboards'),
+      at('room:attic', 'Attic'),
+    ]
+    const inside = [
+      device({ name: 'Fridge plug', roomId: 'room:pantry' }),
+      device({ name: 'Oven plug', roomId: 'room:kitchen' }),
+      device({ name: 'Board sensor', roomId: 'room:groundling' }),
+      device({ name: 'Ceiling lamp', roomId: 'room:attic' }),
+    ]
+    const chosen = selectForExport(browseDevices(inside, house), {
+      kind: 'room',
+      path: 'Ground Floor',
+    })
+    const lines = await extractText(await buildInventoryPdf(chosen, { labels: LABELS }))
+
+    expect(lines.filter((line) => line.startsWith('Ground Floor') || line === 'Attic')).toEqual([
+      'Ground Floor › Kitchen',
+      'Ground Floor › Kitchen › Pantry',
+    ])
+  })
+
+  it('cuts a long breadcrumb heading to the text column, with an ellipsis', async () => {
+    // A three-level path of long German names is wider than A4: drawn as it was, the heading
+    // ran off the page. It is cut like any other free text, and the rule under it still fits.
+    const long = at(
+      'room:long',
+      'Nebengebäude mit Werkstatt und Garage/Obergeschoss Lagerraum für Gartenmöbel/Hinterer Abstellbereich unter der Dachschräge',
+    )
+    const bytes = await buildInventoryPdf(
+      browseDevices([device({ name: 'Shelf light', roomId: 'room:long' })], [long]),
+      { labels: LABELS },
+    )
+
+    const pdf = await PDFDocument.create()
+    const bold = await pdf.embedFont(StandardFonts.HelveticaBold)
+    const headings = (await extractPlacedText(bytes)).filter(
+      (line) => line.text.startsWith('Nebengebäude') && Math.abs(line.x - A4.margin) < 0.01,
+    )
+
+    expect(headings).toHaveLength(1)
+    const heading = headings[0] as (typeof headings)[number]
+    expect(heading.text.endsWith('…')).toBe(true)
+    expect(heading.text).toContain(' › ')
+    expect(bold.widthOfTextAtSize(heading.text, heading.size)).toBeLessThanOrEqual(
+      A4.width - 2 * A4.margin,
+    )
   })
 })

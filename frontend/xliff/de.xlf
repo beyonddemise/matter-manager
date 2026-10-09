@@ -990,6 +990,19 @@
   <source>Factory reset</source>
   <target>Auf Werkseinstellungen zurücksetzen</target>
 </trans-unit>
+<trans-unit id="s7e3aa186499429cf">
+  <source>Export…</source>
+  <target>Exportieren…</target>
+</trans-unit>
+<trans-unit id="s91dc3ada29474cd0">
+  <source>Export this room and its sub-rooms</source>
+  <target>Diesen Raum mit allen Unterräumen exportieren</target>
+</trans-unit>
+<trans-unit id="s1c359a694b57cd0c">
+  <source>, with its sub-rooms</source>
+  <note from="lit-localize">Follows a room name in the export menu: "Ground Floor, with its sub-rooms".</note>
+  <target>, mit allen Unterräumen</target>
+</trans-unit>
 </body>
 </file>
 </xliff>

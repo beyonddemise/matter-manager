@@ -20,6 +20,7 @@ import {
   layoutInventory,
   manufacturerName,
   type PageGeometry,
+  roomPathBreadcrumb,
 } from '../../domain/index.js'
 import { ExportCancelled, type InventoryProgress } from './progress.js'
 import { drawQr } from './qr.js'
@@ -222,13 +223,16 @@ function drawHeading(
   context: Drawing & { readonly bold: Awaited<ReturnType<PDFDocument['embedFont']>> },
 ): void {
   const { yOf, geometry, bold, ink, labels } = context
-  const path = block.path === '' ? labels.withoutRoom : block.path
+  // The same breadcrumb the device list shows (#242): `Attic › Studio`, not `Attic/Studio`.
+  // Sub-rooms already follow their parent, because the groups come from `browseDevices`.
+  const path = block.path === '' ? labels.withoutRoom : roomPathBreadcrumb(block.path)
   const text = block.continued ? labels.continued(path) : path
 
-  // Every string that reaches `drawText` goes through this. Missing one is not a rendering
-  // glitch: `pdf-lib` throws on a character WinAnsi cannot encode, so one Polish room name
-  // would lose the whole export. See `win-ansi.ts`.
-  page.drawText(winAnsiSafe(text), {
+  // Fitted to the column, which also makes it WinAnsi-safe. A three-level breadcrumb of long
+  // names is wider than the page (#242); cut with an ellipsis it stays on one line above its
+  // rule. Missing the WinAnsi step is not a rendering glitch: `pdf-lib` throws on a character
+  // WinAnsi cannot encode, so one Polish room name would lose the whole export.
+  page.drawText(fitToWidth(text, bold, HEADING_SIZE, geometry.width - 2 * geometry.margin), {
     x: geometry.margin,
     y: yOf(block.top + HEADING_SIZE),
     size: HEADING_SIZE,

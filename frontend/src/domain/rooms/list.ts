@@ -21,6 +21,7 @@
 import { chooseRoom } from '../documents/draft.js'
 import type { DeviceDocument, RoomDocument, Unsaved } from '../documents/types.js'
 import {
+  compareRoomPaths,
   isNearDuplicateRoomPath,
   normaliseRoomPath,
   renameRoomPath,
@@ -66,6 +67,11 @@ const compareText = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 
 /**
  * The order to show rooms in: the ones somebody arranged, then the rest by path.
  *
+ * Among the rooms nobody arranged, the path is compared segment by segment (#242), so a sub-room
+ * follows its parent when both are unarranged. When the parent was arranged and the sub-room was
+ * not, the parent sits among the arranged rooms and the sub-room among the rest, apart from it.
+ * The comparison is by code point, not the locale collator the device list uses.
+ *
  * `sortKey` is a **manual position over the whole list**, not a position among siblings. The
  * hierarchy here is derived from the path (ADR 0006), so an intermediate level like
  * `Ground Floor` may have no document at all — and a sibling ordering would need a `sortKey` on
@@ -85,7 +91,9 @@ export function roomsInOrder(rooms: readonly RoomDocument[]): readonly RoomDocum
       if (b.sortKey === undefined) return -1
       return a.sortKey - b.sortKey
     }
-    return compareText(a.path, b.path)
+    // Segment by segment (#242): among unarranged rooms, `Attic/Studio` comes after `Attic`
+    // and before `Attic Bedroom`, which a whole-string comparison got the other way round.
+    return compareRoomPaths(a.path, b.path, compareText)
   })
 }
 
