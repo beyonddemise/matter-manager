@@ -1,7 +1,7 @@
 # Upgrade dialog: plan comparison and a free waitlist (design)
 
 Date: 2026-10-09
-Status: proposed
+Status: approved 2026-10-09
 Issue: #224. The decisions are recorded in the issue's comments.
 
 ## What this is for
