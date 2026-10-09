@@ -425,6 +425,28 @@ export class DeviceView extends LitElement {
   }
 
   /**
+   * Removes the device; on a conflict, re-reads it and removes the fresh revision, once.
+   *
+   * Why: `remove` needs the current `_rev`, and a background backfill write moves it on (#238),
+   * which the add form's backfill request makes likely for a device just added. The user
+   * confirmed deleting *this device*, not a revision of it, so the fresh one goes. A device
+   * already gone by the re-read was deleted elsewhere: the outcome the user asked for.
+   *
+   * @throws whatever the remove throws, other than a conflict resolved this way
+   */
+  private async removeFresh(device: DeviceDocument): Promise<void> {
+    const devices = this.repos().devices
+    try {
+      await devices.remove(device)
+    } catch (error) {
+      if (!isConflict(error)) throw error
+      const fresh = await devices.get(device._id)
+      if (fresh === undefined) return
+      await devices.remove(fresh)
+    }
+  }
+
+  /**
    * Deletes the device, and then leaves — the page it was showing no longer exists.
    *
    * Reached only from the confirmation dialog. The warning there names the irreversible part
@@ -436,7 +458,7 @@ export class DeviceView extends LitElement {
     this.busy = true
     const token = this.request
     try {
-      await this.repos().devices.remove(device)
+      await this.removeFresh(device)
     } catch {
       // The dialog stays open, now saying why. Closing it would look like the delete had
       // happened, which for the one irreversible action here is the wrong way to be wrong.

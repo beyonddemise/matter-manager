@@ -1143,6 +1143,54 @@ describe('a revision another writer moved on', () => {
     expect(element.remarkError).toBeUndefined()
   })
 
+  it('deletes the device, whatever the other writer stored', async () => {
+    await seed()
+    const element = await page()
+    await backgroundWrite()
+
+    click(element, '[data-delete]')
+    await element.updateComplete
+    click(element, '[data-confirm-delete]')
+
+    await waitUntil(
+      async () => (await database.repositories.devices.get(DEVICE_ID)) === undefined,
+      'the device was never deleted',
+      { timeout: 3000 },
+    )
+    expect(element.failure).toBeUndefined()
+  })
+
+  it('treats a device gone by the re-read as deleted', async () => {
+    await seed()
+    const real = database.repositories
+    let removes = 0
+    const repositories: ProjectRepositories = {
+      ...real,
+      devices: {
+        ...real.devices,
+        // The first remove loses the race; by the re-read, another replica has deleted it.
+        remove: async () => {
+          removes += 1
+          throw Object.assign(new Error('Document update conflict'), {
+            status: 409,
+            name: 'conflict',
+          })
+        },
+        get: async (id: string) => (removes > 0 ? undefined : real.devices.get(id)),
+      },
+    }
+    const element = await page(UUID, repositories)
+
+    window.location.hash = `#/devices/${UUID}`
+    click(element, '[data-delete]')
+    await element.updateComplete
+    click(element, '[data-confirm-delete]')
+
+    await waitUntil(() => window.location.hash === '#/devices', 'never left the deleted device')
+    expect(element.failure).toBeUndefined()
+    expect(removes).toBe(1)
+  })
+
   it('retries once, then reports the failure', async () => {
     await seed()
     const { repositories, saves } = alwaysConflicting()
