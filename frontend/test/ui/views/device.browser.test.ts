@@ -976,6 +976,25 @@ describe('what the catalogue knows', () => {
       .toBeVisible()
   })
 
+  it("names each page's pairing group by its own label, so two pages cannot cross-wire (#248)", async () => {
+    await seed(lamp(CATALOGUED))
+    const first = await page()
+    const second = await page()
+
+    const wiring = [first, second].map((element) => {
+      const group = element.querySelector('[data-pairing]') as HTMLElement
+      const id = group.getAttribute('aria-labelledby') ?? ''
+      // Resolved the way `aria-labelledby` resolves it: the first match in the document.
+      return { id, label: document.getElementById(id), own: group.querySelector(`[id="${id}"]`) }
+    })
+    expect(wiring[0]?.id).not.toBe(wiring[1]?.id)
+    for (const { id, label, own } of wiring) {
+      expect(id).not.toBe('')
+      expect(label).toBe(own)
+      expect(label?.textContent?.trim()).toBe('Pairing')
+    }
+  })
+
   it('names the pairing tags as a group by their label', async () => {
     await seed(lamp(CATALOGUED))
     const element = await page()

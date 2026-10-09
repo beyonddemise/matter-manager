@@ -730,6 +730,12 @@ export class DeviceView extends LitElement {
     `
   }
 
+  /** Distinguishes this page's ids from another instance's. See {@link pairingLabelId}. */
+  private static instances = 0
+
+  /** The id of the pairing group's label, unique per instance (`aria-labelledby` needs one). */
+  private readonly pairingLabelId = `device-view-${++DeviceView.instances}-pairing-label`
+
   /**
    * One labelled fact, or nothing when there is no fact to state.
    *
@@ -826,15 +832,16 @@ export class DeviceView extends LitElement {
     if (tags.length === 0) return ''
     // A group named by its label, so a screen reader announces "Pairing" on entering the tags
     // rather than reading a caption and then tags that seem unrelated to it (WCAG 2.2 1.3.1).
-    // The view renders into the light DOM, one device page at a time, so the id is unique.
+    // The view renders into the light DOM, so its ids share the document with every other
+    // instance's: the id is prefixed per instance (#248), as the device list's heading ids are.
     return html`
       <div
         class="wa-stack wa-gap-3xs"
         role="group"
-        aria-labelledby="device-pairing-label"
+        aria-labelledby=${this.pairingLabelId}
         data-pairing
       >
-        <small class="app-empty" id="device-pairing-label">${msg('Pairing')}</small>
+        <small class="app-empty" id=${this.pairingLabelId}>${msg('Pairing')}</small>
         <div class="wa-cluster wa-gap-2xs">${tags}</div>
       </div>
     `
