@@ -8,6 +8,12 @@
  * **Test-vendor codes never leave the device** ({@link answeringTestVendors}, #238): the server
  * would answer them without the DCL anyway, so they are answered here.
  *
+ * **One rate-limit budget per account.** The API counts lookups per signed-in user, 120 in any
+ * 300 seconds (`catalog` in `backend/src/security/register.ts`), and the add form and backfill
+ * draw on that one budget: a long backfill pass can leave the add form `rate-limited`, and the
+ * form then saves without names, which the next backfill run fills in. Backfill's one request a
+ * second is what keeps a pass inside the budget; test-vendor codes cost nothing from it.
+ *
  * **It never throws.** Every caller treats a failed lookup the same way (save without names, let
  * backfill catch up), so a failure is an outcome to switch on, not an exception to remember to
  * catch. The status decides the outcome, never the problem title.

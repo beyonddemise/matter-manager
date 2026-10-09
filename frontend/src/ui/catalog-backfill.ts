@@ -136,6 +136,8 @@ async function runOnce(deps: BackfillDependencies, signal: AbortSignal): Promise
       if (signal.aborted) return
 
       if (outcome.kind === 'rate-limited') {
+        // The budget is shared with the add form (see `catalog.ts`), so a 429 here may be the
+        // user's own lookups, not this pass; waiting as asked is right either way.
         await deps.wait(outcome.retryAfterSeconds * 1000, signal)
         // The retry-after already was the pause; the same device is asked again at once.
         first = true
