@@ -5,6 +5,9 @@
  * never appears in a URL, a log or an error. The backend decodes it in memory and sends only
  * vendor and product ids to the DCL (spec §Security). Nothing here writes to the console.
  *
+ * **Test-vendor codes never leave the device** ({@link answeringTestVendors}, #238): the server
+ * would answer them without the DCL anyway, so they are answered here.
+ *
  * **It never throws.** Every caller treats a failed lookup the same way (save without names, let
  * backfill catch up), so a failure is an outcome to switch on, not an exception to remember to
  * catch. The status decides the outcome, never the problem title.
@@ -12,7 +15,7 @@
  * @module
  */
 
-import type { CatalogLookup } from '../domain/index.js'
+import { type CatalogLookup, testVendorAnswer } from '../domain/index.js'
 
 /** What a lookup came to. */
 export type LookupOutcome =
@@ -151,6 +154,31 @@ export function catalogApi(
         return UNAVAILABLE
       }
       return isCatalogLookup(body) ? { kind: 'found', lookup: body } : UNAVAILABLE
+    },
+  }
+}
+
+/**
+ * Answers test-vendor codes (0xFFF1–0xFFF4) locally, and passes every other code to `api`.
+ *
+ * A wrapper rather than a branch inside {@link catalogApi}, so it sits in front of everything a
+ * lookup goes through (the add form and backfill both take theirs from `composition.catalog()`)
+ * and the HTTP client stays a plain HTTP client. In front of the token check too: the answer
+ * needs no server, so it needs no sign-in either.
+ *
+ * @param api the lookup to fall back to
+ * @param now the clock for `fetchedAt`; injected by tests
+ */
+export function answeringTestVendors(
+  api: CatalogApi,
+  now: () => Date = () => new Date(),
+): CatalogApi {
+  return {
+    lookup(code: string, signal?: AbortSignal): Promise<LookupOutcome> {
+      const local = testVendorAnswer(code, now())
+      return local === undefined
+        ? api.lookup(code, signal)
+        : Promise.resolve({ kind: 'found', lookup: local })
     },
   }
 }

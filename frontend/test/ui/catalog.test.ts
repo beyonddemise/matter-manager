@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { CatalogLookup } from '../../src/domain/index.js'
+import { type CatalogLookup, decodePayload, encodePayload } from '../../src/domain/index.js'
 import {
+  answeringTestVendors,
+  type CatalogApi,
   catalogApi,
   DEFAULT_RETRY_AFTER_SECONDS,
   isCatalogLookup,
@@ -170,5 +172,55 @@ describe('isCatalogLookup', () => {
   it('refuses a product whose fields have the wrong types', () => {
     expect(isCatalogLookup({ ...ANSWER, product: { name: 7 } })).toBe(false)
     expect(isCatalogLookup({ ...ANSWER, vendor: { name: 'x', preferredName: 3 } })).toBe(false)
+  })
+})
+
+/** #238: test-vendor codes are answered here and never reach the API. */
+describe('answeringTestVendors', () => {
+  const NOW = new Date('2026-10-09T08:00:00.000Z')
+
+  /** An inner API that records what it was asked and answers `unavailable`. */
+  function recording() {
+    const asked: string[] = []
+    const api: CatalogApi = {
+      async lookup(code) {
+        asked.push(code)
+        return { kind: 'unavailable' }
+      },
+    }
+    return { asked, api }
+  }
+
+  it('answers a test-vendor code without asking the API', async () => {
+    const { asked, api } = recording()
+    const outcome = await answeringTestVendors(api, () => NOW).lookup(CODE)
+
+    expect(outcome).toEqual({
+      kind: 'found',
+      lookup: { ...ANSWER, fetchedAt: NOW.toISOString() },
+    })
+    expect(asked).toHaveLength(0)
+  })
+
+  it('passes every other code, and the signal, through unchanged', async () => {
+    const real = encodePayload({ ...decodePayload(CODE), vendorId: 0x1234 })
+    const signals: Array<AbortSignal | undefined> = []
+    const inner: CatalogApi = {
+      async lookup(_code, signal) {
+        signals.push(signal)
+        return { kind: 'rate-limited', retryAfterSeconds: 5 }
+      },
+    }
+    const controller = new AbortController()
+
+    expect(await answeringTestVendors(inner, () => NOW).lookup(real, controller.signal)).toEqual({
+      kind: 'rate-limited',
+      retryAfterSeconds: 5,
+    })
+    expect(signals).toEqual([controller.signal])
+
+    const { asked, api } = recording()
+    await answeringTestVendors(api, () => NOW).lookup('not a code')
+    expect(asked).toEqual(['not a code'])
   })
 })
