@@ -195,11 +195,19 @@ export function withCatalogBlock<T extends object>(document: T, source: object):
   return Object.fromEntries([...kept, ...block]) as T
 }
 
-/** The manufacturer as people say it: the preferred name, then the vendor name. */
+/**
+ * The manufacturer as people say it: the preferred name, then the vendor name, trimmed.
+ *
+ * A blank or whitespace-only name counts as absent, not as a name. `catalogFields` never
+ * writes one, but a synced document can carry one, and `??` would let it hide the field
+ * instead of falling back (ruling R27).
+ *
+ * @returns `undefined` when neither name says anything; the caller supplies its own fallback
+ */
 export function manufacturerName(
   fields: Pick<CatalogFields, 'vendorPreferredName' | 'vendorName'>,
 ): string | undefined {
-  return fields.vendorPreferredName ?? fields.vendorName
+  return text(fields.vendorPreferredName) ?? text(fields.vendorName)
 }
 
 /** The two names a form shows from the catalogue, each omitted when unknown. */

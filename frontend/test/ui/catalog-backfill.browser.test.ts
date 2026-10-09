@@ -117,6 +117,21 @@ describe('catalogue backfill', () => {
     }
   })
 
+  it("keeps the device's updatedAt: a catalogue-only write is not an edit (R26)", async () => {
+    const before = await database.repositories.devices.save(device('a'))
+    // The repository stamps with the system clock; a pause makes a restamp observable.
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    const { backfill } = runner(found)
+
+    backfill.trigger()
+    await backfill.idle()
+
+    const after = await database.repositories.devices.get('device:a')
+    expect(after?.vendorName).toBe('Aqara')
+    expect(after?._rev).not.toBe(before._rev)
+    expect(after?.updatedAt).toBe(before.updatedAt)
+  })
+
   it('asks for a 21-digit code by its digits, and never for an 11-digit one', async () => {
     const { payload: _payload, ...manualOnly } = device('long')
     await database.repositories.devices.save(manualOnly)
@@ -227,8 +242,12 @@ describe('catalogue backfill', () => {
     expect((await database.repositories.devices.get('device:a'))?.catalogCheckedAt).toBeUndefined()
   })
 
-  it('keeps a concurrent user edit, and fills the block on the next run', async () => {
+  it('keeps a concurrent user edit, fills the next device in the same pass, and fills the block on the next run', async () => {
     await database.repositories.devices.save(device('a'))
+    // A second device, after `a` in id order. Ruling R9's 409 half: the refused write on `a`
+    // ends nothing, so `b` is filled in the same first pass. Were the 409 rethrown, the pass
+    // would end at `a` and `b` would wait for the next trigger.
+    await database.repositories.devices.save(device('b'))
     const real = database.repositories.devices
     let raced = false
     // The user renames the device between backfill reading it and writing it: the write is
@@ -251,6 +270,9 @@ describe('catalogue backfill', () => {
     await backfill.idle()
     expect((await real.get('device:a'))?.name).toBe('Renamed by hand')
     expect((await real.get('device:a'))?.catalogCheckedAt).toBeUndefined()
+    const second = await real.get('device:b')
+    expect(second?.vendorName).toBe('Aqara')
+    expect(second?.catalogCheckedAt).toBe(NOW.toISOString())
 
     backfill.trigger()
     await backfill.idle()
@@ -282,7 +304,8 @@ describe('catalogue backfill', () => {
     const real = database.repositories.devices
     const failing: Repository<DeviceDocument> = {
       ...real,
-      save: () => Promise.reject(Object.assign(new Error('quota'), { status: 500 })),
+      saveKeepingUpdatedAt: () =>
+        Promise.reject(Object.assign(new Error('quota'), { status: 500 })),
     }
     const { backfill, calls } = runner(found, { devices: () => failing })
 

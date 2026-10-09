@@ -105,6 +105,34 @@ describe('save', () => {
     expect(second.updatedAt).toBe('2026-02-02T00:00:00.000Z')
   })
 
+  it('saveKeepingUpdatedAt writes the document but keeps the stamp it was read with', async () => {
+    // Ruling R26: a catalogue-only write is not an edit, so it must not outrank one in the
+    // merge's (updatedAt, _rev) order.
+    const clock = fixedClock('2026-01-01T00:00:00.000Z', '2026-02-02T00:00:00.000Z')
+    const repos = projectRepositories(database, clock)
+    const first = await repos.devices.save(lamp())
+
+    const second = await repos.devices.saveKeepingUpdatedAt({ ...first, vendorName: 'Aqara' })
+
+    expect(second._rev).toMatch(/^2-/)
+    expect(second.updatedAt).toBe('2026-01-01T00:00:00.000Z')
+    const stored = await repos.devices.get(LAMP)
+    expect(stored?.updatedAt).toBe('2026-01-01T00:00:00.000Z')
+    expect(stored?.vendorName).toBe('Aqara')
+  })
+
+  it('saveKeepingUpdatedAt refuses a stale revision and a foreign id, like save', async () => {
+    const first = await repositories.devices.save(lamp())
+    await repositories.devices.save({ ...first, name: 'renamed' })
+    await expect(repositories.devices.saveKeepingUpdatedAt(first)).rejects.toThrow()
+    await expect(
+      repositories.devices.saveKeepingUpdatedAt({
+        ...first,
+        _id: KITCHEN,
+      } as DeviceDocument),
+    ).rejects.toThrow(TypeError)
+  })
+
   it('updates in place when given the revision it read', async () => {
     const first = await repositories.devices.save(lamp())
     const second = await repositories.devices.save({ ...first, name: 'Kitchen spotlight' })

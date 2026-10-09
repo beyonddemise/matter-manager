@@ -29,6 +29,14 @@ export interface Repository<T extends Revision> {
   list(): Promise<T[]>
   /** Writes the document and returns it as stored, with its new `_rev` and `updatedAt`. */
   save(document: Unsaved<T>): Promise<T>
+  /**
+   * Writes the document as read, keeping its `updatedAt`, and returns it with its new `_rev`.
+   *
+   * Only for a write that changes no user-entered field: the catalogue block, which carries
+   * its own clock (`catalogCheckedAt`). Restamping would let such a write, made on a stale
+   * replica, outrank a real edit in the merge's `(updatedAt, _rev)` order (ruling R26).
+   */
+  saveKeepingUpdatedAt(document: T): Promise<T>
   /** Deletes the document. Takes the document, not the id, because the `_rev` must be current. */
   remove(document: T): Promise<void>
 }
@@ -59,6 +67,22 @@ export function repository<T extends Revision>(
   now: () => string,
   resolve: (document: Conflicted<T>) => Promise<T>,
 ): Repository<T> {
+  /** Writes a document of this type exactly as given; both save paths end here. */
+  async function put(stored: T): Promise<T> {
+    const actualType = documentTypeOf(stored._id)
+    if (actualType !== type) {
+      // Saved through the wrong repository, a document is outside this type's key range and
+      // outside the other's guard: it reads back by id and appears in no list at all.
+      throw new TypeError(
+        `A ${type} repository cannot save ${JSON.stringify(stored._id)}; that id is ${
+          actualType === undefined ? 'not one this application writes' : `a ${actualType}`
+        }.`,
+      )
+    }
+    const { rev } = await database.put(stored as unknown as PouchDB.Core.PutDocument<object>)
+    return { ...stored, _rev: rev }
+  }
+
   return {
     async get(id: string): Promise<T | undefined> {
       let document: Conflicted<T>
@@ -100,22 +124,13 @@ export function repository<T extends Revision>(
     },
 
     async save(document: Unsaved<T>): Promise<T> {
-      const actualType = documentTypeOf(document._id)
-      if (actualType !== type) {
-        // Saved through the wrong repository, a document is outside this type's key range and
-        // outside the other's guard: it reads back by id and appears in no list at all.
-        throw new TypeError(
-          `A ${type} repository cannot save ${JSON.stringify(document._id)}; that id is ${
-            actualType === undefined ? 'not one this application writes' : `a ${actualType}`
-          }.`,
-        )
-      }
-
       // Spread last so a caller cannot supply their own `updatedAt`, even by casting past
       // `Unsaved`. The stamp is half of the conflict merge's total order (ADR 0010).
-      const stored = { ...document, updatedAt: now() } as unknown as T
-      const { rev } = await database.put(stored as unknown as PouchDB.Core.PutDocument<object>)
-      return { ...stored, _rev: rev }
+      return put({ ...document, updatedAt: now() } as unknown as T)
+    },
+
+    saveKeepingUpdatedAt(document: T): Promise<T> {
+      return put(document)
     },
 
     async remove(document: T): Promise<void> {

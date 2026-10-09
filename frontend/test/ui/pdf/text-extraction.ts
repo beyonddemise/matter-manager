@@ -145,3 +145,59 @@ export async function extractText(pdf: Uint8Array): Promise<string[]> {
 
   return drawn
 }
+
+/** One drawn line of text, where it was drawn, and at what size. */
+export interface PlacedText {
+  readonly text: string
+  /** The left edge, in points from the page's left. */
+  readonly x: number
+  /** The baseline, in points from the page's foot (PDF's origin is bottom-left). */
+  readonly y: number
+  readonly size: number
+}
+
+/** A hex string from a `Tj`, as characters. */
+function decodeHex(hex: string): string {
+  const digits = hex.replace(/\s+/g, '')
+  let text = ''
+  for (let index = 0; index + 1 < digits.length; index += 2) {
+    text += fromWinAnsi(Number.parseInt(digits.slice(index, index + 2), 16))
+  }
+  return text
+}
+
+/**
+ * Every line of text in the document with its position, for the layout assertions.
+ *
+ * Reads only the shape `pdf-lib`'s `drawText` writes: per call one `BT … ET` with `Tf` (size),
+ * `TL` (line height), `Tm` (position), then `<hex> Tj T*` per line. A string `pdf-lib` wrapped
+ * at `maxWidth` therefore comes back as several entries, each one `TL` lower than the last,
+ * which is exactly what an overlap test needs to see.
+ */
+export async function extractPlacedText(pdf: Uint8Array): Promise<PlacedText[]> {
+  const decoder = new TextDecoder('latin1')
+  const placed: PlacedText[] = []
+
+  for (const stream of streams(pdf)) {
+    let content: string
+    try {
+      content = decoder.decode(await inflate(stream))
+    } catch {
+      continue
+    }
+    for (const block of content.matchAll(/BT([\s\S]*?)ET/g)) {
+      const body = block[1] ?? ''
+      const size = Number(/([\d.]+)\s+Tf/.exec(body)?.[1] ?? Number.NaN)
+      const leading = Number(/([\d.]+)\s+TL/.exec(body)?.[1] ?? 0)
+      const matrix = /([-\d.]+)\s+([-\d.]+)\s+Tm/.exec(body)
+      if (matrix === null) continue
+      const x = Number(matrix[1])
+      let y = Number(matrix[2])
+      for (const shown of body.matchAll(/<([0-9a-fA-F\s]*)>\s*Tj/g)) {
+        placed.push({ text: decodeHex(shown[1] ?? ''), x, y, size })
+        y -= leading
+      }
+    }
+  }
+  return placed
+}

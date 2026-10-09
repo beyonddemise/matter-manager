@@ -27,10 +27,11 @@ const remark = (id: string, createdAt: string, text = `remark ${id}`): Remark =>
 type DeviceFixture = Revision & {
   readonly remarks: readonly Remark[]
   readonly name: string
+  readonly roomId?: string
   readonly vendorName?: string
   readonly supportUrl?: string
   readonly catalogCheckedAt?: string
-  readonly catalogSource?: 'found' | 'missing' | 'test-vendor'
+  readonly catalogSource?: 'found' | 'missing' | 'test-vendor' | 'unusable'
 }
 
 const device = (
@@ -456,6 +457,28 @@ describe('mergeDevice and the catalogue block', () => {
     const one = device('1-a', '2026-08-01T00:00:00.000Z')
     const two = device('2-b', '2026-08-02T00:00:00.000Z')
     expect(mergeDevice(one, [two])).not.toHaveProperty('catalogCheckedAt')
+  })
+
+  it('lets a stale backfill win only the block, never the scalars of a newer rename', () => {
+    // Ruling R26. X renames and moves the device offline at 10:00. Y, still holding the 09:00
+    // copy, backfills at 10:05. The backfill keeps the 09:00 updatedAt (a catalogue-only write
+    // is not an edit), so although its `_rev` sorts after the rename's, the rename is later.
+    const renamed = device('2-a', '2026-10-05T10:00:00.000Z', [], {
+      name: 'Hall sensor',
+      roomId: 'room:hall',
+    })
+    const backfilled = device('2-b', '2026-10-05T09:00:00.000Z', [], {
+      roomId: 'room:kitchen',
+      ...FOUND,
+      catalogCheckedAt: '2026-10-05T10:05:00.000Z',
+    })
+
+    for (const merged of [mergeDevice(renamed, [backfilled]), mergeDevice(backfilled, [renamed])]) {
+      expect(merged.name).toBe('Hall sensor')
+      expect(merged.roomId).toBe('room:hall')
+      expect(merged.vendorName).toBe('Aqara')
+      expect(merged.catalogCheckedAt).toBe('2026-10-05T10:05:00.000Z')
+    }
   })
 
   it('stays permutation-independent with blocks involved', () => {

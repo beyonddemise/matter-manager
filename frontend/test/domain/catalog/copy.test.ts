@@ -188,6 +188,22 @@ describe('manufacturerName', () => {
     expect(manufacturerName({ vendorName: 'Aqara' })).toBe('Aqara')
     expect(manufacturerName({})).toBeUndefined()
   })
+
+  // Ruling R27: a synced document may carry an empty name (an older client, or another
+  // replica). It must fall back, not hide the field.
+  it('treats a blank or whitespace-only name as absent', () => {
+    expect(manufacturerName({ vendorPreferredName: '', vendorName: 'Aqara' })).toBe('Aqara')
+    expect(manufacturerName({ vendorPreferredName: ' \t ', vendorName: 'Aqara' })).toBe('Aqara')
+    expect(manufacturerName({ vendorPreferredName: '', vendorName: '  ' })).toBeUndefined()
+    expect(manufacturerName({ vendorName: '' })).toBeUndefined()
+  })
+
+  it('leaves the hex fallback to the caller when both names are blank', () => {
+    const fallback = '0xFFF1'
+    expect(manufacturerName({ vendorPreferredName: ' ', vendorName: '' }) ?? fallback).toBe(
+      fallback,
+    )
+  })
 })
 
 describe('needsCatalogLookup', () => {

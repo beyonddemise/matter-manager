@@ -41,7 +41,8 @@ export interface DeviceCredential {
   /**
    * The `MT:` payload, verbatim, when the input was one.
    *
-   * **A secret**: it encodes the setup passcode. Never log it. It leaves the browser only through sync and our own catalogue lookup (ADR 0019).
+   * **A secret**: it encodes the setup passcode. Never log it. It leaves the browser only
+   * through sync and our own catalogue lookup (ADR 0019).
    */
   readonly payload?: string
   /**
