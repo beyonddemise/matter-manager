@@ -1510,6 +1510,8 @@ describe('upgrading', () => {
 
     expect(waitlist.calls).toEqual([{ kind: 'join', plan: 'member' }])
     expect(text(dialog.querySelector('[data-waiting]'))).toContain('Member')
+    // Focus lands on what changed, not on the page behind the dialog (WCAG 2.4.3).
+    expect(document.activeElement).toBe(dialog.querySelector('[data-waiting]'))
     expect(await store.cache().readProfile()).toMatchObject({
       planRequested: 'member',
       requestedAt: AT,
@@ -1642,6 +1644,77 @@ describe('upgrading', () => {
     expect(texts(dialog, '[data-join]')).toEqual(['Zu Mitglied wechseln'])
     expect(text(dialog.querySelector('[data-leave-waitlist]'))).toBe('Warteliste verlassen')
     fitsAt360(dialog)
+  })
+
+  it('says what changed in one status region that was there before the change', async () => {
+    const waitlist = fakeWaitlist(() => ({
+      kind: 'done',
+      profile: serverProfile({ planRequested: 'member', requestedAt: AT }),
+    }))
+    const { element } = await mount({
+      cachedProfile: profile({ plan: 'free', projectLimit: 1 }),
+      waitlist: waitlist.api,
+    })
+    await inputSettles(element, (i) => i.plan === 'free', 'plan never read')
+    const dialog = await openUpgrade(element)
+    const status = dialog.querySelector('[data-waitlist-status]')
+    expect(status?.getAttribute('role')).toBe('status')
+
+    ;(dialog.querySelector('[data-join="member"]') as HTMLElement).click()
+    await waitUntil(() => dialog.querySelector('[data-waiting]') !== null, 'the join never showed')
+
+    // The same element: a live region created with its content is not announced.
+    expect(dialog.querySelector('[data-waitlist-status]')).toBe(status)
+    expect(status?.querySelector('[data-waiting]')).not.toBeNull()
+  })
+
+  it('puts a problem in the status region and focus back on an action', async () => {
+    const waitlist = fakeWaitlist(() => ({ kind: 'unavailable' }))
+    const { element } = await mount({
+      cachedProfile: profile({ plan: 'free', projectLimit: 1 }),
+      waitlist: waitlist.api,
+    })
+    await inputSettles(element, (i) => i.plan === 'free', 'plan never read')
+    const dialog = await openUpgrade(element)
+
+    ;(dialog.querySelector('[data-join="pro"]') as HTMLElement).click()
+    await waitUntil(
+      () => dialog.querySelector('[data-waitlist-problem]') !== null,
+      'no problem shown',
+    )
+    // The dialog holds focus from the moment it opens, so wait for the action, not the dialog.
+    await waitUntil(
+      () => document.activeElement?.hasAttribute('data-join') === true,
+      'focus never returned to an action',
+    )
+
+    const status = dialog.querySelector('[data-waitlist-status]') as HTMLElement
+    expect(status.getAttribute('role')).toBe('status')
+    expect(status.querySelector('[data-waitlist-problem]')).not.toBeNull()
+    expect(dialog.contains(document.activeElement)).toBe(true)
+  })
+
+  it('announces leaving when it takes the dialog away', async () => {
+    const waitlist = fakeWaitlist(() => ({
+      kind: 'done',
+      profile: serverProfile({ plan: 'pro', projectLimit: -1 }),
+    }))
+    const { element } = await mount({
+      cachedProfile: profile({
+        plan: 'pro',
+        projectLimit: -1,
+        planRequested: 'pro',
+        requestedAt: AT,
+      }),
+      waitlist: waitlist.api,
+    })
+    const dialog = await openUpgrade(element)
+    await waitUntil(() => dialog.querySelector('[data-waiting]') !== null, 'not waiting')
+
+    ;(dialog.querySelector('[data-leave-waitlist]') as HTMLElement).click()
+    await waitUntil(() => element.querySelector('[data-upgrade-dialog]') === null, 'dialog stayed')
+
+    expect(text(element.querySelector('[data-status-announcement]'))).toBe('You left the waitlist.')
   })
 
   it('sends one request for two quick clicks, and holds every action until it answers', async () => {

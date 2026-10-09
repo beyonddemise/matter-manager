@@ -254,10 +254,41 @@ export function renderWaitlist(state: WaitlistState, handlers: WaitlistHandlers)
           <wa-icon slot="icon" name="triangle-exclamation"></wa-icon>
           ${PROBLEMS[state.problem]()}
         </wa-callout>`
+  const waiting =
+    state.session === 'signed-in' && state.request !== undefined
+      ? // Focusable by script only: it is where focus goes once a change has landed.
+        html`<p data-waiting tabindex="-1">${waitingText(state.request)}</p>`
+      : ''
   const offline = state.online
     ? ''
     : html`<p data-needs-connection data-note>${msg('Needs a connection')}</p>`
-  const button = (plan: Plan, label: string, primary: boolean) =>
+
+  // One outer template for every state, so the status region is the same element before and
+  // after a change: a live region that arrives together with its content is not announced.
+  return html`<div data-waitlist class="wa-stack wa-gap-s">
+    <div data-waitlist-status role="status" class="wa-stack wa-gap-s">${problem}${waiting}</div>
+    <div class="wa-cluster wa-gap-s">${actions(state, handlers, disabled)}</div>
+    ${offline}
+  </div>`
+}
+
+/** The buttons for the reader's state; see {@link renderWaitlist}. */
+function actions(
+  state: WaitlistState,
+  handlers: WaitlistHandlers,
+  disabled: boolean,
+): TemplateResult {
+  if (state.session !== 'signed-in') {
+    return html`<wa-button
+      data-sign-in-waitlist
+      variant="brand"
+      ?disabled=${!state.online}
+      @click=${handlers.onSignIn}
+    >
+      ${msg('Sign in to join the waitlist')}
+    </wa-button>`
+  }
+  const join = (plan: Plan, label: string, primary: boolean) =>
     html`<wa-button
       data-join=${plan}
       variant="brand"
@@ -268,51 +299,38 @@ export function renderWaitlist(state: WaitlistState, handlers: WaitlistHandlers)
       ${label}
     </wa-button>`
 
-  if (state.session !== 'signed-in') {
-    return html`<div data-waitlist class="wa-stack wa-gap-s">
-      ${problem}
-      <div class="wa-cluster wa-gap-s">
-        <wa-button
-          data-sign-in-waitlist
-          variant="brand"
-          ?disabled=${!state.online}
-          @click=${handlers.onSignIn}
-        >
-          ${msg('Sign in to join the waitlist')}
-        </wa-button>
-      </div>
-      ${offline}
-    </div>`
-  }
-
   const request = state.request
   const above = plansAbove(state.plan)
   if (request === undefined) {
-    return html`<div data-waitlist class="wa-stack wa-gap-s">
-      ${problem}
-      <div class="wa-cluster wa-gap-s">
-        ${above.map((plan, index) => button(plan, joinLabel(plan), index === 0))}
-      </div>
-      ${offline}
-    </div>`
+    return html`${above.map((plan, index) => join(plan, joinLabel(plan), index === 0))}`
   }
-
   // Two variables compared, never a tier literal (ADR 0009).
   const others = above.filter((plan) => plan !== request.plan)
-  return html`<div data-waitlist class="wa-stack wa-gap-s">
-    ${problem}
-    <p data-waiting>${waitingText(request)}</p>
-    <div class="wa-cluster wa-gap-s">
-      ${others.map((plan) => button(plan, changeLabel(plan), false))}
-      <wa-button
-        data-leave-waitlist
-        appearance="outlined"
-        ?disabled=${disabled}
-        @click=${handlers.onLeave}
-      >
-        ${msg('Leave the waitlist')}
-      </wa-button>
-    </div>
-    ${offline}
-  </div>`
+  return html`${others.map((plan) => join(plan, changeLabel(plan), false))}
+    <wa-button
+      data-leave-waitlist
+      appearance="outlined"
+      ?disabled=${disabled}
+      @click=${handlers.onLeave}
+    >
+      ${msg('Leave the waitlist')}
+    </wa-button>`
+}
+
+/**
+ * Moves focus to what a settled change left behind (WCAG 2.4.3): the waiting line when there is
+ * one, else the first action that can be taken. The button that was clicked was disabled while
+ * the change was on its way, and a disabled control drops focus to the page behind the dialog.
+ *
+ * @param root the open dialog
+ */
+export async function focusWaitlist(root: ParentNode): Promise<void> {
+  const target =
+    root.querySelector<HTMLElement & { updateComplete?: Promise<unknown> }>('[data-waiting]') ??
+    root.querySelector<HTMLElement & { updateComplete?: Promise<unknown> }>(
+      '[data-waitlist] wa-button:not([disabled])',
+    )
+  // A button enabled by this render has not yet enabled its inner control, which refuses focus.
+  await target?.updateComplete
+  target?.focus()
 }

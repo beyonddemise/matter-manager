@@ -1091,6 +1091,10 @@
   <source>Leave the waitlist</source>
   <target>Warteliste verlassen</target>
 </trans-unit>
+<trans-unit id="saa87171de4fd4d4f">
+  <source>You left the waitlist.</source>
+  <target>Sie haben die Warteliste verlassen.</target>
+</trans-unit>
 </body>
 </file>
 </xliff>

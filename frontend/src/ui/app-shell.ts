@@ -50,7 +50,7 @@ import type { SyncState } from './sync/replication.js'
 import { startRefresher } from './token-refresher.js'
 import { forgetTokens, pouchRefreshTokenStore } from './tokens.js'
 import { applyUpdate } from './updates.js'
-import type { WaitlistProblem } from './upgrade-dialog.js'
+import { focusWaitlist, type WaitlistProblem } from './upgrade-dialog.js'
 import type { WaitlistApi, WaitlistOutcome } from './waitlist.js'
 import './views/add-device.js'
 import './views/rooms.js'
@@ -739,26 +739,37 @@ export class AppShell extends LitElement implements ViewHost {
     this.waitlistBusy = true
     this.waitlistProblem = undefined
     try {
-      const outcome = await change(this.waitlist ?? waitlistClient())
-      if (outcome.kind !== 'done') {
-        this.waitlistProblem = outcome.kind
-        return
-      }
-      // A cache that refuses the write leaves the server right and the dialog showing the old
-      // state until the profile is next fetched; there is nothing better to do about it here.
-      await (this.projectStore ?? localProjectDefaults)
-        .cache()
-        .writeProfile(cachedProfileOf(outcome.profile, new Date().toISOString()))
-        .catch(() => undefined)
-      await this.projects.refresh(false)
-      // Leaving a request for the top plan takes the Upgrade button away (ruling R3); the dialog
-      // goes with it, and must not reopen by itself when a later request brings the button back.
-      const facts = this.projects.facts
-      if (!offersUpgrade({ plan: facts?.plan ?? DEFAULT_PLAN, request: facts?.request })) {
-        this.onCloseUpgrade()
-      }
+      await this.settleWaitlist(await change(this.waitlist ?? waitlistClient()))
     } finally {
       this.waitlistBusy = false
+    }
+    // Every outcome, a problem included: the clicked button was disabled on the way and dropped
+    // focus to the page behind the dialog.
+    await this.updateComplete
+    const dialog = this.querySelector('[data-upgrade-dialog]')
+    if (dialog !== null) await focusWaitlist(dialog)
+  }
+
+  /** Shows what a waitlist change came to: the problem, or the profile the server now holds. */
+  private async settleWaitlist(outcome: WaitlistOutcome): Promise<void> {
+    if (outcome.kind !== 'done') {
+      this.waitlistProblem = outcome.kind
+      return
+    }
+    // A cache that refuses the write leaves the server right and the dialog showing the old
+    // state until the profile is next fetched; there is nothing better to do about it here.
+    await (this.projectStore ?? localProjectDefaults)
+      .cache()
+      .writeProfile(cachedProfileOf(outcome.profile, new Date().toISOString()))
+      .catch(() => undefined)
+    await this.projects.refresh(false)
+    // Leaving a request for the top plan takes the Upgrade button away (ruling R3); the dialog
+    // goes with it, and must not reopen by itself when a later request brings the button back.
+    // Its status region goes with it, so the shell's own live region says what happened.
+    const facts = this.projects.facts
+    if (!offersUpgrade({ plan: facts?.plan ?? DEFAULT_PLAN, request: facts?.request })) {
+      this.onCloseUpgrade()
+      this.announcement = msg('You left the waitlist.')
     }
   }
 

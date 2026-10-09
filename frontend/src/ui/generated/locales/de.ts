@@ -185,6 +185,7 @@
 'sa950a4e89727b60b': `Erfordert zuerst einen Schritt am Gerät`,
 'sa968b0c395c8592b': `Abgeglichen`,
 'sa9c46478165d17ed': `Diese Änderung konnte nicht gespeichert werden. Das Gerät ist unverändert; bitte erneut versuchen.`,
+'saa87171de4fd4d4f': `Sie haben die Warteliste verlassen.`,
 'saab875d8cfcfe712': `Design`,
 'saadba46653e4ffef': `Kopplung`,
 'sab0752a788606876': `Belegter Speicher`,
