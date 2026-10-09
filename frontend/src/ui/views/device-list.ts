@@ -286,7 +286,7 @@ export class DeviceListView extends LitElement {
    * only way to export a parent that holds no devices itself, because such a parent has no
    * heading of its own to put a button on.
    *
-   * Every item says exactly what it exports, `Ground Floor, with its sub-rooms`, and carries the
+   * Every item says exactly what it exports, `Ground Floor, and its sub-rooms`, and carries the
    * path in `data-export-room`, as the single button does.
    *
    * @param group the room the heading is for; nothing is offered for devices without a room
@@ -336,8 +336,8 @@ export class DeviceListView extends LitElement {
             // breadcrumb), and the check-i18n scan reads text in an html template given to msg
             // as unwrapped.
             hasRoomsBelow(path)
-              ? msg(', with its sub-rooms', {
-                  desc: 'Follows a room name in the export menu: "Ground Floor, with its sub-rooms".',
+              ? msg(', and its sub-rooms', {
+                  desc: 'Follows a room name in the export menu: "Ground Floor, Kitchen, and its sub-rooms".',
                 })
               : nothing
           }

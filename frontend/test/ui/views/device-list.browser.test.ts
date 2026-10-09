@@ -314,23 +314,34 @@ describe('sub-rooms', () => {
     // to export it, and each item says exactly what it takes.
     expect(exportItems(element, 'Ground Floor/Kitchen/Pantry')).toEqual([
       ['Ground Floor/Kitchen/Pantry', 'Ground Floor, Kitchen, Pantry'],
-      ['Ground Floor/Kitchen', 'Ground Floor, Kitchen, with its sub-rooms'],
-      ['Ground Floor', 'Ground Floor, with its sub-rooms'],
+      ['Ground Floor/Kitchen', 'Ground Floor, Kitchen, and its sub-rooms'],
+      ['Ground Floor', 'Ground Floor, and its sub-rooms'],
     ])
     // The room itself, when it has sub-rooms, says that they come too.
     expect(exportItems(element, 'Ground Floor/Kitchen')).toEqual([
-      ['Ground Floor/Kitchen', 'Ground Floor, Kitchen, with its sub-rooms'],
-      ['Ground Floor', 'Ground Floor, with its sub-rooms'],
+      ['Ground Floor/Kitchen', 'Ground Floor, Kitchen, and its sub-rooms'],
+      ['Ground Floor', 'Ground Floor, and its sub-rooms'],
     ])
     expect(exportItems(element, 'Attic/Studio')).toEqual([
       ['Attic/Studio', 'Attic, Studio'],
-      ['Attic', 'Attic, with its sub-rooms'],
+      ['Attic', 'Attic, and its sub-rooms'],
     ])
     // Visibly, the items read as the heading does.
     const item = element.querySelector(
       '[data-room="Attic/Studio"] wa-dropdown-item[data-export-room="Attic"]',
     )
-    expect(item?.textContent?.replace(/\s+/g, ' ').trim()).toContain('Attic, with its sub-rooms')
+    expect(item?.textContent?.replace(/\s+/g, ' ').trim()).toContain('Attic, and its sub-rooms')
+  })
+
+  it('says "samt Unterräumen" after the room in German, so it is not read as another room', async () => {
+    await seedAttic()
+    await activateLocale('de')
+    try {
+      const element = await list()
+      expect(exportItems(element, 'Attic/Studio')[1]).toEqual(['Attic', 'Attic samt Unterräumen'])
+    } finally {
+      await activateLocale('en')
+    }
   })
 
   it('exports a parent with all its sub-rooms from a sub-room menu', async () => {
