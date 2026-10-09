@@ -1070,3 +1070,86 @@ describe('what the catalogue knows', () => {
     expect(frame.scrollWidth).toBeLessThanOrEqual(360)
   })
 })
+
+/**
+ * #238: backfill writes the catalogue block in the background, so the `_rev` this page holds can
+ * go stale under it. The next toggle or remark must not fail for a write the user never saw:
+ * it re-reads and retries once, as the edit form does.
+ */
+describe('a revision another writer moved on', () => {
+  /** What backfill does: the catalogue block, written on a fresh read, `updatedAt` kept. */
+  async function backgroundWrite(): Promise<void> {
+    const stored = await database.repositories.devices.get(DEVICE_ID)
+    if (stored === undefined) throw new Error('nothing to write over')
+    await database.repositories.devices.saveKeepingUpdatedAt({
+      ...stored,
+      vendorName: 'Aqara',
+      catalogCheckedAt: '2026-10-09T08:00:00.000Z',
+      catalogSource: 'found',
+    })
+  }
+
+  /** The real repositories, with every device save answered as a lost revision race. */
+  function alwaysConflicting(): { repositories: ProjectRepositories; saves: () => number } {
+    const real = database.repositories
+    let saves = 0
+    return {
+      repositories: {
+        ...real,
+        devices: {
+          ...real.devices,
+          save: async () => {
+            saves += 1
+            throw Object.assign(new Error('Document update conflict'), {
+              status: 409,
+              name: 'conflict',
+            })
+          },
+        },
+      },
+      saves: () => saves,
+    }
+  }
+
+  it('disables the device, keeping what the other writer stored', async () => {
+    await seed()
+    const element = await page()
+    await backgroundWrite()
+
+    click(element, '[data-toggle-disabled]')
+    await waitUntil(() => element.device?.disabled === true, 'the device was never disabled')
+
+    const stored = await database.repositories.devices.get(DEVICE_ID)
+    expect(stored?.disabled).toBe(true)
+    expect(stored?.vendorName).toBe('Aqara')
+    await element.updateComplete
+    expect(element.failure).toBeUndefined()
+  })
+
+  it('records the remark, keeping what the other writer stored', async () => {
+    await seed()
+    const element = await page()
+    await backgroundWrite()
+
+    const box = element.querySelector('[data-remark-text]') as { value?: string } | null
+    if (box === null) throw new Error('the remark composer is not on the page')
+    box.value = 'Replaced batteries'
+    click(element, '[data-add-remark]')
+    await waitUntil(() => (element.device?.remarks.length ?? 0) === 1, 'never stored')
+
+    const stored = await database.repositories.devices.get(DEVICE_ID)
+    expect(stored?.remarks.map((remark) => remark.text)).toEqual(['Replaced batteries'])
+    expect(stored?.vendorName).toBe('Aqara')
+    expect(element.remarkError).toBeUndefined()
+  })
+
+  it('retries once, then reports the failure', async () => {
+    await seed()
+    const { repositories, saves } = alwaysConflicting()
+    const element = await page(UUID, repositories)
+
+    click(element, '[data-toggle-disabled]')
+    await waitUntil(() => element.failure === 'toggle', 'the failure was never reported')
+    expect(saves()).toBe(2)
+  })
+})

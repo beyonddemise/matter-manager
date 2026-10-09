@@ -1,6 +1,6 @@
 import { msg, str, updateWhenLocaleChanges } from '@lit/localize'
 import { html, LitElement, type PropertyValues, type TemplateResult } from 'lit'
-import type { ProjectRepositories } from '../../data/index.js'
+import { isConflict, type ProjectRepositories } from '../../data/index.js'
 import {
   addRemark,
   type DeviceDocument,
@@ -12,6 +12,7 @@ import {
   type RoomDocument,
   remarksNewestFirst,
   setDeviceDisabled,
+  type Unsaved,
   uuidOf,
 } from '../../domain/index.js'
 import { PROJECT_CHANGED } from '../current-project.js'
@@ -360,9 +361,12 @@ export class DeviceView extends LitElement {
     if (device === undefined || this.busy) return
     this.busy = true
     const token = this.request
+    // What the user asked for, decided from what they saw: a retry on a fresh copy applies the
+    // same state, rather than toggling whatever the re-read happens to hold.
+    const disabled = !device.disabled
     try {
-      const saved = await this.repos().devices.save(
-        setDeviceDisabled(device, !device.disabled, () => new Date().toISOString()),
+      const saved = await this.saveFresh(device, (current) =>
+        setDeviceDisabled(current, disabled, () => new Date().toISOString()),
       )
       if (token !== this.request) return
       this.device = saved
@@ -377,6 +381,35 @@ export class DeviceView extends LitElement {
       // on navigation, and a later device may have set it again for a write of its own -
       // clearing it unconditionally here would unlock that one's guard from under it.
       if (token === this.request) this.busy = false
+    }
+  }
+
+  /**
+   * Saves `change(device)`; on a conflict, re-reads the device and saves `change` of that, once.
+   *
+   * Why: backfill writes the catalogue block in the background (#228), so the `_rev` this page
+   * holds can be stale without the user having done anything, and the action would fail for a
+   * write they never saw (#238). Applying the change to a fresh read keeps the other writer's
+   * fields, as the edit form's re-read does. Once only: a second conflict is a real race, and
+   * reported like any refused write.
+   *
+   * @param device the copy on screen
+   * @param change builds the document to store from a copy; called again for the retry
+   * @returns the stored document, `_rev` included
+   * @throws whatever the save throws, or the conflict when the device has gone meanwhile
+   */
+  private async saveFresh(
+    device: DeviceDocument,
+    change: (current: DeviceDocument) => Unsaved<DeviceDocument>,
+  ): Promise<DeviceDocument> {
+    const devices = this.repos().devices
+    try {
+      return await devices.save(change(device))
+    } catch (error) {
+      if (!isConflict(error)) throw error
+      const fresh = await devices.get(device._id)
+      if (fresh === undefined) throw error
+      return devices.save(change(fresh))
     }
   }
 
@@ -538,12 +571,17 @@ export class DeviceView extends LitElement {
     const device = this.device
     if (device === undefined || this.busy) return
 
+    // Fixed once, so a retry on a fresh copy records the same remark, not a second one.
+    const text = fieldValue(this, '[data-remark-text]')
+    const author = currentAuthor()
+    const id = crypto.randomUUID()
+    const at = new Date().toISOString()
+    const remarked = (current: DeviceDocument) =>
+      addRemark(current, text, author, { uuid: () => id, now: () => at })
+
     let updated: ReturnType<typeof addRemark>
     try {
-      updated = addRemark(device, fieldValue(this, '[data-remark-text]'), currentAuthor(), {
-        uuid: () => crypto.randomUUID(),
-        now: () => new Date().toISOString(),
-      })
+      updated = remarked(device)
     } catch (error) {
       // The only thing `addRemark` refuses is a remark with nothing in it. Rethrowing anything
       // else keeps a genuine fault visible rather than reporting it as an empty box.
@@ -555,7 +593,9 @@ export class DeviceView extends LitElement {
     this.busy = true
     const token = this.request
     try {
-      const saved = await this.repos().devices.save(updated)
+      const saved = await this.saveFresh(device, (current) =>
+        current === device ? updated : remarked(current),
+      )
       if (token !== this.request) return
       this.device = saved
       this.remarkError = undefined
