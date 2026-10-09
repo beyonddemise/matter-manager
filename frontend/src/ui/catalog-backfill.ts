@@ -3,16 +3,18 @@
  *
  * A device added in a basement has no names: the lookup never ran. This asks the catalogue for
  * each such device once a session and a network exist, and writes the answer into the device as
- * an ordinary edit, so it syncs and merges like any other (`mergeDevice` keeps the newer block).
+ * a new revision, so it syncs and merges like any other (`mergeDevice` keeps the newer block).
  *
  * **Polite by construction.** One request at a time, a second between requests, stop at the
  * first sign the API cannot help (offline, signed out), and on 429 wait as long as asked. The
  * next trigger (sign-in, network back, project switch) starts again from the top; the device
  * documents themselves record what is done, so there is no queue to persist.
  *
- * **Writes only the catalogue block**, on a fresh read, through `devices.save`. A save refused
- * because somebody edited the device in the meantime is left alone: their edit stands, and the
- * next run fills the block on top of it.
+ * **Writes only the catalogue block**, on a fresh read, through `devices.saveKeepingUpdatedAt`:
+ * the device's `updatedAt` stays as it was, so the write never outranks a user's edit in the
+ * merge; the block has its own clock, `catalogCheckedAt`. A save refused because somebody
+ * edited the device in the meantime is left alone: their edit stands, and the next run fills
+ * the block on top of it.
  *
  * Nothing is logged: every document here carries a setup code.
  *
@@ -97,7 +99,7 @@ function isConflict(error: unknown): boolean {
  * block written meanwhile by another tab or replica is not replaced by this answer.
  *
  * @param block the catalogue fields to write, built from the time it is given
- * @throws whatever `devices.save` throws, except a 409; the caller ends the pass on it
+ * @throws whatever `devices.saveKeepingUpdatedAt` throws, except a 409; the caller ends the pass on it
  */
 async function fill(
   devices: Repository<DeviceDocument>,
@@ -110,9 +112,10 @@ async function fill(
   if (signal.aborted || fresh === undefined) return
   const at = deps.now()
   if (!needsCatalogLookup(fresh, at)) return
-  const { updatedAt: _stamp, ...unsaved } = fresh
   try {
-    await devices.save(withCatalogBlock(unsaved, block(at.toISOString())))
+    // Keeps `updatedAt`: filling the block is not an edit, and a restamp would let this write,
+    // made on a stale copy, outrank a newer rename or move in `mergeDevice` (ruling R26).
+    await devices.saveKeepingUpdatedAt(withCatalogBlock(fresh, block(at.toISOString())))
   } catch (error) {
     // A 409: the device changed between the read and the write. The edit stands; the next run
     // fills the block on top of it. Anything else (quota, a broken database) is not this

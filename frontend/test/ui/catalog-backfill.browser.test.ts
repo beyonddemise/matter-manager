@@ -117,6 +117,21 @@ describe('catalogue backfill', () => {
     }
   })
 
+  it("keeps the device's updatedAt: a catalogue-only write is not an edit (R26)", async () => {
+    const before = await database.repositories.devices.save(device('a'))
+    // The repository stamps with the system clock; a pause makes a restamp observable.
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    const { backfill } = runner(found)
+
+    backfill.trigger()
+    await backfill.idle()
+
+    const after = await database.repositories.devices.get('device:a')
+    expect(after?.vendorName).toBe('Aqara')
+    expect(after?._rev).not.toBe(before._rev)
+    expect(after?.updatedAt).toBe(before.updatedAt)
+  })
+
   it('asks for a 21-digit code by its digits, and never for an 11-digit one', async () => {
     const { payload: _payload, ...manualOnly } = device('long')
     await database.repositories.devices.save(manualOnly)
@@ -282,7 +297,8 @@ describe('catalogue backfill', () => {
     const real = database.repositories.devices
     const failing: Repository<DeviceDocument> = {
       ...real,
-      save: () => Promise.reject(Object.assign(new Error('quota'), { status: 500 })),
+      saveKeepingUpdatedAt: () =>
+        Promise.reject(Object.assign(new Error('quota'), { status: 500 })),
     }
     const { backfill, calls } = runner(found, { devices: () => failing })
 
