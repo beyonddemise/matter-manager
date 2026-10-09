@@ -92,7 +92,8 @@ const codeOf = (device: DeviceDocument): string => device.payload ?? device.manu
  * block written meanwhile by another tab or replica is not replaced by this answer.
  *
  * @param block the catalogue fields to write, built from the time it is given
- * @throws whatever `devices.saveKeepingUpdatedAt` throws, except a 409; the caller ends the pass on it
+ * @throws whatever `devices.saveKeepingUpdatedAt` throws, except a 409; the caller ends the
+ *   pass on it
  */
 async function fill(
   devices: Repository<DeviceDocument>,

@@ -267,7 +267,7 @@ describe('catalogue backfill', () => {
     expect((await database.repositories.devices.get('device:b'))?.catalogCheckedAt).toBeUndefined()
   })
 
-  it('keeps a concurrent user edit, fills the next device in the same pass, and fills the block on the next run', async () => {
+  it('keeps a concurrent edit, fills the next device, and the edited one next run', async () => {
     await database.repositories.devices.save(device('a'))
     // A second device, after `a` in id order. Ruling R9's 409 half: the refused write on `a`
     // ends nothing, so `b` is filled in the same first pass. Were the 409 rethrown, the pass
@@ -323,7 +323,7 @@ describe('catalogue backfill', () => {
     expect(calls).toHaveLength(1)
   })
 
-  it('ends the pass on a save error that is not a conflict, and leaves later devices alone', async () => {
+  it('ends the pass on a non-conflict save error and leaves later devices alone', async () => {
     await database.repositories.devices.save(device('a'))
     await database.repositories.devices.save(device('b'))
     const real = database.repositories.devices
