@@ -271,6 +271,17 @@ describe('copying a catalogue answer', () => {
     expect(device).not.toHaveProperty('catalogCheckedAt')
   })
 
+  it.each([
+    ['vendor id', { vendorId: 4447 }],
+    ['product id', { productId: 8194 }],
+  ])('ignores an answer whose only difference is the %s', (_which, change) => {
+    // One id of the two matches. Copying it would name this device after a neighbouring
+    // product of the same maker, or after another maker's product with the same number.
+    const other: CatalogLookup = { ...TEST_VENDOR, ...change }
+    const { device } = planNewDevice(draft(), [KITCHEN], clock('device-uuid'), other)
+    expect(device).not.toHaveProperty('catalogCheckedAt')
+  })
+
   it('ignores an answer for a code that carries no ids', () => {
     const { device } = planNewDevice(
       draft({ credential: SHORT_CODE }),
