@@ -1509,6 +1509,8 @@ checkout, I ran `git checkout -b feat/waitlist-224` in the same directory. Its u
 my branch. The agent noticed, reverted them with `git apply -R` and finished in a temporary worktree.
 
 **Rule:**
-- While any implementer or fix-round agent is live, the controller does not run `checkout`, `switch`,
-  `pull` or `stash` in the shared checkout.
+- While any implementer or fix-round agent is live, the controller runs no command in the shared checkout
+  that changes the branch, the index or the worktree. That includes `checkout`, `switch`, `pull`, `stash`,
+  `reset`, `restore`, `merge`, `rebase`, `cherry-pick`, `add` and `commit`.
+- Read-only commands such as `status`, `log`, `diff` and `show` are fine.
 - Start a parallel line of work in its own `git worktree add` directory, or wait until the agent reports.
