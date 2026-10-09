@@ -672,3 +672,33 @@ it('stops backfill before signing out', async () => {
     signOutOf.mock.invocationCallOrder[0] ?? 0,
   )
 })
+
+it('refuses backfill triggers that arrive while the sign-out is still running', async () => {
+  // #238: the session stays `signed-in` until `signOutOf` resolves, so a project switch or a
+  // regained connection in that window would start a run for an account that is leaving.
+  const network = controllableNetwork()
+  const { element, play, backfill, signOutOf } = await driven(network.source)
+  await play({ kind: 'refreshed', expiresIn: 300 })
+  let finish: (removed: readonly string[]) => void = () => {}
+  signOutOf.mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve
+      }),
+  )
+  await waitUntil(() => element.querySelector('[data-sign-out]') !== null, 'not signed in')
+  ;(element.querySelector('[data-sign-out]') as HTMLElement).click()
+  await waitUntil(() => element.querySelector('[data-confirm-sign-out]') !== null, 'no dialog')
+  ;(element.querySelector('[data-confirm-sign-out]') as HTMLElement).click()
+  await waitUntil(() => signOutOf.mock.calls.length > 0, 'never signed out')
+  backfill.trigger.mockClear()
+
+  window.dispatchEvent(new CustomEvent(PROJECT_CHANGED))
+  network.set(false)
+  network.set(true)
+  expect(backfill.trigger).not.toHaveBeenCalled()
+
+  finish([])
+  await waitUntil(() => element.querySelector('[data-sign-in]') !== null, 'still signed in')
+  expect(backfill.trigger).not.toHaveBeenCalled()
+})
