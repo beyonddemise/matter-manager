@@ -17,6 +17,7 @@ import { fixture, fixtureCleanup, html, waitUntil } from '@open-wc/testing-helpe
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { page } from 'vitest/browser'
 import type { CachedProfile, LocalProjectEntry } from '../../src/data/index.js'
+import type { Plan } from '../../src/domain/plan.js'
 import type { AppShell } from '../../src/ui/app-shell.js'
 import '../../src/ui/app-shell.js'
 import { CURRENT_PROJECT_KEY, writeCurrentProjectId } from '../../src/ui/current-project.js'
@@ -32,7 +33,9 @@ import { beginProjectAction, projectActionRunning } from '../../src/ui/project-b
 import type { Project } from '../../src/ui/projects.js'
 import type { SyncableProject } from '../../src/ui/sync/manager.js'
 import '../../src/ui/styles/app.css'
+import type { Profile } from '../../src/ui/profile.js'
 import type { ProjectsView } from '../../src/ui/views/projects.js'
+import type { WaitlistApi, WaitlistOutcome } from '../../src/ui/waitlist.js'
 import { refresherNeverAnswering, refresherReporting } from './refresher-stub.js'
 import { destroyProjectStores, isolatedProjectStore } from './support/project-store.js'
 
@@ -71,6 +74,37 @@ const profile = (over: Partial<CachedProfile> = {}): CachedProfile => ({
   fetchedAt: '2026-10-03T08:00:00.000Z',
   ...over,
 })
+
+/** The profile as the server answers it, for a fake waitlist to return. */
+const serverProfile = (over: Partial<Profile> = {}): Profile => ({
+  sub: 'google|1',
+  email: 'ada@example.org',
+  displayName: 'Ada',
+  locale: 'auto',
+  plan: 'free',
+  projectLimit: 1,
+  ...over,
+})
+
+type WaitlistCall = { readonly kind: 'join'; readonly plan: Plan } | { readonly kind: 'leave' }
+
+/** A waitlist API answering every call from `answer`, recording each one. */
+function fakeWaitlist(answer: (call: WaitlistCall) => Promise<WaitlistOutcome> | WaitlistOutcome) {
+  const calls: WaitlistCall[] = []
+  const api: WaitlistApi = {
+    join: async (plan) => {
+      const call = { kind: 'join', plan } as const
+      calls.push(call)
+      return answer(call)
+    },
+    leave: async () => {
+      const call = { kind: 'leave' } as const
+      calls.push(call)
+      return answer(call)
+    },
+  }
+  return { api, calls }
+}
 
 /** A network a test can take away. */
 function fakeNetwork(onLine = true) {
@@ -127,6 +161,10 @@ interface Options {
   readonly push?: (projectId: string, signal?: AbortSignal) => Promise<void>
   /** How long signing out waits for each push. */
   readonly signOutPushTimeoutMs?: number
+  /** The waitlist API; one that is never expected to be called by default. */
+  readonly waitlist?: WaitlistApi
+  /** What "Sign in" does; nothing by default. */
+  readonly signIn?: () => void
 }
 
 /** The shell, wired to fakes, settled past its first refresh. */
@@ -155,7 +193,8 @@ async function mount(options: Options = {}) {
       .listProjects=${list}
       .makeSync=${() => sync.manager}
       .signOutOf=${signOutOf}
-      .signIn=${() => {}}
+      .signIn=${options.signIn ?? (() => {})}
+      .waitlist=${options.waitlist}
       .backfill=${backfill}
       .projectStore=${store}
       .signOutPushTimeoutMs=${options.signOutPushTimeoutMs}
@@ -1173,6 +1212,10 @@ describe('upgrading', () => {
     const table = dialog.querySelector('[data-plan-table]') as HTMLElement
 
     expect(getComputedStyle(table).display).not.toBe('none')
+    // One layout per width: the cards are not displayed, so assistive technology reads the table only.
+    expect(getComputedStyle(dialog.querySelector('[data-plan-cards]') as HTMLElement).display).toBe(
+      'none',
+    )
     expect(
       [...table.querySelectorAll('th[data-plan-column]')].map((th) =>
         th.getAttribute('data-plan-column'),
@@ -1258,5 +1301,339 @@ describe('upgrading', () => {
     await inputSettles(element, (i) => i.plan === 'pro', 'plan never read')
     await element.updateComplete
     expect(element.querySelector('[data-upgrade]')).toBeNull()
+  })
+
+  const AT = '2026-10-09T08:00:00.000Z'
+  const joinButtons = (dialog: Element) =>
+    [...dialog.querySelectorAll('[data-join]')].map((button) => button.getAttribute('data-join'))
+  /** The loud brand buttons in the dialog: brand, in the default `accent` appearance. */
+  const filledBrand = (dialog: Element) =>
+    (
+      [...dialog.querySelectorAll('wa-button')] as Array<
+        HTMLElement & { variant: string; appearance: string }
+      >
+    ).filter((button) => button.variant === 'brand' && button.appearance === 'accent')
+
+  it('asks a signed-out reader to sign in first, and still compares the plans', async () => {
+    const signIn = vi.fn()
+    const { element } = await mount({ session: 'signed-out', signIn })
+    await waitUntil(() => element.querySelector('[data-sign-in]') !== null, 'no sign-in')
+    const dialog = await openUpgrade(element)
+
+    expect(dialog.querySelector('[data-plan-cards]')).not.toBeNull()
+    expect(joinButtons(dialog)).toEqual([])
+    const button = dialog.querySelector('[data-sign-in-waitlist]') as HTMLElement
+    expect(text(button)).toBe('Sign in to join the waitlist')
+    button.click()
+    expect(signIn).toHaveBeenCalledTimes(1)
+  })
+
+  it('offers to join only the plans above a free account’s', async () => {
+    const { element } = await mount({ cachedProfile: profile({ plan: 'free', projectLimit: 1 }) })
+    await inputSettles(element, (i) => i.plan === 'free', 'plan never read')
+    const dialog = await openUpgrade(element)
+
+    expect(joinButtons(dialog)).toEqual(['member', 'pro'])
+    expect(texts(dialog, '[data-join]')).toEqual([
+      'Join the waitlist for Member',
+      'Join the waitlist for Pro',
+    ])
+    expect(dialog.querySelector('[data-leave-waitlist]')).toBeNull()
+  })
+
+  it('offers no join for the plan a member has, or below it', async () => {
+    const { element } = await mount({ cachedProfile: profile({ plan: 'member', projectLimit: 5 }) })
+    await inputSettles(element, (i) => i.plan === 'member', 'plan never read')
+    const dialog = await openUpgrade(element)
+
+    expect(joinButtons(dialog)).toEqual(['pro'])
+  })
+
+  it('fills only the next plan up’s join in brand, and nothing while waiting', async () => {
+    // DESIGN.md's Commissioning Blue Rule: one loud brand action in view, at most.
+    const free = await mount({ cachedProfile: profile({ plan: 'free', projectLimit: 1 }) })
+    await inputSettles(free.element, (i) => i.plan === 'free', 'plan never read')
+    let dialog = await openUpgrade(free.element)
+    expect(filledBrand(dialog).map((button) => button.getAttribute('data-join'))).toEqual([
+      'member',
+    ])
+    fixtureCleanup()
+
+    const member = await mount({ cachedProfile: profile({ plan: 'member', projectLimit: 5 }) })
+    await inputSettles(member.element, (i) => i.plan === 'member', 'plan never read')
+    dialog = await openUpgrade(member.element)
+    expect(filledBrand(dialog).map((button) => button.getAttribute('data-join'))).toEqual(['pro'])
+    fixtureCleanup()
+
+    const signedOut = await mount({ session: 'signed-out' })
+    await waitUntil(() => signedOut.element.querySelector('[data-sign-in]') !== null, 'no sign-in')
+    dialog = await openUpgrade(signedOut.element)
+    expect(filledBrand(dialog)).toHaveLength(1)
+    expect(filledBrand(dialog)[0]?.hasAttribute('data-sign-in-waitlist')).toBe(true)
+    fixtureCleanup()
+
+    const waiting = await mount({
+      cachedProfile: profile({
+        plan: 'free',
+        projectLimit: 1,
+        planRequested: 'pro',
+        requestedAt: AT,
+      }),
+    })
+    dialog = await openUpgrade(waiting.element)
+    await waitUntil(() => dialog.querySelector('[data-waiting]') !== null, 'not waiting')
+    expect(filledBrand(dialog)).toHaveLength(0)
+  })
+
+  it('says what a waiting account waits for and since when, and offers change and leave', async () => {
+    const { element } = await mount({
+      cachedProfile: profile({
+        plan: 'free',
+        projectLimit: 1,
+        planRequested: 'pro',
+        requestedAt: AT,
+      }),
+    })
+    const dialog = await openUpgrade(element)
+    await waitUntil(() => dialog.querySelector('[data-waiting]') !== null, 'not waiting')
+
+    expect(text(dialog.querySelector('[data-waiting]'))).toBe(
+      'You are on the waitlist for Pro (since Oct 9, 2026).',
+    )
+    expect(joinButtons(dialog)).toEqual(['member'])
+    expect(texts(dialog, '[data-join]')).toEqual(['Change to Member'])
+    expect(text(dialog.querySelector('[data-leave-waitlist]'))).toBe('Leave the waitlist')
+  })
+
+  it('still lets an account leave a waitlist for a plan it now has', async () => {
+    // An operator set the plan after the request: the request stays until the user leaves.
+    const { element } = await mount({
+      cachedProfile: profile({
+        plan: 'member',
+        projectLimit: 5,
+        planRequested: 'member',
+        requestedAt: AT,
+      }),
+    })
+    const dialog = await openUpgrade(element)
+    await waitUntil(() => dialog.querySelector('[data-waiting]') !== null, 'not waiting')
+
+    expect(joinButtons(dialog)).toEqual(['pro'])
+    expect(dialog.querySelector('[data-leave-waitlist]')).not.toBeNull()
+  })
+
+  it('offers Upgrade on the top plan while a request is pending, so it can be left', async () => {
+    // Raised to the top plan after asking for it: nothing to upgrade to, but a request to leave.
+    const waitlist = fakeWaitlist(() => ({
+      kind: 'done',
+      profile: serverProfile({ plan: 'pro', projectLimit: -1 }),
+    }))
+    const { element } = await mount({
+      cachedProfile: profile({
+        plan: 'pro',
+        projectLimit: -1,
+        planRequested: 'pro',
+        requestedAt: AT,
+      }),
+      waitlist: waitlist.api,
+    })
+    const dialog = await openUpgrade(element)
+    await waitUntil(() => dialog.querySelector('[data-waiting]') !== null, 'not waiting')
+
+    expect(joinButtons(dialog)).toEqual([])
+    ;(dialog.querySelector('[data-leave-waitlist]') as HTMLElement).click()
+    await waitUntil(() => element.querySelector('[data-upgrade]') === null, 'Upgrade stayed')
+    expect(waitlist.calls).toEqual([{ kind: 'leave' }])
+  })
+
+  it('shows a date it cannot read as it is', async () => {
+    const { element } = await mount({
+      cachedProfile: profile({
+        plan: 'free',
+        projectLimit: 1,
+        planRequested: 'pro',
+        requestedAt: 'soon',
+      }),
+    })
+    const dialog = await openUpgrade(element)
+    await waitUntil(() => dialog.querySelector('[data-waiting]') !== null, 'not waiting')
+
+    expect(text(dialog.querySelector('[data-waiting]'))).toBe(
+      'You are on the waitlist for Pro (since soon).',
+    )
+  })
+
+  it('disables everything that needs the server while offline, and says why', async () => {
+    const { element } = await mount({
+      cachedProfile: profile({ plan: 'free', projectLimit: 1 }),
+      network: fakeNetwork(false),
+    })
+    await inputSettles(element, (i) => i.online === false, 'never offline')
+    const dialog = await openUpgrade(element)
+
+    expect(dialog.querySelector('[data-plan-cards]')).not.toBeNull()
+    const buttons = [...dialog.querySelectorAll('[data-join]')] as Array<
+      HTMLElement & { disabled: boolean }
+    >
+    expect(buttons).toHaveLength(2)
+    expect(buttons.every((button) => button.disabled)).toBe(true)
+    expect(text(dialog.querySelector('[data-needs-connection]'))).toBe('Needs a connection')
+  })
+
+  it('disables signing in while offline too', async () => {
+    const { element } = await mount({ session: 'signed-out', network: fakeNetwork(false) })
+    await waitUntil(() => element.querySelector('[data-sign-in]') !== null, 'no sign-in')
+    const dialog = await openUpgrade(element)
+
+    expect(
+      (dialog.querySelector('[data-sign-in-waitlist]') as HTMLElement & { disabled: boolean })
+        .disabled,
+    ).toBe(true)
+    expect(dialog.querySelector('[data-needs-connection]')).not.toBeNull()
+  })
+
+  it('joins, then shows the request and caches it', async () => {
+    const waitlist = fakeWaitlist(() => ({
+      kind: 'done',
+      profile: serverProfile({ planRequested: 'member', requestedAt: AT }),
+    }))
+    const { element, store } = await mount({
+      cachedProfile: profile({ plan: 'free', projectLimit: 1 }),
+      waitlist: waitlist.api,
+    })
+    await inputSettles(element, (i) => i.plan === 'free', 'plan never read')
+    const dialog = await openUpgrade(element)
+
+    ;(dialog.querySelector('[data-join="member"]') as HTMLElement).click()
+    await waitUntil(() => dialog.querySelector('[data-waiting]') !== null, 'the join never showed')
+
+    expect(waitlist.calls).toEqual([{ kind: 'join', plan: 'member' }])
+    expect(text(dialog.querySelector('[data-waiting]'))).toContain('Member')
+    expect(await store.cache().readProfile()).toMatchObject({
+      planRequested: 'member',
+      requestedAt: AT,
+    })
+  })
+
+  it('leaves, then offers joining again and forgets the request', async () => {
+    const waitlist = fakeWaitlist(() => ({ kind: 'done', profile: serverProfile() }))
+    const { element, store } = await mount({
+      cachedProfile: profile({
+        plan: 'free',
+        projectLimit: 1,
+        planRequested: 'pro',
+        requestedAt: AT,
+      }),
+      waitlist: waitlist.api,
+    })
+    const dialog = await openUpgrade(element)
+    await waitUntil(() => dialog.querySelector('[data-waiting]') !== null, 'not waiting')
+
+    ;(dialog.querySelector('[data-leave-waitlist]') as HTMLElement).click()
+    await waitUntil(() => dialog.querySelector('[data-waiting]') === null, 'never left')
+
+    expect(waitlist.calls).toEqual([{ kind: 'leave' }])
+    expect(joinButtons(dialog)).toEqual(['member', 'pro'])
+    expect(await store.cache().readProfile()).not.toHaveProperty('planRequested')
+  })
+
+  it.each([
+    ['already-on-plan', 'You already have this plan.'],
+    ['unavailable', 'The waitlist could not be reached. Please try again.'],
+    ['signed-out', 'Your session has ended. Please sign in again.'],
+  ] as const)('says so inline when the answer is %s', async (kind, words) => {
+    const waitlist = fakeWaitlist(() => ({ kind }))
+    const { element } = await mount({
+      cachedProfile: profile({ plan: 'free', projectLimit: 1 }),
+      waitlist: waitlist.api,
+    })
+    await inputSettles(element, (i) => i.plan === 'free', 'plan never read')
+    const dialog = await openUpgrade(element)
+
+    ;(dialog.querySelector('[data-join="pro"]') as HTMLElement).click()
+    await waitUntil(
+      () => dialog.querySelector('[data-waitlist-problem]') !== null,
+      'no problem shown',
+    )
+
+    const callout = dialog.querySelector('[data-waitlist-problem]') as HTMLElement
+    expect(callout.getAttribute('variant')).toBe('danger')
+    expect(text(callout)).toBe(words)
+    expect(dialog.querySelector('[data-waiting]')).toBeNull()
+  })
+
+  it('wraps the waitlist’s words at 360 px instead of clipping them', async () => {
+    // The dialog is rendered inside the header's actions, which never wrap: it must not inherit that.
+    await page.viewport(360, 740)
+    await activateLocale('de')
+    const waitlist = fakeWaitlist(() => ({ kind: 'unavailable' }))
+    const { element } = await mount({
+      cachedProfile: profile({ plan: 'free', projectLimit: 1 }),
+      waitlist: waitlist.api,
+    })
+    await pageView(element, 'mobile')
+    await inputSettles(element, (i) => i.plan === 'free', 'plan never read')
+    const dialog = await openUpgrade(element)
+    ;(dialog.querySelector('[data-join="pro"]') as HTMLElement).click()
+    await waitUntil(
+      () => dialog.querySelector('[data-waitlist-problem]') !== null,
+      'no problem shown',
+    )
+    await (
+      dialog.querySelector('[data-waitlist-problem]') as HTMLElement & {
+        updateComplete: Promise<unknown>
+      }
+    ).updateComplete
+
+    const callout = dialog.querySelector('[data-waitlist-problem]') as HTMLElement
+    const message = callout.shadowRoot?.querySelector('[part~="message"]') as HTMLElement
+    expect(message.scrollWidth).toBeLessThanOrEqual(message.clientWidth)
+    for (const button of dialog.querySelectorAll('[data-join]')) {
+      expect(button.getBoundingClientRect().right).toBeLessThanOrEqual(window.innerWidth)
+    }
+    const body = dialog.shadowRoot?.querySelector('[part~="body"]') as HTMLElement
+    expect(body.scrollWidth).toBeLessThanOrEqual(body.clientWidth)
+  })
+
+  it('sends one request for two quick clicks, and holds every action until it answers', async () => {
+    let release: (outcome: WaitlistOutcome) => void = () => {}
+    const waitlist = fakeWaitlist(
+      () =>
+        new Promise<WaitlistOutcome>((resolve) => {
+          release = resolve
+        }),
+    )
+    const { element } = await mount({
+      cachedProfile: profile({ plan: 'free', projectLimit: 1 }),
+      waitlist: waitlist.api,
+    })
+    await inputSettles(element, (i) => i.plan === 'free', 'plan never read')
+    const dialog = await openUpgrade(element)
+
+    const member = dialog.querySelector('[data-join="member"]') as HTMLElement
+    member.click()
+    member.click()
+    await element.updateComplete
+
+    expect(waitlist.calls).toHaveLength(1)
+    const buttons = [...dialog.querySelectorAll('[data-join]')] as Array<
+      HTMLElement & { disabled: boolean }
+    >
+    expect(buttons.every((button) => button.disabled)).toBe(true)
+
+    release({ kind: 'done', profile: serverProfile({ planRequested: 'member', requestedAt: AT }) })
+    await waitUntil(() => dialog.querySelector('[data-waiting]') !== null, 'never answered')
+  })
+
+  it('offers the waitlist in German, formally', async () => {
+    await activateLocale('de')
+    const { element } = await mount({ cachedProfile: profile({ plan: 'free', projectLimit: 1 }) })
+    await inputSettles(element, (i) => i.plan === 'free', 'plan never read')
+    const dialog = await openUpgrade(element)
+
+    expect(texts(dialog, '[data-join]')).toEqual([
+      'Auf die Warteliste für Mitglied',
+      'Auf die Warteliste für Pro',
+    ])
   })
 })

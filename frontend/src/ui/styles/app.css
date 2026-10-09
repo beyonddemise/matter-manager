@@ -392,6 +392,9 @@ wa-page[view="mobile"] .app-project-slot .app-project-name {
    than that table's phone-width ones, and specificity must only climb (noDescendingSpecificity). */
 wa-dialog[data-upgrade-dialog] {
   --width: calc(var(--wa-space-5xl) * 8);
+  /* The dialog is rendered inside `.app-header-actions`, which never wraps; without this its
+     callout and its longer German buttons inherit that and clip at phone width. */
+  white-space: normal;
 }
 
 /* The comparison table. Arrangement inside cells comes from utilities; only what a table needs

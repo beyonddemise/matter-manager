@@ -11,9 +11,14 @@
 
 import { msg } from '@lit/localize'
 import { html, type TemplateResult } from 'lit'
-import { type Plan, showsUpgrade } from '../domain/plan.js'
+import { showsUpgrade } from '../domain/plan.js'
 import type { SessionState } from './session.js'
-import { renderPlanComparison } from './upgrade-dialog.js'
+import {
+  renderPlanComparison,
+  renderWaitlist,
+  type WaitlistHandlers,
+  type WaitlistState,
+} from './upgrade-dialog.js'
 
 /**
  * The account, top right: the signed-in email, or the way to sign in, or nothing at all until
@@ -55,16 +60,22 @@ export function renderAccount(
 }
 
 /**
- * The way to a bigger plan, while there is one (`showsUpgrade`, never a tier literal: ADR 0009).
+ * The way to a bigger plan, while there is one (`showsUpgrade`, never a tier literal: ADR 0009),
+ * or while a request is pending: an account raised to the top plan after asking for it has
+ * nothing left to upgrade to, but still needs the dialog to leave the waitlist.
  * The dialog compares the plans and offers the free waitlist (#224).
+ *
+ * @param state the plan, the session, the connection, the cached request and the change in flight
+ * @param handlers join, leave and sign in; closing is `onClose`
  */
 export function renderUpgrade(
-  plan: Plan,
+  state: WaitlistState,
   open: boolean,
   onOpen: () => void,
   onClose: () => void,
+  handlers: WaitlistHandlers,
 ): TemplateResult | '' {
-  if (!showsUpgrade(plan)) return ''
+  if (!offersUpgrade(state)) return ''
   return html`
     <!-- The rocket is desktop only: at phone width it is what keeps the header on one line at
          360px, and the word says more than the icon. -->
@@ -84,16 +95,25 @@ export function renderUpgrade(
             }}
           >
             <div class="wa-stack wa-gap-m">
-              ${renderPlanComparison(plan)}
+              ${renderPlanComparison(state.plan)}
               <p data-waitlist-statement>
                 ${msg('Under heavy development. Join the waitlist for free.')}
               </p>
+              ${renderWaitlist(state, handlers)}
             </div>
             <wa-button slot="footer" data-close-upgrade @click=${onClose}>${msg('Close')}</wa-button>
           </wa-dialog>`
         : ''
     }
   `
+}
+
+/**
+ * Whether the header offers Upgrade: a bigger plan exists, or a request is pending (ruling R3).
+ * Exported so the shell can close a dialog whose button has just gone.
+ */
+export function offersUpgrade(state: Pick<WaitlistState, 'plan' | 'request'>): boolean {
+  return showsUpgrade(state.plan) || state.request !== undefined
 }
 
 /**

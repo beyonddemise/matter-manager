@@ -1,6 +1,6 @@
 import { msg, updateWhenLocaleChanges } from '@lit/localize'
 import { html, LitElement, type TemplateResult } from 'lit'
-import { DEFAULT_PLAN } from '../domain/plan.js'
+import { DEFAULT_PLAN, type Plan } from '../domain/plan.js'
 import { BACKFILL_WANTED } from './catalog.js'
 import { type CatalogBackfill, defaultCatalogBackfill } from './catalog-backfill.js'
 import {
@@ -9,13 +9,15 @@ import {
   followProfileLocale,
   requestTokens,
   type TokenOutcome,
+  waitlist as waitlistClient,
 } from './composition.js'
 import { browserConnectivity, type ConnectivitySource, watchConnectivity } from './connectivity.js'
 import { PROJECT_CHANGED } from './current-project.js'
 import { localDatabase } from './db/project-database.js'
 import { negotiateLocale } from './i18n/locale.js'
 import { activateLocale } from './i18n/localization.js'
-import type { LocalProjectDependencies } from './local-projects.js'
+import { type LocalProjectDependencies, localProjectDefaults } from './local-projects.js'
+import { cachedProfileOf } from './profile.js'
 import { beginProjectAction } from './project-busy.js'
 import type { Project } from './projects.js'
 import { ProjectsController } from './projects-controller.js'
@@ -30,6 +32,7 @@ import {
 } from './scheme.js'
 import { type SessionState, sessionExpired } from './session.js'
 import {
+  offersUpgrade,
   renderAccount,
   renderSignOut,
   renderSignOutConfirmation,
@@ -47,6 +50,8 @@ import type { SyncState } from './sync/replication.js'
 import { startRefresher } from './token-refresher.js'
 import { forgetTokens, pouchRefreshTokenStore } from './tokens.js'
 import { applyUpdate } from './updates.js'
+import type { WaitlistProblem } from './upgrade-dialog.js'
+import type { WaitlistApi, WaitlistOutcome } from './waitlist.js'
 import './views/add-device.js'
 import './views/rooms.js'
 import './views/device-list.js'
@@ -182,6 +187,9 @@ export class AppShell extends LitElement implements ViewHost {
     session: { state: true },
     signingOut: { state: true },
     upgrading: { state: true },
+    waitlistBusy: { state: true },
+    waitlistProblem: { state: true },
+    waitlist: { attribute: false },
     refresher: { attribute: false },
     sessionEndedNotice: { state: true },
     listProjects: { attribute: false },
@@ -219,6 +227,12 @@ export class AppShell extends LitElement implements ViewHost {
   declare signingOut: SignOutStep | undefined
   /** Whether the upgrade dialog is open. */
   declare upgrading: boolean
+  /** A waitlist change is on its way to the server; every action in the dialog waits. */
+  declare waitlistBusy: boolean
+  /** Why the last waitlist change did not happen, until the dialog closes or another is tried. */
+  declare waitlistProblem: WaitlistProblem | undefined
+  /** Injected by tests. Unset in the application, where it reaches the real API. */
+  declare waitlist?: WaitlistApi
   /** Whether the "session ended" notice is showing. Dismissed by the reader, never by timeout. */
   declare sessionEndedNotice: boolean
 
@@ -330,6 +344,8 @@ export class AppShell extends LitElement implements ViewHost {
     updateWhenLocaleChanges(this)
     this.signingOut = undefined
     this.upgrading = false
+    this.waitlistBusy = false
+    this.waitlistProblem = undefined
     this.sessionEndedNotice = false
     this.hash = window.location.hash
     this.announcement = ''
@@ -691,11 +707,59 @@ export class AppShell extends LitElement implements ViewHost {
   }
 
   private onUpgrade = (): void => {
+    this.waitlistProblem = undefined
     this.upgrading = true
   }
 
   private onCloseUpgrade = (): void => {
     this.upgrading = false
+    this.waitlistProblem = undefined
+  }
+
+  private onJoinWaitlist = (plan: Plan): void => {
+    void this.changeWaitlist((api) => api.join(plan))
+  }
+
+  private onLeaveWaitlist = (): void => {
+    void this.changeWaitlist((api) => api.leave())
+  }
+
+  /**
+   * Sends one waitlist change, then caches the profile the server answered with and re-reads the
+   * facts, so the dialog shows what the server now holds. The cache is what the dialog reads, and
+   * offline it is all there is.
+   *
+   * One change at a time: a second click before the first answers is ignored here, and not only
+   * by the disabled buttons, which update a render later than a quick second click arrives.
+   */
+  private async changeWaitlist(
+    change: (api: WaitlistApi) => Promise<WaitlistOutcome>,
+  ): Promise<void> {
+    if (this.waitlistBusy) return
+    this.waitlistBusy = true
+    this.waitlistProblem = undefined
+    try {
+      const outcome = await change(this.waitlist ?? waitlistClient())
+      if (outcome.kind !== 'done') {
+        this.waitlistProblem = outcome.kind
+        return
+      }
+      // A cache that refuses the write leaves the server right and the dialog showing the old
+      // state until the profile is next fetched; there is nothing better to do about it here.
+      await (this.projectStore ?? localProjectDefaults)
+        .cache()
+        .writeProfile(cachedProfileOf(outcome.profile, new Date().toISOString()))
+        .catch(() => undefined)
+      await this.projects.refresh(false)
+      // Leaving a request for the top plan takes the Upgrade button away (ruling R3); the dialog
+      // goes with it, and must not reopen by itself when a later request brings the button back.
+      const facts = this.projects.facts
+      if (!offersUpgrade({ plan: facts?.plan ?? DEFAULT_PLAN, request: facts?.request })) {
+        this.onCloseUpgrade()
+      }
+    } finally {
+      this.waitlistBusy = false
+    }
   }
 
   /** The public website, its privacy notice and its terms. */
@@ -727,10 +791,22 @@ export class AppShell extends LitElement implements ViewHost {
           </div>
           <div class="wa-cluster wa-gap-xs app-header-actions">
             ${renderUpgrade(
-              this.projects.facts?.plan ?? DEFAULT_PLAN,
+              {
+                plan: this.projects.facts?.plan ?? DEFAULT_PLAN,
+                session: this.session,
+                online: this.online,
+                request: this.projects.facts?.request,
+                busy: this.waitlistBusy,
+                problem: this.waitlistProblem,
+              },
               this.upgrading,
               this.onUpgrade,
               this.onCloseUpgrade,
+              {
+                onJoin: this.onJoinWaitlist,
+                onLeave: this.onLeaveWaitlist,
+                onSignIn: this.onSignIn,
+              },
             )}
             <wa-button data-scheme-toggle appearance="plain" size="s" @click=${this.cycleScheme}>
               <wa-icon

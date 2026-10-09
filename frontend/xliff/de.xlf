@@ -1063,6 +1063,34 @@
   <source>The plans compared</source>
   <target>Die Pläne im Vergleich</target>
 </trans-unit>
+<trans-unit id="sc75323c324a6d369">
+  <source>You already have this plan.</source>
+  <target>Sie haben diesen Plan bereits.</target>
+</trans-unit>
+<trans-unit id="sf78bc12f7d5ef1f9">
+  <source>The waitlist could not be reached. Please try again.</source>
+  <target>Die Warteliste ist nicht erreichbar. Bitte versuchen Sie es erneut.</target>
+</trans-unit>
+<trans-unit id="s893c054facb379ca">
+  <source>Join the waitlist for <x id="0" equiv-text="${name}"/></source>
+  <target>Auf die Warteliste für <x id="0" equiv-text="${name}"/></target>
+</trans-unit>
+<trans-unit id="s9c54220fa10ecbb8">
+  <source>Change to <x id="0" equiv-text="${name}"/></source>
+  <target>Zu <x id="0" equiv-text="${name}"/> wechseln</target>
+</trans-unit>
+<trans-unit id="s137e47769946f4df">
+  <source>You are on the waitlist for <x id="0" equiv-text="${name}"/> (since <x id="1" equiv-text="${date}"/>).</source>
+  <target>Sie stehen auf der Warteliste für <x id="0" equiv-text="${name}"/> (seit <x id="1" equiv-text="${date}"/>).</target>
+</trans-unit>
+<trans-unit id="sc1adf1395010ab6c">
+  <source>Sign in to join the waitlist</source>
+  <target>Melden Sie sich an, um sich auf die Warteliste zu setzen</target>
+</trans-unit>
+<trans-unit id="sdb7edeb4ccc2e114">
+  <source>Leave the waitlist</source>
+  <target>Warteliste verlassen</target>
+</trans-unit>
 </body>
 </file>
 </xliff>

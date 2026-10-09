@@ -1,6 +1,6 @@
 /**
  * The upgrade dialog's body (#224): the three plans compared, the account's own highlighted, and
- * (Task W7) the free waitlist.
+ * the free waitlist.
  *
  * Plain functions over plain values, rendered inside `<app-shell>`, like `shell-header.ts`. The
  * shell owns the state and subscribes to locale changes, so every `msg()` here follows the
@@ -20,7 +20,17 @@
 
 import { msg, str } from '@lit/localize'
 import { html, type TemplateResult } from 'lit'
-import { PLAN_FEATURES, PLANS, type Plan, PROJECT_LIMITS, planSyncs } from '../domain/plan.js'
+import {
+  PLAN_FEATURES,
+  PLANS,
+  type Plan,
+  PROJECT_LIMITS,
+  planSyncs,
+  plansAbove,
+} from '../domain/plan.js'
+import { getLocale } from './i18n/localization.js'
+import type { PlanRequest } from './profile.js'
+import type { SessionState } from './session.js'
 
 /** Each plan's name as the dialog shows it. A table, so no plan is named by comparison. */
 const PLAN_NAMES: Readonly<Record<Plan, () => string>> = {
@@ -36,6 +46,8 @@ export function planName(plan: Plan): string {
 
 /** The price row's words, while ADR 0009 leaves billing open. */
 const PRICES: Readonly<Record<'free' | 'tba', () => string>> = {
+  /* why: this shares its id with the plan name "Free"; a `desc` alone does not split the two
+     translations, so a different German word here would need an explicit `{id: …}`. */
   free: () => msg('Free'),
   tba: () => msg('To be announced'),
 }
@@ -140,7 +152,7 @@ function comparisonCards(isCurrent: (plan: Plan) => boolean): TemplateResult {
             ${ROWS.map(
               (row) =>
                 html`<div class="wa-split wa-gap-s" data-row=${row.id}>
-                  <dt>${row.label()}</dt>
+                  <dt class="app-plan-label">${row.label()}</dt>
                   <dd>${row.value(plan)}</dd>
                 </div>`,
             )}
@@ -159,4 +171,148 @@ export function renderPlanComparison(current: Plan): TemplateResult {
   // Two variables compared, never a tier literal (ADR 0009).
   const isCurrent = (plan: Plan): boolean => plan === current
   return html`${comparisonTable(isCurrent)}${comparisonCards(isCurrent)}`
+}
+
+/** Why the last waitlist change did not happen. The client's outcomes, less `done`. */
+export type WaitlistProblem = 'already-on-plan' | 'signed-out' | 'unavailable'
+
+/** What the waitlist part of the dialog shows. */
+export interface WaitlistState {
+  /** The account's plan, from the cached profile. */
+  readonly plan: Plan
+  readonly session: SessionState | undefined
+  readonly online: boolean
+  /** The cached request, when the account is waiting. */
+  readonly request: PlanRequest | undefined
+  /** A change is on its way to the server: every action waits for it. */
+  readonly busy: boolean
+  /** Why the last change did not happen, until the dialog closes or another is tried. */
+  readonly problem: WaitlistProblem | undefined
+}
+
+/** What the waitlist part of the dialog calls back with. */
+export interface WaitlistHandlers {
+  /** Join for `plan`, or change to it. */
+  readonly onJoin: (plan: Plan) => void
+  readonly onLeave: () => void
+  /** The shell's own sign-in. */
+  readonly onSignIn: () => void
+}
+
+/** What each problem says, in DESIGN.md's error style: what happened, and what to do. */
+const PROBLEMS: Readonly<Record<WaitlistProblem, () => string>> = {
+  'already-on-plan': () => msg('You already have this plan.'),
+  'signed-out': () => msg('Your session has ended. Please sign in again.'),
+  unavailable: () => msg('The waitlist could not be reached. Please try again.'),
+}
+
+/**
+ * A request's date in the current language. A value this build cannot read is shown as it is:
+ * `Intl.DateTimeFormat#format` throws a `RangeError` on an invalid date, which would take the
+ * whole header down with it.
+ */
+function since(at: string): string {
+  const time = Date.parse(at)
+  if (Number.isNaN(time)) return at
+  return new Intl.DateTimeFormat(getLocale(), { dateStyle: 'medium' }).format(time)
+}
+
+function joinLabel(plan: Plan): string {
+  const name = planName(plan)
+  return msg(str`Join the waitlist for ${name}`)
+}
+
+function changeLabel(plan: Plan): string {
+  const name = planName(plan)
+  return msg(str`Change to ${name}`)
+}
+
+function waitingText(request: PlanRequest): string {
+  const name = planName(request.plan)
+  const date = since(request.at)
+  return msg(str`You are on the waitlist for ${name} (since ${date}).`)
+}
+
+/**
+ * The waitlist's actions for the reader's state.
+ *
+ * - **Signed out** (or not yet known): one button, the shell's sign-in.
+ * - **Signed in, not waiting:** "Join the waitlist for …", for each plan above the account's.
+ *   The next plan up is the one loud brand button (DESIGN.md's Commissioning Blue Rule); any
+ *   further one is outlined.
+ * - **Waiting:** what for and since when, "Change to …" for each other plan above the account's,
+ *   and "Leave the waitlist", all outlined: nothing is the obvious next step. Leaving asks
+ *   nothing first: it is not destructive and can be redone at once.
+ * - **Offline:** everything that needs the server is disabled, and the reader is told why.
+ */
+export function renderWaitlist(state: WaitlistState, handlers: WaitlistHandlers): TemplateResult {
+  const disabled = !state.online || state.busy
+  const problem =
+    state.problem === undefined
+      ? ''
+      : html`<wa-callout variant="danger" data-waitlist-problem>
+          <wa-icon slot="icon" name="triangle-exclamation"></wa-icon>
+          ${PROBLEMS[state.problem]()}
+        </wa-callout>`
+  const offline = state.online
+    ? ''
+    : html`<p data-needs-connection data-note>${msg('Needs a connection')}</p>`
+  const button = (plan: Plan, label: string, primary: boolean) =>
+    html`<wa-button
+      data-join=${plan}
+      variant="brand"
+      appearance=${primary ? 'accent' : 'outlined'}
+      ?disabled=${disabled}
+      @click=${() => handlers.onJoin(plan)}
+    >
+      ${label}
+    </wa-button>`
+
+  if (state.session !== 'signed-in') {
+    return html`<div data-waitlist class="wa-stack wa-gap-s">
+      ${problem}
+      <div class="wa-cluster wa-gap-s">
+        <wa-button
+          data-sign-in-waitlist
+          variant="brand"
+          ?disabled=${!state.online}
+          @click=${handlers.onSignIn}
+        >
+          ${msg('Sign in to join the waitlist')}
+        </wa-button>
+      </div>
+      ${offline}
+    </div>`
+  }
+
+  const request = state.request
+  const above = plansAbove(state.plan)
+  if (request === undefined) {
+    return html`<div data-waitlist class="wa-stack wa-gap-s">
+      ${problem}
+      <div class="wa-cluster wa-gap-s">
+        ${above.map((plan, index) => button(plan, joinLabel(plan), index === 0))}
+      </div>
+      ${offline}
+    </div>`
+  }
+
+  // Two variables compared, never a tier literal (ADR 0009).
+  const others = above.filter((plan) => plan !== request.plan)
+  return html`<div data-waitlist class="wa-stack wa-gap-s">
+    ${problem}
+    <p data-waiting>${waitingText(request)}</p>
+    <div class="wa-cluster wa-gap-s">
+      ${others.map((plan) => button(plan, changeLabel(plan), false))}
+      <wa-button
+        data-leave-waitlist
+        appearance="outlined"
+        ?disabled=${disabled}
+        @click=${handlers.onLeave}
+      >
+        ${msg('Leave the waitlist')}
+      </wa-button>
+    </div>
+    ${offline}
+  </div>`
 }
