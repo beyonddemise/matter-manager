@@ -188,3 +188,49 @@ describe('whether a path is inside a room', () => {
     expect(isWithinRoom(' Ground Floor / Kitchen ', 'Ground Floor')).toBe(true)
   })
 })
+
+/**
+ * #242: a room export takes the room with all its sub-rooms, in the list's segment-wise order,
+ * so exporting `Attic` is the attic and the studio inside it, and never `Attic Bedroom`.
+ */
+describe('exporting a room with its sub-rooms (#242)', () => {
+  const rooms = [
+    room('room:pantry', 'Ground Floor/Kitchen/Pantry'),
+    room('room:bedroom', 'Attic Bedroom'),
+    room('room:kitchen', 'Ground Floor/Kitchen'),
+    room('room:studio', 'Attic/Studio'),
+    room('room:ground', 'Ground Floor'),
+    room('room:attic', 'Attic'),
+  ]
+  const groups = browseDevices(
+    rooms.map((entry) => device(`device:${entry.path}`, entry._id)),
+    rooms,
+  )
+  const pathsOf = (path: string) =>
+    selectForExport(groups, { kind: 'room', path }).map((entry) => entry.path)
+
+  it('takes a top room with its sub-rooms, but not a sibling whose name it prefixes', () => {
+    expect(pathsOf('Attic')).toEqual(['Attic', 'Attic/Studio'])
+  })
+
+  it('takes every level below, in order', () => {
+    expect(pathsOf('Ground Floor')).toEqual([
+      'Ground Floor',
+      'Ground Floor/Kitchen',
+      'Ground Floor/Kitchen/Pantry',
+    ])
+  })
+
+  it('takes just the room when it has nothing below it', () => {
+    expect(pathsOf('Attic/Studio')).toEqual(['Attic/Studio'])
+    expect(pathsOf('Attic Bedroom')).toEqual(['Attic Bedroom'])
+  })
+
+  it('takes the sub-rooms of a parent that holds no devices itself', () => {
+    // The case the dropdown exists for: `Ground Floor` has no heading of its own here.
+    const onlyBelow = groups.filter((entry) => entry.path !== 'Ground Floor')
+    expect(
+      selectForExport(onlyBelow, { kind: 'room', path: 'Ground Floor' }).map((e) => e.path),
+    ).toEqual(['Ground Floor/Kitchen', 'Ground Floor/Kitchen/Pantry'])
+  })
+})
