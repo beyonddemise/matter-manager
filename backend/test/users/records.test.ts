@@ -156,9 +156,10 @@ describe('planOf and profileOf', () => {
 
   it('reads free for an unknown plan, and reports it', () => {
     const report = vi.fn()
-    const record = { _id: 'u', type: 'user', email: 'a@b.c', plan: 'Pro' } as const
+    const record = { _id: 'u', type: 'user', sub: 's|1', email: 'a@b.c', plan: 'Pro' } as const
     expect(planOf(record, report)).toBe('free')
-    expect(report).toHaveBeenCalledWith({ email: 'a@b.c', plan: 'Pro' })
+    // The subject, not the address: this reaches the log, and the address must not.
+    expect(report).toHaveBeenCalledWith({ sub: 's|1', plan: 'Pro' })
   })
 
   it('does not report an absent plan, which is the ordinary case', () => {
@@ -183,16 +184,155 @@ describe('planOf and profileOf', () => {
     // exists to end, and production runs the default.
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     try {
-      planOf({ _id: 'u', type: 'user', email: 'a@b.c', plan: 'Pro' })
+      planOf({ _id: 'user:YUBiLmM', type: 'user', sub: 's|1', email: 'a@b.c', plan: 'Pro' })
 
       expect(warn).toHaveBeenCalledTimes(1)
-      expect(JSON.parse(String(warn.mock.calls[0]?.[0]))).toMatchObject({
-        level: 'warn',
-        email: 'a@b.c',
-        plan: 'Pro',
-      })
+      const line = String(warn.mock.calls[0]?.[0])
+      expect(JSON.parse(line)).toMatchObject({ level: 'warn', sub: 's|1', plan: 'Pro' })
+      // Neither the address nor the id, which is the address in base64url.
+      expect(line).not.toContain('@')
+      expect(line).not.toContain('a@b.c')
+      expect(line).not.toContain('YUBiLmM')
     } finally {
       warn.mockRestore()
     }
+  })
+})
+
+describe('the waitlist fields', () => {
+  const AT = '2026-10-09T08:00:00.000Z'
+  const LATER = '2026-10-10T09:30:00.000Z'
+  const writesTo = (fake: ReturnType<typeof fakeCouch>) =>
+    fake.calls.filter((call) => call.operation === 'putDoc' && call.database === USERS_DB).length
+
+  it('records the plan requested and when', async () => {
+    const { couch, documents } = fakeCouch()
+    const records = userRecords(couch, () => 0)
+    await records.ensure(ADA)
+
+    const written = await records.requestPlan(ADA.email, 'member', AT)
+
+    expect(written).toMatchObject({ planRequested: 'member', requestedAt: AT })
+    expect(documents.get(at(ADA.email))).toMatchObject({
+      sub: 'google|1',
+      planRequested: 'member',
+      requestedAt: AT,
+    })
+  })
+
+  it('overwrites an earlier request rather than keeping both', async () => {
+    const { couch, documents } = fakeCouch()
+    const records = userRecords(couch, () => 0)
+    await records.ensure(ADA)
+    await records.requestPlan(ADA.email, 'member', AT)
+
+    await records.requestPlan(ADA.email, 'pro', LATER)
+
+    expect(documents.get(at(ADA.email))).toMatchObject({ planRequested: 'pro', requestedAt: LATER })
+  })
+
+  it('never touches the plan or the refresh tokens', async () => {
+    const { couch, documents } = fakeCouch()
+    const records = userRecords(couch, () => 0)
+    await records.setPlan(ADA.email, 'member')
+    await records.ensure(ADA, [{ hash: 'h', exp: 100, createdAt: 1 }])
+
+    await records.requestPlan(ADA.email, 'pro', AT)
+
+    const stored = documents.get(at(ADA.email)) as { plan: string; refreshTokens: unknown[] }
+    expect(stored.plan).toBe('member')
+    expect(stored.refreshTokens).toHaveLength(1)
+  })
+
+  it('refuses a request without a record, and the error does not name the address', async () => {
+    const { couch } = fakeCouch()
+    const error = await userRecords(couch, () => 0)
+      .requestPlan(ADA.email, 'pro', AT)
+      .catch((caught: unknown) => caught)
+
+    expect(error).toBeInstanceOf(Error)
+    expect((error as Error).message).toMatch(/ensure one first/)
+    // Errors reach the log, and the address must not.
+    expect((error as Error).message).not.toContain(ADA.email)
+  })
+
+  it('clears both fields and keeps everything else', async () => {
+    const { couch, documents } = fakeCouch()
+    const records = userRecords(couch, () => 0)
+    await records.ensure(ADA)
+    await records.requestPlan(ADA.email, 'pro', AT)
+
+    const cleared = await records.clearRequest(ADA.email)
+
+    const stored = documents.get(at(ADA.email))
+    expect(stored).not.toHaveProperty('planRequested')
+    expect(stored).not.toHaveProperty('requestedAt')
+    expect(stored).toMatchObject({ sub: 'google|1', email: 'ada@example.com' })
+    expect(cleared).not.toHaveProperty('planRequested')
+  })
+
+  it('writes nothing when the user is not waiting', async () => {
+    const fake = fakeCouch()
+    const records = userRecords(fake.couch, () => 0)
+    await records.ensure(ADA)
+    const before = writesTo(fake)
+
+    const answer = await records.clearRequest(ADA.email)
+
+    expect(writesTo(fake)).toBe(before)
+    expect(answer?.email).toBe(ADA.email)
+  })
+
+  it('creates no record when clearing for an address that has none', async () => {
+    const { couch, documents } = fakeCouch()
+
+    expect(await userRecords(couch, () => 0).clearRequest(ADA.email)).toBeUndefined()
+    expect(documents.has(at(ADA.email))).toBe(false)
+  })
+
+  it('retries a request that lost a race', async () => {
+    const fake = fakeCouch()
+    const records = userRecords(fake.couch, () => 0)
+    await records.ensure(ADA)
+    const original = fake.couch.putDoc.bind(fake.couch)
+    let first = true
+    vi.spyOn(fake.couch, 'putDoc').mockImplementation(async (db, doc) => {
+      if (first && db === USERS_DB) {
+        first = false
+        throw new CouchError(409, 'conflict', 'raced')
+      }
+      return original(db, doc)
+    })
+
+    await records.requestPlan(ADA.email, 'pro', AT)
+
+    expect(fake.documents.get(at(ADA.email))).toMatchObject({ planRequested: 'pro' })
+  })
+})
+
+describe('the waitlist fields in the profile', () => {
+  const AT = '2026-10-09T08:00:00.000Z'
+  const claims = { sub: 's', email: 'a@b.c' }
+  const record = (fields: Record<string, unknown>) =>
+    ({ _id: 'u', type: 'user', email: 'a@b.c', ...fields }) as never
+
+  it('reports the plan requested and when, while the user is waiting', () => {
+    expect(profileOf(record({ planRequested: 'pro', requestedAt: AT }), claims)).toMatchObject({
+      planRequested: 'pro',
+      requestedAt: AT,
+    })
+  })
+
+  it.each([
+    ['not waiting', {}],
+    ['a request without a date', { planRequested: 'pro' }],
+    ['a date without a request', { requestedAt: AT }],
+    ['free, which nobody waits for', { planRequested: 'free', requestedAt: AT }],
+    ['a tier this build does not know', { planRequested: 'gold', requestedAt: AT }],
+  ])('reports neither for %s', (_case, fields) => {
+    const profile = profileOf(record(fields), claims)
+
+    expect(profile).not.toHaveProperty('planRequested')
+    expect(profile).not.toHaveProperty('requestedAt')
   })
 })
