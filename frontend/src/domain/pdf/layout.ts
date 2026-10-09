@@ -54,6 +54,10 @@ export const A4: PageGeometry = {
 /** A room's name, above the devices in it. */
 export interface HeadingBlock {
   readonly kind: 'heading'
+  /**
+   * The room's stored path, `Attic/Studio`. Kept raw so the layout stays text-free; the renderer
+   * draws it as a breadcrumb with `roomPathBreadcrumb`, as the device list does.
+   */
   readonly path: string
   /** The distance from the top of the page to the top of this block. */
   readonly top: number

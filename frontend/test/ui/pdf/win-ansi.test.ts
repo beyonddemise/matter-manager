@@ -9,6 +9,7 @@ describe('text the standard fonts can already draw', () => {
     ['Spanish and Portuguese', 'Año, mañana, coração'],
     ['Nordic letters', 'Ærø, Ølstykke, Åstorp'],
     ['a room path', 'Erdgeschoss/Küche'],
+    ['a room breadcrumb, whose separator is WinAnsi 0x9B (#242)', 'Erdgeschoss › Küche'],
     ['punctuation WinAnsi has and Latin-1 does not', '“quoted” — em dashed… €'],
     ['digits, which a pairing code is made of', '34970112332'],
   ])('leaves %s exactly as it is', (_case, text) => {

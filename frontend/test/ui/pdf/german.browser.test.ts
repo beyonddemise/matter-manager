@@ -71,7 +71,8 @@ describe('German in a generated PDF', () => {
   })
 
   it('renders a room path with an umlaut', async () => {
-    expect(await drawn([device(DEVICE)])).toContain(ROOM)
+    // Drawn as a breadcrumb since #242; the `›` is WinAnsi too, so nothing is lost around it.
+    expect(await drawn([device(DEVICE)])).toContain('Erdgeschoss › Küche')
   })
 
   it('renders every character German uses', async () => {

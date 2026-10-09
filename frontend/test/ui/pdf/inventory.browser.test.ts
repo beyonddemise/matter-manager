@@ -319,3 +319,37 @@ describe('free text longer than its column', () => {
     })
   })
 })
+
+/**
+ * #242: the PDF consumes `browseDevices`, so it inherits the segment-wise room order, and it
+ * draws the same breadcrumb heading as the device list. A heading of `Attic/Studio` would read
+ * as a file name on paper; `Attic › Studio` reads as a place.
+ */
+describe('sub-rooms', () => {
+  const at = (id: string, path: string): RoomDocument => ({
+    _id: id,
+    _rev: '1-a',
+    updatedAt: '2026-08-19T08:00:00.000Z',
+    type: 'room',
+    path,
+  })
+  const rooms = [
+    at('room:bedroom', 'Attic Bedroom'),
+    at('room:studio', 'Attic/Studio'),
+    at('room:attic', 'Attic'),
+  ]
+  const devices = [
+    device({ name: 'Bedroom lamp', roomId: 'room:bedroom' }),
+    device({ name: 'Studio lamp', roomId: 'room:studio' }),
+    device({ name: 'Ceiling lamp', roomId: 'room:attic' }),
+  ]
+
+  it('heads each room with its breadcrumb, sub-rooms straight after their parent', async () => {
+    const bytes = await buildInventoryPdf(browseDevices(devices, rooms), { labels: LABELS })
+    const lines = await extractText(bytes)
+    const headings = lines.filter((line) => line.startsWith('Attic'))
+
+    expect(headings).toEqual(['Attic', 'Attic › Studio', 'Attic Bedroom'])
+    expect(lines).not.toContain('Attic/Studio')
+  })
+})
