@@ -154,4 +154,26 @@ describe('what the catalogue knows', () => {
     expect(text).toContain('Aqara Home Door and Window Sensor P2')
     expect(text).toContain('Part number: AS056')
   })
+
+  // Ruling R27: the device page shows the manufacturer whenever it is known, so the paper does.
+  it('prints the manufacturer beside the hex product id when the model is unknown', async () => {
+    const bytes = await buildInventoryPdf(
+      groupsFor([
+        device({ name: 'Found vendor', vendorName: 'Aqara', vendorPreferredName: 'Aqara Home' }),
+        device({ name: 'Test vendor device', vendorName: 'Test vendor' }),
+      ]),
+      { labels: LABELS },
+    )
+    const text = (await extractText(bytes)).join('\n')
+    expect(text).toContain('Aqara Home / 0x8000')
+    expect(text).toContain('Test vendor / 0x8000')
+    expect(text).not.toContain('0xFFF1')
+  })
+
+  it('prints the manufacturer alone when no product id is known either', async () => {
+    const { productId: _productId, ...noProduct } = device({ vendorName: 'Aqara' })
+    const bytes = await buildInventoryPdf(groupsFor([noProduct]), { labels: LABELS })
+    const text = (await extractText(bytes)).join('\n')
+    expect(text.split('\n')).toContain('Aqara')
+  })
 })

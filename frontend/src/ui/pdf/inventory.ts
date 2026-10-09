@@ -65,19 +65,26 @@ export interface InventoryOptions {
   readonly cancelled?: () => boolean
 }
 
-/** A device's product, in whatever form is known. */
+/** A Matter id as the device page writes it, e.g. `0x8000`. */
+const hex = (value: number): string => `0x${value.toString(16).toUpperCase().padStart(4, '0')}`
+
+/**
+ * A device's product, in whatever form is known.
+ *
+ * The manufacturer is printed whenever it is known, as on the device page (ruling R27): beside
+ * the model name, or beside the hex product id when the catalogue named the vendor but not the
+ * model (and for every test vendor). It then takes the place of the hex vendor id it names.
+ */
 function productOf(entry: EntryBlock): string | undefined {
   const device = entry.device
+  // The preferred name: what people call the company, and what the device page shows.
+  const manufacturer = manufacturerName(device)
   if (device.productName !== undefined) {
-    // The preferred name: what people call the company, and what the device page shows.
-    const manufacturer = manufacturerName(device)
     return manufacturer === undefined ? device.productName : `${manufacturer} ${device.productName}`
   }
-  if (device.productId === undefined) return undefined
-  const hex = (value: number) => `0x${value.toString(16).toUpperCase().padStart(4, '0')}`
-  return device.vendorId === undefined
-    ? hex(device.productId)
-    : `${hex(device.vendorId)} / ${hex(device.productId)}`
+  if (device.productId === undefined) return manufacturer
+  const vendor = manufacturer ?? (device.vendorId === undefined ? undefined : hex(device.vendorId))
+  return vendor === undefined ? hex(device.productId) : `${vendor} / ${hex(device.productId)}`
 }
 
 /**
