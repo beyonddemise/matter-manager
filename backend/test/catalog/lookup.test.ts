@@ -3,7 +3,7 @@ import { dclClient, MAINNET_URL } from '../../src/catalog/dcl.js'
 import { type LookupDependencies, lookupEntries } from '../../src/catalog/lookup.js'
 import { CATALOG_DB, catalogStore, forgetCatalogDatabase } from '../../src/catalog/store.js'
 import { type CouchFailures, fakeCouch } from '../support/couch.js'
-import { AQARA_ROUTES, fakeDcl, type Recorded } from '../support/dcl.js'
+import { AQARA_ROUTES, AQARA_VENDOR, fakeDcl, type Recorded } from '../support/dcl.js'
 
 beforeEach(() => forgetCatalogDatabase())
 
@@ -78,6 +78,16 @@ describe('lookupEntries with nothing cached', () => {
     expect(couch.documents.get(`${CATALOG_DB}/model:4447:8194`)).not.toHaveProperty('dcl.creator')
   })
 
+  it('does not store the vendor record creator either', async () => {
+    const { couch, deps } = setup()
+    await lookupEntries(AQARA, deps)
+
+    // The positive control: the DCL did send a creator, so its absence is the store's doing.
+    expect(AQARA_VENDOR.vendorInfo.creator).toBeTruthy()
+    expect(couch.documents.get(`${CATALOG_DB}/vendor:4447`)).toMatchObject({ status: 'found' })
+    expect(couch.documents.get(`${CATALOG_DB}/vendor:4447`)).not.toHaveProperty('dcl.creator')
+  })
+
   it('stores a miss for a model the DCL does not have, with the vendor still found', async () => {
     const { couch, deps } = setup()
     const result = await lookupEntries({ vendorId: 4447, productId: 9999 }, deps)
@@ -99,7 +109,7 @@ describe('lookupEntries with nothing cached', () => {
 
   it('handles two first lookups racing for the same product', async () => {
     // Both read "absent", both fetch, both write; the second write is a 409 and is ignored.
-    const { couch, dcl, deps } = setup()
+    const { couch, dcl, deps, warnings } = setup()
     const [first, second] = await Promise.all([
       lookupEntries(AQARA, deps),
       lookupEntries(AQARA, deps),
@@ -107,6 +117,8 @@ describe('lookupEntries with nothing cached', () => {
     expect(first?.vendor.status).toBe('found')
     expect(second?.vendor.status).toBe('found')
     expect(dcl.requests).toHaveLength(4)
+    // A lost race is normal, not a degraded step: nothing is logged for it.
+    expect(warnings).toEqual([])
     expect(couch.documents.get(`${CATALOG_DB}/vendor:4447`)).toMatchObject({ _rev: '1-a' })
   })
 })
@@ -178,6 +190,13 @@ describe('lookupEntries when CouchDB misbehaves', () => {
     const result = await lookupEntries(AQARA, deps)
 
     expect(result?.model.status).toBe('found')
-    expect(warnings.length).toBeGreaterThan(0)
+    // A failing put also fails the database setup every read starts with, so each entry reports
+    // its unreadable cache first and then its unwritable one: the exact words an operator greps.
+    expect([...warnings].sort()).toEqual([
+      'catalogue cache unreadable; asking the DCL',
+      'catalogue cache unreadable; asking the DCL',
+      'catalogue cache unwritable; answering anyway',
+      'catalogue cache unwritable; answering anyway',
+    ])
   })
 })
