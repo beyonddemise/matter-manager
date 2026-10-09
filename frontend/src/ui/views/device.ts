@@ -21,6 +21,7 @@ import { shownManufacturer } from '../i18n/manufacturer.js'
 import { currentAuthor } from '../identity.js'
 import { qrSvg } from '../qr/render.js'
 import { fieldValue } from './device-form.js'
+import { roomBreadcrumb } from './room-breadcrumb.js'
 
 /**
  * Text worth a section, or `undefined`.
@@ -737,7 +738,7 @@ export class DeviceView extends LitElement {
    * The `div` around the pair is what HTML allows a `dl` to group a term with its definition
    * by, and it is what the grid lays out.
    */
-  private field(label: string, value: string | undefined): TemplateResult | '' {
+  private field(label: string, value: string | TemplateResult | undefined): TemplateResult | '' {
     if (value === undefined || value === '') return ''
     return html`
       <div class="wa-stack wa-gap-3xs">
@@ -757,7 +758,15 @@ export class DeviceView extends LitElement {
   private renderDetails(device: DeviceDocument): TemplateResult {
     return html`
       <dl class="wa-grid app-details app-facts">
-        ${this.field(msg('Room'), this.room?.path ?? msg('Without a room'))}
+        ${this.field(
+          msg('Room'),
+          // The breadcrumb the list headings use (#248), so a room reads the same in both.
+          this.room === undefined
+            ? msg('Without a room')
+            : this.room.path === ''
+              ? ''
+              : roomBreadcrumb(this.room.path),
+        )}
         ${this.field(msg('Spot'), device.spot)}
         ${this.field(
           msg('Manufacturer'),
