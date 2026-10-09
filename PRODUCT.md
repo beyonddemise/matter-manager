@@ -58,7 +58,7 @@ Success: no one who used Matter Manager ever has to factory-reset a device becau
   - Must never require connectivity for device work.
   - Creating server projects, promoting and downloading need a connection.
   - The network state must always be visible.
-- **Security:** setup passcodes are stored deliberately unencrypted (ADR 0005). They must never be logged. They leave the browser only through sync and through the catalogue lookup on our own API ([ADR 0019](docs/adr/0019-setup-code-to-own-api.md)), which decodes them in memory and never stores or logs them; only vendor and product IDs reach the DCL.
+- **Security:** setup passcodes are stored deliberately unencrypted (ADR 0005). They must never be logged. They leave the browser only through sync and through the catalogue lookup on our own API ([ADR 0019](docs/adr/0019-setup-code-to-own-api.md)), which decodes them in memory, never stores or logs them, and never echoes them in an error; only vendor and product IDs reach the DCL.
 - **Dependencies:** minimal runtime dependencies, enforced in CI (ADR 0013).
 - **PDFs** are generated client-side (pdf-lib, loaded lazily).
 - **Undecided:**
