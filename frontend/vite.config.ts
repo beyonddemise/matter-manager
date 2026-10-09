@@ -91,8 +91,9 @@ export default defineConfig(({ mode }) => {
       // keeps the warning meaningful: it fires again when the entry grows materially, instead of
       // being printed on every build and ignored. Raised from 700 for #214, when the footer status
       // bar and the projects page's scroller and menu divider took the entry from ~697 kB to
-      // ~708 kB.
-      chunkSizeWarningLimit: 720,
+      // ~708 kB, and from 720 to 730 for #238, when the catalogue follow-ups (#243 to #245) took it
+      // to ~720 kB.
+      chunkSizeWarningLimit: 730,
       rolldownOptions: {
         output: {
           /**
