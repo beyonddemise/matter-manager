@@ -92,7 +92,9 @@ export function emailSignIn(
     async complete(challenge, code) {
       const response = await post(`/auth/email/${encodeURIComponent(challenge)}`, { code })
       if (response === undefined) return { kind: 'unreachable' }
-      if (response.status === 401) return { kind: 'failed' }
+      // A 400 refuses the code's shape, a 401 the code itself; to the person at the dialog both
+      // are "the code didn't work", not a service problem.
+      if (response.status === 400 || response.status === 401) return { kind: 'failed' }
       if (!response.ok) return { kind: 'unreachable' }
       let body: unknown
       try {

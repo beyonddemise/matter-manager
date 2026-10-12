@@ -74,6 +74,14 @@ describe('completeEmailSignIn', () => {
     forgetTokens()
   })
 
+  it('a 400 for a malformed code is failed too, not a service problem', async () => {
+    // The contract refuses a code that is not six digits with a 400; to the person at the
+    // dialog that is "the code didn't work", not "the service is down".
+    const client = emailSignIn('https://api', memoryStore(), (() =>
+      answer(400, { title: 'Bad request' })) as unknown as typeof fetch)
+    expect((await client.complete('c-1', '123')).kind).toBe('failed')
+  })
+
   it('a 401 is failed and stores nothing; a token-shaped lie is unreachable', async () => {
     forgetTokens()
     const store = memoryStore()

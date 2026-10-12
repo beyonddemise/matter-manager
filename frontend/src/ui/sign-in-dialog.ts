@@ -46,9 +46,18 @@ function emailValue(root: Element | null): string {
 }
 
 /** The chooser: Google is the surface's one filled brand button; email steps aside politely. */
-function chooser(state: { emailUnavailable: boolean }, actions: SignInActions): TemplateResult {
+function chooser(
+  state: { emailUnavailable: boolean },
+  online: boolean,
+  actions: SignInActions,
+): TemplateResult {
   return html`<div class="wa-stack wa-gap-s">
-    <wa-button data-google-sign-in variant="brand" @click=${actions.onGoogle}>
+    <wa-button
+      data-google-sign-in
+      variant="brand"
+      ?disabled=${!online}
+      @click=${actions.onGoogle}
+    >
       ${msg('Sign in with Google')}
     </wa-button>
     ${
@@ -62,7 +71,11 @@ function chooser(state: { emailUnavailable: boolean }, actions: SignInActions): 
 }
 
 /** The address step. Enter in the field submits, like the button. */
-function emailStep(state: { busy: boolean }, actions: SignInActions): TemplateResult {
+function emailStep(
+  state: { busy: boolean },
+  online: boolean,
+  actions: SignInActions,
+): TemplateResult {
   const send = (event: Event) =>
     actions.onSendCode(emailValue((event.target as HTMLElement).closest('[data-sign-in-dialog]')))
   return html`<div class="wa-stack wa-gap-s">
@@ -73,11 +86,11 @@ function emailStep(state: { busy: boolean }, actions: SignInActions): TemplateRe
       label=${msg('Email address')}
       autocomplete="email"
       @keydown=${(event: KeyboardEvent) => {
-        if (event.key === 'Enter' && !state.busy) send(event)
+        if (event.key === 'Enter' && !state.busy && online) send(event)
       }}
     ></wa-input>
     <div class="wa-cluster wa-gap-s">
-      <wa-button data-send-code variant="brand" ?disabled=${state.busy} @click=${send}>
+      <wa-button data-send-code variant="brand" ?disabled=${state.busy || !online} @click=${send}>
         ${msg('Send code')}
       </wa-button>
       <wa-button data-back appearance="plain" @click=${actions.onBack}>${msg('Back')}</wa-button>
@@ -88,6 +101,7 @@ function emailStep(state: { busy: boolean }, actions: SignInActions): TemplateRe
 /** The code step: six digits, the address they went to, resend on a cooldown, a way back. */
 function codeStep(
   state: { email: string; busy: boolean; resendWaitSeconds: number },
+  online: boolean,
   actions: SignInActions,
 ): TemplateResult {
   const email = state.email
@@ -103,7 +117,7 @@ function codeStep(
       <wa-button
         data-verify
         variant="brand"
-        ?disabled=${state.busy}
+        ?disabled=${state.busy || !online}
         @click=${(event: Event) =>
           actions.onVerify(
             (
@@ -118,7 +132,7 @@ function codeStep(
       <wa-button
         data-resend
         appearance="plain"
-        ?disabled=${state.resendWaitSeconds > 0}
+        ?disabled=${state.resendWaitSeconds > 0 || !online}
         @click=${actions.onResend}
       >
         ${
@@ -133,14 +147,14 @@ function codeStep(
 }
 
 /** The step's body; the status region below it is shared by all three. */
-function body(state: SignInStep, actions: SignInActions): TemplateResult {
+function body(state: SignInStep, online: boolean, actions: SignInActions): TemplateResult {
   switch (state.step) {
     case 'chooser':
-      return chooser(state, actions)
+      return chooser(state, online, actions)
     case 'email':
-      return emailStep(state, actions)
+      return emailStep(state, online, actions)
     case 'code':
-      return codeStep(state, actions)
+      return codeStep(state, online, actions)
   }
 }
 
@@ -149,10 +163,13 @@ function body(state: SignInStep, actions: SignInActions): TemplateResult {
  * the state). Closing it — Escape, its X — reaches the shell through `onClose`.
  *
  * @param notice the status line: a failure, a cooldown word, or `''` for silence
+ * @param online whether the network is believed present; offline, every action that needs the
+ *   server is disabled and the reader is told why, the waitlist dialog's convention (#224)
  */
 export function renderSignInDialog(
   state: SignInStep,
   notice: string,
+  online: boolean,
   actions: SignInActions,
 ): TemplateResult {
   return html`<wa-dialog
@@ -165,8 +182,9 @@ export function renderSignInDialog(
     }}
   >
     <div class="wa-stack wa-gap-m">
-      ${body(state, actions)}
+      ${body(state, online, actions)}
       <output data-sign-in-status role="status">${notice}</output>
+      ${online ? '' : html`<p data-needs-connection data-note>${msg('Needs a connection')}</p>`}
     </div>
   </wa-dialog>`
 }

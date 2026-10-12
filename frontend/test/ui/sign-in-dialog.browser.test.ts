@@ -32,9 +32,14 @@ function recording() {
 }
 
 /** The dialog rendered into a fresh container, queried by its light-DOM contract. */
-async function mounted(state: SignInStep, notice = '', actions: SignInActions = recording()) {
+async function mounted(
+  state: SignInStep,
+  notice = '',
+  actions: SignInActions = recording(),
+  online = true,
+) {
   const container = await fixture(html`<div></div>`)
-  render(renderSignInDialog(state, notice, actions), container as HTMLElement)
+  render(renderSignInDialog(state, notice, online, actions), container as HTMLElement)
   await customElements.whenDefined('wa-dialog')
   return container as HTMLElement
 }
@@ -228,4 +233,30 @@ describe('German, at 360 px', () => {
       expect(button.getBoundingClientRect().right).toBeLessThanOrEqual(window.innerWidth)
     }
   })
+})
+
+describe('offline', () => {
+  it.each([
+    [
+      'chooser',
+      { step: 'chooser', emailUnavailable: false } satisfies SignInStep,
+      '[data-google-sign-in]',
+    ],
+    ['email', { step: 'email', busy: false } satisfies SignInStep, '[data-send-code]'],
+    [
+      'code',
+      { step: 'code', email: 'a@b.co', busy: false, resendWaitSeconds: 0 } satisfies SignInStep,
+      '[data-verify]',
+    ],
+  ] as const)(
+    'the %s step disables its action and says a connection is needed',
+    async (_name, step, action) => {
+      // Signing in needs the server either way; the existing dialog convention (#224) is
+      // disabled actions plus the words, not a failure after the attempt.
+      const root = await mounted(step, '', recording(), false)
+
+      expect(root.querySelector('[data-needs-connection]')).not.toBeNull()
+      expect((root.querySelector(action) as HTMLElement).hasAttribute('disabled')).toBe(true)
+    },
+  )
 })

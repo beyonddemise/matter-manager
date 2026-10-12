@@ -535,6 +535,36 @@ export class AppShell extends LitElement implements ViewHost {
         this.querySelector<HTMLElement>('[data-scheme-toggle]')
       target?.focus()
     }
+    // A session arriving takes the sign-in control away; if it held focus — it is where the
+    // dialog's close put it a moment earlier — focus falls to the page. Re-home it to the
+    // scheme toggle, the control that takes its place in the header's order.
+    if (changed.has('session') && this.session === 'signed-in') {
+      const active = document.activeElement
+      if (active === null || active === document.body)
+        this.querySelector<HTMLElement>('[data-scheme-toggle]')?.focus()
+    }
+    // Focus moves with each step (#224): the clicked button is removed with its step, and
+    // without this focus falls to the document. The dialog's own autofocus covers the first
+    // open; step changes inside it are this component's to carry.
+    if (changed.has('signingIn') && this.signingIn !== undefined) {
+      const was = changed.get('signingIn') as SignInStep | undefined
+      if (was !== undefined && was.step !== this.signingIn.step)
+        void this.focusSignInStep(this.signingIn.step)
+    }
+  }
+
+  /** The step's first control, focused once its inner element is ready (`focusWaitlist`'s way). */
+  private async focusSignInStep(step: SignInStep['step']): Promise<void> {
+    const selector =
+      step === 'chooser'
+        ? '[data-google-sign-in]'
+        : step === 'email'
+          ? '[data-email-input]'
+          : '[data-code-input]'
+    const target = this.querySelector<HTMLElement & { updateComplete?: Promise<unknown> }>(selector)
+    if (target === null) return
+    await target.updateComplete
+    target.focus()
   }
 
   /** What decides whether Upgrade is offered: the cached plan and request. */
@@ -842,6 +872,12 @@ export class AppShell extends LitElement implements ViewHost {
   private async verifySignInCode(code: string): Promise<void> {
     const challenge = this.signInChallenge
     if (challenge === undefined || this.verifyingCode) return
+    // The contract takes exactly six digits; a shorter code (Sign in pressed early) earns the
+    // same words a wrong one would, without a request the server could only 400.
+    if (!/^[0-9]{6}$/.test(code)) {
+      this.signInNotice = msg("That code didn't work. It may have expired — request a new one.")
+      return
+    }
     this.verifyingCode = true
     const attempt = this.signInAttempt
     if (this.signingIn?.step === 'code') this.signingIn = { ...this.signingIn, busy: true }
@@ -851,15 +887,29 @@ export class AppShell extends LitElement implements ViewHost {
     } finally {
       this.verifyingCode = false
     }
+
+    if (outcome.kind === 'signed-in') {
+      // Committed whether or not the dialog is still open: the client already holds the access
+      // token and stored the refresh token, and a header still offering "Sign in" over live
+      // credentials would be a lie the next reload exposes. Only the dialog-local words are
+      // gated by the attempt counter.
+      if (attempt === this.signInAttempt) this.closeSignIn()
+      // The dialog's status region is gone; the shell's own live region says it instead.
+      this.announcement = msg('Signed in.')
+      // The refresher answered `signed-out` at startup and armed nothing more. Started afresh,
+      // its first exchange presents the just-stored refresh token, answers `refreshed`, and the
+      // ordinary transition does the rest — session, replication, backfill, and the next
+      // refresh scheduled before expiry. Faking the outcome here instead would flip the session
+      // and then let the 300-second token die unrefreshed.
+      this.tokenRefresher?.stop()
+      this.tokenRefresher = (this.refresher ?? startRealRefresher)((heard) =>
+        this.onTokenOutcome(heard),
+      )
+      return
+    }
     if (attempt !== this.signInAttempt) return
 
     switch (outcome.kind) {
-      case 'signed-in':
-        this.closeSignIn()
-        // The dialog's status region goes with it; the shell's own live region says it instead.
-        this.announcement = msg('Signed in.')
-        this.onTokenOutcome({ kind: 'refreshed', expiresIn: outcome.expiresIn })
-        return
       case 'failed':
         // One wording for every refusal, as the contract answers: wrong, expired, consumed and
         // unknown are indistinguishable by design.
@@ -1152,7 +1202,12 @@ export class AppShell extends LitElement implements ViewHost {
               // Beside the upgrade dialog's render: presence in the template is the state. Gone
               // once the session is in, whichever path answered it.
               this.signingIn !== undefined && this.session !== 'signed-in'
-                ? renderSignInDialog(this.signingIn, this.signInNotice, this.signInActions)
+                ? renderSignInDialog(
+                    this.signingIn,
+                    this.signInNotice,
+                    this.online,
+                    this.signInActions,
+                  )
                 : ''
             }
           </div>
