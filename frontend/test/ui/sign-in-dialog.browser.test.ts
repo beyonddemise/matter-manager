@@ -1,11 +1,16 @@
 import '@awesome.me/webawesome-pro/dist/styles/webawesome.css'
+import '@awesome.me/webawesome-pro/dist/styles/themes/glossy.css'
+import '@awesome.me/webawesome-pro/dist/styles/color/palettes/anodized.css'
 import '@awesome.me/webawesome-pro/dist/components/button/button.js'
 import '@awesome.me/webawesome-pro/dist/components/dialog/dialog.js'
 import '@awesome.me/webawesome-pro/dist/components/input/input.js'
 import '@awesome.me/webawesome-pro/dist/components/otp-input/otp-input.js'
 import { fixture } from '@open-wc/testing-helpers'
 import { html, render } from 'lit'
-import { beforeAll, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
+import { page } from 'vitest/browser'
+import { SOURCE_LOCALE } from '../../src/ui/i18n/locale.js'
+import { activateLocale } from '../../src/ui/i18n/localization.js'
 import {
   renderSignInDialog,
   type SignInActions,
@@ -183,5 +188,39 @@ describe('the status region', () => {
     expect(spoken.querySelector('[data-sign-in-status]')?.textContent).toContain(
       'Something to say',
     )
+  })
+})
+
+describe('German, at 360 px', () => {
+  afterEach(async () => {
+    await page.viewport(414, 896)
+    await activateLocale(SOURCE_LOCALE)
+  })
+
+  it.each([
+    ['chooser', { step: 'chooser', emailUnavailable: false } satisfies SignInStep, 'Mit E-Mail anmelden'],
+    ['email', { step: 'email', busy: false } satisfies SignInStep, 'Code senden'],
+    [
+      'code',
+      {
+        step: 'code',
+        email: 'langer.name@beispiel-domain.example',
+        busy: false,
+        resendWaitSeconds: 59,
+      } satisfies SignInStep,
+      'Neuen Code senden (59)',
+    ],
+  ] as const)('the %s step speaks Sie and nothing scrolls sideways', async (_name, step, copy) => {
+    await page.viewport(360, 640)
+    await activateLocale('de')
+    const root = await mounted(step, 'Der Anmeldedienst war nicht erreichbar. Bitte versuchen Sie es erneut.')
+
+    expect(root.textContent).toContain(copy)
+    const dialog = root.querySelector('[data-sign-in-dialog]') as HTMLElement
+    const body = dialog.shadowRoot?.querySelector('[part~="body"]') as HTMLElement
+    expect(body.scrollWidth).toBeLessThanOrEqual(body.clientWidth)
+    for (const button of root.querySelectorAll('wa-button')) {
+      expect(button.getBoundingClientRect().right).toBeLessThanOrEqual(window.innerWidth)
+    }
   })
 })
