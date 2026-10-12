@@ -89,9 +89,11 @@ A new optional field holds authentication identities:
   record, `ensureRecord` seeds it with that sub, exactly as it seeds Google subs today. If that
   account later signs in with Google, the Google subject fills `subjects.google` and the
   canonical `mail:` sub stays — rule 2 above.
-- `ensureRecord` therefore gains the provider dimension: `ensure(provider, subject, email,
-  displayName)`. Same provider + different subject on a filled slot → 409 `subject-conflict`.
-  Different provider → fill that slot, leave the canonical sub alone.
+- Identity resolution is its own step, **before** `ensureRecord`: `resolveIdentity(provider,
+  providerSubject, verifiedAddress)` answers the canonical subject (filling or checking the
+  provider's slot; mismatch → 409 `subject-conflict`), and `ensureRecord` keeps its existing
+  signature and semantics, seeded with that canonical subject. `ensureRecord` itself never
+  learns about providers.
 
 ### Views
 
@@ -200,9 +202,11 @@ the two operations.
 
 ## Security and logging
 
-- No address ever reaches a log line, an error message or a problem body; the derived `mail:`
-  sub (or the canonical sub) is the loggable identity. Sign-ins log through the existing
-  `SignInLog` with the subject only.
+- No address reaches an error message, a problem body, or any new log line; the derived `mail:`
+  sub (or the canonical sub) is the loggable identity. The one exception stays what it already
+  is: the existing `SignInLog` line deliberately carries the address (sign-in creates no record,
+  so it is the only trace; retention policy pending, reference #212), and email sign-ins write
+  that same line with `provider: "email"`.
 - The code is stored only as `sha256(code)`, compared constant-time, single-use, 10-minute TTL,
   5 attempts.
 - The challenge id is high-entropy and single-use; possession of the email alone (code) or the
