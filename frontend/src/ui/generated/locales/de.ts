@@ -285,6 +285,7 @@
 'sf0b5a77a7af7527b': `Ein Gerät braucht einen Raum. Tippen Sie einen Namen ein, um einen anzulegen, oder wählen Sie einen vorhandenen Raum.`,
 'sf0ef7644098b8a63': `Endgültig löschen`,
 'sf28d171a302d2b60': `Neues Projekt`,
+'sf2df3f6dce2b02c4': `Mit GitHub anmelden`,
 'sf38d6612424880ee': `Bild hochladen`,
 'sf62138b53ab5a555': `Speicher auf diesem Gerät`,
 'sf633b74af173a4e9': `Noch keine Räume. Ein Raum entsteht, sobald Sie bei einem Gerät einen eintragen.`,

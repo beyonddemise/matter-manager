@@ -238,11 +238,8 @@ describe('German, at 360 px', () => {
   })
 
   it.each([
-    [
-      'chooser',
-      { step: 'chooser', google: true, github: false, email: true } satisfies SignInStep,
-      'Mit E-Mail anmelden',
-    ],
+    ['chooser, its GitHub button', ALL_ON, 'Mit GitHub anmelden'],
+    ['chooser, its email button', ALL_ON, 'Mit E-Mail anmelden'],
     ['email', { step: 'email', busy: false } satisfies SignInStep, 'Code senden'],
     [
       'code',
