@@ -89,7 +89,9 @@ route the gate would 404.
 - `GitHubConfig` (`@ConfigMapping(prefix = "github")`): `clientId`, `clientSecret`, `webBase`
   (default `https://github.com`), `apiBase` (default `https://api.github.com`). Empty strings
   count as unset, as everywhere else.
-- `Features.github()` is true only when both `clientId` and `clientSecret` are set.
+- `Features.github()` is true only when the whole flow can run: `clientId`, `clientSecret` and
+  `redirectUri` set, plus the session prerequisites the Google gate already requires (CouchDB,
+  keys, app origin) — `methods` must never advertise a route that would fail mid-dance.
 - A `("auth/github", Features::github)` gate **before** the broader `("auth", ...)` gate,
   first-match-decides — the pattern the email gate established. Unconfigured deployments answer
   404 on both routes, and `methods` says `"github": false`.
