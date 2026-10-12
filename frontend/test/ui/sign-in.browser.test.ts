@@ -418,7 +418,10 @@ describe('signing in with an emailed code', () => {
   const requestCode = async (element: HTMLElement, email = 'ada@example.com') => {
     await waitUntil(() => element.querySelector('[data-sign-in]') !== null, 'no sign-in control')
     ;(element.querySelector('[data-sign-in]') as HTMLElement).click()
-    await waitUntil(() => element.querySelector('[data-sign-in-dialog][open]') !== null, 'no chooser')
+    await waitUntil(
+      () => element.querySelector('[data-sign-in-dialog][open]') !== null,
+      'no chooser',
+    )
     const dialog = element.querySelector('[data-sign-in-dialog]') as HTMLElement
     ;(dialog.querySelector('[data-email-option]') as HTMLElement).click()
     await waitUntil(() => dialog.querySelector('[data-email-input]') !== null, 'no email step')
@@ -452,9 +455,9 @@ describe('signing in with an emailed code', () => {
     expect(completes).toEqual([{ challenge: 'c-1', code: '123456' }])
     expect(element.querySelector('[data-sign-in-dialog]')).toBeNull()
     expect(makeSync).toHaveBeenCalledTimes(1)
-    expect(
-      element.querySelector('[data-status-announcement]')?.textContent?.trim(),
-    ).toBe('Signed in.')
+    expect(element.querySelector('[data-status-announcement]')?.textContent?.trim()).toBe(
+      'Signed in.',
+    )
     await waitUntil(
       () => document.activeElement === element.querySelector('[data-scheme-toggle]'),
       'focus went nowhere',

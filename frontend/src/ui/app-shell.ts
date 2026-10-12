@@ -16,8 +16,8 @@ import {
 } from './composition.js'
 import { browserConnectivity, type ConnectivitySource, watchConnectivity } from './connectivity.js'
 import { PROJECT_CHANGED } from './current-project.js'
-import type { EmailSignIn, StartOutcome, VerifyOutcome } from './email-signin.js'
 import { localDatabase } from './db/project-database.js'
+import type { EmailSignIn, StartOutcome, VerifyOutcome } from './email-signin.js'
 import { negotiateLocale } from './i18n/locale.js'
 import { activateLocale, getLocale } from './i18n/localization.js'
 import { type LocalProjectDependencies, localProjectDefaults } from './local-projects.js'
@@ -37,11 +37,6 @@ import {
 } from './scheme.js'
 import { type SessionState, sessionExpired } from './session.js'
 import {
-  renderSignInDialog,
-  type SignInActions,
-  type SignInStep,
-} from './sign-in-dialog.js'
-import {
   offersUpgrade,
   renderAccount,
   renderSignOut,
@@ -55,6 +50,7 @@ import {
   renderSyncStatus,
   type StatusSnapshot,
 } from './shell-status.js'
+import { renderSignInDialog, type SignInActions, type SignInStep } from './sign-in-dialog.js'
 import type { SyncManager } from './sync/manager.js'
 import type { SyncState } from './sync/replication.js'
 import { startRefresher } from './token-refresher.js'

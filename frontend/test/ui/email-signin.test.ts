@@ -15,18 +15,19 @@ function memoryStore() {
   return {
     written: () => token,
     read: async () => token,
-    write: async (t: string) => void (token = t),
-    clear: async () => void (token = undefined),
+    write: async (t: string) => {
+      token = t
+    },
+    clear: async () => {
+      token = undefined
+    },
   }
 }
 
 describe('startEmailSignIn', () => {
   it('answers the challenge and sends address and locale', async () => {
     let sent: RequestInit | undefined
-    const client = emailSignIn('https://api', memoryStore(), ((
-      url: string,
-      init?: RequestInit,
-    ) => {
+    const client = emailSignIn('https://api', memoryStore(), ((url: string, init?: RequestInit) => {
       expect(url).toBe('https://api/auth/email')
       sent = init
       return answer(202, { challenge: 'c-1' })

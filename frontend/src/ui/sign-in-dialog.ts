@@ -106,9 +106,11 @@ function codeStep(
         ?disabled=${state.busy}
         @click=${(event: Event) =>
           actions.onVerify(
-            ((event.target as HTMLElement)
-              .closest('[data-sign-in-dialog]')
-              ?.querySelector('[data-code-input]') as { value?: string } | null)?.value ?? '',
+            (
+              (event.target as HTMLElement)
+                .closest('[data-sign-in-dialog]')
+                ?.querySelector('[data-code-input]') as { value?: string } | null
+            )?.value ?? '',
           )}
       >
         ${msg('Sign in')}

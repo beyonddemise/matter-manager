@@ -185,9 +185,7 @@ describe('the status region', () => {
     expect((region.textContent ?? '').trim()).toBe('')
 
     const spoken = await mounted(step, 'Something to say')
-    expect(spoken.querySelector('[data-sign-in-status]')?.textContent).toContain(
-      'Something to say',
-    )
+    expect(spoken.querySelector('[data-sign-in-status]')?.textContent).toContain('Something to say')
   })
 })
 
@@ -198,7 +196,11 @@ describe('German, at 360 px', () => {
   })
 
   it.each([
-    ['chooser', { step: 'chooser', emailUnavailable: false } satisfies SignInStep, 'Mit E-Mail anmelden'],
+    [
+      'chooser',
+      { step: 'chooser', emailUnavailable: false } satisfies SignInStep,
+      'Mit E-Mail anmelden',
+    ],
     ['email', { step: 'email', busy: false } satisfies SignInStep, 'Code senden'],
     [
       'code',
@@ -213,7 +215,10 @@ describe('German, at 360 px', () => {
   ] as const)('the %s step speaks Sie and nothing scrolls sideways', async (_name, step, copy) => {
     await page.viewport(360, 640)
     await activateLocale('de')
-    const root = await mounted(step, 'Der Anmeldedienst war nicht erreichbar. Bitte versuchen Sie es erneut.')
+    const root = await mounted(
+      step,
+      'Der Anmeldedienst war nicht erreichbar. Bitte versuchen Sie es erneut.',
+    )
 
     expect(root.textContent).toContain(copy)
     const dialog = root.querySelector('[data-sign-in-dialog]') as HTMLElement
