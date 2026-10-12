@@ -14,7 +14,6 @@
       ".github/**",
       "*.json",
       "!frontend",
-      "!backend",
       "!**/dist",
       "!**/coverage",
       "!**/playwright-report",

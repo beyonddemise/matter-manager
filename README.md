@@ -103,18 +103,20 @@ Two halves and a contract between them.
 | Directory      | Contains                                                              | Depends on |
 | -------------- | --------------------------------------------------------------------- | ---------- |
 | `frontend`     | The browser application — `src/domain`, `src/data`, `src/ui`           | nothing    |
-| `backend`      | Fastify service, and its own pure domain in `src/domain`               | nothing    |
 | `e2e`          | Playwright journeys against the built site                             | both       |
-| `openapi.yaml` | The HTTP contract both sides are held to                               | —          |
+| `openapi.yaml` | The HTTP contract the frontend codes against                           | —          |
 
-**Each half installs, lints, typechecks, tests and builds on its own**, with its own
+**The API lives in its own repository,
+[matter-manager-backend](https://github.com/beyonddemise/matter-manager-backend)** — a
+Quarkus service shipped as a native container. That replaceability was designed in: ADR 0004
+chose TypeScript partly to avoid writing domain logic twice, the code showed no such sharing
+exists, and the service was rewritten in another language exactly as planned. Its copy of
+`openapi.yaml` is the contract of record; the copy here is what the frontend's contract tests
+read, and the two must say the same thing.
+
+**Each package installs, lints, typechecks, tests and builds on its own**, with its own
 `package.json`, lockfile, `tsconfig`, Biome and Vitest configuration. `e2e` is self-contained
 the same way, including its own `playwright.config.ts`. They share no package.
-That is deliberate rather than tidy: ADR 0004 chose TypeScript partly to avoid writing domain
-logic twice, the code has since shown no such sharing exists — the browser and the service
-have one type alias in common and no functions — and so either side stays replaceable in
-another language. `backend` in particular needs no Web Awesome token, which is what lets a
-fork's backend pull request pass CI where the frontend's cannot.
 
 Inside `frontend`, the three directories are what used to be three npm packages:
 
@@ -124,9 +126,8 @@ Inside `frontend`, the three directories are what used to be three npm packages:
 | `src/data`         | PouchDB repositories, sync manager                    | `src/domain` |
 | `src/ui`           | Lit SPA, routing, views, PDF, QR                      | both         |
 
-Pure logic — no I/O, no DOM, no network — lives in `frontend/src/domain` for the browser and
-`backend/src/domain` for the service. That is where almost all the logic that can be _wrong_
-lives, and it runs in milliseconds with zero setup. If something needs a browser or a database
+Pure logic — no I/O, no DOM, no network — lives in `frontend/src/domain`. That is where almost
+all the logic that can be _wrong_ lives, and it runs in milliseconds with zero setup. If something needs a browser or a database
 to test, that is a signal it belongs elsewhere. The purity is enforced, not requested: see
 `frontend/tsconfig.domain.json` and `frontend/test/domain/purity.test.ts`.
 
@@ -158,10 +159,9 @@ comes up alongside, already configured, and your token is forwarded from the hos
 ```bash
 npm ci                          # root tooling: Biome, for the files the root owns
 npm ci --prefix frontend        # the application (needs the token above)
-npm ci --prefix backend         # the service (needs no token)
 npm ci --prefix e2e             # the end-to-end journeys (needs no token)
 docker compose -f .devcontainer/docker-compose.yml up -d couchdb
-npm run verify                  # everything, both halves
+npm run verify                  # everything
 npm run dev                     # Vite dev server with HMR on http://localhost:5173
 ```
 
@@ -170,12 +170,12 @@ npm run dev                     # Vite dev server with HMR on http://localhost:5
 | `npm run dev`        | Vite dev server for `frontend` with hot module replacement, on http://localhost:5173.                                                                     |
 | `npm run build`      | Production bundle into `frontend/dist`. Typechecks first — both passes — because the deploy is the last place to find a type error.                        |
 | `npm run preview`    | Serve the built bundle, to check it before deploying.                                                                                                     |
-| `npm run verify`     | **Everything**: the repository-wide checks, then `frontend`'s own verify, then `backend`'s. CI adds coverage gates and the CouchDB contract checks.        |
+| `npm run verify`     | **Everything**: the repository-wide checks, then `frontend`'s own verify. CI adds coverage gates and the CouchDB contract checks.                          |
 | `npm run e2e`        | Playwright end-to-end suite against the built site                                                                                                        |
 | `npm run check:fix`  | Auto-fix formatting and lint at the root. Each half has its own: `npm run check:fix --prefix frontend`.                                                    |
 
-Anything that belongs to one half is run from that half — `npm test --prefix frontend`,
-`npm run test:watch --prefix backend`. The root runs what spans them.
+Anything that belongs to one package is run from that package — `npm test --prefix frontend`.
+The root runs what spans them.
 
 ---
 

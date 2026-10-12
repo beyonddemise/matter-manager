@@ -18,8 +18,8 @@
  * A floor (`>=24`) and a pin (`24`) are different statements, and this check deliberately
  * requires the same *major* from both rather than treating a looser floor as acceptable. The
  * repository has one runtime. A package claiming to support an older Node is claiming something
- * nothing here tests, and `backend`'s stale `>=22` — left behind by the move in #164 and true
- * of nothing — is what that leniency looks like in practice.
+ * nothing here tests, and the old backend's stale `>=22` — left behind by the move in #164 and
+ * true of nothing — is what that leniency looked like in practice.
  *
  * Extracted from an inline `run:` block in `ci.yml` so it can be run before pushing, which the
  * shell version could not be. Adding the two package.json checks to thirty lines of YAML shell
@@ -136,7 +136,6 @@ function expect(where, what, majors) {
   }
 }
 
-expect('backend/Dockerfile', 'FROM node', scan('backend/Dockerfile', /^FROM node:(\d+)-/))
 expect(
   '.devcontainer/docker-compose.yml',
   'typescript-node image',

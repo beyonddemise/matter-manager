@@ -17,56 +17,12 @@ services:
       - caddy-data:/data
       - caddy-config:/config
     depends_on:
-      - api
       - couchdb
 
-  api:
-    # backend/Dockerfile landed with #120; this note previously said it did not exist,
-    # which stopped being true then. The stack as a whole is still finished in M9 - what this
-    # file documents is the intended topology.
-    build:
-      context: ..
-      dockerfile: backend/Dockerfile
-    restart: unless-stopped
-    # Every name here is read by backend/src/composition.ts. That is not a
-    # coincidence to preserve casually: this block previously passed API_PORT,
-    # JWT_PRIVATE_KEY_PATH, JWT_ISSUER, JWT_AUDIENCE and API_PUBLIC_URL, none of
-    # which anything read - so the stack started, looked configured, and served
-    # no sign-in and no projects.
-    environment:
-      NODE_ENV: production
-      PORT: 3000
-      COUCHDB_URL: http://couchdb:5984
-      COUCHDB_ADMIN_USER: ${COUCHDB_ADMIN_USER}
-      COUCHDB_ADMIN_PASSWORD: ${COUCHDB_ADMIN_PASSWORD}
-      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
-      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
-      # Byte-for-byte what is registered in the Google console. See
-      # docs/GOOGLE-SIGN-IN.md.
-      GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI}
-      # Where the browser is returned to, and the only origin allowed to make a
-      # cross-origin request. Unset means the application is refused.
-      APP_ORIGIN: ${APP_ORIGIN}
-      # The PEM itself, not a path: signingKeyFromPem parses a value, and there is
-      # no code that reads a key file. Multi-line values are supported in .env by
-      # Compose v2 when double-quoted.
-      JWT_PRIVATE_KEY: ${JWT_PRIVATE_KEY}
-      JWT_KEY_ID: ${JWT_KEY_ID}
-      # A SECOND key, for refresh tokens, handoff cookies and PKCE carriers. Its public half is
-      # never given to CouchDB, which is the point: CouchDB checks a signature and an expiry and
-      # no claim we invented, so a refresh token signed with the key above would be a thirty-day
-      # database credential. Must not be the same value.
-      JWT_SESSION_PRIVATE_KEY: ${JWT_SESSION_PRIVATE_KEY}
-      # Caddy is the only ingress and sets X-Forwarded-For. Without this the rate
-      # limiter counts every request against Caddy's address, so the first twenty
-      # sign-in attempts from anywhere lock out everybody else.
-      TRUST_PROXY: 'true'
-    depends_on:
-      couchdb:
-        condition: service_healthy
-    # Never published to the host. Caddy is the only ingress.
-    expose:
-      - '3000'
+  # The API is no longer part of this stack: it is built and shipped as a container from its
+  # own repository, matter-manager-backend, and deployed on the droplet by hand. It takes the
+  # same environment variables the Node service took (that repository's README documents them)
+  # and reaches CouchDB over this network.
 
   couchdb:
     # Built, not pulled, so the configuration is COPYed in rather than bind-mounted.
