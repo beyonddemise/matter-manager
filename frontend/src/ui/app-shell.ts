@@ -7,6 +7,7 @@ import {
   beginSignIn,
   endSession,
   followProfileLocale,
+  plans as plansClient,
   profile,
   requestTokens,
   type TokenOutcome,
@@ -18,6 +19,7 @@ import { localDatabase } from './db/project-database.js'
 import { negotiateLocale } from './i18n/locale.js'
 import { activateLocale } from './i18n/localization.js'
 import { type LocalProjectDependencies, localProjectDefaults } from './local-projects.js'
+import { type PlanMatrix, type PlansApi, resolvePlanMatrix } from './plans.js'
 import { cachedProfileOf, type PlanRequest, type Profile } from './profile.js'
 import { beginProjectAction } from './project-busy.js'
 import type { Project } from './projects.js'
@@ -192,6 +194,8 @@ export class AppShell extends LitElement implements ViewHost {
     waitlistProblem: { state: true },
     waitlistLeft: { state: true },
     waitlist: { attribute: false },
+    planMatrix: { state: true },
+    plans: { attribute: false },
     readProfile: { attribute: false },
     refresher: { attribute: false },
     sessionEndedNotice: { state: true },
@@ -238,6 +242,14 @@ export class AppShell extends LitElement implements ViewHost {
   declare waitlistLeft: boolean
   /** Injected by tests. Unset in the application, where it reaches the real API. */
   declare waitlist?: WaitlistApi
+  /**
+   * The published plan matrix the comparison renders from: the cache's answer the moment the
+   * dialog opens, corrected by the server behind it. `undefined` until one is heard, which is
+   * what renders the built-in tables instead.
+   */
+  declare planMatrix: PlanMatrix | undefined
+  /** Fetches the matrix; injected by tests, the real API otherwise. */
+  declare plans?: PlansApi
   /**
    * Counts waitlist changes, so a background profile read started by one can tell that a later
    * change has landed since, and drop its older answer.
@@ -356,6 +368,7 @@ export class AppShell extends LitElement implements ViewHost {
     updateWhenLocaleChanges(this)
     this.signingOut = undefined
     this.upgrading = false
+    this.planMatrix = undefined
     this.waitlistBusy = false
     this.waitlistProblem = undefined
     this.waitlistLeft = false
@@ -752,6 +765,27 @@ export class AppShell extends LitElement implements ViewHost {
     this.waitlistProblem = undefined
     this.waitlistLeft = false
     this.upgrading = true
+    // Not awaited: the dialog opens at once with whatever is already here, and the comparison
+    // follows — first the cache's answer, then the server's correction.
+    void this.loadPlanMatrix()
+  }
+
+  /**
+   * Loads the plan matrix for the comparison: the cache's answer immediately, the server's
+   * correction behind it. No sign-out guard, unlike `rereadProfile`: the matrix is public and
+   * the same for every account, so a late answer is at worst a moment stale, never somebody
+   * else's data. A device that has heard neither keeps what it already shows — the matrix a
+   * previous open fetched, or `undefined`, which renders the built-in tables.
+   */
+  private async loadPlanMatrix(): Promise<void> {
+    const cached = await resolvePlanMatrix(
+      this.plans ?? plansClient(),
+      (this.projectStore ?? localProjectDefaults).cache(),
+      (fresh) => {
+        this.planMatrix = fresh
+      },
+    )
+    this.planMatrix = cached ?? this.planMatrix
   }
 
   private onCloseUpgrade = (): void => {
@@ -894,6 +928,7 @@ export class AppShell extends LitElement implements ViewHost {
                 problem: this.waitlistProblem,
                 left: this.waitlistLeft,
               },
+              this.planMatrix,
               this.upgrading,
               this.onUpgrade,
               this.onCloseUpgrade,

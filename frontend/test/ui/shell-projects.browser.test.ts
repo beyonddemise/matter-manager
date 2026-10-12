@@ -29,6 +29,7 @@ import {
 import { SOURCE_LOCALE } from '../../src/ui/i18n/locale.js'
 import { activateLocale } from '../../src/ui/i18n/localization.js'
 import type { LocalProjectDependencies } from '../../src/ui/local-projects.js'
+import type { PlanMatrix, PlansApi } from '../../src/ui/plans.js'
 import { beginProjectAction, projectActionRunning } from '../../src/ui/project-busy.js'
 import type { Project } from '../../src/ui/projects.js'
 import type { SyncableProject } from '../../src/ui/sync/manager.js'
@@ -168,6 +169,8 @@ interface Options {
   readonly signOutPushTimeoutMs?: number
   /** The waitlist API; one that is never expected to be called by default. */
   readonly waitlist?: WaitlistApi
+  /** The plan matrix API; nothing published by default, so the built-in tables render. */
+  readonly plans?: PlansApi
   /** What "Sign in" does; nothing by default. */
   readonly signIn?: () => void
   /** What the server answers for the profile; nothing (no token) by default. */
@@ -204,6 +207,7 @@ async function mount(options: Options = {}) {
       .signOutOf=${signOutOf}
       .signIn=${options.signIn ?? (() => {})}
       .waitlist=${options.waitlist}
+      .plans=${options.plans ?? { read: async () => undefined }}
       .readProfile=${options.readProfile ?? (async () => undefined)}
       .backfill=${backfill}
       .projectStore=${store}
@@ -1311,6 +1315,165 @@ describe('upgrading', () => {
     await inputSettles(element, (i) => i.plan === 'pro', 'plan never read')
     await element.updateComplete
     expect(element.querySelector('[data-upgrade]')).toBeNull()
+  })
+
+  /** The backend's own `/plans` fixture, pivoted: marketing keys, values as display copy. */
+  const MATRIX: PlanMatrix = {
+    free: { Projects: 1, Price: 'Free forever' },
+    home: { Projects: 3, Price: 'Announced at launch' },
+    pro: { Projects: 'Unlimited*', Price: 'Announced at launch' },
+  }
+  const publishing = (matrix: PlanMatrix): PlansApi => ({ read: async () => matrix })
+
+  it('compares the published plans in the server’s order, values verbatim', async () => {
+    await page.viewport(1280, 800)
+    // A marketing plan this build has no tier for still compares; it just belongs to nobody.
+    const matrix: PlanMatrix = { ...MATRIX, beyond: { Projects: 'Teams', Price: 'On request' } }
+    const { element } = await mount({
+      cachedProfile: profile({ plan: 'member', projectLimit: 5 }),
+      plans: publishing(matrix),
+    })
+    await inputSettles(element, (i) => i.plan === 'member', 'plan never read')
+    await pageView(element, 'desktop')
+    const dialog = await openUpgrade(element)
+    await waitUntil(() => dialog.querySelector('[data-plan-column="home"]') !== null, 'no matrix')
+    const table = dialog.querySelector('[data-plan-table]') as HTMLElement
+
+    expect(
+      [...table.querySelectorAll('th[data-plan-column]')].map((th) =>
+        th.getAttribute('data-plan-column'),
+      ),
+    ).toEqual(['free', 'home', 'pro', 'beyond'])
+    // "Your plan" sits on the marketing column whose tier is the account's: `home` is `member`.
+    expect(texts(table, 'th[data-plan-column]')).toEqual([
+      'free',
+      'home Your plan',
+      'pro',
+      'beyond',
+    ])
+    // The lowercase marketing key is capitalized for display by CSS, verbatim in the DOM.
+    expect(
+      getComputedStyle(
+        table.querySelector('[data-plan-column="home"] .app-plan-marketing') as Element,
+      ).textTransform,
+    ).toBe('capitalize')
+    // The operator's rows in document order, every value verbatim — and no icons: the matrix
+    // carries display text, not booleans.
+    expect(texts(table, 'tbody th[scope="row"]')).toEqual(['Projects', 'Price'])
+    expect(texts(table, '[data-row="Projects"] td')).toEqual(['1', '3', 'Unlimited*', 'Teams'])
+    expect(texts(table, '[data-row="Price"] td')).toEqual([
+      'Free forever',
+      'Announced at launch',
+      'Announced at launch',
+      'On request',
+    ])
+    expect(table.querySelectorAll('td wa-icon')).toHaveLength(0)
+    // The highlight attaches to the resolved column only, and to no unknown one.
+    expect(
+      [...table.querySelectorAll('.app-plan-current')].every(
+        (cell) =>
+          cell.getAttribute('data-plan') === 'home' ||
+          cell.getAttribute('data-plan-column') === 'home',
+      ),
+    ).toBe(true)
+    expect(table.querySelectorAll('[data-your-plan]')).toHaveLength(1)
+    // The waitlist stays tier-driven (ADR 0009): a member account can still only wait for pro.
+    expect(
+      [...dialog.querySelectorAll('[data-join]')].map((button) => button.getAttribute('data-join')),
+    ).toEqual(['pro'])
+  })
+
+  it('renders the cache’s last good matrix when the server has nothing', async () => {
+    await page.viewport(1280, 800)
+    const store = isolatedProjectStore()
+    await store.cache().writePlanMatrix({ matrix: MATRIX, fetchedAt: '2026-10-11T00:00:00.000Z' })
+    const { element } = await mount({
+      store,
+      cachedProfile: profile({ plan: 'free', projectLimit: 1 }),
+      plans: { read: async () => undefined },
+    })
+    await inputSettles(element, (i) => i.plan === 'free', 'plan never read')
+    await pageView(element, 'desktop')
+    const dialog = await openUpgrade(element)
+
+    await waitUntil(
+      () => dialog.querySelector('[data-plan-column="home"]') !== null,
+      'no cached matrix',
+    )
+    const table = dialog.querySelector('[data-plan-table]') as HTMLElement
+    expect(texts(table, '[data-row="Projects"] td')).toEqual(['1', '3', 'Unlimited*'])
+  })
+
+  it('corrects an open dialog when the server’s answer differs from the cache', async () => {
+    const store = isolatedProjectStore()
+    await store.cache().writePlanMatrix({ matrix: MATRIX, fetchedAt: '2026-10-11T00:00:00.000Z' })
+    const changed: PlanMatrix = {
+      ...MATRIX,
+      pro: { Projects: 'Unlimited', Price: 'Announced at launch' },
+    }
+    const { element } = await mount({
+      store,
+      cachedProfile: profile({ plan: 'free', projectLimit: 1 }),
+      plans: publishing(changed),
+    })
+    await inputSettles(element, (i) => i.plan === 'free', 'plan never read')
+    const dialog = await openUpgrade(element)
+
+    // The corrected value in the matrix's own cell, not anywhere in the dialog: the built-in
+    // fallback that renders for an instant before the cache is read also says "Unlimited", and
+    // matching it would read the cache below before the correction was written.
+    await waitUntil(() => {
+      const cell = dialog.querySelector('[data-row="Projects"] td[data-plan="pro"]')
+      return cell !== null && text(cell) === 'Unlimited'
+    }, 'the dialog never heard the correction')
+    // And the cache holds the correction, so the next offline open shows it too. The resolver
+    // writes before it calls back, so a corrected dialog means a corrected cache.
+    expect((await store.cache().readPlanMatrix())?.matrix).toEqual(changed)
+  })
+
+  it('stacks one card per published plan at 360 px, nothing scrolling sideways', async () => {
+    await page.viewport(360, 740)
+    const { element } = await mount({
+      cachedProfile: profile({ plan: 'member', projectLimit: 5 }),
+      plans: publishing(MATRIX),
+    })
+    await inputSettles(element, (i) => i.plan === 'member', 'plan never read')
+    await pageView(element, 'mobile')
+    const dialog = await openUpgrade(element)
+    await waitUntil(() => dialog.querySelector('[data-plan-card="home"]') !== null, 'no cards')
+
+    const cards = [...dialog.querySelectorAll('wa-card[data-plan-card]')] as HTMLElement[]
+    expect(cards.map((card) => card.getAttribute('data-plan-card'))).toEqual([
+      'free',
+      'home',
+      'pro',
+    ])
+    expect(cards[1]?.querySelector('[data-your-plan]')).not.toBeNull()
+    expect(cards[2]?.querySelector('[data-row="Projects"]')?.textContent).toContain('Unlimited*')
+    for (const card of cards) {
+      expect(card.getBoundingClientRect().width).toBeGreaterThan(0)
+      expect(card.getBoundingClientRect().right).toBeLessThanOrEqual(window.innerWidth)
+    }
+    const body = dialog.shadowRoot?.querySelector('[part~="body"]') as HTMLElement
+    expect(body.scrollWidth).toBeLessThanOrEqual(body.clientWidth)
+  })
+
+  it('keeps the dialog’s own words German while the matrix copy stays as published', async () => {
+    await activateLocale('de')
+    const { element } = await mount({
+      cachedProfile: profile({ plan: 'member', projectLimit: 5 }),
+      plans: publishing(MATRIX),
+    })
+    await inputSettles(element, (i) => i.plan === 'member', 'plan never read')
+    const dialog = await openUpgrade(element)
+    await waitUntil(() => dialog.querySelector('[data-plan-card="home"]') !== null, 'no matrix')
+
+    // The chrome is localized; the matrix is the operator's published copy, shown verbatim.
+    expect(text(dialog)).toContain('Ihr Plan')
+    expect(text(dialog)).toContain('Announced at launch')
+    expect(text(dialog.querySelector('[data-waitlist-statement]'))).toBe(
+      'In intensiver Entwicklung. Setzen Sie sich kostenlos auf die Warteliste.',
+    )
   })
 
   // Midday UTC, so the date reads the same in every time zone a test machine might run in.

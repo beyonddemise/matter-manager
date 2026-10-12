@@ -41,6 +41,11 @@ tags:
     description: |
       Manufacturer and product names from the CSA's Distributed Compliance Ledger, cached by
       this API. The one operation that receives a setup code; see ADR 0019 for why it may.
+  - name: plans
+    description: |
+      The public plan comparison matrix, read from the operator-maintained `plans` document in
+      the `matter_manager` database. Marketing copy, not entitlements: what a plan actually
+      permits is the policy table behind `plan` and `projectLimit` on a profile (ADR 0009).
   - name: admin
     description: |
       Operator endpoints. Reached only by an account holding the `customerservice` role, and
@@ -70,6 +75,33 @@ paths:
                 required: [status]
                 properties:
                   status: { type: string, const: ok }
+
+  /plans:
+    get:
+      operationId: getPlans
+      tags: [plans]
+      summary: The plan comparison matrix
+      security: []
+      description: |
+        Public: a pricing page needs this before anybody signs in. The matrix is the
+        operator-maintained `plans` document in `matter_manager`, pivoted to one object per
+        plan and filtered to rows marked `active` — a row without `active: true` is not
+        advertised.
+
+        Everything passes through byte-for-byte: plan keys, property labels and values are
+        served exactly as stored, and any localization happens in the client, never here. The
+        plan keys are marketing names and need not match the `plan` enum a profile reports.
+      responses:
+        '200':
+          description: One entry per plan, each mapping active property labels to their values
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlanMatrix' }
+        '404':
+          description: No matrix has been published (the `plans` document does not exist).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
 
   /auth/google:
     get:
@@ -897,6 +929,17 @@ components:
       properties:
         ownerType: { type: string, enum: [user, org] }
         ownerId: { type: string }
+
+    PlanMatrix:
+      type: object
+      description: |
+        One entry per plan, keyed by the plan's marketing name as stored in the `plans`
+        document. Each entry maps a property label to its value for that plan — a number or a
+        display string, exactly as stored. Labels and values are source copy for the client to
+        localize; nothing in them is machine-readable entitlement data.
+      additionalProperties:
+        type: object
+        additionalProperties: true
 
     Profile:
       type: object

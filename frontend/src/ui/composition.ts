@@ -29,6 +29,7 @@ import {
   removeLocalDatabases,
 } from './db/project-database.js'
 
+import { type PlansApi, plansApi } from './plans.js'
 import { type Locale, profileApi, resolveProfileLocale } from './profile.js'
 import { type Project, projectsApi } from './projects.js'
 import {
@@ -271,6 +272,11 @@ export function profile(fetchImpl: typeof fetch = fetch): ReturnType<typeof prof
 /** The waitlist (#224), behind the same API base and access token as the profile. */
 export function waitlist(fetchImpl: typeof fetch = fetch): WaitlistApi {
   return waitlistApi(API_BASE, fetchImpl)
+}
+
+/** The published plan matrix (#224): public marketing copy, behind the same API base, no token. */
+export function plans(fetchImpl: typeof fetch = fetch): PlansApi {
+  return plansApi(API_BASE, fetchImpl)
 }
 
 /**
