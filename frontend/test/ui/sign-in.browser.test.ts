@@ -5,6 +5,7 @@ import '@awesome.me/webawesome-pro/dist/components/input/input.js'
 import '@awesome.me/webawesome-pro/dist/components/otp-input/otp-input.js'
 import { fixture, html, waitUntil } from '@open-wc/testing-helpers'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { AuthMethods } from '../../src/ui/auth-methods.js'
 import type { EmailSignIn, StartOutcome, VerifyOutcome } from '../../src/ui/email-signin.js'
 import type { SessionState } from '../../src/ui/session.js'
 import '../../src/ui/app-shell.js'
@@ -422,6 +423,8 @@ describe('signing in with an emailed code', () => {
         .listProjects=${async () => []}
         .makeSync=${makeSync}
         .emailAuth=${client}
+        .authMethods=${overrides.methods ?? { read: async () => undefined }}
+        .signInGitHub=${overrides.signInGitHub}
       ></app-shell>
     `)) as HTMLElement & { updateComplete: Promise<unknown> }
     await element.updateComplete
@@ -680,5 +683,80 @@ describe('signing in with an emailed code', () => {
       'no unreachable message',
     )
     expect(dialog.querySelector('[data-code-input]')).not.toBeNull()
+  })
+
+  /** An email client no chooser test ever reaches; the chooser is about methods, not codes. */
+  const idleEmailAuth = () =>
+    fakeEmailAuth(
+      () => ({ kind: 'unreachable' }),
+      () => ({ kind: 'failed' }),
+    ).client
+
+  /** Opens the sign-in dialog on its chooser and hands it back. */
+  const openChooser = async (element: HTMLElement) => {
+    await waitUntil(() => element.querySelector('[data-sign-in]') !== null, 'no sign-in control')
+    ;(element.querySelector('[data-sign-in]') as HTMLElement).click()
+    await waitUntil(
+      () => element.querySelector('[data-sign-in-dialog][open]') !== null,
+      'no chooser',
+    )
+    return element.querySelector('[data-sign-in-dialog]') as HTMLElement
+  }
+
+  const EVERY_METHOD: AuthMethods = { google: true, github: true, email: true }
+
+  it('offers GitHub when the deployment does, and the button leaves through the seam', async () => {
+    const signInGitHub = vi.fn()
+    const { element } = await emailShell(idleEmailAuth(), {
+      methods: { read: async () => EVERY_METHOD },
+      signInGitHub,
+    })
+    const dialog = await openChooser(element)
+    await waitUntil(() => dialog.querySelector('[data-github-sign-in]') !== null, 'no GitHub')
+    ;(dialog.querySelector('[data-github-sign-in]') as HTMLElement).click()
+
+    expect(signInGitHub).toHaveBeenCalledTimes(1)
+    await waitUntil(() => element.querySelector('[data-sign-in-dialog]') === null, 'still open')
+  })
+
+  it("falls back to today's chooser when methods cannot be read", async () => {
+    // The harness default: a methods read that answers `undefined`, the older-API shape.
+    const { element } = await emailShell(idleEmailAuth())
+    const dialog = await openChooser(element)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+
+    expect(dialog.querySelector('[data-google-sign-in]')).not.toBeNull()
+    expect(dialog.querySelector('[data-email-option]')).not.toBeNull()
+    expect(dialog.querySelector('[data-github-sign-in]')).toBeNull()
+  })
+
+  it('hides the email option when the deployment says so', async () => {
+    const { element } = await emailShell(idleEmailAuth(), {
+      methods: { read: async () => ({ google: true, github: true, email: false }) },
+    })
+    const dialog = await openChooser(element)
+    // GitHub appearing proves the answer landed; only then is the email option's absence telling.
+    await waitUntil(() => dialog.querySelector('[data-github-sign-in]') !== null, 'no GitHub')
+
+    expect(dialog.querySelector('[data-email-option]')).toBeNull()
+  })
+
+  it('a methods answer landing after the dialog closed changes nothing', async () => {
+    let announce: (methods: AuthMethods) => void = () => {}
+    const answer = new Promise<AuthMethods>((resolve) => {
+      announce = resolve
+    })
+    const { element } = await emailShell(idleEmailAuth(), { methods: { read: () => answer } })
+    const dialog = await openChooser(element)
+    ;(dialog as HTMLElement & { open: boolean }).open = false
+    await waitUntil(() => element.querySelector('[data-sign-in-dialog]') === null, 'still open')
+
+    announce(EVERY_METHOD)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(element.querySelector('[data-sign-in-dialog]')).toBeNull()
+
+    // The answer was kept, only the mutation was gated: reopening offers GitHub.
+    const reopened = await openChooser(element)
+    await waitUntil(() => reopened.querySelector('[data-github-sign-in]') !== null, 'no GitHub')
   })
 })
