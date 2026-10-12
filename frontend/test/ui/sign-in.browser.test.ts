@@ -759,4 +759,21 @@ describe('signing in with an emailed code', () => {
     const reopened = await openChooser(element)
     await waitUntil(() => reopened.querySelector('[data-github-sign-in]') !== null, 'no GitHub')
   })
+
+  it('a methods answer landing on a reopened chooser corrects it', async () => {
+    let announce: (methods: AuthMethods) => void = () => {}
+    const answer = new Promise<AuthMethods>((resolve) => {
+      announce = resolve
+    })
+    const { element } = await emailShell(idleEmailAuth(), { methods: { read: () => answer } })
+    const dialog = await openChooser(element)
+    ;(dialog as HTMLElement & { open: boolean }).open = false
+    await waitUntil(() => element.querySelector('[data-sign-in-dialog]') === null, 'still open')
+
+    // Reopened while the one read is still in flight: the reopen joins it, and the answer must
+    // reach this chooser — whichever attempt opened it, an open chooser reflects the deployment.
+    const reopened = await openChooser(element)
+    announce(EVERY_METHOD)
+    await waitUntil(() => reopened.querySelector('[data-github-sign-in]') !== null, 'no GitHub')
+  })
 })

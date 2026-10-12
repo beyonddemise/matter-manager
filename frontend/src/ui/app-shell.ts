@@ -765,17 +765,17 @@ export class AppShell extends LitElement implements ViewHost {
 
   /**
    * Reads the methods and corrects the open chooser. The answer is kept either way — it is the
-   * deployment's, not the dialog's — but the open dialog only changes while the reader is still
-   * on the chooser of the same attempt, the `sendSignInCode` gating.
+   * deployment's, not the dialog's. The step check is the whole gate: a closed dialog has no
+   * step and stays closed, while *any* open chooser reflects the answer, whichever attempt
+   * opened it — a reopen joins the read in flight, and an attempt comparison would hand that
+   * reopened chooser a stale method list until yet another open.
    */
   private async loadSignInMethods(): Promise<void> {
-    const attempt = this.signInAttempt
     try {
       const methods = await (this.authMethods ?? authMethodsClient()).read()
       if (methods === undefined) return
       this.signInMethods = methods
-      if (attempt === this.signInAttempt && this.signingIn?.step === 'chooser')
-        this.signingIn = this.chooserStep()
+      if (this.signingIn?.step === 'chooser') this.signingIn = this.chooserStep()
     } finally {
       this.signInMethodsLoad = undefined
     }
