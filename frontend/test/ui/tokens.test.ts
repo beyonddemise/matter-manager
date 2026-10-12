@@ -3,6 +3,7 @@ import {
   accessToken,
   EXPIRY_MARGIN_SECONDS,
   forgetTokens,
+  isTokenResponse,
   pouchRefreshTokenStore,
   rememberAccessToken,
 } from '../../src/ui/tokens.js'
@@ -225,5 +226,18 @@ describe('the refresh token store', () => {
     await store.clear()
     expect(await store.read()).toBeUndefined()
     await expect(store.clear()).resolves.toBeUndefined()
+  })
+})
+
+describe('isTokenResponse', () => {
+  const good = { accessToken: 'a', expiresIn: 300, refreshToken: 'r' }
+  it('accepts a real pair and rejects every mutilation', () => {
+    expect(isTokenResponse(good)).toBe(true)
+    expect(isTokenResponse({})).toBe(false)
+    expect(isTokenResponse({ ...good, accessToken: '' })).toBe(false)
+    expect(isTokenResponse({ ...good, refreshToken: '' })).toBe(false)
+    expect(isTokenResponse({ ...good, expiresIn: Number.NaN })).toBe(false)
+    expect(isTokenResponse({ ...good, expiresIn: EXPIRY_MARGIN_SECONDS })).toBe(false)
+    expect(isTokenResponse(null)).toBe(false)
   })
 })

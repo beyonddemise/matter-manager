@@ -43,12 +43,11 @@ import { remoteProject } from './sync/remote.js'
 import type { SyncState } from './sync/replication.js'
 import {
   accessToken,
-  EXPIRY_MARGIN_SECONDS,
   forgetTokens,
+  isTokenResponse,
   pouchRefreshTokenStore,
   type RefreshTokenStore,
   rememberAccessToken,
-  type TokenResponse,
 } from './tokens.js'
 import { type WaitlistApi, waitlistApi } from './waitlist.js'
 
@@ -183,39 +182,6 @@ export async function requestTokens(
   rememberAccessToken(body)
   if (body.refreshToken !== stored) await store.write(body.refreshToken)
   return { kind: 'refreshed', expiresIn: body.expiresIn }
-}
-
-/**
- * Whether a parsed response really is a token pair: an access token and a refresh token.
- *
- * Here rather than in `tokens.ts` because this is the trust boundary: `tokens.ts` holds a token
- * for the rest of the application and is entitled to assume it was given one. Something has to
- * make that true, and the place where a response becomes a value is it.
- */
-function isTokenResponse(body: unknown): body is TokenResponse {
-  if (typeof body !== 'object' || body === null) return false
-  const { accessToken: token, expiresIn, refreshToken } = body as Partial<TokenResponse>
-
-  // Likewise for the refresh token: without one the next reload could not sign in again.
-  if (typeof refreshToken !== 'string' || refreshToken === '') return false
-
-  // An empty token is not a token: it would be sent as `Authorization: Bearer `, refused, and
-  // reported as an expiry - sending the user round a sign-in loop that cannot help them.
-  if (typeof token !== 'string' || token === '') return false
-
-  // `Number.isFinite` rather than a type check alone. `expiresIn` becomes `now() + expiresIn`,
-  // so a NaN or an Infinity there is an expiry that either never passes or has already passed,
-  // and both are worse than having no token at all.
-  if (typeof expiresIn !== 'number' || !Number.isFinite(expiresIn)) return false
-
-  // Against the margin, not against zero. `accessToken()` withholds a token with less than
-  // `EXPIRY_MARGIN_SECONDS` left - a token that may die in flight produces a 401 that looks like
-  // a server fault rather than an expiry - so anything at or below the margin is a token this
-  // application will never send. Storing one and reporting `signed-in` would be the same
-  // divergence as believing an empty body: a session that says yes and a token that says no.
-  //
-  // Derived from the constant rather than repeating 30, so the two cannot drift apart.
-  return expiresIn > EXPIRY_MARGIN_SECONDS
 }
 
 /**
