@@ -433,6 +433,12 @@ wa-dialog[data-upgrade-dialog] wa-button::part(base) {
   color: var(--wa-color-text-quiet);
 }
 
+/* A marketing plan name from the published matrix: stored lowercase ("home"), shown as a name.
+   Presentation only — the key itself stays verbatim in data attributes and the DOM text. */
+.app-plan-marketing {
+  text-transform: capitalize;
+}
+
 /* The account's own plan, on the brand surface: its column in the table, its card on a phone. */
 .app-plan-current {
   background-color: var(--wa-color-brand-fill-quiet);

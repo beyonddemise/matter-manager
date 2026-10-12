@@ -95,6 +95,38 @@ describe('caching what the server said', () => {
   })
 })
 
+describe('caching the plan matrix', () => {
+  const CACHED = {
+    matrix: { free: { Projects: 1, Price: 'Free forever' }, pro: { Projects: 'Unlimited*' } },
+    fetchedAt: '2026-10-12T09:00:00.000Z',
+  }
+
+  it('answers "never fetched" before anything has been', async () => {
+    expect(await localCache(memoryDatabase()).readPlanMatrix()).toBeUndefined()
+  })
+
+  it('reads back what was written, values verbatim', async () => {
+    const cache = localCache(memoryDatabase())
+    await cache.writePlanMatrix(CACHED)
+
+    expect(await cache.readPlanMatrix()).toMatchObject(CACHED)
+  })
+
+  it('replaces rather than accumulating, beside the profile', async () => {
+    // One matrix per browser, under its own id: replacing it must not touch the profile.
+    const database = memoryDatabase()
+    const cache = localCache(database)
+    await cache.writeProfile(PROFILE)
+
+    await cache.writePlanMatrix(CACHED)
+    await cache.writePlanMatrix({ ...CACHED, fetchedAt: '2026-10-12T10:00:00.000Z' })
+
+    expect((await cache.readPlanMatrix())?.fetchedAt).toBe('2026-10-12T10:00:00.000Z')
+    expect((await cache.readProfile())?.sub).toBe('google|1234')
+    expect((await database.allDocs()).rows).toHaveLength(2)
+  })
+})
+
 describe('signing out', () => {
   it('removes the cache from this browser', async () => {
     // It holds a name and an email address belonging to the person who signed in. Leaving them
@@ -135,11 +167,13 @@ describe('the cache is never replicated', () => {
       'clear',
       'markAccessRemoved',
       'readLocalProjects',
+      'readPlanMatrix',
       'readProfile',
       'readProjects',
       'removeLocalProject',
       'setLocalState',
       'updateLocalProject',
+      'writePlanMatrix',
       'writeProfile',
       'writeProjects',
     ])

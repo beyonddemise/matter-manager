@@ -54,6 +54,12 @@ const noProjects = {
   removeLocalProject: async (): Promise<never> => {
     throw new Error('the profile tests do not use the project cache')
   },
+  readPlanMatrix: async (): Promise<never> => {
+    throw new Error('the profile tests do not use the plan matrix')
+  },
+  writePlanMatrix: async (): Promise<never> => {
+    throw new Error('the profile tests do not use the plan matrix')
+  },
 }
 
 /** A cache backed by a variable, so a test can start it full, empty or broken. */

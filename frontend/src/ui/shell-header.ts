@@ -12,6 +12,7 @@
 import { msg } from '@lit/localize'
 import { html, type TemplateResult } from 'lit'
 import { showsUpgrade } from '../domain/plan.js'
+import type { PlanMatrix } from './plans.js'
 import type { SessionState } from './session.js'
 import {
   renderPlanComparison,
@@ -66,10 +67,12 @@ export function renderAccount(
  * The dialog compares the plans and offers the free waitlist (#224).
  *
  * @param state the plan, the session, the connection, the cached request and the change in flight
+ * @param matrix the published plan matrix, when one has been heard; the built-in tables otherwise
  * @param handlers join, leave and sign in; closing is `onClose`
  */
 export function renderUpgrade(
   state: WaitlistState,
+  matrix: PlanMatrix | undefined,
   open: boolean,
   onOpen: () => void,
   onClose: () => void,
@@ -95,7 +98,7 @@ export function renderUpgrade(
             }}
           >
             <div class="wa-stack wa-gap-m">
-              ${renderPlanComparison(state.plan)}
+              ${renderPlanComparison(state.plan, matrix)}
               <p data-waitlist-statement>
                 ${msg('Under heavy development. Join the waitlist for free.')}
               </p>

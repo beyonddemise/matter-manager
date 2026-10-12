@@ -1,14 +1,21 @@
 /**
- * The upgrade dialog's body (#224): the three plans compared, the account's own highlighted, and
- * the free waitlist.
+ * The upgrade dialog's body (#224): the plans compared, the account's own highlighted, and the
+ * free waitlist.
  *
  * Plain functions over plain values, rendered inside `<app-shell>`, like `shell-header.ts`. The
  * shell owns the state and subscribes to locale changes, so every `msg()` here follows the
  * language with it.
  *
- * **No plan literals** (ADR 0009). Columns come from `PLANS` and values from the plan tables.
- * The account's column is found by comparing two `Plan` values held in variables; a named tier
- * is never compared against.
+ * **The comparison prefers the published matrix** (`GET /plans`, see `plans.ts`): the operator's
+ * columns in the server's order, the operator's rows in document order, every value shown
+ * verbatim — it is source copy, numbers and display strings alike, so there are no icons and no
+ * translation of what the operator wrote. The dialog's own chrome (caption, "Your plan", the
+ * waitlist) stays localized. Without a matrix — never fetched, nothing cached — the built-in
+ * tables below render instead; they go once `/plans` is served in production.
+ *
+ * **No plan literals** (ADR 0009). Built-in columns come from `PLANS` and values from the plan
+ * tables; a matrix column's tier is `tierOf`'s lookup. The account's column is found by comparing
+ * two `Plan` values held in variables; a named tier is never compared against.
  *
  * **One layout per width.** At desktop width the comparison is a table with the plans as
  * columns. At phone width (`wa-mobile-only`, below `<wa-page>`'s breakpoint) it is one `wa-card`
@@ -27,8 +34,10 @@ import {
   PROJECT_LIMITS,
   planSyncs,
   plansAbove,
+  tierOf,
 } from '../domain/plan.js'
 import { getLocale } from './i18n/localization.js'
+import type { PlanMatrix } from './plans.js'
 import type { PlanRequest } from './profile.js'
 import type { SessionState } from './session.js'
 
@@ -163,11 +172,121 @@ function comparisonCards(isCurrent: (plan: Plan) => boolean): TemplateResult {
 }
 
 /**
- * The three plans compared, `current` highlighted.
+ * One column of the published matrix: the marketing key names it, and the tier behind the key —
+ * when this build knows one — is what "Your plan" and the highlight attach to. A column with no
+ * tier still compares; it just belongs to nobody here.
+ */
+interface MatrixColumn {
+  readonly key: string
+  readonly rows: Readonly<Record<string, string | number>>
+  readonly current: boolean
+}
+
+/** The matrix's columns in the server's order, the account's own marked. */
+function matrixColumns(matrix: PlanMatrix, current: Plan): readonly MatrixColumn[] {
+  return Object.entries(matrix).map(([key, rows]) => ({
+    key,
+    rows,
+    // Two Plan variables compared, never a tier literal (ADR 0009): `tierOf` is the lookup.
+    current: tierOf(key) === current,
+  }))
+}
+
+/**
+ * The row labels, in the operator's document order: each column's labels as they come, first
+ * seen wins. The backend pivots every column from one list of rows, so ordinarily each column
+ * repeats the same labels — the union only matters when a column misses one, and its cell is
+ * then empty rather than the whole row lost.
+ */
+function matrixLabels(columns: readonly MatrixColumn[]): readonly string[] {
+  const labels: string[] = []
+  for (const column of columns)
+    for (const label of Object.keys(column.rows)) if (!labels.includes(label)) labels.push(label)
+  return labels
+}
+
+/**
+ * A marketing name as the column header: the key verbatim, capitalized by CSS
+ * (`app-plan-marketing`) because the matrix stores it lowercase. Not localized — it is the
+ * operator's published name, the same in every language.
+ */
+function matrixName(key: string): TemplateResult {
+  return html`<span class="app-plan-marketing">${key}</span>`
+}
+
+/** The matrix's plans as columns, with the operator's rows as row headers. Desktop only. */
+function matrixTable(columns: readonly MatrixColumn[]): TemplateResult {
+  const labels = matrixLabels(columns)
+  const highlight = (column: MatrixColumn) => (column.current ? 'app-plan-current' : '')
+  return html`<table data-plan-table class="app-plan-table wa-desktop-only">
+    <caption class="wa-visually-hidden">${msg('The plans compared')}</caption>
+    <thead>
+      <tr>
+        <td></td>
+        ${columns.map(
+          (column) =>
+            html`<th scope="col" data-plan-column=${column.key} class=${highlight(column)}>
+              <div class="wa-stack wa-gap-2xs wa-align-items-start">
+                ${matrixName(column.key)}
+                ${column.current ? yourPlan() : ''}
+              </div>
+            </th>`,
+        )}
+      </tr>
+    </thead>
+    <tbody>
+      ${labels.map(
+        (label) =>
+          html`<tr data-row=${label}>
+            <th scope="row" class="app-plan-label">${label}</th>
+            ${columns.map(
+              (column) =>
+                html`<td data-plan=${column.key} class=${highlight(column)}>
+                  ${column.rows[label] ?? ''}
+                </td>`,
+            )}
+          </tr>`,
+      )}
+    </tbody>
+  </table>`
+}
+
+/** One card per matrix plan, stacked, with the rows as a description list. Phone width only. */
+function matrixCards(columns: readonly MatrixColumn[]): TemplateResult {
+  return html`<div data-plan-cards class="wa-stack wa-gap-s wa-mobile-only">
+    ${columns.map(
+      (column) =>
+        html`<wa-card data-plan-card=${column.key} class=${column.current ? 'app-plan-current' : ''}>
+          <div slot="header" class="wa-split wa-gap-s">
+            <strong>${matrixName(column.key)}</strong>
+            ${column.current ? yourPlan() : ''}
+          </div>
+          <dl class="wa-stack wa-gap-2xs app-plan-facts">
+            ${Object.entries(column.rows).map(
+              ([label, value]) =>
+                html`<div class="wa-split wa-gap-s" data-row=${label}>
+                  <dt class="app-plan-label">${label}</dt>
+                  <dd>${value}</dd>
+                </div>`,
+            )}
+          </dl>
+        </wa-card>`,
+    )}
+  </div>`
+}
+
+/**
+ * The plans compared, `current` highlighted: the published matrix when there is one, the
+ * built-in tables otherwise (see the module note).
  *
  * @param current the account's plan, from the cached profile
+ * @param matrix the published matrix — fetched, or the cache's last good answer
  */
-export function renderPlanComparison(current: Plan): TemplateResult {
+export function renderPlanComparison(current: Plan, matrix?: PlanMatrix): TemplateResult {
+  if (matrix !== undefined) {
+    const columns = matrixColumns(matrix, current)
+    return html`${matrixTable(columns)}${matrixCards(columns)}`
+  }
   // Two variables compared, never a tier literal (ADR 0009).
   const isCurrent = (plan: Plan): boolean => plan === current
   return html`${comparisonTable(isCurrent)}${comparisonCards(isCurrent)}`

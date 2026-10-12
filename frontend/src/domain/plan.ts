@@ -151,6 +151,33 @@ export function plansAbove(plan: Plan): readonly Plan[] {
 }
 
 /**
+ * The tier behind each marketing name `GET /plans` may use as a column key.
+ *
+ * The plan matrix is operator-maintained marketing copy, and its keys are the plans' *public*
+ * names — today the `member` tier is marketed as `home`. This is the one table that connects the
+ * two vocabularies, here because ADR 0009 confines plan literals to this file. A key missing
+ * from it is not an error: the dialog shows such a column as a plain comparison column, without
+ * "Your plan" or waitlist actions, so a fourth marketing plan displays before this build learns
+ * its tier.
+ */
+const MARKETING_TIERS: Readonly<Record<string, Plan>> = Object.freeze({
+  free: 'free',
+  home: 'member',
+  member: 'member',
+  pro: 'pro',
+} satisfies Record<string, Plan>)
+
+/**
+ * The tier a marketing key names, or `undefined` for one this build does not know.
+ *
+ * `Object.hasOwn` before indexing, as in {@link isPlan}: the key is server data, and a bare
+ * record lookup would answer `tierOf('constructor')` with a function off the prototype chain.
+ */
+export function tierOf(marketingKey: string): Plan | undefined {
+  return Object.hasOwn(MARKETING_TIERS, marketingKey) ? MARKETING_TIERS[marketingKey] : undefined
+}
+
+/**
  * Whether `value` is a plan an account can wait for: one with a plan below it, so there is
  * something to upgrade from. Derived from {@link PLANS}, never from a plan literal (ADR 0009).
  */

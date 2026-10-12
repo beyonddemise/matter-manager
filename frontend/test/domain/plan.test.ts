@@ -16,6 +16,7 @@ import {
   plansAbove,
   SYNCED_PLANS,
   showsUpgrade,
+  tierOf,
   withinLimit,
 } from '../../src/domain/plan.js'
 
@@ -155,4 +156,29 @@ describe('the plans in order', () => {
     expect(Object.isFrozen(PLANS_IN_ORDER)).toBe(true)
     expect(Object.isFrozen(PLAN_FEATURES)).toBe(true)
   })
+})
+
+describe('the marketing names the plan matrix uses', () => {
+  it.each([
+    ['free', 'free'],
+    ['home', 'member'],
+    ['member', 'member'],
+    ['pro', 'pro'],
+  ] satisfies [string, Plan][])('%s is the %s tier', (key, tier) => {
+    expect(tierOf(key)).toBe(tier)
+  })
+
+  it('answers undefined for a marketing name this build does not know', () => {
+    // Not an error: the dialog shows such a column without "Your plan" or waitlist actions, so
+    // a fourth marketing plan displays before this build learns its tier.
+    expect(tierOf('enterprise')).toBeUndefined()
+  })
+
+  it.each(['constructor', 'toString', '__proto__', 'hasOwnProperty'])(
+    'never answers %s off the prototype chain',
+    (key) => {
+      // The key is server data; a bare record lookup would answer with a function.
+      expect(tierOf(key)).toBeUndefined()
+    },
+  )
 })

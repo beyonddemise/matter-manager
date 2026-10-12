@@ -59,6 +59,23 @@ export interface CachedProfile {
 /** The document id the profile is cached under. One user per browser profile. */
 export const PROFILE_ID = 'cache:profile'
 
+/**
+ * The plan matrix as `GET /plans` last answered it, kept so the upgrade dialog compares the
+ * published plans offline too.
+ *
+ * `matrix` is `unknown` deliberately: it is whatever an older or newer build wrote, and the
+ * reader's shape guard decides what this build makes of it — the posture {@link CachedProfile}
+ * takes with `plan`.
+ */
+export interface CachedPlanMatrix {
+  readonly matrix: unknown
+  /** When it was fetched, ISO-8601. For showing how stale a cached answer is. */
+  readonly fetchedAt: string
+}
+
+/** The document id the plan matrix is cached under. */
+export const PLAN_MATRIX_ID = 'cache:plans'
+
 /** Whether this device holds a replica of a project, as opposed to being allowed to. */
 export type ProjectLocalState =
   /** The replica is here and the project opens with no connectivity. */
@@ -192,6 +209,10 @@ export interface LocalCache {
   readProfile(): Promise<CachedProfile | undefined>
   /** Replaces the cached profile. */
   writeProfile(profile: CachedProfile): Promise<void>
+  /** The cached plan matrix, or `undefined` if `GET /plans` has never answered. */
+  readPlanMatrix(): Promise<CachedPlanMatrix | undefined>
+  /** Replaces the cached plan matrix. */
+  writePlanMatrix(cached: CachedPlanMatrix): Promise<void>
   /**
    * Every project this browser knows of, in id order.
    *
@@ -359,36 +380,58 @@ export function localCache(database: PouchDB.Database): LocalCache {
     }
   }
 
+  /**
+   * One cached document, or `undefined` while nothing has been cached under its id.
+   *
+   * "Never fetched" is an answer this application acts on rather than a failure. Anything else
+   * still throws: a corrupt or inaccessible database is not the same as an empty one.
+   */
+  const readSingleton = async <T>(id: string): Promise<T | undefined> => {
+    try {
+      return (await database.get(id)) as unknown as T
+    } catch (error) {
+      if (isMissing(error)) return undefined
+      throw error
+    }
+  }
+
+  /**
+   * Replaces one cached document wholesale.
+   *
+   * Read for the `_rev` rather than kept in memory. A cache written from two tabs is ordinary,
+   * and a stale `_rev` there is a conflict over a value both tabs agree about.
+   */
+  const writeSingleton = async (id: string, content: object): Promise<void> => {
+    let rev: string | undefined
+    try {
+      const existing = (await database.get(id)) as unknown as { _rev: string }
+      rev = existing._rev
+    } catch (error) {
+      if (!isMissing(error)) throw error
+    }
+
+    await database.put({
+      ...content,
+      _id: id,
+      ...(rev === undefined ? {} : { _rev: rev }),
+    } as unknown as PouchDB.Core.PutDocument<object>)
+  }
+
   return {
     async readProfile(): Promise<CachedProfile | undefined> {
-      try {
-        const document = (await database.get(PROFILE_ID)) as unknown as CachedProfile
-        return document
-      } catch (error) {
-        // "Never fetched" is an answer this application acts on — follow the browser's
-        // language — rather than a failure. Anything else still throws: a corrupt or
-        // inaccessible database is not the same as an empty one.
-        if (isMissing(error)) return undefined
-        throw error
-      }
+      return readSingleton<CachedProfile>(PROFILE_ID)
     },
 
     async writeProfile(profile: CachedProfile): Promise<void> {
-      // Read for the `_rev` rather than kept in memory. A cache written from two tabs is
-      // ordinary, and a stale `_rev` there is a conflict over a value both tabs agree about.
-      let rev: string | undefined
-      try {
-        const existing = (await database.get(PROFILE_ID)) as unknown as { _rev: string }
-        rev = existing._rev
-      } catch (error) {
-        if (!isMissing(error)) throw error
-      }
+      await writeSingleton(PROFILE_ID, profile)
+    },
 
-      await database.put({
-        ...profile,
-        _id: PROFILE_ID,
-        ...(rev === undefined ? {} : { _rev: rev }),
-      } as unknown as PouchDB.Core.PutDocument<object>)
+    async readPlanMatrix(): Promise<CachedPlanMatrix | undefined> {
+      return readSingleton<CachedPlanMatrix>(PLAN_MATRIX_ID)
+    },
+
+    async writePlanMatrix(cached: CachedPlanMatrix): Promise<void> {
+      await writeSingleton(PLAN_MATRIX_ID, cached)
     },
 
     async readProjects(): Promise<CachedProject[]> {

@@ -25,12 +25,14 @@ export {
 } from './conflicts.js'
 export { isConflict } from './errors.js'
 export {
+  type CachedPlanMatrix,
   type CachedProfile,
   type CachedProject,
   isLocalOnlyDatabase,
   type LocalCache,
   type LocalProjectEntry,
   localCache,
+  PLAN_MATRIX_ID,
   PROFILE_ID,
   type ProjectLocalState,
   type ServerProject,
