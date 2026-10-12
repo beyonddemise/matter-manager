@@ -34,7 +34,7 @@
   description: Lit SPA, components, routing
 - name: 'area:api'
   color: '006B75'
-  description: Fastify backend, OpenAPI contract
+  description: The API (served from matter-manager-backend), OpenAPI contract
 - name: 'area:infra'
   color: '444444'
   description: CouchDB, Caddy, Docker, deployment, CI

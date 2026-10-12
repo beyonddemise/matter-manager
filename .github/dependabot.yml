@@ -37,7 +37,6 @@ updates:
     directories:
       - /
       - /frontend
-      - /backend
       - /e2e
     registries:
       - webawesome
@@ -102,7 +101,6 @@ updates:
     directories:
       - /infra/couchdb
       - /.devcontainer/couchdb
-      - /backend
     schedule:
       interval: monthly
     # Node runs on the even-numbered majors only, and only once they enter Long Term Support

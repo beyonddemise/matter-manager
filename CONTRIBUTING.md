@@ -25,15 +25,14 @@ Commit at each transition where it helps a reviewer follow the reasoning.
 
 ## Where code goes
 
-| If it...                             | It belongs in           |
-| ------------------------------------ | ----------------------- |
-| is a pure function the browser needs | `frontend/src/domain`   |
-| is a pure function the service needs | `backend/src/domain`    |
-| touches PouchDB                      | `frontend/src/data`     |
-| renders or handles user input        | `frontend/src/ui`       |
-| serves HTTP, CouchDB or Google       | `backend/src`           |
+| If it...                             | It belongs in                            |
+| ------------------------------------ | ---------------------------------------- |
+| is a pure function the browser needs | `frontend/src/domain`                    |
+| touches PouchDB                      | `frontend/src/data`                      |
+| renders or handles user input        | `frontend/src/ui`                        |
+| serves HTTP, CouchDB or Google       | the `matter-manager-backend` repository  |
 
-**Neither `frontend/src/domain` nor `backend/src/domain` may import a DOM type, a network
+**`frontend/src/domain` may not import a DOM type, a network
 client, or a database.** If a piece of logic seems to need one to be tested, it is nearly
 always two pieces of logic tangled together: a pure decision and an impure action. Separate
 them, put the decision in the domain, and test the decision exhaustively.
@@ -233,9 +232,9 @@ so the visible symptom is no symptom at all: Web Awesome simply never appears in
 looks identical to already being current.
 
 Without a licence, please open an issue describing the change rather than a pull request you
-cannot build, and we will work out how to land it. Changes confined to `backend/` build and
-test without any of this — it installs with no token at all, which is why a fork's backend
-pull request passes CI where the frontend's cannot.
+cannot build, and we will work out how to land it. Changes confined to `e2e/` or the API
+repository (`matter-manager-backend`) build and test without any of this — both install with
+no token at all.
 
 ## Handling Matter payloads
 

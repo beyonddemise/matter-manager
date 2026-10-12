@@ -130,25 +130,6 @@ jobs:
       - name: Dependency policy
         run: npm run check:deps
 
-      # `backend/src/generated/openapi.ts` is compiled from `openapi.yaml` and committed, so a
-      # checkout builds without a code generation step. A committed generated file goes stale
-      # silently, and this one did: the generator could not run at all — `openapi-typescript`
-      # builds its output by constructing a TypeScript AST and the backend compiles with
-      # `typescript@^7`, the Go port, which has none of that API — so it threw on import, and
-      # nothing invoked it to find out. The file went three contract edits stale and each was
-      # patched by hand.
-      #
-      # Invisible to every other check in this file, which is the point of adding one. A stale
-      # `paths` type describes a service that no longer exists and the compiler agrees with it
-      # perfectly, so the Backend job's TypeScript step cannot see it. This regenerates in
-      # memory and compares; it writes nothing.
-      #
-      # In this job rather than the Backend one because the generator is a root devDependency:
-      # two TypeScripts in `backend/node_modules` collide on `bin.tsc`, which was measured to
-      # repoint `npm run typecheck` at 5.9.3. See `scripts/openapi-types.mjs`.
-      - name: The generated types match the contract
-        run: npm run check:openapi-types
-
       # Web Awesome Pro's presence, and the translation catalogue's currency. Both are in
       # `npm run verify`; the webawesome one was missing here, so a laptop and CI disagreed
       # about what "green" meant.
@@ -278,60 +259,14 @@ jobs:
           path: frontend/coverage/
           retention-days: 7
 
-  backend:
-    name: Backend
-    runs-on: ubuntu-latest
-    steps:
-      # `persist-credentials: false` because this job is meant to run on pull requests from
-      # forks, where the checked-out tree is the least trustworthy place to leave a usable
-      # job token in `.git/config`. Nothing here writes to the repository — it reads, installs
-      # and tests — so the credential has no purpose.
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version-file: .nvmrc
-          cache: npm
-          cache-dependency-path: backend/package-lock.json
-
-      # No WEBAWESOME_NPM_TOKEN, deliberately and verifiably: the backend depends on nothing
-      # from a private registry, so this job installs on a fork's pull request where the
-      # frontend job cannot. If a change to backend/package.json ever needs the token, this
-      # step fails rather than the property being lost quietly.
-      #
-      # --ignore-scripts for the same reason the frontend job uses it: a transitive
-      # postinstall has no business running in CI.
-      - name: Install
-        run: npm ci --ignore-scripts
-        working-directory: backend
-
-      - name: Biome
-        run: npx biome check .
-        working-directory: backend
-
-      - name: TypeScript
-        run: npx tsc --build
-        working-directory: backend
-
-      - name: Tests
-        run: npx vitest run --coverage
-        working-directory: backend
-
-
   images:
     name: Container images
     runs-on: ubuntu-latest
-    # Nothing here has ever built a Dockerfile, and that gap was expensive. #164 moved the API
-    # to `backend/` and left this image installing npm workspaces that no longer existed, so it
-    # could not build at all - and three CI checks passed on that commit, because none of them
-    # touch the image. A reviewer reading the file caught it. A build takes seconds and cannot
-    # be fooled by careful reasoning.
-    #
-    # The same gap covers the two CouchDB images, with a second failure mode on top: their
-    # authentication configuration is read only at CouchDB startup, so whether our images
-    # carry it is a question only a running container can answer.
+    # A Dockerfile that nobody builds breaks silently - a COPY path that stops resolving
+    # fails only when somebody builds the image. The two CouchDB images carry a second
+    # failure mode on top: their authentication configuration is read only at CouchDB
+    # startup, so whether our images carry it is a question only a running container can
+    # answer.
     steps:
       # No credential in the tree: this job needs none, and the workspace is the worst place to
       # leave one on a pull request from a fork.
@@ -363,115 +298,19 @@ jobs:
       - name: Dependabot watches everything, and names it correctly
         run: node scripts/check-dependabot.mjs
 
-      # Two TypeScripts are installed on purpose - `^7` in frontend and backend, `^5` at the
-      # root for `openapi-typescript`, which needs a compiler API the Go port does not publish.
-      # They must not share a node_modules, because both declare `bin.tsc`. The residual hazard
-      # is that `npx tsc` resolves upward, so from the repository root it silently means 5.9.3:
-      # a root script reaching for the compiler would check a package against a compiler that
-      # package does not declare, and succeed. dependency-policy.json stated the premise; this
-      # is what makes it enforced rather than asserted in prose.
-      - name: No root script invokes tsc
-        run: node scripts/check-root-tsc.mjs
-
-      # The repository root is the context, matching what `infra/compose.prod.yml` passes:
-      # `infra/couchdb/design-docs` is copied from it. Nothing is pushed anywhere - building
-      # proves the Dockerfile, and publishing is a separate decision that belongs with M9.
+      # Both build from the repository root, and for them it is not a convenience:
+      # `infra/couchdb/00-base.ini` is shared between them, so neither can be built from its
+      # own directory (#169).
       #
-      # No registry credentials and no WEBAWESOME_NPM_TOKEN, deliberately: this image needs
-      # neither, so the job works on a pull request from a fork.
-      #
-      # Keyed on the lockfile, because the layer worth keeping is `npm ci`. A dependency
-      # change should miss; anything else should hit. `restore-keys` gives a stale cache to
-      # build on when the lockfile does move, which still saves the base image pull.
-      #
-      # Note the first run on a branch has nothing to restore - Actions caches are scoped to
-      # the branch with a fallback to the base - so this is a saving from the second run
-      # onward, not this one.
-      - name: Cache the backend image layers
-        id: image-cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: /tmp/.buildx-cache
-          key: buildx-backend-${{ runner.os }}-${{ hashFiles('backend/package-lock.json') }}
-          restore-keys: buildx-backend-${{ runner.os }}-
-
-      # `--builder ci`, and deliberately NOT `docker buildx create --use`. An exported cache
-      # needs the docker-container driver, which the default builder is not - but making it
-      # that driver does not put its result in the local image store, so making it the default
-      # would break any plain `docker build` in this job whose image is then run: the build
-      # would appear to succeed and the smoke test would fail on an image that does not exist.
-      # Naming the builder for the one build that needs it keeps that trap shut.
-      - name: Backend image
-        run: |
-          docker buildx create --name ci --driver docker-container >/dev/null
-          # A missing src is a warning rather than an error, but only in some buildx versions.
-          mkdir -p /tmp/.buildx-cache
-
-          args=(
-            --builder ci --load
-            -f backend/Dockerfile -t matter-manager/backend:ci
-            --cache-from type=local,src=/tmp/.buildx-cache
-          )
-
-          # Exported only when there is something to save. On an exact key hit `actions/cache`
-          # says "not saving cache" and discards whatever is written, so exporting then costs
-          # several seconds and 178MB of writes to produce a file nothing reads. A miss - a
-          # changed lockfile, or a `restore-keys` fallback - does get saved, so export there.
-          if [ "${{ steps.image-cache.outputs.cache-hit }}" != "true" ]; then
-            args+=(--cache-to type=local,dest=/tmp/.buildx-cache-new,mode=max)
-          fi
-
-          docker buildx build "${args[@]}" .
-
-          # Written to a new directory and swapped in, because `type=local` appends: exporting
-          # over the restored cache grows it without bound, one layer set per run, until the
-          # restore itself is the slow part.
-          # Guarded: a `mv` of a directory buildx did not write would fail the step under
-          # errexit, turning a successful build into a red job for no reason.
-          if [ -d /tmp/.buildx-cache-new ]; then
-            rm -rf /tmp/.buildx-cache
-            mv /tmp/.buildx-cache-new /tmp/.buildx-cache
-          fi
-
-      # These two build from the repository root as well, and for them it is not a
-      # convenience: `infra/couchdb/00-base.ini` is shared between them, so neither can be
-      # built from its own directory. That arrangement is recent (#169), and a COPY path that
-      # stops resolving fails only when somebody builds the image - which, until now, nobody
-      # did.
-      #
-      # Not cached, unlike the backend. Each is a base image and two COPYs of an ini file:
-      # there is no expensive layer to keep, and a cache would cost more to restore than the
-      # build costs to run.
+      # No registry credentials and no WEBAWESOME_NPM_TOKEN, deliberately: these images need
+      # neither, so the job works on a pull request from a fork. Not cached: each is a base
+      # image and two COPYs of an ini file, so there is no expensive layer to keep, and a
+      # cache would cost more to restore than the build costs to run.
       - name: CouchDB image (production)
         run: docker build -f infra/couchdb/Dockerfile -t matter-manager/couchdb:ci .
 
       - name: CouchDB image (development)
         run: docker build -f .devcontainer/couchdb/Dockerfile -t matter-manager/couchdb-dev:ci .
-
-      # Building proves the COPY paths resolve. Running proves the runtime stage: that the
-      # pruned node_modules is complete, that CMD finds dist/src/main.js, and that the process
-      # serves. `/healthz` answers on an unconfigured deployment by design - `serverOptions`
-      # returns no routes without CouchDB and a key, and `prepareCouchDb` returns early - which
-      # is exactly what makes it usable here with no database present.
-      - name: The backend image actually serves
-        run: |
-          docker run -d --name backend-smoke -p 3000:3000 matter-manager/backend:ci
-
-          # The retry count bounds how many attempts are made, not how long one takes, and
-          # curl has no default deadline. A container that accepts the connection and then
-          # never answers would hang here until the job timeout hours later, reported as a
-          # stuck runner rather than as a service that does not respond.
-          for _ in $(seq 1 30); do
-            if curl -fsS --connect-timeout 2 --max-time 5 http://127.0.0.1:3000/healthz; then
-              echo
-              echo "backend image serves /healthz"
-              exit 0
-            fi
-            sleep 1
-          done
-          echo "::error::the built backend image never answered /healthz"
-          docker logs backend-smoke
-          exit 1
 
       # The one thing `verify-jwt-model.sh` cannot tell us. That script PUTs
       # `authentication_handlers` and restarts, so it proves the JWT model against a stock
@@ -500,7 +339,7 @@ jobs:
 
             # `require_valid_user_except_for_up` is what makes an unauthenticated /_up work,
             # so this wait doubles as a check on that setting.
-            # Deadlines for the same reason as the backend probe: the count bounds attempts,
+            # Deadlines, because curl has none of its own: the count bounds attempts,
             # not the time one attempt can take.
             for _ in $(seq 1 60); do
               curl -fsS --connect-timeout 2 --max-time 5 \
