@@ -28,6 +28,7 @@ import {
 } from '../pdf/download.js'
 import { ExportCancelled, type InventoryProgress } from '../pdf/progress.js'
 import { fieldValue } from './device-form.js'
+import { roomBreadcrumb } from './room-breadcrumb.js'
 
 /**
  * The two PDF builders, loaded when somebody asks for a PDF.
@@ -50,26 +51,6 @@ import { fieldValue } from './device-form.js'
  */
 const inventoryBuilder = () => import('../pdf/inventory.js')
 const labelBuilder = () => import('../pdf/labels.js')
-
-/**
- * A room path as a breadcrumb, `Attic › Studio`, for the headings and the export menu (#242).
- *
- * The parents are quiet and the room's own segment carries the emphasis, because that is the
- * part that tells two sibling groups apart. It is a heading, not navigation, so this is plain
- * text rather than `<wa-breadcrumb>`, which renders a `<nav>` of links.
- *
- * The `›` is decoration and is hidden from assistive technology; in its place a visually hidden
- * `/` makes the accessible name exactly the stored path ("Attic slash Studio"), which is also
- * what the search box and the room field accept.
- *
- * Written without whitespace between the spans on purpose: any would end up in the accessible
- * name. The visual spacing around the `›` comes from CSS.
- */
-function breadcrumb(path: string) {
-  const segments = splitRoomPath(path)
-  const own = segments[segments.length - 1]
-  return html`${segments.slice(0, -1).map((parent) => html`<span class="app-room-parent" data-room-parent>${parent}</span><span class="app-room-crumb" aria-hidden="true">›</span><span class="wa-visually-hidden">${ROOM_PATH_SEPARATOR}</span>`)}<span data-room-own>${own}</span>`
-}
 
 /**
  * The device list: rooms, in order, with what is in them.
@@ -269,6 +250,8 @@ export class DeviceListView extends LitElement {
       query: this.query,
       includeDisabled: this.includeDisabled,
       compare: new Intl.Collator(getLocale()).compare,
+      // The stored name is English; people search for what the interface shows (#248).
+      testVendorTerm: msg('Test vendor'),
     })
   }
 
@@ -286,12 +269,12 @@ export class DeviceListView extends LitElement {
    *
    * A room is shown as a breadcrumb, `Attic › Studio` (#242): the groups are flat and a parent
    * with no devices of its own has no heading, so the lineage has to be in the heading itself.
-   * See {@link breadcrumb}.
+   * See {@link roomBreadcrumb}.
    */
   private groupLabel(group: DeviceGroup) {
     // An empty path means the room is gone but its devices are not. Naming it rather than
     // leaving a blank heading is what stops those devices looking like a rendering fault.
-    return group.path === '' ? msg('Without a room') : breadcrumb(group.path)
+    return group.path === '' ? msg('Without a room') : roomBreadcrumb(group.path)
   }
 
   /**
@@ -303,7 +286,7 @@ export class DeviceListView extends LitElement {
    * only way to export a parent that holds no devices itself, because such a parent has no
    * heading of its own to put a button on.
    *
-   * Every item says exactly what it exports, `Ground Floor, with its sub-rooms`, and carries the
+   * Every item says exactly what it exports, `Ground Floor, and its sub-rooms`, and carries the
    * path in `data-export-room`, as the single button does.
    *
    * @param group the room the heading is for; nothing is offered for devices without a room
@@ -348,13 +331,13 @@ export class DeviceListView extends LitElement {
       </wa-button>
       ${levels.map(
         (path) => html`<wa-dropdown-item data-export-room=${path}>
-          ${breadcrumb(path)}${
+          ${roomBreadcrumb(path)}${
             // A phrase after the name rather than a sentence around it: the name is markup (the
             // breadcrumb), and the check-i18n scan reads text in an html template given to msg
             // as unwrapped.
             hasRoomsBelow(path)
-              ? msg(', with its sub-rooms', {
-                  desc: 'Follows a room name in the export menu: "Ground Floor, with its sub-rooms".',
+              ? msg(', and its sub-rooms', {
+                  desc: 'Follows a room name in the export menu: "Ground Floor, Kitchen, and its sub-rooms".',
                 })
               : nothing
           }
