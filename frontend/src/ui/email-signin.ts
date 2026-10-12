@@ -16,7 +16,12 @@
  * @module
  */
 
-import { isTokenResponse, type RefreshTokenStore, rememberAccessToken } from './tokens.js'
+import {
+  forgetTokens,
+  isTokenResponse,
+  type RefreshTokenStore,
+  rememberAccessToken,
+} from './tokens.js'
 
 /** What starting a sign-in came to. */
 export type StartOutcome =
@@ -106,7 +111,14 @@ export function emailSignIn(
       // server fault, and believing it would store a session that cannot speak.
       if (!isTokenResponse(body)) return { kind: 'unreachable' }
       rememberAccessToken(body)
-      await store.write(body.refreshToken)
+      try {
+        await store.write(body.refreshToken)
+      } catch {
+        // Half a sign-in is worse than none: an access token held without its refresh token
+        // would die in minutes with nothing to renew it, while the caller heard "success".
+        forgetTokens()
+        return { kind: 'unreachable' }
+      }
       return { kind: 'signed-in', expiresIn: body.expiresIn }
     },
   }

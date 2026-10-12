@@ -74,6 +74,25 @@ describe('completeEmailSignIn', () => {
     forgetTokens()
   })
 
+  it('a refresh token the device cannot store is unreachable, and keeps no access token', async () => {
+    // Half a sign-in is worse than none: an access token held while the refresh token was never
+    // written would die in 300 seconds with nothing to renew it, and the caller heard "success".
+    forgetTokens()
+    const store = memoryStore()
+    store.write = async () => {
+      throw new Error('storage refused')
+    }
+    const client = emailSignIn('https://api', store, (() =>
+      answer(200, {
+        accessToken: 'acc',
+        expiresIn: 300,
+        refreshToken: 'ref',
+      })) as unknown as typeof fetch)
+
+    expect((await client.complete('c-1', '123456')).kind).toBe('unreachable')
+    expect(accessToken()).toBeUndefined()
+  })
+
   it('a 400 for a malformed code is failed too, not a service problem', async () => {
     // The contract refuses a code that is not six digits with a 400; to the person at the
     // dialog that is "the code didn't work", not "the service is down".

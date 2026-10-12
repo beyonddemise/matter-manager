@@ -428,6 +428,22 @@ it('offline during verify says the service is unreachable', …)
 
 ---
 
+## Execution notes (deviations ruled during implementation and review)
+
+- **Task 4's "run the refreshed transition" was wrong as written**: a refresher that answered
+  `signed-out` arms nothing more, so faking `{kind: 'refreshed'}` would flip the session and let
+  the 300-second token die unrefreshed. The implementation instead **stops and restarts the
+  refresher**; its first exchange presents the just-stored refresh token and the ordinary
+  transition follows. (Final review, Critical.)
+- A verify success arriving after the dialog closed is **committed**, not dropped: the client
+  already holds and stored the tokens. Only dialog-local notices stay behind the attempt guard.
+- `SignInActions` gained `onEmail()` (the chooser→email transition the interface lacked); a 400
+  from verify reads as `failed`; the dialog honors `online` with the #224 convention; focus moves
+  into each step's first control.
+- **Task 6's openapi note is superseded**: since PR #251/#254 the root `openapi.yaml` is the
+  documented mirror of the Java contract, so the email operations were mirrored into it from
+  `matter-manager-backend` (its PR #7).
+
 ## Deliberate scope notes
 
 - No "linked sign-in methods" UI, no passkeys, no Apple (pieces 3–4).
