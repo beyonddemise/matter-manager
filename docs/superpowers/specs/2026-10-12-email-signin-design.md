@@ -68,6 +68,13 @@ A new optional field holds authentication identities:
 - Each `subjects` slot is **write-once**: filling an empty slot is auto-linking; a different
   value for a filled slot is refused with the existing 409 `subject-conflict`. The anti-takeover
   rule the Java backend already enforces moves from "the one sub" to "each provider's slot".
+- Slots are written **at sign-in completion**, where the provider is known: every provider
+  sign-in resolves `(provider, providerSubject, verifiedAddress)` against the record —
+  returning the canonical sub for the session, filling the provider's empty slot, or refusing a
+  filled slot's mismatch. This applies to the **Google callback too**: an account whose
+  canonical sub is `mail:…` must still be able to sign in with Google (auto-link works in both
+  directions), so the callback's session subject is the record's canonical sub, not necessarily
+  Google's.
 - **Legacy records need no migration.** Until now Google was the only provider, so a record with
   `sub` not prefixed `mail:` and no `subjects.google` is read as `subjects.google = sub`. The
   next write through the new code normalizes the map; the `sub` field itself is never altered.
@@ -120,10 +127,14 @@ code). The plaintext code exists only inside the email.
 Request body: `{ "code": "123456" }`. The address appears nowhere in this request — the
 challenge binds it.
 
-- **204** on success, with the same refresh cookie the Google callback sets. The app then calls
-  `POST /auth/token` as after any sign-in; the access token's `sub` is the record's canonical
-  sub, or the derived `mail:` sub when no record exists, and `_couchdb.roles` carries the plan
-  as today. The challenge is consumed: a second use is a 401.
+- **200** on success with the same body `POST /auth/token` answers —
+  `{ accessToken, expiresIn, refreshToken }` — because this backend keeps the refresh token in
+  the page, not in a cookie: the `mm_handoff` cookie exists only to bridge the Google redirect
+  flow, and a fetch-based verify needs no bridge. Verification mints the refresh token
+  (remembering its hash) and the access token in one step, exactly as the first
+  `POST /auth/token` after a Google callback does. The token `sub` is the record's canonical
+  sub, or the derived `mail:` sub when no record exists; `_couchdb.roles` carries the plan as
+  today. The challenge is consumed: a second use is a 401.
 - **401** (problem+json, `title: "Sign-in failed"`) for *every* failure — unknown, expired,
   consumed or attempt-exhausted challenge, and a wrong code alike. The answer never reveals
   which half the caller is missing.
@@ -160,9 +171,10 @@ Two operations, tag `auth`, in `matter-manager-backend`'s `src/main/resources/op
 | Operation | Method and path | Answers |
 | --- | --- | --- |
 | `startEmailSignIn` | `POST /auth/email` | 202 `EmailChallenge`, 400, 429 |
-| `completeEmailSignIn` | `POST /auth/email/{challenge}` | 204 (+ refresh cookie), 401 |
+| `completeEmailSignIn` | `POST /auth/email/{challenge}` | 200 `TokenResponse` (as `issueToken`), 401 |
 
-Schemas: `EmailSignInStart` `{ email: string, format: email }` (required),
+Schemas: `EmailSignInStart` `{ email: string (format: email, required), locale?: enum [en, de] }`
+(the app sends its active locale for the email's language; absent means `en`),
 `EmailChallenge` `{ challenge: string }` (required),
 `EmailSignInCode` `{ code: string, pattern: ^[0-9]{6}$ }` (required).
 The `Profile` schema is untouched in this piece. Drift and contract-validation tests grow by
