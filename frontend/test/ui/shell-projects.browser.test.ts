@@ -1419,11 +1419,15 @@ describe('upgrading', () => {
     await inputSettles(element, (i) => i.plan === 'free', 'plan never read')
     const dialog = await openUpgrade(element)
 
-    await waitUntil(
-      () => text(dialog).includes('Unlimited') && !text(dialog).includes('Unlimited*'),
-      'the dialog never heard the correction',
-    )
-    // And the cache holds the correction, so the next offline open shows it too.
+    // The corrected value in the matrix's own cell, not anywhere in the dialog: the built-in
+    // fallback that renders for an instant before the cache is read also says "Unlimited", and
+    // matching it would read the cache below before the correction was written.
+    await waitUntil(() => {
+      const cell = dialog.querySelector('[data-row="Projects"] td[data-plan="pro"]')
+      return cell !== null && text(cell) === 'Unlimited'
+    }, 'the dialog never heard the correction')
+    // And the cache holds the correction, so the next offline open shows it too. The resolver
+    // writes before it calls back, so a corrected dialog means a corrected cache.
     expect((await store.cache().readPlanMatrix())?.matrix).toEqual(changed)
   })
 
