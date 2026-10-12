@@ -939,7 +939,10 @@ components:
         localize; nothing in them is machine-readable entitlement data.
       additionalProperties:
         type: object
-        additionalProperties: true
+        additionalProperties:
+          # A number or a display string, as the description says; pinned so the contract
+          # check refuses a cell the client's shape guard would silently fall back over.
+          type: [string, number]
 
     Profile:
       type: object

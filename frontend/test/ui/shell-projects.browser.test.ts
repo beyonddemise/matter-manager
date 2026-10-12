@@ -1431,6 +1431,38 @@ describe('upgrading', () => {
     expect((await store.cache().readPlanMatrix())?.matrix).toEqual(changed)
   })
 
+  it('a close and reopen joins the load in flight instead of racing a second fetch', async () => {
+    // Two overlapping fetches could land out of order, the older answer overwriting the newer
+    // in the cache and on the open dialog; single-flight makes the order unaskable.
+    let reads = 0
+    let release: (matrix: PlanMatrix) => void = () => {}
+    const plans: PlansApi = {
+      read: () => {
+        reads += 1
+        return new Promise((resolve) => {
+          release = resolve
+        })
+      },
+    }
+    const { element } = await mount({
+      cachedProfile: profile({ plan: 'free', projectLimit: 1 }),
+      plans,
+    })
+    await inputSettles(element, (i) => i.plan === 'free', 'plan never read')
+
+    const dialog = await openUpgrade(element)
+    ;(dialog.querySelector('[data-close-upgrade]') as HTMLElement).click()
+    await waitUntil(() => element.querySelector('[data-upgrade-dialog]') === null, 'still open')
+    const reopened = await openUpgrade(element)
+
+    expect(reads).toBe(1)
+    release(MATRIX)
+    await waitUntil(
+      () => reopened.querySelector('[data-plan-column="home"]') !== null,
+      'the joined load never reached the reopened dialog',
+    )
+  })
+
   it('stacks one card per published plan at 360 px, nothing scrolling sideways', async () => {
     await page.viewport(360, 740)
     const { element } = await mount({

@@ -87,22 +87,23 @@ export function plansApi(baseUrl: string, fetchImpl: typeof fetch = fetch): Plan
  * Loads the matrix, preferring the cache and correcting it from the server, the way
  * `resolveProfileLocale` loads the profile.
  *
- * Never throws, and never blocks on the network: the cached answer returns at once so the dialog
- * opens with it, and the fetch runs behind it. The matrix is public and the same for every
- * account, so unlike the profile nothing here needs a sign-out guard: a late answer is never
- * somebody else's data, at worst a moment stale.
+ * Never throws. `onMatrix` fires up to twice — the cached answer before the network is asked,
+ * so a dialog opens with it at once, and the server's answer when it differs. The returned
+ * promise settles only when the fetch and the cache write are done: a caller that holds it can
+ * keep overlapping loads single-flight, so a close-and-reopen cannot race two fetches whose
+ * older answer would overwrite the newer one in the cache and on screen. The matrix is public
+ * and the same for every account, so unlike the profile nothing here needs a sign-out guard: a
+ * late answer is never somebody else's data, at worst a moment stale.
  *
- * @param onFresh called when the server's answer differs from what was cached, with the matrix
- *   the open dialog should now show. Not called for an answer the cache already held.
- * @returns what the dialog should show *now*: the cached matrix, or `undefined` when nothing has
- *   ever been cached (the built-in tables' case).
+ * @param onMatrix called with what the dialog should show, cached then corrected; never called
+ *   with the same answer twice, and not at all when neither cache nor server has one.
  */
 export async function resolvePlanMatrix(
   api: PlansApi,
   cache: LocalCache,
-  onFresh: (matrix: PlanMatrix) => void,
+  onMatrix: (matrix: PlanMatrix) => void,
   now: () => string = () => new Date().toISOString(),
-): Promise<PlanMatrix | undefined> {
+): Promise<void> {
   let cached: PlanMatrix | undefined
   try {
     const stored = await cache.readPlanMatrix()
@@ -112,17 +113,13 @@ export async function resolvePlanMatrix(
     // An unreadable cache is not a reason to be unusable; the server is asked below.
     cached = undefined
   }
+  if (cached !== undefined) onMatrix(cached)
 
-  // Not awaited by the caller: the dialog opens with the cached answer, not after a round trip.
-  void (async () => {
-    const fresh = await api.read()
-    if (fresh === undefined) return
+  const fresh = await api.read()
+  if (fresh === undefined) return
 
-    await cache.writePlanMatrix({ matrix: fresh, fetchedAt: now() }).catch(() => {
-      // A cache that refuses the write still leaves this session's dialog correct.
-    })
-    if (JSON.stringify(fresh) !== JSON.stringify(cached)) onFresh(fresh)
-  })()
-
-  return cached
+  await cache.writePlanMatrix({ matrix: fresh, fetchedAt: now() }).catch(() => {
+    // A cache that refuses the write still leaves this session's dialog correct.
+  })
+  if (JSON.stringify(fresh) !== JSON.stringify(cached)) onMatrix(fresh)
 }
