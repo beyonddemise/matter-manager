@@ -17,7 +17,7 @@
 
 import type { LocalCache, LocalProjectEntry, ServerProject } from '../data/index.js'
 import { DEFAULT_PLAN, type Plan } from '../domain/plan.js'
-import { cachedPlan } from './profile.js'
+import { cachedPlan, cachedRequest, type PlanRequest } from './profile.js'
 import type { Project } from './projects.js'
 import type { ListedProject } from './projects-model.js'
 
@@ -35,6 +35,8 @@ export interface ProjectFacts {
   readonly reportedLimit?: number
   /** The signed-in account's email, when the profile was ever heard. */
   readonly email?: string
+  /** The plan the account is waiting for, when the cached profile says it is (#224). */
+  readonly request?: PlanRequest
 }
 
 /** A device that never signed in and holds nothing: what an unreadable cache reads as. */
@@ -115,6 +117,7 @@ export async function readProjectFacts(
   // An empty remembered list cannot be told from none (the cache has no "heard" marker), and the
   // model reads the two alike: neither names a project, and both refuse every server action.
   const server = fresh ?? (lastHeard.length === 0 ? undefined : lastHeard)
+  const request = cachedRequest(profile)
   return {
     local,
     server,
@@ -122,5 +125,6 @@ export async function readProjectFacts(
     plan: cachedPlan(profile),
     ...(profile?.projectLimit === undefined ? {} : { reportedLimit: profile.projectLimit }),
     ...(profile?.email === undefined ? {} : { email: profile.email }),
+    ...(request === undefined ? {} : { request }),
   }
 }

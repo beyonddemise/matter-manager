@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
+  BY_PLAN_REQUESTED_DESIGN,
+  BY_PLAN_REQUESTED_VIEW,
   BY_SUB_DESIGN,
   BY_SUB_VIEW,
   ensureUsersDatabase,
@@ -28,6 +30,12 @@ describe('ensureUsersDatabase', () => {
     expect(documents.get(`${USERS_DB}/_design/${BY_SUB_DESIGN}`)).toBeDefined()
   })
 
+  it('installs the by_plan_requested view in the same setup', async () => {
+    const { couch, documents } = fakeCouch()
+    await ensureUsersDatabase(couch)
+    expect(documents.get(`${USERS_DB}/_design/${BY_PLAN_REQUESTED_DESIGN}`)).toBeDefined()
+  })
+
   it('does the work once per process', async () => {
     const { couch, calls } = fakeCouch()
     await ensureUsersDatabase(couch)
@@ -44,20 +52,29 @@ describe('ensureUsersDatabase', () => {
  * module's own `map` string, which is what CouchDB is handed verbatim. Executing it is the only
  * way to test what it emits rather than what its text contains.
  */
-async function emitted(doc: Record<string, unknown>): Promise<Array<{ key: unknown }>> {
+async function rowsOf(
+  design: string,
+  view: string,
+  doc: Record<string, unknown>,
+): Promise<Array<{ key: unknown; value: unknown }>> {
   forgetUsersDatabase()
   const { couch, documents } = fakeCouch()
   await ensureUsersDatabase(couch)
-  const design = documents.get(`${USERS_DB}/_design/${BY_SUB_DESIGN}`) as {
+  const stored = documents.get(`${USERS_DB}/_design/${design}`) as {
     views: Record<string, { map: string }>
   }
-  const rows: Array<{ key: unknown }> = []
-  const emit = (key: unknown) => rows.push({ key })
-  const map = new Function('emit', `return (${design.views[BY_SUB_VIEW]?.map ?? ''})`)(emit) as (
+  const rows: Array<{ key: unknown; value: unknown }> = []
+  const emit = (key: unknown, value: unknown) => rows.push({ key, value })
+  const map = new Function('emit', `return (${stored.views[view]?.map ?? ''})`)(emit) as (
     doc: unknown,
   ) => void
   map(doc)
   return rows
+}
+
+/** What `by_sub` emits for one document, as keys: its value is always `null`. */
+async function emitted(doc: Record<string, unknown>): Promise<Array<{ key: unknown }>> {
+  return (await rowsOf(BY_SUB_DESIGN, BY_SUB_VIEW, doc)).map(({ key }) => ({ key }))
 }
 
 describe('the by_sub view', () => {
@@ -77,5 +94,30 @@ describe('the by_sub view', () => {
 
   it('skips documents that are not user records', async () => {
     expect(await emitted({ type: 'other', sub: 'google|1234' })).toEqual([])
+  })
+})
+
+describe('the by_plan_requested view', () => {
+  const AT = '2026-10-09T08:00:00.000Z'
+  const rows = (doc: Record<string, unknown>) =>
+    rowsOf(BY_PLAN_REQUESTED_DESIGN, BY_PLAN_REQUESTED_VIEW, doc)
+
+  it('emits a waiting record by plan and date, with the address to contact', async () => {
+    expect(
+      await rows({
+        type: 'user',
+        email: 'ada@example.test',
+        planRequested: 'pro',
+        requestedAt: AT,
+      }),
+    ).toEqual([{ key: ['pro', AT], value: 'ada@example.test' }])
+  })
+
+  it('skips a record that is not waiting', async () => {
+    expect(await rows({ type: 'user', email: 'ada@example.test', plan: 'member' })).toEqual([])
+  })
+
+  it('skips documents that are not user records', async () => {
+    expect(await rows({ type: 'other', planRequested: 'pro', requestedAt: AT })).toEqual([])
   })
 })

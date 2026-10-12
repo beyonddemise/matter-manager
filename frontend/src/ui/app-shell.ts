@@ -1,21 +1,24 @@
 import { msg, updateWhenLocaleChanges } from '@lit/localize'
-import { html, LitElement, type TemplateResult } from 'lit'
-import { DEFAULT_PLAN } from '../domain/plan.js'
+import { html, LitElement, type PropertyValues, type TemplateResult } from 'lit'
+import { DEFAULT_PLAN, type Plan } from '../domain/plan.js'
 import { BACKFILL_WANTED } from './catalog.js'
 import { type CatalogBackfill, defaultCatalogBackfill } from './catalog-backfill.js'
 import {
   beginSignIn,
   endSession,
   followProfileLocale,
+  profile,
   requestTokens,
   type TokenOutcome,
+  waitlist as waitlistClient,
 } from './composition.js'
 import { browserConnectivity, type ConnectivitySource, watchConnectivity } from './connectivity.js'
 import { PROJECT_CHANGED } from './current-project.js'
 import { localDatabase } from './db/project-database.js'
 import { negotiateLocale } from './i18n/locale.js'
 import { activateLocale } from './i18n/localization.js'
-import type { LocalProjectDependencies } from './local-projects.js'
+import { type LocalProjectDependencies, localProjectDefaults } from './local-projects.js'
+import { cachedProfileOf, type PlanRequest, type Profile } from './profile.js'
 import { beginProjectAction } from './project-busy.js'
 import type { Project } from './projects.js'
 import { ProjectsController } from './projects-controller.js'
@@ -30,6 +33,7 @@ import {
 } from './scheme.js'
 import { type SessionState, sessionExpired } from './session.js'
 import {
+  offersUpgrade,
   renderAccount,
   renderSignOut,
   renderSignOutConfirmation,
@@ -47,6 +51,8 @@ import type { SyncState } from './sync/replication.js'
 import { startRefresher } from './token-refresher.js'
 import { forgetTokens, pouchRefreshTokenStore } from './tokens.js'
 import { applyUpdate } from './updates.js'
+import { focusWaitlist, leftWaitlistText, type WaitlistProblem } from './upgrade-dialog.js'
+import type { WaitlistApi, WaitlistOutcome } from './waitlist.js'
 import './views/add-device.js'
 import './views/rooms.js'
 import './views/device-list.js'
@@ -182,6 +188,11 @@ export class AppShell extends LitElement implements ViewHost {
     session: { state: true },
     signingOut: { state: true },
     upgrading: { state: true },
+    waitlistBusy: { state: true },
+    waitlistProblem: { state: true },
+    waitlistLeft: { state: true },
+    waitlist: { attribute: false },
+    readProfile: { attribute: false },
     refresher: { attribute: false },
     sessionEndedNotice: { state: true },
     listProjects: { attribute: false },
@@ -219,6 +230,21 @@ export class AppShell extends LitElement implements ViewHost {
   declare signingOut: SignOutStep | undefined
   /** Whether the upgrade dialog is open. */
   declare upgrading: boolean
+  /** A waitlist change is on its way to the server; every action in the dialog waits. */
+  declare waitlistBusy: boolean
+  /** Why the last waitlist change did not happen, until the dialog closes or another is tried. */
+  declare waitlistProblem: WaitlistProblem | undefined
+  /** The last change left the waitlist and the dialog stayed open to say so. */
+  declare waitlistLeft: boolean
+  /** Injected by tests. Unset in the application, where it reaches the real API. */
+  declare waitlist?: WaitlistApi
+  /**
+   * Counts waitlist changes, so a background profile read started by one can tell that a later
+   * change has landed since, and drop its older answer.
+   */
+  private waitlistChanges = 0
+  /** Reads the account's profile from the server; injected by tests, the real API otherwise. */
+  declare readProfile?: () => Promise<Profile | undefined>
   /** Whether the "session ended" notice is showing. Dismissed by the reader, never by timeout. */
   declare sessionEndedNotice: boolean
 
@@ -330,6 +356,9 @@ export class AppShell extends LitElement implements ViewHost {
     updateWhenLocaleChanges(this)
     this.signingOut = undefined
     this.upgrading = false
+    this.waitlistBusy = false
+    this.waitlistProblem = undefined
+    this.waitlistLeft = false
     this.sessionEndedNotice = false
     this.hash = window.location.hash
     this.announcement = ''
@@ -446,6 +475,35 @@ export class AppShell extends LitElement implements ViewHost {
     const announcement = announcementFor(this.lastStatus, status)
     if (announcement !== undefined) this.announcement = announcement
     this.lastStatus = status
+    // The dialog goes with its button, whatever took the button away: leaving on the top plan,
+    // or a background profile refresh that dropped the request. Without this `upgrading` would
+    // stay set and the dialog would reopen by itself when a later request brings the button back.
+    // Here rather than in `updated()`, so it lands in the same render instead of a second one.
+    if (this.upgrading && !offersUpgrade(this.upgradeFacts())) this.onCloseUpgrade()
+  }
+
+  /**
+   * Gives focus back when the upgrade dialog closes (WCAG 2.4.3), whichever way it closed: Close,
+   * Escape, or leaving on the top plan. The dialog is rendered already `open`, so Web Awesome's
+   * `show()` never records a trigger to return to, and closing removes it from the page, so its
+   * own return never runs either; without this, focus falls to the page.
+   *
+   * Back to Upgrade while it is offered; otherwise to the scheme toggle, the header control that
+   * took Upgrade's place in the focus order. A button rather than a landmark, so moving focus
+   * speaks one label and does not talk over "You left the waitlist." in the live region.
+   */
+  protected override updated(changed: PropertyValues<this>): void {
+    if (changed.get('upgrading') !== true || this.upgrading) return
+    const target =
+      this.querySelector<HTMLElement>('[data-upgrade]') ??
+      this.querySelector<HTMLElement>('[data-scheme-toggle]')
+    target?.focus()
+  }
+
+  /** What decides whether Upgrade is offered: the cached plan and request. */
+  private upgradeFacts(): { plan: Plan; request: PlanRequest | undefined } {
+    const facts = this.projects.facts
+    return { plan: facts?.plan ?? DEFAULT_PLAN, request: facts?.request }
   }
 
   /** Watches the sticky footer's height; see {@link firstUpdated}. */
@@ -691,11 +749,110 @@ export class AppShell extends LitElement implements ViewHost {
   }
 
   private onUpgrade = (): void => {
+    this.waitlistProblem = undefined
+    this.waitlistLeft = false
     this.upgrading = true
   }
 
   private onCloseUpgrade = (): void => {
     this.upgrading = false
+    this.waitlistProblem = undefined
+    this.waitlistLeft = false
+  }
+
+  private onJoinWaitlist = (plan: Plan): void => {
+    void this.changeWaitlist((api) => api.join(plan), false)
+  }
+
+  private onLeaveWaitlist = (): void => {
+    void this.changeWaitlist((api) => api.leave(), true)
+  }
+
+  /**
+   * Sends one waitlist change, then caches the profile the server answered with and re-reads the
+   * facts, so the dialog shows what the server now holds. The cache is what the dialog reads, and
+   * offline it is all there is.
+   *
+   * One change at a time: a second click before the first answers is ignored here, and not only
+   * by the disabled buttons, which update a render later than a quick second click arrives.
+   *
+   * @param leaving whether the change leaves the waitlist, which is said aloud once it lands
+   */
+  private async changeWaitlist(
+    change: (api: WaitlistApi) => Promise<WaitlistOutcome>,
+    leaving: boolean,
+  ): Promise<void> {
+    if (this.waitlistBusy) return
+    this.waitlistBusy = true
+    this.waitlistProblem = undefined
+    this.waitlistLeft = false
+    this.waitlistChanges += 1
+    // As in `startSyncing`: an answer arriving after a sign-out belongs to the account that left,
+    // and must not be cached for whoever comes next.
+    const generation = this.projects.generation
+    try {
+      const outcome = await change(this.waitlist ?? waitlistClient())
+      if (this.projects.isCurrent(generation)) await this.settleWaitlist(outcome, leaving)
+    } finally {
+      this.waitlistBusy = false
+    }
+    // Every outcome, a problem included: the clicked button was disabled on the way and dropped
+    // focus to the page behind the dialog.
+    await this.updateComplete
+    const dialog = this.querySelector('[data-upgrade-dialog]')
+    if (dialog !== null) await focusWaitlist(dialog)
+  }
+
+  /** Shows what a waitlist change came to: the problem, or the profile the server now holds. */
+  private async settleWaitlist(outcome: WaitlistOutcome, leaving: boolean): Promise<void> {
+    if (outcome.kind !== 'done') {
+      this.waitlistProblem = outcome.kind
+      // The server holds a plan this device's cache does not: "Your plan" is out of date. Not
+      // awaited, so the problem shows at once and the correction follows.
+      if (outcome.kind === 'already-on-plan') void this.rereadProfile()
+      return
+    }
+    // The dialog reads the cache. A cache that refuses the write leaves the server right and
+    // this device showing the old state, so the reader is told rather than left to wonder
+    // (ruling R12). Nothing from the profile goes into the notice or a log.
+    try {
+      await (this.projectStore ?? localProjectDefaults)
+        .cache()
+        .writeProfile(cachedProfileOf(outcome.profile, new Date().toISOString()))
+    } catch {
+      this.waitlistProblem = 'not-stored'
+      return
+    }
+    await this.projects.refresh(false)
+    if (!leaving) return
+    // Leaving a request for the top plan takes the Upgrade button away (ruling R3), and
+    // `willUpdate` closes the dialog with it. Its status region goes too, so the shell's own
+    // live region says what happened. Otherwise the dialog stays, and its own region says it.
+    if (offersUpgrade(this.upgradeFacts())) this.waitlistLeft = true
+    else this.announcement = leftWaitlistText()
+  }
+
+  /**
+   * Fetches the profile again and caches it, then re-reads the facts, as startup does
+   * (`resolveProfileLocale`). Never throws: offline, or with the cache refusing, the problem the
+   * dialog already shows stands, and nothing from the profile goes into a log.
+   */
+  private async rereadProfile(): Promise<void> {
+    // Dropped if the account signed out meanwhile, or if a later change landed: its answer is
+    // newer than this read's, and writing this one over it would undo it.
+    const generation = this.projects.generation
+    const change = this.waitlistChanges
+    const overtaken = () => !this.projects.isCurrent(generation) || change !== this.waitlistChanges
+    try {
+      const fresh = await (this.readProfile ?? (() => profile().read()))()
+      if (fresh === undefined || overtaken()) return
+      await (this.projectStore ?? localProjectDefaults)
+        .cache()
+        .writeProfile(cachedProfileOf(fresh, new Date().toISOString()))
+      await this.projects.refresh(false)
+    } catch {
+      // The cached plan stays; the next startup or profile refresh corrects it.
+    }
   }
 
   /** The public website, its privacy notice and its terms. */
@@ -727,10 +884,24 @@ export class AppShell extends LitElement implements ViewHost {
           </div>
           <div class="wa-cluster wa-gap-xs app-header-actions">
             ${renderUpgrade(
-              this.projects.facts?.plan ?? DEFAULT_PLAN,
+              {
+                plan: this.projects.facts?.plan ?? DEFAULT_PLAN,
+                session: this.session,
+                online: this.online,
+                cachedAccount: this.projects.facts?.email !== undefined,
+                request: this.projects.facts?.request,
+                busy: this.waitlistBusy,
+                problem: this.waitlistProblem,
+                left: this.waitlistLeft,
+              },
               this.upgrading,
               this.onUpgrade,
               this.onCloseUpgrade,
+              {
+                onJoin: this.onJoinWaitlist,
+                onLeave: this.onLeaveWaitlist,
+                onSignIn: this.onSignIn,
+              },
             )}
             <wa-button data-scheme-toggle appearance="plain" size="s" @click=${this.cycleScheme}>
               <wa-icon

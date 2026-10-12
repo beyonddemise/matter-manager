@@ -49,6 +49,7 @@ import {
   rememberAccessToken,
   type TokenResponse,
 } from './tokens.js'
+import { type WaitlistApi, waitlistApi } from './waitlist.js'
 
 /** The API, behind the application's own origin. See the module note. */
 export const API_BASE = '/api'
@@ -265,6 +266,11 @@ export function projects(fetchImpl: typeof fetch = fetch): ReturnType<typeof pro
 /** The profile, which carries the locale preference across devices. */
 export function profile(fetchImpl: typeof fetch = fetch): ReturnType<typeof profileApi> {
   return profileApi(API_BASE, fetchImpl)
+}
+
+/** The waitlist (#224), behind the same API base and access token as the profile. */
+export function waitlist(fetchImpl: typeof fetch = fetch): WaitlistApi {
+  return waitlistApi(API_BASE, fetchImpl)
 }
 
 /**
