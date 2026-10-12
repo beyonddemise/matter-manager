@@ -1099,6 +1099,66 @@
   <source>Saved, but this device could not store it. Reload to see it.</source>
   <target>Gespeichert, aber dieses Gerät konnte es nicht ablegen. Laden Sie die Seite neu, um es zu sehen.</target>
 </trans-unit>
+<trans-unit id="s5aec541cd0a38006">
+  <source>Email sign-in is not available yet.</source>
+  <target>Die Anmeldung per E-Mail ist noch nicht verfügbar.</target>
+</trans-unit>
+<trans-unit id="s40f80d6c547688e1">
+  <source>That does not look like an email address.</source>
+  <target>Das sieht nicht nach einer E-Mail-Adresse aus.</target>
+</trans-unit>
+<trans-unit id="sa26595afc78919a7">
+  <source>Too many codes requested. Please wait a few minutes.</source>
+  <target>Zu viele Codes angefordert. Bitte warten Sie einige Minuten.</target>
+</trans-unit>
+<trans-unit id="s677d6fc9e62c8e8c">
+  <source>The sign-in service could not be reached. Please try again.</source>
+  <target>Der Anmeldedienst war nicht erreichbar. Bitte versuchen Sie es erneut.</target>
+</trans-unit>
+<trans-unit id="s05a7590b858f7b0e">
+  <source>Signed in.</source>
+  <target>Angemeldet.</target>
+</trans-unit>
+<trans-unit id="s8c0ac95ebdc308b7">
+  <source>That code didn't work. It may have expired — request a new one.</source>
+  <target>Der Code hat nicht funktioniert. Er ist möglicherweise abgelaufen – fordern Sie einen neuen an.</target>
+</trans-unit>
+<trans-unit id="s334af6a212abee58">
+  <source>Sign in with Google</source>
+  <target>Mit Google anmelden</target>
+</trans-unit>
+<trans-unit id="s5e469746ccb61b25">
+  <source>Sign in with email</source>
+  <target>Mit E-Mail anmelden</target>
+</trans-unit>
+<trans-unit id="s38887b94b3320533">
+  <source>Email address</source>
+  <target>E-Mail-Adresse</target>
+</trans-unit>
+<trans-unit id="s393fa33e92e1b35c">
+  <source>Send code</source>
+  <target>Code senden</target>
+</trans-unit>
+<trans-unit id="sc16e00a7a8b2fde2">
+  <source>Back</source>
+  <target>Zurück</target>
+</trans-unit>
+<trans-unit id="s617dcf3e0a38ba6e">
+  <source>Enter the code we sent to <x id="0" equiv-text="${email}"/>.</source>
+  <target>Geben Sie den Code ein, den wir an <x id="0" equiv-text="${email}"/> gesendet haben.</target>
+</trans-unit>
+<trans-unit id="sd767084454d25f2d">
+  <source>Sign-in code</source>
+  <target>Anmeldecode</target>
+</trans-unit>
+<trans-unit id="s40569c278bc6dc5a">
+  <source>Send a new code (<x id="0" equiv-text="${state.resendWaitSeconds}"/>)</source>
+  <target>Neuen Code senden (<x id="0" equiv-text="${state.resendWaitSeconds}"/>)</target>
+</trans-unit>
+<trans-unit id="s953bc55ab48a4a73">
+  <source>Send a new code</source>
+  <target>Neuen Code senden</target>
+</trans-unit>
 </body>
 </file>
 </xliff>

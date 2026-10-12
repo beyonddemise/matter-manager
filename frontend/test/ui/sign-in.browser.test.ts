@@ -1,13 +1,20 @@
 import '@awesome.me/webawesome-pro/dist/components/button/button.js'
 import '@awesome.me/webawesome-pro/dist/components/checkbox/checkbox.js'
 import '@awesome.me/webawesome-pro/dist/components/dialog/dialog.js'
+import '@awesome.me/webawesome-pro/dist/components/input/input.js'
+import '@awesome.me/webawesome-pro/dist/components/otp-input/otp-input.js'
 import { fixture, html, waitUntil } from '@open-wc/testing-helpers'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { EmailSignIn, StartOutcome, VerifyOutcome } from '../../src/ui/email-signin.js'
 import type { SessionState } from '../../src/ui/session.js'
 import '../../src/ui/app-shell.js'
 import type { LocalProjectEntry } from '../../src/data/index.js'
 import type { LocalProjectDependencies } from '../../src/ui/local-projects.js'
-import { refresherNeverAnswering, refresherReporting } from './refresher-stub.js'
+import {
+  refresherNeverAnswering,
+  refresherReporting,
+  refresherSignedOutThenRefreshed,
+} from './refresher-stub.js'
 import { destroyProjectStores, isolatedProjectStore } from './support/project-store.js'
 
 /**
@@ -126,12 +133,20 @@ describe('the sign-in control', () => {
     expect(element.querySelector('[data-sign-out]')).toBeNull()
   })
 
-  it('leaves the page to sign in', async () => {
+  it('opens the method chooser; Google in it starts the redirect and closes the dialog', async () => {
     const signIn = vi.fn()
     const element = await shell('signed-out', { signIn })
     await waitUntil(() => element.querySelector('[data-sign-in]') !== null, 'no sign-in control')
     ;(element.querySelector('[data-sign-in]') as HTMLElement).click()
+    await waitUntil(
+      () => element.querySelector('[data-sign-in-dialog][open]') !== null,
+      'no chooser',
+    )
+    expect(signIn).not.toHaveBeenCalled()
+    ;(element.querySelector('[data-google-sign-in]') as HTMLElement).click()
+
     expect(signIn).toHaveBeenCalledOnce()
+    await waitUntil(() => element.querySelector('[data-sign-in-dialog]') === null, 'still open')
   })
 
   it('ends up signed out even when signing out reported problems', async () => {
@@ -349,5 +364,321 @@ describe('a session that ends while startup is still in flight', () => {
     // callback never fires would be testing the stub rather than the guard.
     expect(applied).toBe(true)
     expect(document.documentElement.lang).not.toBe('de')
+  })
+})
+
+describe('signing in with an emailed code', () => {
+  /** An email client whose two calls a test scripts and records. */
+  function fakeEmailAuth(
+    start: (email: string, locale: string) => Promise<StartOutcome> | StartOutcome,
+    complete: (challenge: string, code: string) => Promise<VerifyOutcome> | VerifyOutcome,
+  ) {
+    const starts: Array<{ email: string; locale: string }> = []
+    const completes: Array<{ challenge: string; code: string }> = []
+    const client: EmailSignIn = {
+      start: async (email, locale) => {
+        starts.push({ email, locale })
+        return start(email, locale)
+      },
+      complete: async (challenge, code) => {
+        completes.push({ challenge, code })
+        return complete(challenge, code)
+      },
+    }
+    return { client, starts, completes }
+  }
+
+  const stubManager = () => ({
+    set: () => {},
+    running: () => [],
+    stateOf: () => undefined,
+    stop: () => {},
+    pushNow: async () => {},
+    suspend: () => {},
+    resume: () => {},
+    stopAll: () => {},
+  })
+
+  /**
+   * A signed-out shell with the email client injected and replication observable. The refresher
+   * behaves like the real one around an email sign-in: `signed-out` at startup, `refreshed` once
+   * restarted over the stored refresh token — so a shell that forgets the restart stays
+   * signed out, exactly as it would in production.
+   */
+  const emailShell = async (client: EmailSignIn, overrides: Record<string, unknown> = {}) => {
+    const makeSync = vi.fn(() => stubManager())
+    const refresher = refresherSignedOutThenRefreshed()
+    const element = (await fixture(html`
+      <app-shell
+        .refresher=${refresher.factory}
+        .signIn=${overrides.signIn ?? (() => {})}
+        .connectivity=${{
+          addEventListener: () => {},
+          removeEventListener: () => {},
+          onLine: overrides.onLine ?? true,
+        }}
+        .projectStore=${isolatedProjectStore()}
+        .followLocale=${async () => undefined}
+        .listProjects=${async () => []}
+        .makeSync=${makeSync}
+        .emailAuth=${client}
+      ></app-shell>
+    `)) as HTMLElement & { updateComplete: Promise<unknown> }
+    await element.updateComplete
+    return { element, makeSync, refresher: refresher.counters }
+  }
+
+  /** Through the chooser to the email step, address filled, code requested. */
+  const requestCode = async (element: HTMLElement, email = 'ada@example.com') => {
+    await waitUntil(() => element.querySelector('[data-sign-in]') !== null, 'no sign-in control')
+    ;(element.querySelector('[data-sign-in]') as HTMLElement).click()
+    await waitUntil(
+      () => element.querySelector('[data-sign-in-dialog][open]') !== null,
+      'no chooser',
+    )
+    const dialog = element.querySelector('[data-sign-in-dialog]') as HTMLElement
+    ;(dialog.querySelector('[data-email-option]') as HTMLElement).click()
+    await waitUntil(() => dialog.querySelector('[data-email-input]') !== null, 'no email step')
+    const input = dialog.querySelector('[data-email-input]') as HTMLElement & { value: string }
+    input.value = email
+    ;(dialog.querySelector('[data-send-code]') as HTMLElement).click()
+    return dialog
+  }
+
+  /** Types the full code, which fires the otp input's completion. */
+  const typeCode = (dialog: HTMLElement, code: string) => {
+    const field = dialog.querySelector('[data-code-input]') as HTMLElement & { value: string }
+    field.value = code
+    field.dispatchEvent(new CustomEvent('wa-complete', { bubbles: true }))
+  }
+
+  it('signs in in place: session flips, sync starts once, focus and announcement follow', async () => {
+    const { client, starts, completes } = fakeEmailAuth(
+      () => ({ kind: 'challenge', challenge: 'c-1' }),
+      () => ({ kind: 'signed-in', expiresIn: 300 }),
+    )
+    const { element, makeSync, refresher } = await emailShell(client)
+
+    const dialog = await requestCode(element)
+    await waitUntil(() => dialog.querySelector('[data-code-input]') !== null, 'no code step')
+    expect(starts).toEqual([{ email: 'ada@example.com', locale: 'en' }])
+    expect(dialog.textContent).toContain('ada@example.com')
+
+    typeCode(dialog, '123456')
+    await waitUntil(() => element.querySelector('[data-sign-out]') !== null, 'never signed in')
+    expect(completes).toEqual([{ challenge: 'c-1', code: '123456' }])
+    expect(element.querySelector('[data-sign-in-dialog]')).toBeNull()
+    expect(makeSync).toHaveBeenCalledTimes(1)
+    // The restart is what keeps the session alive past the first token's 300 seconds: a faked
+    // `refreshed` outcome would flip the session and then let the token die unrefreshed.
+    expect(refresher.starts).toBe(2)
+    expect(refresher.stops).toBe(1)
+    expect(element.querySelector('[data-status-announcement]')?.textContent?.trim()).toBe(
+      'Signed in.',
+    )
+    await waitUntil(
+      () => document.activeElement === element.querySelector('[data-scheme-toggle]'),
+      'focus went nowhere',
+    )
+  })
+
+  it('moves focus into each step: the address field, then the code field', async () => {
+    const { client } = fakeEmailAuth(
+      () => ({ kind: 'challenge', challenge: 'c-1' }),
+      () => ({ kind: 'failed' }),
+    )
+    const { element } = await emailShell(client)
+    await waitUntil(() => element.querySelector('[data-sign-in]') !== null, 'no sign-in control')
+    ;(element.querySelector('[data-sign-in]') as HTMLElement).click()
+    await waitUntil(
+      () => element.querySelector('[data-sign-in-dialog][open]') !== null,
+      'no chooser',
+    )
+    const dialog = element.querySelector('[data-sign-in-dialog]') as HTMLElement
+    ;(dialog.querySelector('[data-email-option]') as HTMLElement).click()
+    await waitUntil(
+      () => document.activeElement === dialog.querySelector('[data-email-input]'),
+      'focus never reached the address',
+    )
+    const input = dialog.querySelector('[data-email-input]') as HTMLElement & { value: string }
+    input.value = 'ada@example.com'
+    ;(dialog.querySelector('[data-send-code]') as HTMLElement).click()
+    await waitUntil(
+      () => document.activeElement === dialog.querySelector('[data-code-input]'),
+      'focus never reached the code',
+    )
+  })
+
+  it('does not ask the server about a code that is not six digits', async () => {
+    const { client, completes } = fakeEmailAuth(
+      () => ({ kind: 'challenge', challenge: 'c-1' }),
+      () => ({ kind: 'signed-in', expiresIn: 300 }),
+    )
+    const { element } = await emailShell(client)
+    const dialog = await requestCode(element)
+    await waitUntil(() => dialog.querySelector('[data-code-input]') !== null, 'no code step')
+
+    const field = dialog.querySelector('[data-code-input]') as HTMLElement & { value: string }
+    field.value = '123'
+    ;(dialog.querySelector('[data-verify]') as HTMLElement).click()
+    await waitUntil(
+      () =>
+        dialog.querySelector('[data-sign-in-status]')?.textContent?.includes("didn't work") ===
+        true,
+      'no message for the short code',
+    )
+    expect(completes).toHaveLength(0)
+  })
+
+  it('disables the actions and says a connection is needed while offline', async () => {
+    const { client } = fakeEmailAuth(
+      () => ({ kind: 'challenge', challenge: 'c-1' }),
+      () => ({ kind: 'failed' }),
+    )
+    const { element } = await emailShell(client, { onLine: false })
+    await waitUntil(() => element.querySelector('[data-sign-in]') !== null, 'no sign-in control')
+    ;(element.querySelector('[data-sign-in]') as HTMLElement).click()
+    await waitUntil(
+      () => element.querySelector('[data-sign-in-dialog][open]') !== null,
+      'no chooser',
+    )
+    const dialog = element.querySelector('[data-sign-in-dialog]') as HTMLElement
+
+    expect(dialog.querySelector('[data-needs-connection]')).not.toBeNull()
+    expect(
+      (dialog.querySelector('[data-google-sign-in]') as HTMLElement).hasAttribute('disabled'),
+    ).toBe(true)
+  })
+
+  it('hides the email option and keeps Google when start answers 404', async () => {
+    const { client } = fakeEmailAuth(
+      () => ({ kind: 'unavailable' }),
+      () => ({ kind: 'failed' }),
+    )
+    const { element } = await emailShell(client)
+
+    const dialog = await requestCode(element)
+    await waitUntil(() => dialog.querySelector('[data-email-option]') === null, 'option stayed')
+    expect(dialog.querySelector('[data-google-sign-in]')).not.toBeNull()
+    expect(dialog.querySelector('[data-sign-in-status]')?.textContent).toContain(
+      'Email sign-in is not available yet.',
+    )
+  })
+
+  it('keeps the code step on a wrong code, with the one failure message', async () => {
+    const { client, completes } = fakeEmailAuth(
+      () => ({ kind: 'challenge', challenge: 'c-1' }),
+      () => ({ kind: 'failed' }),
+    )
+    const { element } = await emailShell(client)
+
+    const dialog = await requestCode(element)
+    await waitUntil(() => dialog.querySelector('[data-code-input]') !== null, 'no code step')
+    typeCode(dialog, '000000')
+    await waitUntil(
+      () =>
+        dialog
+          .querySelector('[data-sign-in-status]')
+          ?.textContent?.includes("That code didn't work") === true,
+      'no failure message',
+    )
+
+    expect(dialog.querySelector('[data-code-input]')).not.toBeNull()
+    expect(element.querySelector('[data-sign-out]')).toBeNull()
+    expect(completes).toHaveLength(1)
+  })
+
+  it('sends one verify however often the completion fires while one is in flight', async () => {
+    let release: (outcome: VerifyOutcome) => void = () => {}
+    const { client, completes } = fakeEmailAuth(
+      () => ({ kind: 'challenge', challenge: 'c-1' }),
+      () =>
+        new Promise<VerifyOutcome>((resolve) => {
+          release = resolve
+        }),
+    )
+    const { element } = await emailShell(client)
+    const dialog = await requestCode(element)
+    await waitUntil(() => dialog.querySelector('[data-code-input]') !== null, 'no code step')
+
+    typeCode(dialog, '123456')
+    typeCode(dialog, '123456')
+    ;(dialog.querySelector('[data-verify]') as HTMLElement).click()
+    await new Promise((resolve) => setTimeout(resolve, 10))
+
+    expect(completes).toHaveLength(1)
+    release({ kind: 'failed' })
+  })
+
+  it('a sign-in that lands after the dialog closed is still committed', async () => {
+    let release: (outcome: VerifyOutcome) => void = () => {}
+    const { client } = fakeEmailAuth(
+      () => ({ kind: 'challenge', challenge: 'c-1' }),
+      () =>
+        new Promise<VerifyOutcome>((resolve) => {
+          release = resolve
+        }),
+    )
+    const { element, makeSync } = await emailShell(client)
+    const dialog = await requestCode(element)
+    await waitUntil(() => dialog.querySelector('[data-code-input]') !== null, 'no code step')
+    typeCode(dialog, '123456')
+    ;(dialog as HTMLElement & { open: boolean }).open = false
+    await waitUntil(() => element.querySelector('[data-sign-in-dialog]') === null, 'still open')
+
+    release({ kind: 'signed-in', expiresIn: 300 })
+
+    // The client already holds and stored the tokens: a shell that kept saying "Sign in" over
+    // live credentials would be lying, and the next reload would sign in silently anyway. So
+    // the session flips and sync starts — the dialog stays gone, and the change is announced.
+    await waitUntil(() => element.querySelector('[data-sign-out]') !== null, 'never committed')
+    expect(makeSync).toHaveBeenCalledTimes(1)
+    expect(element.querySelector('[data-status-announcement]')?.textContent?.trim()).toBe(
+      'Signed in.',
+    )
+  })
+
+  it('a failure that lands after the dialog closed stays silent', async () => {
+    let release: (outcome: VerifyOutcome) => void = () => {}
+    const { client } = fakeEmailAuth(
+      () => ({ kind: 'challenge', challenge: 'c-1' }),
+      () =>
+        new Promise<VerifyOutcome>((resolve) => {
+          release = resolve
+        }),
+    )
+    const { element, makeSync } = await emailShell(client)
+    const dialog = await requestCode(element)
+    await waitUntil(() => dialog.querySelector('[data-code-input]') !== null, 'no code step')
+    typeCode(dialog, '123456')
+    ;(dialog as HTMLElement & { open: boolean }).open = false
+    await waitUntil(() => element.querySelector('[data-sign-in-dialog]') === null, 'still open')
+
+    release({ kind: 'failed' })
+    await new Promise((resolve) => setTimeout(resolve, 20))
+
+    expect(element.querySelector('[data-sign-out]')).toBeNull()
+    expect(makeSync).not.toHaveBeenCalled()
+    expect(element.querySelector('[data-status-announcement]')?.textContent?.trim()).toBe('')
+  })
+
+  it('says the service was unreachable when verifying offline', async () => {
+    const { client } = fakeEmailAuth(
+      () => ({ kind: 'challenge', challenge: 'c-1' }),
+      () => ({ kind: 'unreachable' }),
+    )
+    const { element } = await emailShell(client)
+    const dialog = await requestCode(element)
+    await waitUntil(() => dialog.querySelector('[data-code-input]') !== null, 'no code step')
+
+    typeCode(dialog, '123456')
+    await waitUntil(
+      () =>
+        dialog
+          .querySelector('[data-sign-in-status]')
+          ?.textContent?.includes('could not be reached') === true,
+      'no unreachable message',
+    )
+    expect(dialog.querySelector('[data-code-input]')).not.toBeNull()
   })
 })

@@ -213,6 +213,68 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /auth/email:
+    post:
+      operationId: startEmailSignIn
+      tags: [auth]
+      summary: Start email sign-in
+      description: |
+        Mails a six-digit one-time code to the address and answers a single-use challenge id.
+        The secret is split: the code goes only to the mailbox and this challenge id only to the
+        requesting client, so an intercepted email alone signs nobody in. The answer is the same
+        whether or not an account exists - any address may sign in, so there is nothing to
+        enumerate. Signing in creates no record.
+
+        At most 3 codes per address per 15 minutes; the code is valid for 10 minutes.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EmailSignInStart' }
+      responses:
+        '202':
+          description: The code is on its way; verify it with the challenge id
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EmailChallenge' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '429': { $ref: '#/components/responses/TooManyCodes' }
+
+  /auth/email/{challenge}:
+    post:
+      operationId: completeEmailSignIn
+      tags: [auth]
+      summary: Complete email sign-in
+      description: |
+        Verifies the mailed code against the challenge and answers exactly what
+        `POST /auth/token` answers: an access token and a refresh token. The challenge is
+        consumed on success. Every failure - unknown, expired, consumed or exhausted challenge,
+        and a wrong code alike - is the same 401, so the answer never says which half the caller
+        is missing. The fifth wrong code invalidates the challenge.
+      security: []
+      parameters:
+        - { name: challenge, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EmailSignInCode' }
+      responses:
+        '200':
+          description: A new access token, and the refresh token to present at `POST /auth/token`
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [accessToken, expiresIn, refreshToken]
+                properties:
+                  accessToken: { type: string }
+                  expiresIn: { type: integer, description: Seconds until expiry }
+                  refreshToken: { type: string }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
   /profile:
     get:
       tags: [profile]
@@ -825,6 +887,38 @@ components:
       bearerFormat: JWT
 
   schemas:
+    EmailSignInStart:
+      type: object
+      required: [email]
+      properties:
+        email:
+          type: string
+          format: email
+          description: Where to send the code; also the account's identity once verified.
+        locale:
+          type: string
+          enum: [en, de]
+          description: The language of the email. Absent means `en`.
+
+    EmailChallenge:
+      type: object
+      required: [challenge]
+      properties:
+        challenge:
+          type: string
+          description: >-
+            Single-use, high-entropy, bound to this request's address. Present it in the path of
+            `POST /auth/email/{challenge}`. It never appears in the email.
+
+    EmailSignInCode:
+      type: object
+      required: [code]
+      properties:
+        code:
+          type: string
+          pattern: '^[0-9]{6}$'
+          description: The six digits from the email, leading zeros kept.
+
     CatalogLookupRequest:
       type: object
       required: [code]
@@ -1202,6 +1296,12 @@ components:
             which is both narrower and local to the refusal it describes.
 
   responses:
+    TooManyCodes:
+      description: Too many codes requested for this address; wait before trying again
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
     BadRequest:
       description: The request body is not one this operation accepts
       content:

@@ -5,6 +5,7 @@ import { BACKFILL_WANTED } from './catalog.js'
 import { type CatalogBackfill, defaultCatalogBackfill } from './catalog-backfill.js'
 import {
   beginSignIn,
+  emailSignInClient,
   endSession,
   followProfileLocale,
   plans as plansClient,
@@ -16,8 +17,9 @@ import {
 import { browserConnectivity, type ConnectivitySource, watchConnectivity } from './connectivity.js'
 import { PROJECT_CHANGED } from './current-project.js'
 import { localDatabase } from './db/project-database.js'
+import type { EmailSignIn, StartOutcome, VerifyOutcome } from './email-signin.js'
 import { negotiateLocale } from './i18n/locale.js'
-import { activateLocale } from './i18n/localization.js'
+import { activateLocale, getLocale } from './i18n/localization.js'
 import { type LocalProjectDependencies, localProjectDefaults } from './local-projects.js'
 import { type PlanMatrix, type PlansApi, resolvePlanMatrix } from './plans.js'
 import { cachedProfileOf, type PlanRequest, type Profile } from './profile.js'
@@ -48,6 +50,7 @@ import {
   renderSyncStatus,
   type StatusSnapshot,
 } from './shell-status.js'
+import { renderSignInDialog, type SignInActions, type SignInStep } from './sign-in-dialog.js'
 import type { SyncManager } from './sync/manager.js'
 import type { SyncState } from './sync/replication.js'
 import { startRefresher } from './token-refresher.js'
@@ -196,6 +199,9 @@ export class AppShell extends LitElement implements ViewHost {
     waitlist: { attribute: false },
     planMatrix: { state: true },
     plans: { attribute: false },
+    signingIn: { state: true },
+    signInNotice: { state: true },
+    emailAuth: { attribute: false },
     readProfile: { attribute: false },
     refresher: { attribute: false },
     sessionEndedNotice: { state: true },
@@ -250,6 +256,12 @@ export class AppShell extends LitElement implements ViewHost {
   declare planMatrix: PlanMatrix | undefined
   /** Fetches the matrix; injected by tests, the real API otherwise. */
   declare plans?: PlansApi
+  /** The sign-in dialog's step, or `undefined` while it is closed. */
+  declare signingIn: SignInStep | undefined
+  /** The sign-in dialog's status line; `''` for silence. Never carries an address or a code. */
+  declare signInNotice: string
+  /** The email sign-in client; injected by tests, the real API otherwise. */
+  declare emailAuth?: EmailSignIn
   /**
    * Counts waitlist changes, so a background profile read started by one can tell that a later
    * change has landed since, and drop its older answer.
@@ -369,6 +381,8 @@ export class AppShell extends LitElement implements ViewHost {
     this.signingOut = undefined
     this.upgrading = false
     this.planMatrix = undefined
+    this.signingIn = undefined
+    this.signInNotice = ''
     this.waitlistBusy = false
     this.waitlistProblem = undefined
     this.waitlistLeft = false
@@ -506,11 +520,51 @@ export class AppShell extends LitElement implements ViewHost {
    * speaks one label and does not talk over "You left the waitlist." in the live region.
    */
   protected override updated(changed: PropertyValues<this>): void {
-    if (changed.get('upgrading') !== true || this.upgrading) return
-    const target =
-      this.querySelector<HTMLElement>('[data-upgrade]') ??
-      this.querySelector<HTMLElement>('[data-scheme-toggle]')
-    target?.focus()
+    if (changed.get('upgrading') === true && !this.upgrading) {
+      const target =
+        this.querySelector<HTMLElement>('[data-upgrade]') ??
+        this.querySelector<HTMLElement>('[data-scheme-toggle]')
+      target?.focus()
+    }
+    // The sign-in dialog's close, same WCAG 2.4.3 duty: back to the account control while there
+    // is one — after a successful sign-in it is gone, and the scheme toggle is what remains of
+    // the header's focus order.
+    if (changed.has('signingIn') && changed.get('signingIn') !== undefined && !this.signingIn) {
+      const target =
+        this.querySelector<HTMLElement>('[data-sign-in]') ??
+        this.querySelector<HTMLElement>('[data-scheme-toggle]')
+      target?.focus()
+    }
+    // A session arriving takes the sign-in control away; if it held focus — it is where the
+    // dialog's close put it a moment earlier — focus falls to the page. Re-home it to the
+    // scheme toggle, the control that takes its place in the header's order.
+    if (changed.has('session') && this.session === 'signed-in') {
+      const active = document.activeElement
+      if (active === null || active === document.body)
+        this.querySelector<HTMLElement>('[data-scheme-toggle]')?.focus()
+    }
+    // Focus moves with each step (#224): the clicked button is removed with its step, and
+    // without this focus falls to the document. The dialog's own autofocus covers the first
+    // open; step changes inside it are this component's to carry.
+    if (changed.has('signingIn') && this.signingIn !== undefined) {
+      const was = changed.get('signingIn') as SignInStep | undefined
+      if (was !== undefined && was.step !== this.signingIn.step)
+        void this.focusSignInStep(this.signingIn.step)
+    }
+  }
+
+  /** The step's first control, focused once its inner element is ready (`focusWaitlist`'s way). */
+  private async focusSignInStep(step: SignInStep['step']): Promise<void> {
+    const selector =
+      step === 'chooser'
+        ? '[data-google-sign-in]'
+        : step === 'email'
+          ? '[data-email-input]'
+          : '[data-code-input]'
+    const target = this.querySelector<HTMLElement & { updateComplete?: Promise<unknown> }>(selector)
+    if (target === null) return
+    await target.updateComplete
+    target.focus()
   }
 
   /** What decides whether Upgrade is offered: the cached plan and request. */
@@ -540,6 +594,7 @@ export class AppShell extends LitElement implements ViewHost {
   }
 
   override disconnectedCallback(): void {
+    this.stopResendTicker()
     this.footerObserver?.disconnect()
     this.footerObserver = undefined
     document.documentElement.style.removeProperty('--app-footer-height')
@@ -667,8 +722,206 @@ export class AppShell extends LitElement implements ViewHost {
     this.signingOut = undefined
   }
 
+  /** The header's "Sign in": opens the method chooser (the Google redirect moved inside). */
   private onSignIn = (): void => {
-    ;(this.signIn ?? beginSignIn)()
+    this.signInNotice = ''
+    this.signingIn = { step: 'chooser', emailUnavailable: this.emailUnavailable }
+  }
+
+  /** A 404 from start hid the email option; the chooser stays Google-only for this session. */
+  private emailUnavailable = false
+
+  /** The challenge the mailed code belongs to, with the address it went to, held for resend. */
+  private signInChallenge: { id: string; email: string } | undefined
+
+  /**
+   * Counts closures and steps back, so an answer that arrives after the dialog closed or the
+   * reader left the step changes nothing — the #224 `waitlistChanges` pattern.
+   */
+  private signInAttempt = 0
+
+  /** One start and one verify at a time: `wa-complete` plus a click must not send two. */
+  private sendingCode = false
+  private verifyingCode = false
+
+  /** Ticks the resend cooldown down once a second; cleared with the dialog and on disconnect. */
+  private resendTicker: ReturnType<typeof setInterval> | undefined
+
+  private stopResendTicker(): void {
+    if (this.resendTicker !== undefined) clearInterval(this.resendTicker)
+    this.resendTicker = undefined
+  }
+
+  private startResendCountdown(): void {
+    this.stopResendTicker()
+    this.resendTicker = setInterval(() => {
+      if (this.signingIn?.step !== 'code' || this.signingIn.resendWaitSeconds <= 0) {
+        this.stopResendTicker()
+        return
+      }
+      this.signingIn = {
+        ...this.signingIn,
+        resendWaitSeconds: this.signingIn.resendWaitSeconds - 1,
+      }
+    }, 1000)
+  }
+
+  private closeSignIn(): void {
+    this.signInAttempt += 1
+    this.signingIn = undefined
+    this.signInNotice = ''
+    this.signInChallenge = undefined
+    this.stopResendTicker()
+  }
+
+  /** What the sign-in dialog calls back with; the state it reads is this component's. */
+  private readonly signInActions: SignInActions = {
+    onGoogle: () => {
+      // The redirect leaves the page; the dialog closes first so it is not what the browser's
+      // Back button returns to.
+      this.closeSignIn()
+      ;(this.signIn ?? beginSignIn)()
+    },
+    onEmail: () => {
+      this.signInNotice = ''
+      this.signingIn = { step: 'email', busy: false }
+    },
+    onSendCode: (email) => void this.sendSignInCode(email),
+    onVerify: (code) => void this.verifySignInCode(code),
+    onResend: () => {
+      const step = this.signingIn
+      if (step?.step === 'code' && step.resendWaitSeconds <= 0)
+        void this.sendSignInCode(this.signInChallenge?.email ?? step.email)
+    },
+    onBack: () => {
+      this.signInAttempt += 1
+      this.stopResendTicker()
+      this.signInChallenge = undefined
+      this.signInNotice = ''
+      this.signingIn = { step: 'chooser', emailUnavailable: this.emailUnavailable }
+    },
+    onClose: () => this.closeSignIn(),
+  }
+
+  /** How long resend waits, matching the server's three-codes-per-fifteen-minutes limit. */
+  private static readonly RESEND_WAIT_SECONDS = 60
+
+  /**
+   * Asks for a code. The address goes to the client and nowhere else — not into a notice, not
+   * into a log; the outcomes carry none of it back.
+   */
+  private async sendSignInCode(email: string): Promise<void> {
+    if (this.sendingCode || this.signingIn === undefined) return
+    this.sendingCode = true
+    const attempt = this.signInAttempt
+    if (this.signingIn.step === 'email') this.signingIn = { step: 'email', busy: true }
+    let outcome: StartOutcome
+    try {
+      outcome = await (this.emailAuth ?? emailSignInClient()).start(email, getLocale())
+    } finally {
+      this.sendingCode = false
+    }
+    // The dialog closed or the reader stepped back while this was in flight: say nothing.
+    if (attempt !== this.signInAttempt) return
+
+    switch (outcome.kind) {
+      case 'challenge':
+        this.signInChallenge = { id: outcome.challenge, email }
+        this.signInNotice = ''
+        this.signingIn = {
+          step: 'code',
+          email,
+          busy: false,
+          resendWaitSeconds: AppShell.RESEND_WAIT_SECONDS,
+        }
+        this.startResendCountdown()
+        return
+      case 'unavailable':
+        // This deployment has no email sign-in: the option hides for the session, Google stays.
+        this.emailUnavailable = true
+        this.signInNotice = msg('Email sign-in is not available yet.')
+        this.signingIn = { step: 'chooser', emailUnavailable: true }
+        return
+      case 'refused':
+        this.signInNotice = msg('That does not look like an email address.')
+        this.signingIn = this.afterSendStep()
+        return
+      case 'throttled':
+        this.signInNotice = msg('Too many codes requested. Please wait a few minutes.')
+        this.signingIn = this.afterSendStep()
+        return
+      case 'unreachable':
+        this.signInNotice = msg('The sign-in service could not be reached. Please try again.')
+        this.signingIn = this.afterSendStep()
+        return
+    }
+  }
+
+  /** Where a failed send leaves the reader: the code step for a resend, the address otherwise. */
+  private afterSendStep(): SignInStep {
+    return this.signingIn?.step === 'code'
+      ? { ...this.signingIn, busy: false }
+      : { step: 'email', busy: false }
+  }
+
+  /**
+   * Verifies the typed code. On success the client already holds both tokens, so the ordinary
+   * `refreshed` transition does the rest — session, replication, backfill — and the running
+   * refresher takes over before expiry, since the stored refresh token is now this session's.
+   */
+  private async verifySignInCode(code: string): Promise<void> {
+    const challenge = this.signInChallenge
+    if (challenge === undefined || this.verifyingCode) return
+    // The contract takes exactly six digits; a shorter code (Sign in pressed early) earns the
+    // same words a wrong one would, without a request the server could only 400.
+    if (!/^[0-9]{6}$/.test(code)) {
+      this.signInNotice = msg("That code didn't work. It may have expired — request a new one.")
+      return
+    }
+    this.verifyingCode = true
+    const attempt = this.signInAttempt
+    if (this.signingIn?.step === 'code') this.signingIn = { ...this.signingIn, busy: true }
+    let outcome: VerifyOutcome
+    try {
+      outcome = await (this.emailAuth ?? emailSignInClient()).complete(challenge.id, code)
+    } finally {
+      this.verifyingCode = false
+    }
+
+    if (outcome.kind === 'signed-in') {
+      // Committed whether or not the dialog is still open: the client already holds the access
+      // token and stored the refresh token, and a header still offering "Sign in" over live
+      // credentials would be a lie the next reload exposes. Only the dialog-local words are
+      // gated by the attempt counter.
+      if (attempt === this.signInAttempt) this.closeSignIn()
+      // The dialog's status region is gone; the shell's own live region says it instead.
+      this.announcement = msg('Signed in.')
+      // The refresher answered `signed-out` at startup and armed nothing more. Started afresh,
+      // its first exchange presents the just-stored refresh token, answers `refreshed`, and the
+      // ordinary transition does the rest — session, replication, backfill, and the next
+      // refresh scheduled before expiry. Faking the outcome here instead would flip the session
+      // and then let the 300-second token die unrefreshed.
+      this.tokenRefresher?.stop()
+      this.tokenRefresher = (this.refresher ?? startRealRefresher)((heard) =>
+        this.onTokenOutcome(heard),
+      )
+      return
+    }
+    if (attempt !== this.signInAttempt) return
+
+    switch (outcome.kind) {
+      case 'failed':
+        // One wording for every refusal, as the contract answers: wrong, expired, consumed and
+        // unknown are indistinguishable by design.
+        this.signInNotice = msg("That code didn't work. It may have expired — request a new one.")
+        if (this.signingIn?.step === 'code') this.signingIn = { ...this.signingIn, busy: false }
+        ;(this.querySelector('[data-code-input]') as { clear?: () => void } | null)?.clear?.()
+        return
+      case 'unreachable':
+        this.signInNotice = msg('The sign-in service could not be reached. Please try again.')
+        if (this.signingIn?.step === 'code') this.signingIn = { ...this.signingIn, busy: false }
+        return
+    }
   }
 
   /** Counts sign-out dialogs, so a push that outlives its dialog (cancelled) signs nobody out. */
@@ -954,6 +1207,18 @@ export class AppShell extends LitElement implements ViewHost {
               ></wa-icon>
             </wa-button>
             ${renderAccount(this.session, this.projects.facts?.email, this.onSignIn)}
+            ${
+              // Beside the upgrade dialog's render: presence in the template is the state. Gone
+              // once the session is in, whichever path answered it.
+              this.signingIn !== undefined && this.session !== 'signed-in'
+                ? renderSignInDialog(
+                    this.signingIn,
+                    this.signInNotice,
+                    this.online,
+                    this.signInActions,
+                  )
+                : ''
+            }
           </div>
         </header>
 

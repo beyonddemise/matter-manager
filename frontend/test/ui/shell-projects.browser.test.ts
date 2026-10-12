@@ -1531,6 +1531,13 @@ describe('upgrading', () => {
     const button = dialog.querySelector('[data-sign-in-waitlist]') as HTMLElement
     expect(text(button)).toBe('Sign in to join the waitlist')
     button.click()
+    // Signing in is a method chooser now: the button opens it rather than leaving for Google.
+    await waitUntil(
+      () => element.querySelector('[data-sign-in-dialog][open]') !== null,
+      'no chooser',
+    )
+    expect(signIn).not.toHaveBeenCalled()
+    ;(element.querySelector('[data-google-sign-in]') as HTMLElement).click()
     expect(signIn).toHaveBeenCalledTimes(1)
   })
 

@@ -29,6 +29,28 @@ export function refresherReporting(session: SessionState) {
 export const refresherNeverAnswering = (): StubRefresher => ({ stop() {} })
 
 /**
+ * A refresher factory that reports `signed-out` on its first start and `refreshed` on every
+ * later one — the shape of an email sign-in: the device had no session when the shell started,
+ * and a restart after the verify finds the stored refresh token valid. `starts` counts the
+ * factory's invocations, so a test can assert the restart actually happened.
+ */
+export function refresherSignedOutThenRefreshed() {
+  const counters = { starts: 0, stops: 0 }
+  const factory = (onOutcome: (o: TokenOutcome) => void): StubRefresher => {
+    counters.starts += 1
+    const outcome: TokenOutcome =
+      counters.starts === 1 ? { kind: 'signed-out' } : { kind: 'refreshed', expiresIn: 300 }
+    queueMicrotask(() => onOutcome(outcome))
+    return {
+      stop() {
+        counters.stops += 1
+      },
+    }
+  }
+  return { factory, counters }
+}
+
+/**
  * A refresher that answers `unreachable` and nothing else: the app opened with no connection,
  * so the session stays unknown for the whole outage.
  */
