@@ -1002,6 +1002,7 @@
   <source>, and its sub-rooms</source>
   <note from="lit-localize">Follows a room name in the export menu: "Ground Floor, Kitchen, and its sub-rooms".</note>
   <target> samt Unterräumen</target>
+</trans-unit>
 <trans-unit id="s6ec872b257ae35d4">
   <source>Under heavy development. Join the waitlist for free.</source>
   <target>In intensiver Entwicklung. Setzen Sie sich kostenlos auf die Warteliste.</target>
