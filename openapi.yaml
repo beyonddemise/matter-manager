@@ -103,6 +103,27 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /auth/methods:
+    get:
+      operationId: getAuthMethods
+      tags: [auth]
+      summary: Which sign-in methods this deployment serves
+      description: |
+        Answered from the same feature flags that gate the routes, so it never advertises a
+        method whose route would 404. Public: a sign-in chooser needs it before any session
+        exists. Later sign-in methods extend this object.
+      security: []
+      responses:
+        '200':
+          description: One flag per method
+          headers:
+            Cache-Control:
+              schema: { type: string }
+              description: public, max-age=300 — it changes only on redeploy
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthMethods' }
+
   /auth/google:
     get:
       tags: [auth]
@@ -128,6 +149,38 @@ paths:
             cookie set, which authorises the first `POST /auth/token`. On failure, including an
             address the provider has not verified, the redirect carries `?signin=failed` and no
             handoff.
+
+  /auth/github:
+    get:
+      operationId: startGitHubSignIn
+      tags: [auth]
+      summary: Begin GitHub sign-in
+      description: Redirects to GitHub's consent screen using authorization code + PKCE (S256).
+      security: []
+      responses:
+        '302':
+          description: Redirect to GitHub
+
+  /auth/github/callback:
+    get:
+      operationId: completeGitHubSignIn
+      tags: [auth]
+      summary: Complete GitHub sign-in
+      description: |
+        The identity is the account's numeric id; the address is the **verified primary** from
+        `GET /user/emails` — an account without one is refused. Auto-links into the canonical
+        account by that address, exactly as the Google callback does.
+      security: []
+      parameters:
+        - { name: code, in: query, required: true, schema: { type: string } }
+        - { name: state, in: query, required: true, schema: { type: string } }
+      responses:
+        '302':
+          description: |
+            Redirect to the web app with the two-minute, single-use, `HttpOnly` `mm_handoff`
+            cookie set on success. On failure — a refused state, an unverified or missing
+            primary address, or a provider slot already bound to another GitHub account — the
+            redirect carries `?signin=failed` and no handoff.
 
   /auth/token:
     post:
@@ -887,6 +940,17 @@ components:
       bearerFormat: JWT
 
   schemas:
+    AuthMethods:
+      type: object
+      required: [google, github, email]
+      properties:
+        google: { type: boolean }
+        github: { type: boolean }
+        email: { type: boolean }
+      description: >-
+        One flag per sign-in method this deployment serves. A later method is a new required
+        field here and in the mirror at once.
+
     EmailSignInStart:
       type: object
       required: [email]

@@ -4,8 +4,7 @@ import { type AuthMethods, authMethodsApi, isAuthMethods } from '../../src/ui/au
 const json = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
 
-const answering =
-  (response: Response | Error) =>
+const answering = (response: Response | Error) =>
   (async () => {
     if (response instanceof Error) throw response
     return response

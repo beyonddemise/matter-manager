@@ -1,9 +1,9 @@
 import { msg, updateWhenLocaleChanges } from '@lit/localize'
 import { html, LitElement, type PropertyValues, type TemplateResult } from 'lit'
 import { DEFAULT_PLAN, type Plan } from '../domain/plan.js'
+import type { AuthMethods, AuthMethodsApi } from './auth-methods.js'
 import { BACKFILL_WANTED } from './catalog.js'
 import { type CatalogBackfill, defaultCatalogBackfill } from './catalog-backfill.js'
-import type { AuthMethods, AuthMethodsApi } from './auth-methods.js'
 import {
   authMethods as authMethodsClient,
   beginGitHubSignIn,
