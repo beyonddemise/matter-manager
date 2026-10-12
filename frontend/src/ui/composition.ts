@@ -28,6 +28,7 @@ import {
   rawDatabase,
   removeLocalDatabases,
 } from './db/project-database.js'
+import { type EmailSignIn, emailSignIn } from './email-signin.js'
 
 import { type PlansApi, plansApi } from './plans.js'
 import { type Locale, profileApi, resolveProfileLocale } from './profile.js'
@@ -243,6 +244,11 @@ export function waitlist(fetchImpl: typeof fetch = fetch): WaitlistApi {
 /** The published plan matrix (#224): public marketing copy, behind the same API base, no token. */
 export function plans(fetchImpl: typeof fetch = fetch): PlansApi {
   return plansApi(API_BASE, fetchImpl)
+}
+
+/** Email sign-in, wired to the API and this device's refresh-token store. */
+export function emailSignInClient(fetchImpl: typeof fetch = fetch): EmailSignIn {
+  return emailSignIn(API_BASE, pouchRefreshTokenStore(localDatabase()), fetchImpl)
 }
 
 /**
