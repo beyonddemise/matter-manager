@@ -766,9 +766,15 @@ export class AppShell extends LitElement implements ViewHost {
     this.waitlistLeft = false
     this.upgrading = true
     // Not awaited: the dialog opens at once with whatever is already here, and the comparison
-    // follows — first the cache's answer, then the server's correction.
-    void this.loadPlanMatrix()
+    // follows — first the cache's answer, then the server's correction. Single-flight: closing
+    // does not cancel the load, so a close-and-reopen joins the one in flight instead of racing
+    // a second fetch whose older answer could land last, in the cache and on the open dialog
+    // alike.
+    if (this.planMatrixLoad === undefined) this.planMatrixLoad = this.loadPlanMatrix()
   }
+
+  /** The one matrix load in flight; see {@link onUpgrade}. */
+  private planMatrixLoad: Promise<void> | undefined
 
   /**
    * Loads the plan matrix for the comparison: the cache's answer immediately, the server's
@@ -778,14 +784,17 @@ export class AppShell extends LitElement implements ViewHost {
    * previous open fetched, or `undefined`, which renders the built-in tables.
    */
   private async loadPlanMatrix(): Promise<void> {
-    const cached = await resolvePlanMatrix(
-      this.plans ?? plansClient(),
-      (this.projectStore ?? localProjectDefaults).cache(),
-      (fresh) => {
-        this.planMatrix = fresh
-      },
-    )
-    this.planMatrix = cached ?? this.planMatrix
+    try {
+      await resolvePlanMatrix(
+        this.plans ?? plansClient(),
+        (this.projectStore ?? localProjectDefaults).cache(),
+        (matrix) => {
+          this.planMatrix = matrix
+        },
+      )
+    } finally {
+      this.planMatrixLoad = undefined
+    }
   }
 
   private onCloseUpgrade = (): void => {

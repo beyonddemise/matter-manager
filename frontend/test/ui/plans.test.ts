@@ -64,9 +64,6 @@ function fakeCache(initial?: CachedPlanMatrix, broken?: 'read' | 'write') {
   return { cache, writes }
 }
 
-/** Lets a test wait for the background correction without knowing how long it takes. */
-const settled = () => new Promise((resolve) => setTimeout(resolve, 0))
-
 describe('whether a body is a plan matrix', () => {
   it('accepts the published shape, numbers and display strings alike', () => {
     expect(isPlanMatrix(MATRIX)).toBe(true)
@@ -117,83 +114,78 @@ describe('plansApi', () => {
 describe('resolving the matrix, cache first', () => {
   const api = (answer: PlanMatrix | undefined): PlansApi => ({ read: async () => answer })
 
-  it('answers the cached matrix at once and corrects the cache in the background', async () => {
+  it('shows the cached matrix first, then the correction, and its promise spans both', async () => {
     const { cache, writes } = fakeCache({ matrix: MATRIX, fetchedAt: '2026-10-11T00:00:00.000Z' })
     const changed = { ...MATRIX, pro: { Projects: 'Unlimited' } }
-    const fresh: PlanMatrix[] = []
+    const shown: PlanMatrix[] = []
 
-    const now = await resolvePlanMatrix(api(changed), cache, (matrix) => fresh.push(matrix))
+    // Awaiting the one promise covers the fetch and the cache write too: the caller can hold it
+    // to keep overlapping loads single-flight.
+    await resolvePlanMatrix(api(changed), cache, (matrix) => shown.push(matrix))
 
-    expect(now).toEqual(MATRIX)
-    await settled()
-    expect(fresh).toEqual([changed])
+    expect(shown).toEqual([MATRIX, changed])
     expect(writes.map((write) => write.matrix)).toEqual([changed])
   })
 
-  it('does not call back for an answer the cache already held', async () => {
+  it('does not call back again for an answer the cache already held', async () => {
     const { cache } = fakeCache({ matrix: MATRIX, fetchedAt: '2026-10-11T00:00:00.000Z' })
-    const fresh: PlanMatrix[] = []
+    const shown: PlanMatrix[] = []
 
-    await resolvePlanMatrix(api(MATRIX), cache, (matrix) => fresh.push(matrix))
+    await resolvePlanMatrix(api(MATRIX), cache, (matrix) => shown.push(matrix))
 
-    await settled()
-    expect(fresh).toEqual([])
+    expect(shown).toEqual([MATRIX])
   })
 
-  it('answers nothing on a device that never cached one, then calls back with the fetch', async () => {
+  it('shows nothing on a device that never cached one until the fetch answers', async () => {
     const { cache, writes } = fakeCache()
-    const fresh: PlanMatrix[] = []
+    const shown: PlanMatrix[] = []
 
-    const now = await resolvePlanMatrix(
+    await resolvePlanMatrix(
       api(MATRIX),
       cache,
-      (matrix) => fresh.push(matrix),
+      (matrix) => shown.push(matrix),
       () => '2026-10-12T09:00:00.000Z',
     )
 
-    expect(now).toBeUndefined()
-    await settled()
-    expect(fresh).toEqual([MATRIX])
+    expect(shown).toEqual([MATRIX])
     expect(writes).toEqual([{ matrix: MATRIX, fetchedAt: '2026-10-12T09:00:00.000Z' }])
   })
 
   it('keeps the cached answer when the server has nothing', async () => {
     const { cache, writes } = fakeCache({ matrix: MATRIX, fetchedAt: '2026-10-11T00:00:00.000Z' })
-    const fresh: PlanMatrix[] = []
+    const shown: PlanMatrix[] = []
 
-    const now = await resolvePlanMatrix(api(undefined), cache, (matrix) => fresh.push(matrix))
+    await resolvePlanMatrix(api(undefined), cache, (matrix) => shown.push(matrix))
 
-    expect(now).toEqual(MATRIX)
-    await settled()
-    expect(fresh).toEqual([])
+    expect(shown).toEqual([MATRIX])
     expect(writes).toEqual([])
   })
 
   it('treats a cached document another build wrote as nothing', async () => {
     // Guarded again on the way out: the document is whatever build wrote it last.
     const { cache } = fakeCache({ matrix: { free: 'cheap' }, fetchedAt: 'x' })
+    const shown: PlanMatrix[] = []
 
-    expect(await resolvePlanMatrix(api(undefined), cache, () => {})).toBeUndefined()
+    await resolvePlanMatrix(api(undefined), cache, (matrix) => shown.push(matrix))
+
+    expect(shown).toEqual([])
   })
 
   it('survives an unreadable cache and still asks the server', async () => {
     const { cache } = fakeCache(undefined, 'read')
-    const fresh: PlanMatrix[] = []
+    const shown: PlanMatrix[] = []
 
-    const now = await resolvePlanMatrix(api(MATRIX), cache, (matrix) => fresh.push(matrix))
+    await resolvePlanMatrix(api(MATRIX), cache, (matrix) => shown.push(matrix))
 
-    expect(now).toBeUndefined()
-    await settled()
-    expect(fresh).toEqual([MATRIX])
+    expect(shown).toEqual([MATRIX])
   })
 
   it('still calls back when the cache refuses the write', async () => {
     const { cache } = fakeCache(undefined, 'write')
-    const fresh: PlanMatrix[] = []
+    const shown: PlanMatrix[] = []
 
-    await resolvePlanMatrix(api(MATRIX), cache, (matrix) => fresh.push(matrix))
+    await resolvePlanMatrix(api(MATRIX), cache, (matrix) => shown.push(matrix))
 
-    await settled()
-    expect(fresh).toEqual([MATRIX])
+    expect(shown).toEqual([MATRIX])
   })
 })
