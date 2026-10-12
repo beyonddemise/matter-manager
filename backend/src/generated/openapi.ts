@@ -443,6 +443,97 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/waitlist": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Join the waitlist for a plan, or change the plan waited for
+         * @description Records which plan the caller would like, so an operator can see the demand (#224).
+         *     Nothing is sold and no entitlement changes: `planRequested` is a request, not a plan, and
+         *     `plan` is still set only by an operator through `PUT /customer`.
+         *
+         *     Joining again overwrites `planRequested` and `requestedAt`. The caller's record is
+         *     created if it has none, because the server is now keeping something for them.
+         *
+         *     Whether the caller already has the plan is judged by plan order, never by comparing
+         *     against a tier (ADR 0009).
+         */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["WaitlistRequest"];
+                };
+            };
+            responses: {
+                /** @description The caller's profile, now carrying `planRequested` and `requestedAt` */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Profile"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                /**
+                 * @description The caller already has the requested plan or a higher one. Nothing was written and no
+                 *     record was created.
+                 */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["AlreadyOnPlan"];
+                    };
+                };
+            };
+        };
+        post?: never;
+        /**
+         * Leave the waitlist
+         * @description Removes `planRequested` and `requestedAt`. Idempotent: a caller who is not waiting, or has
+         *     no record, is answered with their profile and nothing is written. It never creates a
+         *     record. Takes no body.
+         */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The caller's profile, without `planRequested` and `requestedAt` */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Profile"];
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/projects": {
         parameters: {
             query?: never;
@@ -1076,6 +1167,17 @@ export interface components {
              *     A number rather than a null or an absence, so one fact arrives in one shape. Reported at all so a page can say "3 of 5 used" without a second copy of the policy table, which is the duplication ADR 0009 exists to prevent.
              */
             projectLimit: number;
+            /**
+             * @description The plan the account is waiting for (`PUT /waitlist`). Absent unless it is waiting. A
+             *     request, never an entitlement: `plan` is what the account may do.
+             * @enum {string}
+             */
+            planRequested?: "member" | "pro";
+            /**
+             * Format: date-time
+             * @description When the account joined the waitlist or last changed the plan it waits for. Present exactly when `planRequested` is.
+             */
+            requestedAt?: string;
         };
         ProjectSummary: {
             /** Format: uuid */
@@ -1205,6 +1307,29 @@ export interface components {
              * @constant
              */
             reason: "project-limit-reached";
+        };
+        WaitlistRequest: {
+            /**
+             * @description The plan to wait for. `free` is refused with 400, because everybody has it.
+             * @enum {string}
+             */
+            plan: "member" | "pro";
+        };
+        /**
+         * @description Joining the waitlist was refused: the caller already has the requested plan or a higher
+         *     one.
+         */
+        AlreadyOnPlan: {
+            /** Format: uri */
+            type?: string;
+            title: string;
+            status: number;
+            detail?: string;
+            /**
+             * @description Pinned, so a handler that renamed it or stopped sending it fails the contract check rather than silently becoming a refusal no client recognises.
+             * @constant
+             */
+            reason: "already-on-plan";
         };
         /** @description RFC 9457 problem details. */
         Problem: {

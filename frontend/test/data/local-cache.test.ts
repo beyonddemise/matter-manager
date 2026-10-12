@@ -55,6 +55,21 @@ describe('caching what the server said', () => {
     expect(await cache.readProfile()).toMatchObject({ plan: 'member', projectLimit: 5 })
   })
 
+  it('round-trips the plan waited for and when', async () => {
+    const cache = localCache(memoryDatabase())
+
+    await cache.writeProfile({
+      ...PROFILE,
+      planRequested: 'pro',
+      requestedAt: '2026-10-09T08:00:00.000Z',
+    })
+
+    expect(await cache.readProfile()).toMatchObject({
+      planRequested: 'pro',
+      requestedAt: '2026-10-09T08:00:00.000Z',
+    })
+  })
+
   it('keeps a profile with no locale, which means "follow the browser"', async () => {
     // Absent rather than a default written in. A stored `en` for someone who never chose one
     // is a preference they cannot tell apart from one they set.

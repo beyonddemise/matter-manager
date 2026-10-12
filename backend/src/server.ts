@@ -27,6 +27,7 @@ import {
   type ProfileDependencies,
   registerProfileRoutes,
 } from './profile/routes.js'
+import { registerWaitlistRoutes } from './profile/waitlist.js'
 import { type ProjectDependencies, registerProjectRoutes } from './projects/routes.js'
 import { DEFAULT_LIMITS, registerSecurity, type SecurityOptions } from './security/register.js'
 
@@ -210,6 +211,9 @@ export function buildServer(options: ServerOptions = {}): Server {
       callerOf: callerClaims(options.profile),
       operatorRoles: OPERATOR_ROLES,
     })
+    // The same condition and the same dependencies: the waitlist identifies its caller exactly as
+    // `/profile` does, and creates the record through the same `ensureRecord`.
+    registerWaitlistRoutes(app, options.profile)
   }
   if (options.projects !== undefined) registerProjectRoutes(app, options.projects)
   if (options.catalog !== undefined) {

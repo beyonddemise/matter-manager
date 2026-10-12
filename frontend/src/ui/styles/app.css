@@ -386,6 +386,69 @@ wa-page[view="mobile"] .app-project-slot .app-project-name {
   font-size: var(--wa-font-size-s);
 }
 
+/* The upgrade dialog (#224). Wide enough for four columns on a desktop; Web Awesome keeps a
+   dialog inside the viewport on its own, and at phone width the comparison is cards instead.
+   It sits ahead of the projects table on purpose: its plain `th`/`td` rules are less specific
+   than that table's phone-width ones, and specificity must only climb (noDescendingSpecificity). */
+wa-dialog[data-upgrade-dialog] {
+  --width: calc(var(--wa-space-5xl) * 8);
+  /* The dialog is rendered inside `.app-header-actions`, which never wraps; without this its
+     callout inherits that and clips at phone width. */
+  white-space: normal;
+}
+
+/* The waitlist's labels are sentences, and the German sign-in one is wider than a phone. The
+   button's own surface does not inherit the line above (its `base` part sets `nowrap` and a
+   fixed height), so it is let wrap there: the height grows with the lines, never below a
+   single-line control's. */
+wa-dialog[data-upgrade-dialog] wa-button {
+  max-width: 100%;
+}
+
+wa-dialog[data-upgrade-dialog] wa-button::part(base) {
+  white-space: normal;
+  height: auto;
+  min-height: var(--wa-form-control-height);
+  padding-block: var(--wa-space-xs);
+}
+
+/* The comparison table. Arrangement inside cells comes from utilities; only what a table needs
+   and has no utility for lives here. */
+.app-plan-table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.app-plan-table th,
+.app-plan-table td {
+  padding: var(--wa-space-xs) var(--wa-space-s);
+  text-align: start;
+  vertical-align: top;
+  border-block-end: var(--wa-border-width-s) solid var(--wa-color-surface-border);
+}
+
+/* Row headers read as labels, quieter than the values beside them. */
+.app-plan-label {
+  font-weight: var(--wa-font-weight-normal);
+  color: var(--wa-color-text-quiet);
+}
+
+/* The account's own plan, on the brand surface: its column in the table, its card on a phone. */
+.app-plan-current {
+  background-color: var(--wa-color-brand-fill-quiet);
+  color: var(--wa-color-brand-on-quiet);
+}
+
+wa-card.app-plan-current {
+  border-color: var(--wa-color-brand-border-quiet);
+}
+
+/* The card's rows: a description list without the browser's indent. */
+.app-plan-facts,
+.app-plan-facts dd {
+  margin: 0;
+}
+
 /* The pro plan's table, in a <wa-scroller>: five columns do not fit a phone, so the table keeps
    its shape and scrolls sideways inside the page, with the scroller's edge shadow saying so,
    rather than widening the page or squeezing every cell onto three lines. At phone width it

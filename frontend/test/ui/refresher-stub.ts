@@ -27,3 +27,12 @@ export function refresherReporting(session: SessionState) {
 
 /** A refresher that never answers, for the moment before the first answer. */
 export const refresherNeverAnswering = (): StubRefresher => ({ stop() {} })
+
+/**
+ * A refresher that answers `unreachable` and nothing else: the app opened with no connection,
+ * so the session stays unknown for the whole outage.
+ */
+export function refresherUnreachable(onOutcome: (o: TokenOutcome) => void): StubRefresher {
+  queueMicrotask(() => onOutcome({ kind: 'unreachable' }))
+  return { stop() {} }
+}
