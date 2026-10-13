@@ -123,9 +123,13 @@ JSON): modelling them field-by-field buys no drift protection and costs it dearl
   parsing, response serialising), tested, instead of a dependency. The credentials API sits
   behind an injected seam (the `signIn`/`signInGitHub` pattern), so browser tests run without
   an authenticator.
-- **Sign-in methods on the profile view** (account-level, so not `SettingsView`, whose doc
-  comment refuses to be a bucket): providers read-only, passkey list with add/rename/delete,
-  rendered from the one `GET /auth/sign-in-methods` fetch. Web Awesome primitives throughout.
+- **Sign-in methods on a new Account view** (amended: no profile view exists — the account
+  surface today is the header's email and sign-out in the navigation). The view is reachable
+  from the navigation when signed in, following the settings view's routing pattern, and shows
+  the account's email and plan plus the sign-in-methods section: providers read-only, passkey
+  list with add/rename/delete, rendered from the one `GET /auth/sign-in-methods` fetch. It is
+  account-level, so not `SettingsView` (whose doc comment refuses to be a bucket); piece 4 and
+  any later profile editing land on the same view. Web Awesome primitives throughout.
 - Accessibility as the epic settled it: WCAG 2.2 AA, ceremony outcomes announced in the
   persistent status region, focus management on section changes, German checked at 360 px.
 - Conditional mediation (passkeys in the autofill dropdown) is out of scope — a later
