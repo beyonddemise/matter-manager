@@ -10,6 +10,21 @@
 
 **Spec:** `/Users/stw/Code/matter-manager/docs/superpowers/specs/2026-10-12-github-signin-design.md`. **Repo:** `/Users/stw/Code/matter-manager-backend`, branched off `feat/email-signin` (PR #7) — this piece consumes `resolveIdentity` and the first-match gate from it. Frontend counterpart: `2026-10-12-github-signin-frontend.md` (ships after).
 
+> **Amended 2026-10-13**, after the whole-branch review (the code merged in matter-manager-backend
+> PR #8 is the record):
+>
+> - A record-less GitHub sign-in mints the **namespaced** canonical subject `github:<id>` (spec
+>   Decision 5 as amended), never the bare numeric id — Task 3's original `signsInAndHandsOff`
+>   expectation was the review's Critical and is corrected below.
+> - The spec's "GitHub-first then Google" auto-link direction was missing from Task 3's test
+>   list (the gap that hid the Critical; see `docs/tasks/lessons.md`). It is covered in
+>   `UserRecordsTest.aGitHubBornAccountLaterLinksGoogleInsteadOfLockingItOut` at
+>   `resolveIdentity` — the single joining point both providers' HTTP tails share, each tail
+>   being proven by its own resource suite.
+> - The spec's "no-email refused" line is owned by `GitHubFlowTest.refusesAnEmptyOrMalformedList`
+>   (flow level); its HTTP failure shape rides the same `UNVERIFIED` path that
+>   `refusesAnUnverifiedPrimary` pins over full HTTP.
+
 ## Global Constraints
 
 - Branch `feat/github-signin` off `feat/email-signin`; rebase onto `main` if #7 merges first.
@@ -461,7 +476,7 @@ refused at GitHub by the missing claim.
 - Produces: `AuthService.startGitHub(String returnTo): SignInRedirect`; `AuthService.completeGitHub(String code, String state, String error, String flowCookie): CallbackResult`; resource methods `startGitHubSignIn`, `completeGitHubSignIn` (names are the drift law).
 
 - [ ] **Step 1: Write the failing resource tests.** Mirror `AuthResourceTest`'s harness (its `begin`/`callback` helpers, adjusted to `/auth/github`); the stub's happy path answers the token exchange with `{"access_token":"gh-token","token_type":"bearer"}`, `/user` with `{"id": 8341702, "login": "ada"}`, `/user/emails` with a primary+verified `ada@example.com`. Tests, each a `@Test` over the full HTTP flow:
-  - `signsInAndHandsOff`: begin → callback with the echoed state → 302 to app origin, `mm_handoff` set, `mm_flow` cleared; then `POST /auth/token` answers a pair whose access token's `sub` is `8341702` (no record: the provider subject IS the canonical subject) and whose `_couchdb.roles` carries `free`; the sign-in log line carries `provider=github`.
+  - `signsInAndHandsOff`: begin → callback with the echoed state → 302 to app origin, `mm_handoff` set, `mm_flow` cleared; then `POST /auth/token` answers a pair whose access token's `sub` is `github:8341702` (no record: the canonical subject is minted namespaced, spec Decision 5 as amended — a bare numeric id would collide with the legacy-Google heuristic; `subjects.github` still keeps the bare id) and whose `_couchdb.roles` carries `free`; the sign-in log line carries `provider=github`.
   - `linksIntoAnEmailBornAccount`: seed FakeCouch with a user record `sub: "mail:abc…", email: ada@example.com, no subjects`; the flow answers a token whose `sub` is the record's `mail:` sub, and the stored record gains `subjects.github = "8341702"`.
   - `refusesASecondGitHubIdentityOnTheSameAddress`: seed the record with `subjects.github = "999"`; callback redirects `?signin=failed`, no handoff, nothing changed.
   - `refusesAnUnverifiedPrimary`: `/user/emails` answers primary+unverified → `?signin=failed`, no handoff, and the sign-in log stays empty.
