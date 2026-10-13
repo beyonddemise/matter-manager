@@ -3,6 +3,11 @@
 **Status:** design approved in conversation; spec awaiting review. Piece 1 of the sign-in epic.
 **Repos:** `matter-manager-backend` (the Java backend of record) and this repo's `frontend/`. The retiring TypeScript backend gets none of this.
 **Date:** 2026-10-12
+**Amended 2026-10-13** (backend PR #9): the legacy-Google bare-sub reading — the implied
+`subjects.google = sub` and `by_identity`'s implied `["google", sub]` emission below — was
+removed before any production data existed. Every record-less sign-in now mints a namespaced
+canonical subject (`google:…`, `github:…`, `mail:…`); the namespace names the born provider,
+whose slot is bound from birth. See piece 2's Decision 5.
 
 ## Purpose
 
