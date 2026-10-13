@@ -2,7 +2,8 @@
 
 **Status:** approved; implemented (frontend PR #257, backend matter-manager-backend PR #8).
 Amended 2026-10-12 after the backend's whole-branch review: canonical-subject namespacing in
-Decision 5.
+Decision 5. Simplified 2026-10-13 (backend PR #9): namespacing is uniform — Google's bare-sub
+exception and the legacy heuristic are removed.
 Piece 2 of the sign-in epic ([piece 1](2026-10-12-email-signin-design.md)).
 **Repos:** `matter-manager-backend` (stacked on its PR #7, which this piece depends on) and this
 repo's `frontend/`.
@@ -38,15 +39,17 @@ needs: a chooser that only offers what the deployment can actually do.
    `subject-conflict`. `resolveIdentity("github", id, verifiedPrimaryEmail)` does all of it:
    auto-link in both directions on the folded address, canonical sub never rebound.
 
-   **Canonical-subject namespacing** (amended from the backend review): when no record exists
-   yet, the canonical subject minted for a GitHub-born account is `github:<id>` — the `mail:`
-   convention — never the bare numeric id. A bare id is byte-for-byte what a legacy Google-born
-   record carries, so the implied legacy-Google-slot heuristic would bind the Google slot to it
-   permanently and refuse Google sign-in on that address forever (write-once, unmigratable after
-   release). `subjects.github` keeps the bare numeric id exactly as above; the implied legacy
-   slot and the `by_identity` view match only un-namespaced subs. The rule carries into pieces
-   3 and 4: **record-less canonical subjects are `<provider>:<id>`; only Google's bare sub stays
-   canonical, for legacy compatibility.** The sub is opaque to the frontend either way.
+   **Canonical-subject namespacing** (amended from the backend review; simplified 2026-10-13,
+   backend PR #9): when no record exists yet, the canonical subject minted is always
+   `<provider>:<provider subject>` — `google:…`, `github:…`, the `mail:` convention — with no
+   exceptions. Google's bare-sub special case and the implied legacy-Google-slot heuristic are
+   removed (ruling: there is no legacy data yet, so nothing needs the bare form). Instead, the
+   canonical sub's namespace names the born provider, whose slot is bound from birth without a
+   `subjects` entry: a later sign-in from that provider with the same subject writes nothing,
+   and a different subject from the same provider refuses (409 `subject-conflict`).
+   `subjects.github` keeps the bare numeric id exactly as above. The rule carries unchanged into
+   pieces 3 and 4: **record-less canonical subjects are `<provider>:<id>`, uniformly.** The sub
+   is opaque to the frontend.
 6. **Discovery is a public endpoint**, `GET /auth/methods`, answered from the same feature flags
    that gate the routes. A GitHub button is a full-page navigation and cannot hide behind a 404
    the way the email option's fetch does; without discovery, an unconfigured deployment dead-ends

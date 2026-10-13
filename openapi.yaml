@@ -62,6 +62,7 @@ security:
 paths:
   /healthz:
     get:
+      operationId: getHealth
       tags: [auth]
       summary: Liveness probe
       security: []
@@ -126,6 +127,7 @@ paths:
 
   /auth/google:
     get:
+      operationId: startGoogleSignIn
       tags: [auth]
       summary: Begin Google sign-in
       description: Redirects to Google's consent screen using authorization code + PKCE.
@@ -136,6 +138,7 @@ paths:
 
   /auth/google/callback:
     get:
+      operationId: completeGoogleSignIn
       tags: [auth]
       summary: Complete Google sign-in
       security: []
@@ -198,6 +201,7 @@ paths:
 
   /auth/token:
     post:
+      operationId: issueToken
       tags: [auth]
       summary: Issue an access token, and a refresh token
       description: |
@@ -248,6 +252,7 @@ paths:
 
   /auth/signout:
     post:
+      operationId: signOut
       tags: [auth]
       summary: End the session
       description: |
@@ -344,6 +349,7 @@ paths:
 
   /profile:
     get:
+      operationId: getProfile
       tags: [profile]
       summary: Read the signed-in user's profile
       responses:
@@ -355,6 +361,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
 
     patch:
+      operationId: updateProfile
       tags: [profile]
       summary: Update the signed-in user's own settings
       description: |
@@ -415,6 +422,7 @@ paths:
 
   /customer:
     put:
+      operationId: upsertCustomer
       tags: [admin]
       summary: Set another account's plan
       description: |
@@ -484,6 +492,7 @@ paths:
 
   /waitlist:
     put:
+      operationId: joinWaitlist
       tags: [profile]
       summary: Join the waitlist for a plan, or change the plan waited for
       description: |
@@ -518,6 +527,7 @@ paths:
               schema: { $ref: '#/components/schemas/AlreadyOnPlan' }
 
     delete:
+      operationId: leaveWaitlist
       tags: [profile]
       summary: Leave the waitlist
       description: |
@@ -534,6 +544,7 @@ paths:
 
   /projects:
     get:
+      operationId: listProjects
       tags: [projects]
       summary: List projects the signed-in user can access
       responses:
@@ -547,6 +558,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
 
     post:
+      operationId: createProject
       tags: [projects]
       summary: Create a project
       description: |
@@ -618,6 +630,7 @@ paths:
         schema: { type: string, format: uuid }
 
     patch:
+      operationId: updateProject
       tags: [projects]
       summary: Change a project's name, address or archived state
       description: |
@@ -703,6 +716,7 @@ paths:
         required: true
         schema: { type: string, format: uuid }
     get:
+      operationId: listMembers
       tags: [projects]
       summary: List project members and their roles
       responses:
@@ -725,6 +739,7 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
 
     put:
+      operationId: setMember
       tags: [projects]
       summary: Grant or change a member's role
       description: |
@@ -782,6 +797,7 @@ paths:
         required: true
         schema: { type: string, format: uuid }
     post:
+      operationId: offerTransfer
       tags: [projects]
       summary: Transfer ownership
       description: |
@@ -817,6 +833,7 @@ paths:
 
   /transfers:
     get:
+      operationId: listTransfers
       tags: [projects]
       summary: Projects being offered to the signed-in user
       description: |
@@ -840,6 +857,7 @@ paths:
         required: true
         schema: { type: string, format: uuid }
     post:
+      operationId: acceptTransfer
       tags: [projects]
       summary: Accept an offer of ownership
       description: |
@@ -877,6 +895,7 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
     delete:
+      operationId: declineTransfer
       tags: [projects]
       summary: Decline an offer of ownership
       responses:
@@ -1111,9 +1130,9 @@ components:
         localize; nothing in them is machine-readable entitlement data.
       additionalProperties:
         type: object
+        # Pinned to what the client guard accepts (strings and finite numbers); anything else in
+        # the stored document is an operator error the contract should refuse, not pass through.
         additionalProperties:
-          # A number or a display string, as the description says; pinned so the contract
-          # check refuses a cell the client's shape guard would silently fall back over.
           type: [string, number]
 
     Profile:
@@ -1261,6 +1280,33 @@ components:
             Pinned, so a handler that renamed it or stopped sending it fails the contract check
             rather than silently becoming a refusal no client recognises.
 
+    WaitlistRequest:
+      type: object
+      required: [plan]
+      properties:
+        plan:
+          type: string
+          enum: [member, pro]
+          description: The plan to wait for. `free` is refused with 400, because everybody has it.
+
+    AlreadyOnPlan:
+      type: object
+      description: |
+        Joining the waitlist was refused: the caller already has the requested plan or a higher
+        one.
+      required: [title, status, reason]
+      properties:
+        type: { type: string, format: uri }
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: string }
+        reason:
+          type: string
+          const: already-on-plan
+          description: >-
+            Pinned, so a handler that renamed it or stopped sending it fails the contract check
+            rather than silently becoming a refusal no client recognises.
+
     NotAManager:
       type: object
       description: |
@@ -1319,33 +1365,6 @@ components:
             Pinned, so a handler that renamed it or stopped sending it fails the contract check
             rather than silently becoming a refusal no client recognises.
 
-    WaitlistRequest:
-      type: object
-      required: [plan]
-      properties:
-        plan:
-          type: string
-          enum: [member, pro]
-          description: The plan to wait for. `free` is refused with 400, because everybody has it.
-
-    AlreadyOnPlan:
-      type: object
-      description: |
-        Joining the waitlist was refused: the caller already has the requested plan or a higher
-        one.
-      required: [title, status, reason]
-      properties:
-        type: { type: string, format: uri }
-        title: { type: string }
-        status: { type: integer }
-        detail: { type: string }
-        reason:
-          type: string
-          const: already-on-plan
-          description: >-
-            Pinned, so a handler that renamed it or stopped sending it fails the contract check
-            rather than silently becoming a refusal no client recognises.
-
     Problem:
       type: object
       description: RFC 9457 problem details.
@@ -1379,7 +1398,6 @@ components:
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
-
     BadRequest:
       description: The request body is not one this operation accepts
       content:
