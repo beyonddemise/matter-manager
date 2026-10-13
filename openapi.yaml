@@ -140,8 +140,15 @@ paths:
       summary: Complete Google sign-in
       security: []
       parameters:
-        - { name: code, in: query, required: true, schema: { type: string } }
+        - name: code
+          in: query
+          schema: { type: string }
+          description: Present only when the user authorized; a refused consent carries `error` instead.
         - { name: state, in: query, required: true, schema: { type: string } }
+        - name: error
+          in: query
+          schema: { type: string }
+          description: The provider's refusal code, e.g. `access_denied`; the callback answers the failure redirect.
       responses:
         '302':
           description: |
@@ -172,8 +179,15 @@ paths:
         account by that address, exactly as the Google callback does.
       security: []
       parameters:
-        - { name: code, in: query, required: true, schema: { type: string } }
+        - name: code
+          in: query
+          schema: { type: string }
+          description: Present only when the user authorized; a refused consent carries `error` instead.
         - { name: state, in: query, required: true, schema: { type: string } }
+        - name: error
+          in: query
+          schema: { type: string }
+          description: The provider's refusal code, e.g. `access_denied`; the callback answers the failure redirect.
       responses:
         '302':
           description: |
