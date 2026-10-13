@@ -1159,6 +1159,10 @@
   <source>Send a new code</source>
   <target>Neuen Code senden</target>
 </trans-unit>
+<trans-unit id="sf2df3f6dce2b02c4">
+  <source>Sign in with GitHub</source>
+  <target>Mit GitHub anmelden</target>
+</trans-unit>
 </body>
 </file>
 </xliff>

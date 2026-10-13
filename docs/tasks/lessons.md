@@ -1514,3 +1514,15 @@ my branch. The agent noticed, reverted them with `git apply -R` and finished in 
   `reset`, `restore`, `merge`, `rebase`, `cherry-pick`, `add` and `commit`.
 - Read-only commands such as `status`, `log`, `diff` and `show` are fine.
 - Start a parallel line of work in its own `git worktree add` directory, or wait until the agent reports.
+
+## A plan's tests must tick off the spec's Testing list item by item
+
+**What happened:** the GitHub sign-in spec's Testing section named "auto-link both directions
+(GitHub-first then Google, email-first then GitHub)". The backend implementation plan carried the
+second case but dropped the first; the missing case hid the Critical the final review then found
+(a record-less GitHub sign-in minting a bare numeric canonical sub that collides with the implied
+legacy-Google heuristic).
+
+**Rule:** the writing-plans self-review's "spec coverage" pass is not a skim. For the spec's
+Testing section specifically, walk it line by line and point at the task test that pins each
+listed case; a line with no test is a gap to fix before the handoff.

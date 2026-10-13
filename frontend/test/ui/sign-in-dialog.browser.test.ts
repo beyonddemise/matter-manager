@@ -22,6 +22,7 @@ import '../../src/ui/styles/app.css'
 function recording() {
   return {
     onGoogle: vi.fn(),
+    onGitHub: vi.fn(),
     onEmail: vi.fn(),
     onSendCode: vi.fn(),
     onVerify: vi.fn(),
@@ -52,9 +53,12 @@ beforeAll(async () => {
   )
 })
 
+/** Every method on: what a fully configured deployment answers. */
+const ALL_ON = { step: 'chooser', google: true, github: true, email: true } satisfies SignInStep
+
 describe('the chooser', () => {
-  it('offers Google and email, Google as the one filled brand button', async () => {
-    const root = await mounted({ step: 'chooser', emailUnavailable: false })
+  it('offers Google, GitHub and email in that order, Google as the one filled brand button', async () => {
+    const root = await mounted(ALL_ON)
 
     const google = root.querySelector('[data-google-sign-in]') as HTMLElement & {
       variant: string
@@ -68,25 +72,58 @@ describe('the chooser', () => {
         (button as HTMLElement & { appearance: string }).appearance === 'accent',
     )
     expect(filled).toEqual([google])
+    const github = root.querySelector('[data-github-sign-in]') as HTMLElement & {
+      appearance: string
+    }
+    expect(github).not.toBeNull()
+    expect(github.appearance).toBe('outlined')
+    expect(root.querySelector('[data-email-option]')).not.toBeNull()
+    const order = [...root.querySelectorAll('wa-button')].map((button) =>
+      button.hasAttribute('data-google-sign-in')
+        ? 'google'
+        : button.hasAttribute('data-github-sign-in')
+          ? 'github'
+          : 'email',
+    )
+    expect(order).toEqual(['google', 'github', 'email'])
+  })
+
+  it.each([
+    ['GitHub', { ...ALL_ON, github: false }, '[data-github-sign-in]'],
+    ['email', { ...ALL_ON, email: false }, '[data-email-option]'],
+  ] as const)('hides the %s option when the deployment lacks it', async (_name, step, selector) => {
+    const root = await mounted(step)
+
+    expect(root.querySelector(selector)).toBeNull()
+  })
+
+  it('still offers email when Google is off: a mail-only deployment stays usable', async () => {
+    const root = await mounted({ step: 'chooser', google: false, github: false, email: true })
+
+    expect(root.querySelector('[data-google-sign-in]')).toBeNull()
+    expect(root.querySelector('[data-github-sign-in]')).toBeNull()
     expect(root.querySelector('[data-email-option]')).not.toBeNull()
   })
 
-  it('offers only Google when email sign-in is unavailable', async () => {
-    const root = await mounted({ step: 'chooser', emailUnavailable: true })
-
-    expect(root.querySelector('[data-google-sign-in]')).not.toBeNull()
-    expect(root.querySelector('[data-email-option]')).toBeNull()
-  })
-
-  it('wires the two choices to their actions', async () => {
+  it('wires the choices to their actions', async () => {
     const actions = recording()
-    const root = await mounted({ step: 'chooser', emailUnavailable: false }, '', actions)
+    const root = await mounted(ALL_ON, '', actions)
     ;(root.querySelector('[data-google-sign-in]') as HTMLElement).click()
     ;(root.querySelector('[data-email-option]') as HTMLElement).click()
 
     expect(actions.onGoogle).toHaveBeenCalledTimes(1)
     expect(actions.onEmail).toHaveBeenCalledTimes(1)
     expect(actions.onSendCode).not.toHaveBeenCalled()
+  })
+
+  it('clicking GitHub calls onGitHub once and nothing else', async () => {
+    const actions = recording()
+    const root = await mounted(ALL_ON, '', actions)
+    ;(root.querySelector('[data-github-sign-in]') as HTMLElement).click()
+
+    expect(actions.onGitHub).toHaveBeenCalledTimes(1)
+    expect(actions.onGoogle).not.toHaveBeenCalled()
+    expect(actions.onEmail).not.toHaveBeenCalled()
   })
 })
 
@@ -174,7 +211,7 @@ describe('the code step', () => {
 
 describe('the status region', () => {
   it.each([
-    ['chooser', { step: 'chooser', emailUnavailable: false } satisfies SignInStep],
+    ['chooser', ALL_ON],
     ['email', { step: 'email', busy: false } satisfies SignInStep],
     [
       'code',
@@ -201,11 +238,8 @@ describe('German, at 360 px', () => {
   })
 
   it.each([
-    [
-      'chooser',
-      { step: 'chooser', emailUnavailable: false } satisfies SignInStep,
-      'Mit E-Mail anmelden',
-    ],
+    ['chooser, its GitHub button', ALL_ON, 'Mit GitHub anmelden'],
+    ['chooser, its email button', ALL_ON, 'Mit E-Mail anmelden'],
     ['email', { step: 'email', busy: false } satisfies SignInStep, 'Code senden'],
     [
       'code',
@@ -237,11 +271,7 @@ describe('German, at 360 px', () => {
 
 describe('offline', () => {
   it.each([
-    [
-      'chooser',
-      { step: 'chooser', emailUnavailable: false } satisfies SignInStep,
-      '[data-google-sign-in]',
-    ],
+    ['chooser', ALL_ON, '[data-google-sign-in]'],
     ['email', { step: 'email', busy: false } satisfies SignInStep, '[data-send-code]'],
     [
       'code',

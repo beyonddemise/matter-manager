@@ -19,8 +19,8 @@ import { html, type TemplateResult } from 'lit'
 
 /** Which screen the dialog shows, with what that screen needs. The shell owns this. */
 export type SignInStep =
-  /** The method chooser; `emailUnavailable` after a 404 hid the email option for the session. */
-  | { step: 'chooser'; emailUnavailable: boolean }
+  /** The method chooser: one flag per method, derived by the shell from `/auth/methods`. */
+  | { step: 'chooser'; google: boolean; github: boolean; email: boolean }
   /** The address, `busy` while the code is being sent. */
   | { step: 'email'; busy: boolean }
   /** The code, sent to `email`; resend waits out the cooldown. */
@@ -30,6 +30,8 @@ export type SignInStep =
 export interface SignInActions {
   /** The Google redirect, unchanged from the header's old button. */
   onGoogle(): void
+  /** The GitHub redirect: the same journey, a different consent screen. */
+  onGitHub(): void
   /** The chooser's email option: show the address step. */
   onEmail(): void
   onSendCode(email: string): void
@@ -45,27 +47,43 @@ function emailValue(root: Element | null): string {
   return (root?.querySelector('[data-email-input]') as { value?: string } | null)?.value ?? ''
 }
 
-/** The chooser: Google is the surface's one filled brand button; email steps aside politely. */
+/** The chooser: Google is the surface's one filled brand button; the others step aside politely. */
 function chooser(
-  state: { emailUnavailable: boolean },
+  state: { google: boolean; github: boolean; email: boolean },
   online: boolean,
   actions: SignInActions,
 ): TemplateResult {
   return html`<div class="wa-stack wa-gap-s">
-    <wa-button
-      data-google-sign-in
-      variant="brand"
-      ?disabled=${!online}
-      @click=${actions.onGoogle}
-    >
-      ${msg('Sign in with Google')}
-    </wa-button>
     ${
-      state.emailUnavailable
-        ? ''
-        : html`<wa-button data-email-option appearance="outlined" @click=${actions.onEmail}>
+      state.google
+        ? html`<wa-button
+            data-google-sign-in
+            variant="brand"
+            ?disabled=${!online}
+            @click=${actions.onGoogle}
+          >
+            ${msg('Sign in with Google')}
+          </wa-button>`
+        : ''
+    }
+    ${
+      state.github
+        ? html`<wa-button
+            data-github-sign-in
+            appearance="outlined"
+            ?disabled=${!online}
+            @click=${actions.onGitHub}
+          >
+            ${msg('Sign in with GitHub')}
+          </wa-button>`
+        : ''
+    }
+    ${
+      state.email
+        ? html`<wa-button data-email-option appearance="outlined" @click=${actions.onEmail}>
             ${msg('Sign in with email')}
           </wa-button>`
+        : ''
     }
   </div>`
 }

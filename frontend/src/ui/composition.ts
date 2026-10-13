@@ -21,6 +21,7 @@
  */
 
 import PouchDB from 'pouchdb-browser'
+import { type AuthMethodsApi, authMethodsApi } from './auth-methods.js'
 import { answeringTestVendors, type CatalogApi, catalogApi } from './catalog.js'
 import {
   localDatabase,
@@ -200,6 +201,17 @@ export function beginSignIn(
 }
 
 /**
+ * Starts the GitHub sign-in journey — a full-page navigation for the reason `beginSignIn` gives.
+ *
+ * @param go injected so a test does not navigate the page it is running in
+ */
+export function beginGitHubSignIn(
+  go: (url: string) => void = (url) => window.location.assign(url),
+): void {
+  go(`${API_BASE}/auth/github`)
+}
+
+/**
  * Signs out, and says what went wrong without pretending it did not happen.
  *
  * `signOut` never throws by design — a sign-out that reports an error leaves the user unsure
@@ -244,6 +256,11 @@ export function waitlist(fetchImpl: typeof fetch = fetch): WaitlistApi {
 /** The published plan matrix (#224): public marketing copy, behind the same API base, no token. */
 export function plans(fetchImpl: typeof fetch = fetch): PlansApi {
   return plansApi(API_BASE, fetchImpl)
+}
+
+/** The sign-in methods this deployment serves (piece 2): public, no token, never cached. */
+export function authMethods(fetchImpl: typeof fetch = fetch): AuthMethodsApi {
+  return authMethodsApi(API_BASE, fetchImpl)
 }
 
 /** Email sign-in, wired to the API and this device's refresh-token store. */

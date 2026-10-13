@@ -1,9 +1,12 @@
 import { msg, updateWhenLocaleChanges } from '@lit/localize'
 import { html, LitElement, type PropertyValues, type TemplateResult } from 'lit'
 import { DEFAULT_PLAN, type Plan } from '../domain/plan.js'
+import type { AuthMethods, AuthMethodsApi } from './auth-methods.js'
 import { BACKFILL_WANTED } from './catalog.js'
 import { type CatalogBackfill, defaultCatalogBackfill } from './catalog-backfill.js'
 import {
+  authMethods as authMethodsClient,
+  beginGitHubSignIn,
   beginSignIn,
   emailSignInClient,
   endSession,
@@ -202,6 +205,8 @@ export class AppShell extends LitElement implements ViewHost {
     signingIn: { state: true },
     signInNotice: { state: true },
     emailAuth: { attribute: false },
+    authMethods: { attribute: false },
+    signInGitHub: { attribute: false },
     readProfile: { attribute: false },
     refresher: { attribute: false },
     sessionEndedNotice: { state: true },
@@ -262,6 +267,10 @@ export class AppShell extends LitElement implements ViewHost {
   declare signInNotice: string
   /** The email sign-in client; injected by tests, the real API otherwise. */
   declare emailAuth?: EmailSignIn
+  /** Reads `/auth/methods`; injected by tests, the real API otherwise. */
+  declare authMethods?: AuthMethodsApi
+  /** The GitHub redirect; injected by tests so they never navigate. */
+  declare signInGitHub?: () => void
   /**
    * Counts waitlist changes, so a background profile read started by one can tell that a later
    * change has landed since, and drop its older answer.
@@ -557,7 +566,9 @@ export class AppShell extends LitElement implements ViewHost {
   private async focusSignInStep(step: SignInStep['step']): Promise<void> {
     const selector =
       step === 'chooser'
-        ? '[data-google-sign-in]'
+        ? // The chooser's first button, whichever methods render: a mail-only deployment has
+          // no Google button to focus.
+          '[data-google-sign-in], [data-github-sign-in], [data-email-option]'
         : step === 'email'
           ? '[data-email-input]'
           : '[data-code-input]'
@@ -725,7 +736,49 @@ export class AppShell extends LitElement implements ViewHost {
   /** The header's "Sign in": opens the method chooser (the Google redirect moved inside). */
   private onSignIn = (): void => {
     this.signInNotice = ''
-    this.signingIn = { step: 'chooser', emailUnavailable: this.emailUnavailable }
+    this.signingIn = this.chooserStep()
+    // Not awaited: the chooser opens at once with what is already known and is corrected when
+    // the deployment's answer lands. Single-flight like the plan matrix: a close-and-reopen
+    // joins the read in flight instead of racing a second one.
+    if (this.signInMethodsLoad === undefined) this.signInMethodsLoad = this.loadSignInMethods()
+  }
+
+  /** The deployment's `/auth/methods` answer, once one was readable. Kept across closes. */
+  private signInMethods: AuthMethods | undefined
+
+  /** The one methods read in flight; see {@link onSignIn}. */
+  private signInMethodsLoad: Promise<void> | undefined
+
+  /** What the chooser offers: the deployment's answer when heard, today's optimism otherwise. */
+  private chooserStep(): SignInStep {
+    const methods = this.signInMethods
+    return {
+      step: 'chooser',
+      google: methods?.google ?? true,
+      // Never without a readable answer: the button is a full-page navigation that cannot hide
+      // behind a 404 the way the email option's fetch does.
+      github: methods?.github ?? false,
+      // The 404-hiding stays as belt and braces for the in-between deployments.
+      email: (methods?.email ?? true) && !this.emailUnavailable,
+    }
+  }
+
+  /**
+   * Reads the methods and corrects the open chooser. The answer is kept either way — it is the
+   * deployment's, not the dialog's. The step check is the whole gate: a closed dialog has no
+   * step and stays closed, while *any* open chooser reflects the answer, whichever attempt
+   * opened it — a reopen joins the read in flight, and an attempt comparison would hand that
+   * reopened chooser a stale method list until yet another open.
+   */
+  private async loadSignInMethods(): Promise<void> {
+    try {
+      const methods = await (this.authMethods ?? authMethodsClient()).read()
+      if (methods === undefined) return
+      this.signInMethods = methods
+      if (this.signingIn?.step === 'chooser') this.signingIn = this.chooserStep()
+    } finally {
+      this.signInMethodsLoad = undefined
+    }
   }
 
   /** A 404 from start hid the email option; the chooser stays Google-only for this session. */
@@ -782,6 +835,11 @@ export class AppShell extends LitElement implements ViewHost {
       this.closeSignIn()
       ;(this.signIn ?? beginSignIn)()
     },
+    onGitHub: () => {
+      // Closed before the redirect for the same reason as Google's.
+      this.closeSignIn()
+      ;(this.signInGitHub ?? beginGitHubSignIn)()
+    },
     onEmail: () => {
       this.signInNotice = ''
       this.signingIn = { step: 'email', busy: false }
@@ -798,7 +856,8 @@ export class AppShell extends LitElement implements ViewHost {
       this.stopResendTicker()
       this.signInChallenge = undefined
       this.signInNotice = ''
-      this.signingIn = { step: 'chooser', emailUnavailable: this.emailUnavailable }
+      // Through the derivation, so a methods answer heard mid-flow reaches the chooser here.
+      this.signingIn = this.chooserStep()
     },
     onClose: () => this.closeSignIn(),
   }
@@ -840,7 +899,7 @@ export class AppShell extends LitElement implements ViewHost {
         // This deployment has no email sign-in: the option hides for the session, Google stays.
         this.emailUnavailable = true
         this.signInNotice = msg('Email sign-in is not available yet.')
-        this.signingIn = { step: 'chooser', emailUnavailable: true }
+        this.signingIn = this.chooserStep()
         return
       case 'refused':
         this.signInNotice = msg('That does not look like an email address.')
