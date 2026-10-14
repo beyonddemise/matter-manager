@@ -45,7 +45,10 @@ describe('authMethodsApi', () => {
   })
 
   it('accepts an answer without the passkeys flag, reading it as false', async () => {
-    const api = authMethodsApi('/api', answering(json(200, { google: true, github: true, email: true })))
+    const api = authMethodsApi(
+      '/api',
+      answering(json(200, { google: true, github: true, email: true })),
+    )
     expect(await api.read()).toEqual({ google: true, github: true, email: true, passkeys: false })
   })
 
