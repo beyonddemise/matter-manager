@@ -92,8 +92,9 @@ export default defineConfig(({ mode }) => {
       // being printed on every build and ignored. Raised from 700 for #214, when the footer status
       // bar and the projects page's scroller and menu divider took the entry from ~697 kB to
       // ~708 kB, and from 720 to 730 for #238, when the catalogue follow-ups (#243 to #245) took it
-      // to ~720 kB.
-      chunkSizeWarningLimit: 730,
+      // to ~720 kB, and from 730 to 740 for the passkeys work, when the Account view and the
+      // passkey sign-in took it to ~735 kB.
+      chunkSizeWarningLimit: 740,
       rolldownOptions: {
         output: {
           /**
