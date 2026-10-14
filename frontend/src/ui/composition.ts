@@ -30,6 +30,7 @@ import {
   removeLocalDatabases,
 } from './db/project-database.js'
 import { type EmailSignIn, emailSignIn } from './email-signin.js'
+import { type CredentialsLike, type PasskeySignIn, passkeySignIn } from './passkey-signin.js'
 
 import { type PlansApi, plansApi } from './plans.js'
 import { type Locale, profileApi, resolveProfileLocale } from './profile.js'
@@ -266,6 +267,19 @@ export function authMethods(fetchImpl: typeof fetch = fetch): AuthMethodsApi {
 /** Email sign-in, wired to the API and this device's refresh-token store. */
 export function emailSignInClient(fetchImpl: typeof fetch = fetch): EmailSignIn {
   return emailSignIn(API_BASE, pouchRefreshTokenStore(localDatabase()), fetchImpl)
+}
+
+/**
+ * Passkey sign-in, wired to the API and this device's refresh-token store.
+ *
+ * @param credentials `navigator.credentials` by default; injected so a test needs no authenticator
+ */
+export function passkeyAuth(
+  store: RefreshTokenStore = pouchRefreshTokenStore(localDatabase()),
+  credentials: CredentialsLike = navigator.credentials,
+  fetchImpl: typeof fetch = fetch,
+): PasskeySignIn {
+  return passkeySignIn(API_BASE, store, credentials, fetchImpl)
 }
 
 /**
