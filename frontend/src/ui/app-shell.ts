@@ -11,6 +11,7 @@ import {
   emailSignInClient,
   endSession,
   followProfileLocale,
+  passkeyAuth as passkeyAuthClient,
   plans as plansClient,
   profile,
   requestTokens,
@@ -24,6 +25,7 @@ import type { EmailSignIn, StartOutcome, VerifyOutcome } from './email-signin.js
 import { negotiateLocale } from './i18n/locale.js'
 import { activateLocale, getLocale } from './i18n/localization.js'
 import { type LocalProjectDependencies, localProjectDefaults } from './local-projects.js'
+import type { PasskeySignIn, PasskeySignInOutcome } from './passkey-signin.js'
 import { type PlanMatrix, type PlansApi, resolvePlanMatrix } from './plans.js'
 import { cachedProfileOf, type PlanRequest, type Profile } from './profile.js'
 import { beginProjectAction } from './project-busy.js'
@@ -206,6 +208,8 @@ export class AppShell extends LitElement implements ViewHost {
     signInNotice: { state: true },
     emailAuth: { attribute: false },
     authMethods: { attribute: false },
+    passkeyAuth: { attribute: false },
+    passkeySupport: { attribute: false },
     signInGitHub: { attribute: false },
     readProfile: { attribute: false },
     refresher: { attribute: false },
@@ -269,6 +273,10 @@ export class AppShell extends LitElement implements ViewHost {
   declare emailAuth?: EmailSignIn
   /** Reads `/auth/methods`; injected by tests, the real API otherwise. */
   declare authMethods?: AuthMethodsApi
+  /** The passkey ceremony; injected by tests, built on first use otherwise. */
+  declare passkeyAuth?: PasskeySignIn
+  /** Whether this browser can run a passkey ceremony; injected by tests. */
+  declare passkeySupport: () => boolean
   /** The GitHub redirect; injected by tests so they never navigate. */
   declare signInGitHub?: () => void
   /**
@@ -398,6 +406,7 @@ export class AppShell extends LitElement implements ViewHost {
     this.sessionEndedNotice = false
     this.hash = window.location.hash
     this.announcement = ''
+    this.passkeySupport = () => typeof PublicKeyCredential !== 'undefined'
     // Read once at construction. The write side (`cycleScheme`) keeps this field and
     // storage in sync itself, so there is no need to re-read on every render.
     this.schemePreference = readPreference(() => localStorage)
@@ -568,7 +577,7 @@ export class AppShell extends LitElement implements ViewHost {
       step === 'chooser'
         ? // The chooser's first button, whichever methods render: a mail-only deployment has
           // no Google button to focus.
-          '[data-google-sign-in], [data-github-sign-in], [data-email-option]'
+          '[data-google-sign-in], [data-github-sign-in], [data-passkey-sign-in], [data-email-option]'
         : step === 'email'
           ? '[data-email-input]'
           : '[data-code-input]'
@@ -760,8 +769,9 @@ export class AppShell extends LitElement implements ViewHost {
       github: methods?.github ?? false,
       // The 404-hiding stays as belt and braces for the in-between deployments.
       email: (methods?.email ?? true) && !this.emailUnavailable,
-      // Placeholder: the real derivation arrives with the shell wiring.
-      passkey: false,
+      // Both halves are required: the deployment serves passkeys (a readable answer only) and
+      // this browser can run the ceremony. Either alone would offer a button that cannot work.
+      passkey: (methods?.passkeys ?? false) && this.passkeySupport(),
     }
   }
 
@@ -842,8 +852,7 @@ export class AppShell extends LitElement implements ViewHost {
       this.closeSignIn()
       ;(this.signInGitHub ?? beginGitHubSignIn)()
     },
-    // Placeholder until the shell wiring lands: the chooser never shows the button yet.
-    onPasskey: () => {},
+    onPasskey: () => void this.signInWithPasskey(),
     onEmail: () => {
       this.signInNotice = ''
       this.signingIn = { step: 'email', busy: false }
@@ -952,22 +961,7 @@ export class AppShell extends LitElement implements ViewHost {
     }
 
     if (outcome.kind === 'signed-in') {
-      // Committed whether or not the dialog is still open: the client already holds the access
-      // token and stored the refresh token, and a header still offering "Sign in" over live
-      // credentials would be a lie the next reload exposes. Only the dialog-local words are
-      // gated by the attempt counter.
-      if (attempt === this.signInAttempt) this.closeSignIn()
-      // The dialog's status region is gone; the shell's own live region says it instead.
-      this.announcement = msg('Signed in.')
-      // The refresher answered `signed-out` at startup and armed nothing more. Started afresh,
-      // its first exchange presents the just-stored refresh token, answers `refreshed`, and the
-      // ordinary transition does the rest — session, replication, backfill, and the next
-      // refresh scheduled before expiry. Faking the outcome here instead would flip the session
-      // and then let the 300-second token die unrefreshed.
-      this.tokenRefresher?.stop()
-      this.tokenRefresher = (this.refresher ?? startRealRefresher)((heard) =>
-        this.onTokenOutcome(heard),
-      )
+      this.commitSignIn(attempt)
       return
     }
     if (attempt !== this.signInAttempt) return
@@ -983,6 +977,67 @@ export class AppShell extends LitElement implements ViewHost {
       case 'unreachable':
         this.signInNotice = msg('The sign-in service could not be reached. Please try again.')
         if (this.signingIn?.step === 'code') this.signingIn = { ...this.signingIn, busy: false }
+        return
+    }
+  }
+
+  /**
+   * The tail every successful sign-in shares. Committed whether or not the dialog is still open:
+   * the client already holds the access token and stored the refresh token, and a header still
+   * offering "Sign in" over live credentials would be a lie the next reload exposes. Only the
+   * dialog-local words are gated by the attempt counter.
+   */
+  private commitSignIn(attempt: number): void {
+    if (attempt === this.signInAttempt) this.closeSignIn()
+    // The dialog's status region is gone; the shell's own live region says it instead.
+    this.announcement = msg('Signed in.')
+    // The refresher answered `signed-out` at startup and armed nothing more. Started afresh,
+    // its first exchange presents the just-stored refresh token, answers `refreshed`, and the
+    // ordinary transition does the rest — session, replication, backfill, and the next
+    // refresh scheduled before expiry. Faking the outcome here instead would flip the session
+    // and then let the 300-second token die unrefreshed.
+    this.tokenRefresher?.stop()
+    this.tokenRefresher = (this.refresher ?? startRealRefresher)((heard) =>
+      this.onTokenOutcome(heard),
+    )
+  }
+
+  /** One ceremony at a time: a double click must not open two browser prompts. */
+  private passkeyInFlight = false
+
+  /**
+   * Runs the passkey ceremony from the chooser. The step stays the chooser throughout; outcomes
+   * are applied only while it still is, so an answer arriving after the reader moved on or closed
+   * the dialog says nothing. `dismissed` is the reader's own choice and earns silence.
+   */
+  private async signInWithPasskey(): Promise<void> {
+    if (this.passkeyInFlight || this.signingIn?.step !== 'chooser') return
+    this.passkeyInFlight = true
+    const attempt = this.signInAttempt
+    this.signInNotice = ''
+    let outcome: PasskeySignInOutcome
+    try {
+      // Built here, not at construction: the real factory touches the local database and
+      // `navigator.credentials`, which a shell that never offers a passkey must not.
+      outcome = await (this.passkeyAuth ?? passkeyAuthClient()).signIn()
+    } finally {
+      this.passkeyInFlight = false
+    }
+
+    if (outcome.kind === 'signed-in') {
+      this.commitSignIn(attempt)
+      return
+    }
+    if (attempt !== this.signInAttempt || this.signingIn?.step !== 'chooser') return
+
+    switch (outcome.kind) {
+      case 'dismissed':
+        return
+      case 'failed':
+      case 'unavailable':
+      case 'unreachable':
+        // One wording for all three: the reader's remedy is the same, try again or pick another way.
+        this.signInNotice = msg('The sign-in service could not be reached. Please try again.')
         return
     }
   }

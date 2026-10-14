@@ -7,6 +7,7 @@ import { fixture, html, waitUntil } from '@open-wc/testing-helpers'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { AuthMethods } from '../../src/ui/auth-methods.js'
 import type { EmailSignIn, StartOutcome, VerifyOutcome } from '../../src/ui/email-signin.js'
+import type { PasskeySignIn, PasskeySignInOutcome } from '../../src/ui/passkey-signin.js'
 import type { SessionState } from '../../src/ui/session.js'
 import '../../src/ui/app-shell.js'
 import type { LocalProjectEntry } from '../../src/data/index.js'
@@ -425,6 +426,8 @@ describe('signing in with an emailed code', () => {
         .emailAuth=${client}
         .authMethods=${overrides.methods ?? { read: async () => undefined }}
         .signInGitHub=${overrides.signInGitHub}
+        .passkeyAuth=${overrides.passkeyAuth}
+        .passkeySupport=${overrides.passkeySupport ?? (() => false)}
       ></app-shell>
     `)) as HTMLElement & { updateComplete: Promise<unknown> }
     await element.updateComplete
@@ -775,5 +778,115 @@ describe('signing in with an emailed code', () => {
     const reopened = await openChooser(element)
     announce(EVERY_METHOD)
     await waitUntil(() => reopened.querySelector('[data-github-sign-in]') !== null, 'no GitHub')
+  })
+  describe('passkey sign-in from the chooser', () => {
+    const WITH_PASSKEYS: AuthMethods = { ...EVERY_METHOD, passkeys: true }
+    const passkeyClient = (outcome: PasskeySignInOutcome | Promise<PasskeySignInOutcome>) => {
+      const signIn = vi.fn(async () => outcome)
+      return { client: { signIn } as PasskeySignIn, signIn }
+    }
+    const chooserWith = async (
+      methods: AuthMethods | undefined,
+      support: boolean,
+      client: PasskeySignIn = passkeyClient({ kind: 'dismissed' }).client,
+    ) => {
+      const shell = await emailShell(idleEmailAuth(), {
+        methods: { read: async () => methods },
+        passkeyAuth: client,
+        passkeySupport: () => support,
+      })
+      const dialog = await openChooser(shell.element)
+      return { ...shell, dialog }
+    }
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 30))
+
+    it.each([
+      ['passkeys on and supported', WITH_PASSKEYS, true, true],
+      ['passkeys on but unsupported', WITH_PASSKEYS, false, false],
+      ['passkeys off but supported', EVERY_METHOD, true, false],
+    ])('button gating: %s', async (_name, methods, support, shown) => {
+      const { dialog } = await chooserWith(methods, support)
+      // GitHub appearing proves the methods answer landed, so absence is telling.
+      await waitUntil(() => dialog.querySelector('[data-github-sign-in]') !== null, 'no GitHub')
+      expect(dialog.querySelector('[data-passkey-sign-in]') !== null).toBe(shown)
+    })
+
+    it('never offers the button when methods are unreadable, even if supported', async () => {
+      const { dialog } = await chooserWith(undefined, true)
+      await settle()
+      expect(dialog.querySelector('[data-passkey-sign-in]')).toBeNull()
+    })
+
+    it('signed-in closes the dialog and drives the same transition as the emailed code', async () => {
+      const { client, signIn } = passkeyClient({ kind: 'signed-in', expiresIn: 300 })
+      const { element, dialog, makeSync, refresher } = await chooserWith(
+        WITH_PASSKEYS,
+        true,
+        client,
+      )
+      await waitUntil(() => dialog.querySelector('[data-passkey-sign-in]') !== null, 'no passkey')
+      ;(dialog.querySelector('[data-passkey-sign-in]') as HTMLElement).click()
+      await waitUntil(() => element.querySelector('[data-sign-out]') !== null, 'never signed in')
+
+      expect(signIn).toHaveBeenCalledTimes(1)
+      expect(element.querySelector('[data-sign-in-dialog]')).toBeNull()
+      expect(makeSync).toHaveBeenCalledTimes(1)
+      expect(refresher.starts).toBe(2)
+      expect(refresher.stops).toBe(1)
+      expect(element.querySelector('[data-status-announcement]')?.textContent?.trim()).toBe(
+        'Signed in.',
+      )
+    })
+
+    it('dismissed leaves the chooser open and the status region empty', async () => {
+      const { client, signIn } = passkeyClient({ kind: 'dismissed' })
+      const { dialog } = await chooserWith(WITH_PASSKEYS, true, client)
+      await waitUntil(() => dialog.querySelector('[data-passkey-sign-in]') !== null, 'no passkey')
+      ;(dialog.querySelector('[data-passkey-sign-in]') as HTMLElement).click()
+      await waitUntil(() => signIn.mock.calls.length === 1, 'never called')
+      await settle()
+
+      expect(dialog.hasAttribute('open')).toBe(true)
+      expect(dialog.querySelector('[data-passkey-sign-in]')).not.toBeNull()
+      expect(dialog.querySelector('[data-sign-in-status]')?.textContent?.trim()).toBe('')
+    })
+
+    it.each(['failed', 'unavailable', 'unreachable'] as const)(
+      '%s keeps the chooser and says the generic failure line',
+      async (kind) => {
+        const { client } = passkeyClient({ kind })
+        const { dialog } = await chooserWith(WITH_PASSKEYS, true, client)
+        await waitUntil(() => dialog.querySelector('[data-passkey-sign-in]') !== null, 'no passkey')
+        ;(dialog.querySelector('[data-passkey-sign-in]') as HTMLElement).click()
+        await waitUntil(
+          () => (dialog.querySelector('[data-sign-in-status]')?.textContent ?? '').trim() !== '',
+          'no notice',
+        )
+
+        expect(dialog.querySelector('[data-sign-in-status]')?.textContent?.trim()).toBe(
+          'The sign-in service could not be reached. Please try again.',
+        )
+        expect(dialog.querySelector('[data-passkey-sign-in]')).not.toBeNull()
+      },
+    )
+
+    it('an outcome landing after the reader left the chooser changes nothing', async () => {
+      let finish: (outcome: PasskeySignInOutcome) => void = () => {}
+      const pending = new Promise<PasskeySignInOutcome>((resolve) => {
+        finish = resolve
+      })
+      const { client } = passkeyClient(pending)
+      const { element, dialog } = await chooserWith(WITH_PASSKEYS, true, client)
+      await waitUntil(() => dialog.querySelector('[data-passkey-sign-in]') !== null, 'no passkey')
+      ;(dialog.querySelector('[data-passkey-sign-in]') as HTMLElement).click()
+      ;(dialog.querySelector('[data-email-option]') as HTMLElement).click()
+      await waitUntil(() => dialog.querySelector('[data-email-input]') !== null, 'no email step')
+
+      finish({ kind: 'unreachable' })
+      await settle()
+      expect(dialog.querySelector('[data-email-input]')).not.toBeNull()
+      expect(dialog.querySelector('[data-sign-in-status]')?.textContent?.trim()).toBe('')
+      expect(element.querySelector('[data-sign-out]')).toBeNull()
+    })
   })
 })
