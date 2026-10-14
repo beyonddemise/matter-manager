@@ -32,11 +32,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 /** Request options JSON → what navigator.credentials.get wants ({ publicKey }). undefined when not the shape. */
 export function parseRequestOptions(body: unknown): CredentialRequestOptions | undefined {
   if (!isRecord(body) || typeof body.challenge !== 'string') return undefined
-  return {
-    publicKey: {
-      ...(body as object),
-      challenge: b64urlToBuffer(body.challenge),
-    } as PublicKeyCredentialRequestOptions,
+  try {
+    return {
+      publicKey: {
+        ...(body as object),
+        challenge: b64urlToBuffer(body.challenge),
+      } as PublicKeyCredentialRequestOptions,
+    }
+  } catch {
+    // Why: atob throws on a string that is not base64url; the contract is "never throws".
+    return undefined
   }
 }
 
@@ -44,17 +49,23 @@ export function parseRequestOptions(body: unknown): CredentialRequestOptions | u
 export function parseCreationOptions(body: unknown): CredentialCreationOptions | undefined {
   if (!isRecord(body) || typeof body.challenge !== 'string') return undefined
   if (!isRecord(body.user) || typeof body.user.id !== 'string') return undefined
-  const exclude = Array.isArray(body.excludeCredentials) ? body.excludeCredentials : []
-  return {
-    publicKey: {
-      ...(body as object),
-      challenge: b64urlToBuffer(body.challenge),
-      user: { ...body.user, id: b64urlToBuffer(body.user.id) },
-      excludeCredentials: exclude.map((c: Record<string, unknown>) => ({
-        ...c,
-        id: b64urlToBuffer(String(c.id)),
-      })),
-    } as PublicKeyCredentialCreationOptions,
+  const exclude = body.excludeCredentials === undefined ? [] : body.excludeCredentials
+  if (!Array.isArray(exclude)) return undefined
+  try {
+    return {
+      publicKey: {
+        ...(body as object),
+        challenge: b64urlToBuffer(body.challenge),
+        user: { ...body.user, id: b64urlToBuffer(body.user.id) },
+        excludeCredentials: exclude.map((c: unknown) => {
+          if (!isRecord(c) || typeof c.id !== 'string') throw new TypeError('bad credential')
+          return { ...c, id: b64urlToBuffer(c.id) }
+        }),
+      } as PublicKeyCredentialCreationOptions,
+    }
+  } catch {
+    // Why: a malformed id or entry anywhere in the body means the whole body is unusable.
+    return undefined
   }
 }
 

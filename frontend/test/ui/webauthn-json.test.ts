@@ -47,7 +47,7 @@ describe('parseRequestOptions', () => {
     expect(result?.publicKey?.timeout).toBe(60000)
   })
 
-  it.each([['<html>'], [null], [undefined], [{}], [{ challenge: 5 }]])(
+  it.each([['<html>'], [null], [undefined], [{}], [{ challenge: 5 }], [{ challenge: '!!!' }]])(
     'answers undefined for %j',
     (body) => {
       expect(parseRequestOptions(body)).toBeUndefined()
@@ -83,17 +83,32 @@ describe('parseCreationOptions', () => {
     expect(parseCreationOptions(rest)?.publicKey?.excludeCredentials).toEqual([])
   })
 
-  it.each([['<html>'], [null], [{}], [{ challenge: 'AQID' }], [{ challenge: 'AQID', user: {} }]])(
-    'answers undefined for %j',
-    (input) => {
-      expect(parseCreationOptions(input)).toBeUndefined()
-    },
-  )
+  it.each([
+    ['<html>'],
+    [null],
+    [{}],
+    [{ challenge: 'AQID' }],
+    [{ challenge: 'AQID', user: {} }],
+    [{ ...body, challenge: '!!!' }],
+    [{ ...body, user: { ...body.user, id: '!!!' } }],
+    [{ ...body, excludeCredentials: [null] }],
+    [{ ...body, excludeCredentials: [{}] }],
+    [{ ...body, excludeCredentials: [{ id: 5 }] }],
+    [{ ...body, excludeCredentials: [{ id: '!!!' }] }],
+    [{ ...body, excludeCredentials: 'x' }],
+  ])('answers undefined for %j', (input) => {
+    expect(parseCreationOptions(input)).toBeUndefined()
+  })
 })
 
 describe('ceremony results', () => {
   const credential = (response: object): PublicKeyCredential =>
-    ({ id: 'cred-id', type: 'public-key', rawId: bytes(1, 2), response }) as PublicKeyCredential
+    ({
+      id: 'cred-id',
+      type: 'public-key',
+      rawId: bytes(1, 2),
+      response,
+    }) as PublicKeyCredential
 
   it('assertionToJSON encodes every buffer, keeping a null userHandle null', () => {
     const json = assertionToJSON(
@@ -131,7 +146,10 @@ describe('ceremony results', () => {
 
   it('attestationToJSON encodes rawId, clientDataJSON and attestationObject', () => {
     const json = attestationToJSON(
-      credential({ clientDataJSON: bytes(1), attestationObject: bytes(1, 2, 3) }),
+      credential({
+        clientDataJSON: bytes(1),
+        attestationObject: bytes(1, 2, 3),
+      }),
     )
     expect(json).toEqual({
       id: 'cred-id',
