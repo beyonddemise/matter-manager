@@ -199,6 +199,143 @@ paths:
             primary address, or a provider slot already bound to another GitHub account — the
             redirect carries `?signin=failed` and no handoff.
 
+  /auth/passkey/options:
+    post:
+      operationId: startPasskeySignIn
+      tags: [auth]
+      summary: Begin passkey sign-in
+      description: |
+        Answers WebAuthn request options (usernameless: no allowCredentials) and sets the
+        challenge carrier cookie. The ceremony's result goes to `POST /auth/passkey`.
+      security: []
+      responses:
+        '200':
+          description: WebAuthn request options (Level 3 JSON)
+          content:
+            application/json:
+              schema: { type: object }
+
+  /auth/passkey:
+    post:
+      operationId: completePasskeySignIn
+      tags: [auth]
+      summary: Complete passkey sign-in
+      description: |
+        Verifies the assertion against the carrier cookie's challenge; the `userHandle` names
+        the account. Answers the same token body `POST /auth/token` answers. Every refusal —
+        unknown credential, wrong challenge, regressed counter, failed verification — is the
+        same 401.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, description: The WebAuthn authentication response (Level 3 JSON) }
+      responses:
+        '200':
+          description: A new access token, and the refresh token to present at `POST /auth/token`
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [accessToken, expiresIn, refreshToken]
+                properties:
+                  accessToken: { type: string }
+                  expiresIn: { type: integer, description: Seconds until expiry }
+                  refreshToken: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /auth/sign-in-methods:
+    get:
+      operationId: getSignInMethods
+      tags: [auth]
+      summary: How this account signs in
+      description: |
+        The signed-in account's linked providers (explicit subjects plus the born provider the
+        canonical sub's namespace names; email is always true — the address is the key) and its
+        passkeys.
+      responses:
+        '200':
+          description: Linked methods and passkeys
+          headers:
+            Cache-Control:
+              schema: { type: string }
+              description: private, no-store — per-user data
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SignInMethods' }
+
+  /auth/passkeys:
+    post:
+      operationId: createPasskey
+      tags: [auth]
+      summary: Register a passkey
+      description: |
+        Verifies the attestation against the registration carrier (bound to this account) and
+        stores the credential. Refused with 409 when the account already holds 10.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, description: The WebAuthn registration response (Level 3 JSON) }
+      responses:
+        '201':
+          description: Stored
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Passkey' }
+        '401': { description: The ceremony could not be verified }
+        '409':
+          description: Conflict — the account already holds 10 passkeys, or this credential is already registered.
+
+  /auth/passkeys/options:
+    post:
+      operationId: startPasskeyRegistration
+      tags: [auth]
+      summary: Begin passkey registration
+      description: |
+        Answers WebAuthn creation options (resident key required, this account's existing
+        credentials excluded) and sets the registration carrier cookie, bound to this account.
+      responses:
+        '200':
+          description: WebAuthn creation options (Level 3 JSON)
+          content:
+            application/json:
+              schema: { type: object }
+
+  /auth/passkeys/{id}:
+    patch:
+      operationId: renamePasskey
+      tags: [auth]
+      summary: Rename a passkey
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [label]
+              properties:
+                label: { type: string, maxLength: 64 }
+      responses:
+        '200':
+          description: Renamed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Passkey' }
+        '404': { description: No such passkey on this account }
+    delete:
+      operationId: deletePasskey
+      tags: [auth]
+      summary: Delete a passkey
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '204': { description: Deleted; that credential refuses sign-in from now on }
+        '404': { description: No such passkey on this account }
+
   /auth/token:
     post:
       operationId: issueToken
@@ -975,14 +1112,36 @@ components:
   schemas:
     AuthMethods:
       type: object
-      required: [google, github, email]
+      required: [google, github, email, passkeys]
       properties:
         google: { type: boolean }
         github: { type: boolean }
         email: { type: boolean }
+        passkeys: { type: boolean }
       description: >-
         One flag per sign-in method this deployment serves. A later method is a new required
         field here and in the mirror at once.
+
+    Passkey:
+      type: object
+      required: [id, label, createdAt, lastUsedAt]
+      properties:
+        id: { type: string, description: Credential id, base64url }
+        label: { type: string }
+        createdAt: { type: string, format: date-time }
+        lastUsedAt: { type: string, format: date-time }
+
+    SignInMethods:
+      type: object
+      required: [google, github, email, passkeys]
+      description: How one account signs in — linked providers and its passkeys.
+      properties:
+        google: { type: boolean }
+        github: { type: boolean }
+        email: { type: boolean }
+        passkeys:
+          type: array
+          items: { $ref: '#/components/schemas/Passkey' }
 
     EmailSignInStart:
       type: object
