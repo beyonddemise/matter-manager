@@ -1,8 +1,9 @@
 # Development CouchDB with configuration baked in.
 #
-# **Build context is the repository root**, because the shared configuration lives in
-# `infra/couchdb/00-base.ini` and is used by this image and the production one alike. See
-# `.devcontainer/docker-compose.yml`.
+# **Build context is this directory** (see `.devcontainer/docker-compose.yml`). The base
+# configuration `00-base.ini` is this repository's copy of the one the backend repository
+# (matter-manager-backend) owns and ships to production — the droplet stack moved there, and
+# with it the production image, so this file and the backend's must be kept in agreement.
 #
 # The configuration is COPYed rather than bind-mounted. The upstream entrypoint runs
 #
@@ -14,5 +15,4 @@
 # --chown avoids the problem entirely and makes the config immutable.
 FROM couchdb:3.5.2.1
 # Lexical order in local.d/ is the override mechanism: the base first, the overlay second.
-COPY --chown=couchdb:couchdb infra/couchdb/00-base.ini /opt/couchdb/etc/local.d/00-base.ini
-COPY --chown=couchdb:couchdb .devcontainer/couchdb/10-development.ini /opt/couchdb/etc/local.d/10-development.ini
+COPY --chown=couchdb:couchdb 00-base.ini 10-development.ini /opt/couchdb/etc/local.d/

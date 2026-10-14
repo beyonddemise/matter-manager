@@ -22,7 +22,7 @@ Four things happen along it, and each is somebody's job:
 - **Caddy** applies the `@forbidden` blocklist. `/db` reaches CouchDB through the same host
   Caddy that serves `couch.matter-manager.io`, so it inherits that list rather than keeping a
   second copy that could drift.
-- **CouchDB** verifies the JWT against `[jwt_keys]`, then `infra/couchdb/design-docs/access.js`
+- **CouchDB** verifies the JWT against `[jwt_keys]`, then `matter-manager-backend/infra/couchdb/access.js`
   decides whether this user may write this document.
 
 ## The credential, and why there are two
@@ -100,7 +100,7 @@ own name gave. Making the *count* depend on `limit` and the *shape* of each resu
 
 **A document written and read back.** The probe's first run sent `{"kind":"probe"}` and was
 refused with `403 Every document must carry a 'type' field` — which is
-`infra/couchdb/design-docs/access.js:59`, so that run proved the **validator** is deployed and
+`matter-manager-backend/infra/couchdb/access.js:59`, so that run proved the **validator** is deployed and
 enforcing, and proved nothing about a successful write. The same function checks the caller
 against the `_security` writers the API wrote at provisioning time, so both halves of the
 access model are live.

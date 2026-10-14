@@ -110,7 +110,7 @@ permission, so a `projects` database readable by authenticated users would discl
 project's name, address and participant list to *every* user. Project names here are street
 addresses, and `participants` is a map of who has access to whose home.
 
-`dbName` keeps the uuid's hyphens. CouchDB permits them — this repository's own
+`dbName` keeps the uuid's hyphens. CouchDB permits them — the backend repository's
 `infra/couchdb/verify-access-model.sh` creates `verify-access-model-$$` against a real server —
 and an earlier version of this example replaced them with underscores, which disagreed with
 ADR 0003 and with the OpenAPI contract. One representation, produced by one function:
