@@ -230,11 +230,13 @@ a promote or removal is not protected ([#220](https://github.com/beyonddemise/ma
 
 ## Deployment
 
-The SPA is static and deploys to Cloudflare Pages. The droplet runs Caddy, the API and
-CouchDB under Docker Compose, with Caddy terminating TLS and acting as the only ingress.
-The droplet stack itself (Caddyfile, compose file, production CouchDB image) lives in the
-backend repository (matter-manager-backend, `infra/`); this repository keeps only its
-devcontainer CouchDB, whose `00-base.ini` is kept in agreement with the backend's.
+The SPA is static and deploys to Cloudflare Pages. On the droplet, Caddy runs on the host
+(systemd, not a container), terminating TLS and acting as the only ingress in front of two
+Docker Compose projects: CouchDB and the API, each publishing a loopback-only port for it.
+The droplet stack itself (the host Caddyfile's versioned copy, the CouchDB compose file and
+production image) lives in the backend repository (matter-manager-backend, `infra/`); this
+repository keeps only its devcontainer CouchDB, whose `00-base.ini` is kept in agreement
+with the backend's.
 Both CouchDB images build on the same pinned tag of
 `ghcr.io/hcl-tech-software/couch-companion`, which is itself based on `apache/couchdb`.
 The tag is pinned rather than `:latest` so Dependabot can offer updates, and an update
