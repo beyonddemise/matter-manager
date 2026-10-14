@@ -235,6 +235,8 @@ CouchDB under Docker Compose, with Caddy terminating TLS and acting as the only 
 The droplet stack itself (Caddyfile, compose file, production CouchDB image) lives in the
 backend repository (matter-manager-backend, `infra/`); this repository keeps only its
 devcontainer CouchDB, whose `00-base.ini` is kept in agreement with the backend's.
+Both CouchDB images build on `ghcr.io/hcl-tech-software/couch-companion:latest`, which is
+itself based on `apache/couchdb:latest`.
 
 CouchDB configuration is **baked into a derived image, never bind-mounted**. The upstream
 entrypoint chowns everything under `/opt/couchdb` as root under `set -e`; a bind-mounted
