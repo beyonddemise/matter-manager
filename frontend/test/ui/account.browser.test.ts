@@ -231,7 +231,11 @@ describe('the account view in German at phone width', () => {
       expect(el.querySelector('[data-rename]')?.textContent).toContain('Umbenennen')
       expect(el.querySelector('[data-delete]')?.textContent).toContain('Löschen')
       expect(el.textContent).toContain('Verknüpft')
-      expect(el.scrollWidth).toBeLessThanOrEqual(host.clientWidth)
+      // `<account-view>` has no display rule, so it is inline and reports a scrollWidth of 0;
+      // the block host is what actually measures the content's width.
+      expect(host.clientWidth).toBe(360)
+      expect(host.scrollWidth).toBeGreaterThan(0)
+      expect(host.scrollWidth).toBeLessThanOrEqual(host.clientWidth)
     } finally {
       host.remove()
     }
