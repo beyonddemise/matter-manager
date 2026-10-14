@@ -63,13 +63,13 @@ baked into the image, so key material never enters the container registry.
 3. Remove the old key once no live token references it.
 
 No restart, no interrupted replication. Verified against CouchDB 3.5.2 and guarded in CI by
-`infra/couchdb/verify-jwt-model.sh`.
+`matter-manager-backend/infra/couchdb/verify-jwt-model.sh`.
 
 **`[chttpd] authentication_handlers`, by contrast, is read only at startup.** Setting it at
 runtime returns `200` and has no effect until the node restarts — and in the meantime every
 request authenticates as *anonymous* rather than failing loudly, which is a particularly
 unhelpful way to be broken. Production bakes the handler into the image
-(`infra/couchdb/00-base.ini`) so it is active from boot; treat changing it as a deployment, not
+(`matter-manager-backend/infra/couchdb/00-base.ini`) so it is active from boot; treat changing it as a deployment, not
 a configuration tweak.
 
 The API should still confirm its key is in effect before serving traffic and fail loudly if
@@ -139,7 +139,7 @@ request.
 
 ### Why this is verified in CI
 
-`infra/couchdb/verify-access-model.sh` runs on every push. It is not ceremony.
+`matter-manager-backend/infra/couchdb/verify-access-model.sh` runs on every push in the backend repository, which owns the CouchDB images and version. It is not ceremony.
 
 If a CouchDB upgrade stops preserving unknown `_security` keys, `writers` disappears, the
 validation function sees an empty writer list — and, depending on how it fails, read-only
@@ -235,7 +235,7 @@ untouched, and a conflict retry cannot reverse a transfer already half applied. 
 the principal is a scrubbed 500, never a refusal and never a pass.
 
 **The database refuses what the API cannot see.** `securityFor` writes a third custom key,
-`_security.owners`, beside `writers`; `infra/couchdb/design-docs/access.js` refuses **every
+`_security.owners`, beside `writers`; `matter-manager-backend/infra/couchdb/access.js` refuses **every
 write, deletions included**, from a name in `owners` whose roles carry neither `member` nor
 `pro` (the access token carries the plan as a role). The rule sits before the `_deleted` branch
 so a downgraded owner cannot keep using the database by trimming it. It is deliberately narrow:

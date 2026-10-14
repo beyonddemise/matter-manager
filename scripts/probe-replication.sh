@@ -221,7 +221,7 @@ say '  database'
 echo "${DB}"
 
 # 4. The round trip PouchDB actually performs, and the reason this script has an exit status.
-#    `type` is required by `infra/couchdb/design-docs/access.js`, which also checks the caller
+#    `type` is required by `matter-manager-backend/infra/couchdb/access.js`, which also checks the caller
 #    against the `_security` writers — so a 403 here means the validator is enforcing and the
 #    write did not land, which is how the first run of this script accidentally proved the
 #    design document was deployed.

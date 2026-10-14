@@ -102,12 +102,12 @@ The asymmetry here is easy to get backwards, and getting it backwards is expensi
 Setting the handler at runtime returns `200` and does nothing until the node restarts — and
 until then every request authenticates as **anonymous** rather than failing, which looks
 exactly like a permissions bug. Production bakes the handler into the image
-(`infra/couchdb/00-base.ini`), so it is active at boot and this never arises in operation.
+(`matter-manager-backend/infra/couchdb/00-base.ini`), so it is active at boot and this never arises in operation.
 
 Keys being live is what makes **zero-downtime key rotation** possible: add the new key under
 a new `kid`, start issuing tokens with it, and remove the old key later. Both keys validate
 throughout, and no replication is interrupted. Verified against CouchDB 3.5.2 and guarded in
-CI by `infra/couchdb/verify-jwt-model.sh`.
+CI by `matter-manager-backend/infra/couchdb/verify-jwt-model.sh`.
 
 ## Packages
 
@@ -161,7 +161,7 @@ client talking to `_changes` directly bypasses it.
 Read access is `_security.members.names`. Write access is a custom `writers.names` key
 enforced by `validate_doc_update`. This was verified against CouchDB 3.5.2 before anything
 was built on it, and the verification runs in CI
-(`infra/couchdb/verify-access-model.sh`).
+(`matter-manager-backend/infra/couchdb/verify-access-model.sh`).
 
 ### Four stores, four different exposures
 
@@ -230,8 +230,15 @@ a promote or removal is not protected ([#220](https://github.com/beyonddemise/ma
 
 ## Deployment
 
-The SPA is static and deploys to Cloudflare Pages. The droplet runs Caddy, Fastify and
+The SPA is static and deploys to Cloudflare Pages. The droplet runs Caddy, the API and
 CouchDB under Docker Compose, with Caddy terminating TLS and acting as the only ingress.
+The droplet stack itself (Caddyfile, compose file, production CouchDB image) lives in the
+backend repository (matter-manager-backend, `infra/`); this repository keeps only its
+devcontainer CouchDB, whose `00-base.ini` is kept in agreement with the backend's.
+Both CouchDB images build on the same pinned tag of
+`ghcr.io/hcl-tech-software/couch-companion`, which is itself based on `apache/couchdb`.
+The tag is pinned rather than `:latest` so Dependabot can offer updates, and an update
+must land in both repositories in the same breath.
 
 CouchDB configuration is **baked into a derived image, never bind-mounted**. The upstream
 entrypoint chowns everything under `/opt/couchdb` as root under `set -e`; a bind-mounted

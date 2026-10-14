@@ -87,19 +87,13 @@ updates:
     schedule:
       interval: monthly
 
-  # `directory: /infra` matched only /infra itself, which holds a Caddyfile and a compose file;
-  # Dependabot does not recurse. Every docker run since the repository was created aborted with
-  # "No Dockerfiles nor Kubernetes YAML found in /infra", so no base image here has ever been
-  # offered an update - see #156.
-  #
-  # Grouped into one pull request, and that is not tidiness. infra/couchdb/Dockerfile and
-  # .devcontainer/couchdb/Dockerfile pin the same CouchDB tag on purpose: replication and
-  # validate_doc_update behaviour differ between minor versions, so dev/prod drift there
-  # surfaces as sync bugs that reproduce nowhere. Ungrouped, Dependabot could raise one and not
-  # the other and break the invariant it exists to maintain.
+  # The production CouchDB image moved to the backend repository with infra/; only the
+  # devcontainer image remains here. Its CouchDB tag deliberately matches the backend's
+  # production image: replication and validate_doc_update behaviour differ between minor
+  # versions, so dev/prod drift there surfaces as sync bugs that reproduce nowhere - an update
+  # Dependabot offers here has to land in the backend repository in the same breath.
   - package-ecosystem: docker
     directories:
-      - /infra/couchdb
       - /.devcontainer/couchdb
     schedule:
       interval: monthly
@@ -136,10 +130,9 @@ updates:
         patterns: ['*']
 
   # A separate ecosystem: `docker` reads Dockerfiles and Kubernetes YAML, never compose files.
-  # Without this, caddy:2-alpine and the devcontainer's node image are pinned and unwatched.
+  # Without this, the devcontainer's node image is pinned and unwatched.
   - package-ecosystem: docker-compose
     directories:
-      - /infra
       - /.devcontainer
     schedule:
       interval: monthly
@@ -150,7 +143,9 @@ updates:
     # same one #153 produced for a completely different reason: there a credential existed and
     # was in the wrong store, here there is nothing to authenticate to at all.
     ignore:
-      - dependency-name: matter-manager/couchdb
+      # Only the -dev image remains here; matter-manager/couchdb moved to the backend
+      # repository with infra/, and ignore names match exactly, so an entry for it would
+      # be inert (#173's lesson).
       - dependency-name: matter-manager/couchdb-dev
       # NO registry host, and NO update-types. Both halves of that were wrong until #193, and
       # the rule had therefore never matched anything.
@@ -160,8 +155,8 @@ updates:
       # same rule by example - for
       # `<account>.dkr.ecr.us-west-2.amazonaws.com/base/foo/bar/ruby:3.1.0-focal-jemalloc`, use
       # `base/foo/bar/ruby`. `mcr.microsoft.com/...` matched no dependency, so this entry was
-      # inert from the day it was written in #173. The two `matter-manager/couchdb` names above
-      # have no host either, which is why those two have always worked.
+      # inert from the day it was written in #173. The `matter-manager/couchdb-dev` name above
+      # has no host either, which is why it has always worked.
       #
       # The absent update-types: this tag is `1-24-bookworm`, where 24 is the Node major and the
       # leading 1 is the devcontainer image's own version. **One tag, two independent versions**,

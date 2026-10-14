@@ -1,6 +1,7 @@
 # Local development stack.
 #
-# The CouchDB image tag here is deliberately identical to infra/compose.prod.yml.
+# The CouchDB image tag here is deliberately identical to the production one in the backend
+# repository (matter-manager-backend, infra/compose.prod.yml).
 # Replication and validate_doc_update behaviour differ between CouchDB minor versions,
 # and those are exactly the behaviours this project depends on most, so dev/prod drift
 # on this image would surface as sync bugs that reproduce nowhere.
@@ -31,11 +32,11 @@ services:
     # Built rather than pulled so the configuration can be COPYed in. It must not be
     # bind-mounted - see the comment in couchdb/Dockerfile for the silent-crash reason.
     build:
-      # The repository root, so the image can reach infra/couchdb/00-base.ini — the
-      # authentication configuration shared with production.
-      context: ..
-      dockerfile: .devcontainer/couchdb/Dockerfile
-    image: matter-manager/couchdb-dev:3.5.2.1
+      # Self-contained: the directory carries its own 00-base.ini (kept in agreement with the
+      # backend repository's copy, which production is built from).
+      context: ./couchdb
+      dockerfile: Dockerfile
+    image: matter-manager/couchdb-dev:0.4.1
     restart: unless-stopped
     environment:
       COUCHDB_USER: admin
@@ -47,7 +48,7 @@ services:
     volumes:
       - couchdb-data:/opt/couchdb/data
     healthcheck:
-      # Unauthenticated on purpose. This only works because infra/couchdb/00-base.ini sets
+      # Unauthenticated on purpose. This only works because couchdb/00-base.ini sets
       # require_valid_user_except_for_up - without it every probe returns 401, the
       # container never reports healthy, and anything waiting on it hangs silently.
       test: ['CMD', 'curl', '-fsS', 'http://localhost:5984/_up']
