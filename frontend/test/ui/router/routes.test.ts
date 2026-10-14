@@ -95,6 +95,7 @@ describe('the route registry', () => {
       'device',
       'edit-device',
       'rooms',
+      'account',
       'settings',
     ])
   })

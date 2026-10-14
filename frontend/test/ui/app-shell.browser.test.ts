@@ -94,7 +94,18 @@ it('renders one navigation link per labelled route, and no more', async () => {
   // Guards the duplicated-navigation trap: slot="navigation" already renders in both
   // views, so a second copy would double these.
   const element = await shell()
-  expect(element.querySelectorAll('nav a').length).toBe(NAV_ROUTES.length)
+  // Signed out, the account page (about the session) is not offered.
+  expect(element.querySelectorAll('nav a').length).toBe(NAV_ROUTES.length - 1)
+  expect(element.querySelector('nav a[href="#/account"]')).toBeNull()
+})
+
+it('offers the Account page above Settings once signed in', async () => {
+  const { element, play } = await driven()
+  await play({ kind: 'refreshed', expiresIn: 300 })
+  await waitUntil(() => element.querySelector('nav a[href="#/account"]') !== null, 'no Account')
+  const links = [...element.querySelectorAll('nav a')].map((a) => a.getAttribute('href'))
+  expect(links.filter((href) => href === '#/account').length).toBe(1)
+  expect(links.indexOf('#/account')).toBe(links.indexOf('#/settings') - 1)
 })
 
 it('marks the current navigation entry', async () => {

@@ -15,6 +15,7 @@ import {
   plans as plansClient,
   profile,
   requestTokens,
+  signInMethods as signInMethodsClient,
   type TokenOutcome,
   waitlist as waitlistClient,
 } from './composition.js'
@@ -56,6 +57,7 @@ import {
   type StatusSnapshot,
 } from './shell-status.js'
 import { renderSignInDialog, type SignInActions, type SignInStep } from './sign-in-dialog.js'
+import type { SignInMethodsApi } from './sign-in-methods.js'
 import type { SyncManager } from './sync/manager.js'
 import type { SyncState } from './sync/replication.js'
 import { startRefresher } from './token-refresher.js'
@@ -70,6 +72,7 @@ import './views/device.js'
 import './views/edit-device.js'
 import './views/not-found.js'
 import './views/projects.js'
+import './views/account.js'
 import './views/settings.js'
 /**
  * The application icon, as a fingerprinted /assets/ URL. `index.html` names the same file as the
@@ -107,6 +110,8 @@ type ViewParams = Readonly<Record<string, string>>
 export interface ViewHost {
   /** The projects page, wired to the shell's state and replication. */
   renderProjects(): TemplateResult
+  /** The account page, given the cached profile and the sign-in-methods api. */
+  renderAccount(): TemplateResult
 }
 
 export const VIEWS: Readonly<
@@ -118,6 +123,7 @@ export const VIEWS: Readonly<
   'device-list': () => html`<device-list-view></device-list-view>`,
   'edit-device': (params) => html`<edit-device-view uuid=${params.id ?? ''}></edit-device-view>`,
   rooms: () => html`<rooms-view></rooms-view>`,
+  account: (_params, host) => host.renderAccount(),
   settings: () => html`<settings-view></settings-view>`,
 }
 
@@ -210,6 +216,7 @@ export class AppShell extends LitElement implements ViewHost {
     authMethods: { attribute: false },
     passkeyAuth: { attribute: false },
     passkeySupport: { attribute: false },
+    signInMethodsApi: { attribute: false },
     signInGitHub: { attribute: false },
     readProfile: { attribute: false },
     refresher: { attribute: false },
@@ -275,6 +282,9 @@ export class AppShell extends LitElement implements ViewHost {
   declare authMethods?: AuthMethodsApi
   /** The passkey ceremony; injected by tests, built on first use otherwise. */
   declare passkeyAuth?: PasskeySignIn
+
+  /** The account page's sign-in-methods calls; injected by tests, the real API otherwise. */
+  declare signInMethodsApi?: SignInMethodsApi
   /** Whether this browser can run a passkey ceremony; injected by tests. */
   declare passkeySupport: () => boolean
   /** The GitHub redirect; injected by tests so they never navigate. */
@@ -687,6 +697,16 @@ export class AppShell extends LitElement implements ViewHost {
       .sync=${this.projects.sync}
       .refresh=${this.refreshFromPage}
     ></projects-view>`
+  }
+
+  /** The account page: the cached profile's email and plan, read as the header reads them. */
+  renderAccount(): TemplateResult {
+    return html`<account-view
+      .api=${this.signInMethodsApi ?? signInMethodsClient()}
+      .passkeySupport=${this.passkeySupport}
+      .email=${this.projects.facts?.email}
+      .plan=${this.projects.facts?.plan}
+    ></account-view>`
   }
 
   /** The page's `refresh`: the list fetched again, then everything re-read. */
@@ -1341,7 +1361,10 @@ export class AppShell extends LitElement implements ViewHost {
         </header>
 
         <nav slot="navigation" class="wa-stack wa-gap-2xs app-nav">
-          ${NAV_ROUTES.map(
+          ${NAV_ROUTES.filter(
+            // The account page is about the session, so it is offered only while there is one.
+            (route) => route.view !== 'account' || this.session === 'signed-in',
+          ).map(
             (route) => html`
               <a
                 href="#${route.path}"

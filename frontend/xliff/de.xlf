@@ -1167,6 +1167,66 @@
   <source>Sign in with a passkey</source>
   <target>Mit Passkey anmelden</target>
 </trans-unit>
+<trans-unit id="s357f80cfe5e913f1">
+  <source>Passkey added.</source>
+  <target>Passkey hinzugefügt.</target>
+</trans-unit>
+<trans-unit id="s9a60dd5cb42617f7">
+  <source>This account has reached its limit of passkeys.</source>
+  <target>Dieses Konto hat die Höchstzahl an Passkeys erreicht.</target>
+</trans-unit>
+<trans-unit id="s201d0cfc22e51141">
+  <source>Passkey renamed.</source>
+  <target>Passkey umbenannt.</target>
+</trans-unit>
+<trans-unit id="s9552eed7676996ac">
+  <source>Passkey deleted.</source>
+  <target>Passkey gelöscht.</target>
+</trans-unit>
+<trans-unit id="s91138a060df28f80">
+  <source>Linked</source>
+  <target>Verknüpft</target>
+</trans-unit>
+<trans-unit id="sa2dff488cc3b7897">
+  <source>Not linked</source>
+  <target>Nicht verknüpft</target>
+</trans-unit>
+<trans-unit id="sdee220ca2f329ba6">
+  <source>Passkey name</source>
+  <target>Name des Passkeys</target>
+</trans-unit>
+<trans-unit id="se871c20e39ace2a5">
+  <source>Added</source>
+  <target>Hinzugefügt</target>
+</trans-unit>
+<trans-unit id="s6d3f81dc4bcacbda">
+  <source>Last used</source>
+  <target>Zuletzt verwendet</target>
+</trans-unit>
+<trans-unit id="s7e73afd34eaa3f7e">
+  <source>Sign-in methods</source>
+  <target>Anmeldemethoden</target>
+</trans-unit>
+<trans-unit id="sd1f44f1a8bc20e67">
+  <source>Email</source>
+  <target>E-Mail</target>
+</trans-unit>
+<trans-unit id="s1cb5437f4997df1c">
+  <source>Passkeys</source>
+  <target>Passkeys</target>
+</trans-unit>
+<trans-unit id="s51c74024490b8507">
+  <source>Add a passkey</source>
+  <target>Passkey hinzufügen</target>
+</trans-unit>
+<trans-unit id="s846b3790b6e25c1c">
+  <source>Account</source>
+  <target>Konto</target>
+</trans-unit>
+<trans-unit id="s067e44ade6b9e558">
+  <source>Sign in to manage how you sign in.</source>
+  <target>Melden Sie sich an, um Ihre Anmeldemethoden zu verwalten.</target>
+</trans-unit>
 </body>
 </file>
 </xliff>
