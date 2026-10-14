@@ -251,6 +251,8 @@ public interface PasskeyLookup { Optional<PasskeyCredential> find(String userHan
             application/json:
               schema: { $ref: '#/components/schemas/Passkey' }
         '401': { description: The ceremony could not be verified }
+        '409':
+          description: Conflict — the account already holds 10 passkeys, or this credential is already registered.
 
   /auth/passkeys/options:
     post:
