@@ -457,7 +457,9 @@ by id, and positional identity would make "the same remark twice" indistinguisha
 }
 ```
 
-Append-only and immutable, enforced by `validate_doc_update`. Because nothing ever rewrites
+Append-only and immutable, enforced by `validate_doc_update`. The validator reads the type
+of **both** the existing and the incoming revision, so an entry cannot escape immutability
+by being rewritten under a different `type`. Because nothing ever rewrites
 them, **audit entries cannot conflict** — a property worth preserving deliberately.
 
 ## Conflicts
