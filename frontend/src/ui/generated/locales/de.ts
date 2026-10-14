@@ -26,6 +26,7 @@
 's10e80d4c01c3cc21': `Eingebaut am`,
 's11801b4b60084cc5': `Ihr Plan`,
 's12d6dde9b30c3093': `Schließen`,
+'s132197f83a0f9c6e': `Mit Passkey anmelden`,
 's137e47769946f4df': str`Sie stehen auf der Warteliste für ${0} (seit ${1}).`,
 's14f88880ab0ab6c8': `Dies konnte nicht gelesen werden. Vergleichen Sie es mit dem Aufdruck auf dem Gerät.`,
 's15e62319b0a3a08a': `BLE`,

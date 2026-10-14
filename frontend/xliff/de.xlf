@@ -1163,6 +1163,10 @@
   <source>Sign in with GitHub</source>
   <target>Mit GitHub anmelden</target>
 </trans-unit>
+<trans-unit id="s132197f83a0f9c6e">
+  <source>Sign in with a passkey</source>
+  <target>Mit Passkey anmelden</target>
+</trans-unit>
 </body>
 </file>
 </xliff>

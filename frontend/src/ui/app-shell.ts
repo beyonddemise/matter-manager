@@ -760,6 +760,8 @@ export class AppShell extends LitElement implements ViewHost {
       github: methods?.github ?? false,
       // The 404-hiding stays as belt and braces for the in-between deployments.
       email: (methods?.email ?? true) && !this.emailUnavailable,
+      // Placeholder: the real derivation arrives with the shell wiring.
+      passkey: false,
     }
   }
 
@@ -840,6 +842,8 @@ export class AppShell extends LitElement implements ViewHost {
       this.closeSignIn()
       ;(this.signInGitHub ?? beginGitHubSignIn)()
     },
+    // Placeholder until the shell wiring lands: the chooser never shows the button yet.
+    onPasskey: () => {},
     onEmail: () => {
       this.signInNotice = ''
       this.signingIn = { step: 'email', busy: false }

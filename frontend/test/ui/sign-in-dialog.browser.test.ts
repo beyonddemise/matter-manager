@@ -23,6 +23,7 @@ function recording() {
   return {
     onGoogle: vi.fn(),
     onGitHub: vi.fn(),
+    onPasskey: vi.fn(),
     onEmail: vi.fn(),
     onSendCode: vi.fn(),
     onVerify: vi.fn(),
@@ -54,10 +55,16 @@ beforeAll(async () => {
 })
 
 /** Every method on: what a fully configured deployment answers. */
-const ALL_ON = { step: 'chooser', google: true, github: true, email: true } satisfies SignInStep
+const ALL_ON = {
+  step: 'chooser',
+  google: true,
+  github: true,
+  email: true,
+  passkey: true,
+} satisfies SignInStep
 
 describe('the chooser', () => {
-  it('offers Google, GitHub and email in that order, Google as the one filled brand button', async () => {
+  it('offers Google, GitHub, a passkey and email in that order, Google as the one filled brand button', async () => {
     const root = await mounted(ALL_ON)
 
     const google = root.querySelector('[data-google-sign-in]') as HTMLElement & {
@@ -77,19 +84,23 @@ describe('the chooser', () => {
     }
     expect(github).not.toBeNull()
     expect(github.appearance).toBe('outlined')
+    expect(root.querySelector('[data-passkey-sign-in]')).not.toBeNull()
     expect(root.querySelector('[data-email-option]')).not.toBeNull()
     const order = [...root.querySelectorAll('wa-button')].map((button) =>
       button.hasAttribute('data-google-sign-in')
         ? 'google'
         : button.hasAttribute('data-github-sign-in')
           ? 'github'
-          : 'email',
+          : button.hasAttribute('data-passkey-sign-in')
+            ? 'passkey'
+            : 'email',
     )
-    expect(order).toEqual(['google', 'github', 'email'])
+    expect(order).toEqual(['google', 'github', 'passkey', 'email'])
   })
 
   it.each([
     ['GitHub', { ...ALL_ON, github: false }, '[data-github-sign-in]'],
+    ['passkey', { ...ALL_ON, passkey: false }, '[data-passkey-sign-in]'],
     ['email', { ...ALL_ON, email: false }, '[data-email-option]'],
   ] as const)('hides the %s option when the deployment lacks it', async (_name, step, selector) => {
     const root = await mounted(step)
@@ -98,7 +109,13 @@ describe('the chooser', () => {
   })
 
   it('still offers email when Google is off: a mail-only deployment stays usable', async () => {
-    const root = await mounted({ step: 'chooser', google: false, github: false, email: true })
+    const root = await mounted({
+      step: 'chooser',
+      google: false,
+      github: false,
+      email: true,
+      passkey: false,
+    })
 
     expect(root.querySelector('[data-google-sign-in]')).toBeNull()
     expect(root.querySelector('[data-github-sign-in]')).toBeNull()
@@ -123,6 +140,17 @@ describe('the chooser', () => {
 
     expect(actions.onGitHub).toHaveBeenCalledTimes(1)
     expect(actions.onGoogle).not.toHaveBeenCalled()
+    expect(actions.onEmail).not.toHaveBeenCalled()
+  })
+
+  it('clicking the passkey button calls onPasskey once and nothing else', async () => {
+    const actions = recording()
+    const root = await mounted(ALL_ON, '', actions)
+    ;(root.querySelector('[data-passkey-sign-in]') as HTMLElement).click()
+
+    expect(actions.onPasskey).toHaveBeenCalledTimes(1)
+    expect(actions.onGoogle).not.toHaveBeenCalled()
+    expect(actions.onGitHub).not.toHaveBeenCalled()
     expect(actions.onEmail).not.toHaveBeenCalled()
   })
 })
@@ -239,6 +267,7 @@ describe('German, at 360 px', () => {
 
   it.each([
     ['chooser, its GitHub button', ALL_ON, 'Mit GitHub anmelden'],
+    ['chooser, its passkey button', ALL_ON, 'Mit Passkey anmelden'],
     ['chooser, its email button', ALL_ON, 'Mit E-Mail anmelden'],
     ['email', { step: 'email', busy: false } satisfies SignInStep, 'Code senden'],
     [
