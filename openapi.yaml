@@ -286,7 +286,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Passkey' }
-        '401': { description: The session is missing, or the ceremony could not be verified }
+        '401': { description: "The session is missing, or the ceremony could not be verified" }
         '409':
           description: Conflict — the account already holds 10 passkeys, or this credential is already registered.
 
@@ -328,7 +328,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Passkey' }
-        '400': { description: The label is missing, blank or longer than 64 characters }
+        '400': { description: "The label is missing, blank or longer than 64 characters" }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { description: No such passkey on this account }
     delete:
