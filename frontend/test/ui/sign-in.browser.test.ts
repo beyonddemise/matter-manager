@@ -703,7 +703,7 @@ describe('signing in with an emailed code', () => {
     return element.querySelector('[data-sign-in-dialog]') as HTMLElement
   }
 
-  const EVERY_METHOD: AuthMethods = { google: true, github: true, email: true }
+  const EVERY_METHOD: AuthMethods = { google: true, github: true, email: true, passkeys: false }
 
   it('offers GitHub when the deployment does, and the button leaves through the seam', async () => {
     const signInGitHub = vi.fn()
