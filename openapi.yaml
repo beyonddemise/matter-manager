@@ -264,6 +264,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/SignInMethods' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
 
   /auth/passkeys:
     post:
@@ -272,7 +273,8 @@ paths:
       summary: Register a passkey
       description: |
         Verifies the attestation against the registration carrier (bound to this account) and
-        stores the credential. Refused with 409 when the account already holds 10.
+        stores the credential. Refused with 409 when the account already holds 10 or already
+        holds this credential.
       requestBody:
         required: true
         content:
@@ -284,7 +286,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Passkey' }
-        '401': { description: The ceremony could not be verified }
+        '401': { description: The session is missing, or the ceremony could not be verified }
         '409':
           description: Conflict — the account already holds 10 passkeys, or this credential is already registered.
 
@@ -302,6 +304,7 @@ paths:
           content:
             application/json:
               schema: { type: object }
+        '401': { $ref: '#/components/responses/Unauthorized' }
 
   /auth/passkeys/{id}:
     patch:
@@ -325,6 +328,8 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Passkey' }
+        '400': { description: The label is missing, blank or longer than 64 characters }
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { description: No such passkey on this account }
     delete:
       operationId: deletePasskey
@@ -334,6 +339,7 @@ paths:
         - { name: id, in: path, required: true, schema: { type: string } }
       responses:
         '204': { description: Deleted; that credential refuses sign-in from now on }
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { description: No such passkey on this account }
 
   /auth/token:
