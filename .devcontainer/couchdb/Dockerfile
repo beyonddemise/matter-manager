@@ -14,9 +14,10 @@
 # entrypoint dies with exit code 1 and NO log output whatsoever. Baking the file in with
 # --chown avoids the problem entirely and makes the config immutable.
 #
-# The base is HCL's couch-companion, which is itself built on apache/couchdb:latest — the
-# layer whose entrypoint behaviour is described above, and the layer that determines the
-# CouchDB version this stack runs.
-FROM ghcr.io/hcl-tech-software/couch-companion:latest
+# The base is HCL's couch-companion, which is itself built on apache/couchdb — the layer
+# whose entrypoint behaviour is described above, and the layer that determines the CouchDB
+# version this stack runs. The tag is pinned (not :latest) so Dependabot can offer updates;
+# the backend repository's production image pins the same tag, and the two move together.
+FROM ghcr.io/hcl-tech-software/couch-companion:0.4.1
 # Lexical order in local.d/ is the override mechanism: the base first, the overlay second.
 COPY --chown=couchdb:couchdb 00-base.ini 10-development.ini /opt/couchdb/etc/local.d/
