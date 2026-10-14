@@ -100,7 +100,21 @@ export class AccountView extends LitElement {
   }
 
   protected override willUpdate(changed: PropertyValues<this>): void {
-    if (changed.has('session') && this.session === 'signed-in') void this.refresh()
+    if (!changed.has('session')) return
+    if (this.session === 'signed-in') void this.refresh()
+    else if (this.session !== undefined) this.forget()
+  }
+
+  /**
+   * Drops everything the ended session loaded and shows the signed-out state. Why bumping
+   * `reads`: a read still in flight would otherwise answer after sign-out and put the previous
+   * account's methods back on screen.
+   */
+  private forget(): void {
+    this.reads++
+    this.loaded = 'signed-out'
+    this.editing = undefined
+    this.announcement = ''
   }
 
   /** Counts reads, so an answer to an older read never overwrites a newer one. */
@@ -233,10 +247,11 @@ export class AccountView extends LitElement {
         const next = before[before.findIndex((p) => p.id === passkey.id) + 1]
         this.setPasskeys(before.filter((p) => p.id !== passkey.id))
         this.announcement = msg('Passkey deleted.')
-        // The next row stands where the deleted one was; with none left, the Add button.
+        // The next row stands where the deleted one was; with none left, the Add button, which
+        // is absent when this browser cannot make passkeys, so the heading is the fallback.
         this.focusAfterRender(() =>
           next === undefined
-            ? this.querySelector('[data-add-passkey]')
+            ? (this.querySelector('[data-add-passkey]') ?? this.querySelector('h1'))
             : this.renameButton(next.id),
         )
       } else if (outcome.kind === 'signed-out') {
@@ -382,7 +397,7 @@ export class AccountView extends LitElement {
     const methods = this.methods
     return html`
       <div class="wa-stack wa-gap-l">
-        <h1>${msg('Account')}</h1>
+        <h1 tabindex="-1">${msg('Account')}</h1>
         ${
           this.email === undefined
             ? nothing

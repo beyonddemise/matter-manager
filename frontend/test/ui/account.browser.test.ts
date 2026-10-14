@@ -242,6 +242,15 @@ describe('the account view', () => {
       expect(rows(el)[0]?.getAttribute('data-passkey')).toBe('p2')
     })
 
+    it('moves to the heading after deleting the last row when adding is unavailable', async () => {
+      const el = await account(stubApi(), () => false)
+      button(el, '[data-delete]').click()
+      await waitUntil(() => rows(el).length === 0, 'row still there')
+      await settle(el)
+      expect(el.querySelector('[data-add-passkey]')).toBeNull()
+      expect(document.activeElement).toBe(el.querySelector('h1'))
+    })
+
     it('moves to the Add button after deleting the last row', async () => {
       const el = await account(stubApi())
       button(el, '[data-delete]').click()
@@ -249,6 +258,32 @@ describe('the account view', () => {
       await settle(el)
       expect(document.activeElement).toBe(el.querySelector('[data-add-passkey]'))
     })
+  })
+
+  it('forgets its methods when the session ends', async () => {
+    const el = await account(stubApi())
+    el.session = 'signed-in'
+    await el.updateComplete
+    await waitUntil(() => el.querySelector('[data-provider]') !== null)
+    el.session = 'signed-out'
+    await el.updateComplete
+    expect(el.querySelector('[data-signed-out]')).not.toBeNull()
+    expect(el.querySelector('[data-provider]')).toBeNull()
+  })
+
+  it('ignores a read that answers after the session ended', async () => {
+    let answer: (outcome: MethodsOutcome) => void = () => {}
+    const el = await account(stubApi())
+    el.api = stubApi({ read: () => new Promise<MethodsOutcome>((resolve) => (answer = resolve)) })
+    el.session = 'signed-in'
+    await el.updateComplete
+    el.session = 'signed-out'
+    await el.updateComplete
+    answer(methods())
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await el.updateComplete
+    expect(el.querySelector('[data-provider]')).toBeNull()
+    expect(el.querySelector('[data-signed-out]')).not.toBeNull()
   })
 
   it('shows the signed-out state for a signed-out outcome', async () => {
