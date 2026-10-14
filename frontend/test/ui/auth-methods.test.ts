@@ -10,7 +10,7 @@ const answering = (response: Response | Error) =>
     return response
   }) as unknown as typeof fetch
 
-const ALL: AuthMethods = { google: true, github: true, email: true }
+const ALL: AuthMethods = { google: true, github: true, email: true, passkeys: true }
 
 describe('whether a body is an auth-methods answer', () => {
   it('accepts the contract shape', () => {
@@ -23,8 +23,13 @@ describe('whether a body is an auth-methods answer', () => {
     ['null', null],
     ['a missing flag', { google: true, github: true }],
     ['a flag that is not a boolean', { ...ALL, github: 'yes' }],
+    ['a passkeys flag that is not a boolean', { ...ALL, passkeys: 'yes' }],
   ])('refuses %s', (_name, body) => {
     expect(isAuthMethods(body)).toBe(false)
+  })
+
+  it('accepts and keeps a passkeys flag', () => {
+    expect(isAuthMethods({ ...ALL, passkeys: true })).toBe(true)
   })
 })
 
@@ -37,6 +42,14 @@ describe('authMethodsApi', () => {
     }) as unknown as typeof fetch)
     expect(await api.read()).toEqual(ALL)
     expect(asked).toBe('/api/auth/methods')
+  })
+
+  it('accepts an answer without the passkeys flag, reading it as false', async () => {
+    const api = authMethodsApi(
+      '/api',
+      answering(json(200, { google: true, github: true, email: true })),
+    )
+    expect(await api.read()).toEqual({ google: true, github: true, email: true, passkeys: false })
   })
 
   it.each([

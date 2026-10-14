@@ -30,6 +30,7 @@ import {
   removeLocalDatabases,
 } from './db/project-database.js'
 import { type EmailSignIn, emailSignIn } from './email-signin.js'
+import { type CredentialsLike, type PasskeySignIn, passkeySignIn } from './passkey-signin.js'
 
 import { type PlansApi, plansApi } from './plans.js'
 import { type Locale, profileApi, resolveProfileLocale } from './profile.js'
@@ -40,6 +41,7 @@ import {
   type SessionDependencies,
   signOut,
 } from './session.js'
+import { type SignInMethodsApi, signInMethodsApi } from './sign-in-methods.js'
 import { type ManagerDependencies, type SyncManager, syncManager } from './sync/manager.js'
 import { remoteProject } from './sync/remote.js'
 import type { SyncState } from './sync/replication.js'
@@ -266,6 +268,24 @@ export function authMethods(fetchImpl: typeof fetch = fetch): AuthMethodsApi {
 /** Email sign-in, wired to the API and this device's refresh-token store. */
 export function emailSignInClient(fetchImpl: typeof fetch = fetch): EmailSignIn {
   return emailSignIn(API_BASE, pouchRefreshTokenStore(localDatabase()), fetchImpl)
+}
+
+/**
+ * Passkey sign-in, wired to the API and this device's refresh-token store.
+ *
+ * @param credentials `navigator.credentials` by default; injected so a test needs no authenticator
+ */
+export function passkeyAuth(
+  store: RefreshTokenStore = pouchRefreshTokenStore(localDatabase()),
+  credentials: CredentialsLike = navigator.credentials,
+  fetchImpl: typeof fetch = fetch,
+): PasskeySignIn {
+  return passkeySignIn(API_BASE, store, credentials, fetchImpl)
+}
+
+/** The account's sign-in methods and passkeys, behind the same API base and access token. */
+export function signInMethods(fetchImpl: typeof fetch = fetch): SignInMethodsApi {
+  return signInMethodsApi(API_BASE, fetchImpl)
 }
 
 /**

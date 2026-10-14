@@ -5,13 +5,15 @@
  * a dead network — leaves the caller with the same move (fall back to the optimistic chooser),
  * so one `undefined` says it all, the `plans.ts` argument. There is deliberately no cache
  * document: a chooser shown offline cannot sign in whatever it offers, so a cached answer
- * would only ever advertise buttons that cannot work.
+ * would only ever advertise buttons that cannot work. An absent `passkeys` field indicates an
+ * older API and is read as `false`.
  */
 
 export interface AuthMethods {
   readonly google: boolean
   readonly github: boolean
   readonly email: boolean
+  readonly passkeys: boolean
 }
 
 /** Checked by shape at the trust boundary, as `isPlanMatrix` is. */
@@ -21,7 +23,8 @@ export function isAuthMethods(body: unknown): body is AuthMethods {
   return (
     typeof value.google === 'boolean' &&
     typeof value.github === 'boolean' &&
-    typeof value.email === 'boolean'
+    typeof value.email === 'boolean' &&
+    (value.passkeys === undefined || typeof value.passkeys === 'boolean')
   )
 }
 
@@ -44,7 +47,7 @@ export function authMethodsApi(baseUrl: string, fetchImpl: typeof fetch = fetch)
       } catch {
         return undefined
       }
-      return isAuthMethods(body) ? body : undefined
+      return isAuthMethods(body) ? { ...body, passkeys: body.passkeys ?? false } : undefined
     },
   }
 }

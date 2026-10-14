@@ -20,7 +20,7 @@ import { html, type TemplateResult } from 'lit'
 /** Which screen the dialog shows, with what that screen needs. The shell owns this. */
 export type SignInStep =
   /** The method chooser: one flag per method, derived by the shell from `/auth/methods`. */
-  | { step: 'chooser'; google: boolean; github: boolean; email: boolean }
+  | { step: 'chooser'; google: boolean; github: boolean; email: boolean; passkey: boolean }
   /** The address, `busy` while the code is being sent. */
   | { step: 'email'; busy: boolean }
   /** The code, sent to `email`; resend waits out the cooldown. */
@@ -32,6 +32,8 @@ export interface SignInActions {
   onGoogle(): void
   /** The GitHub redirect: the same journey, a different consent screen. */
   onGitHub(): void
+  /** The passkey ceremony: no redirect and no second screen, the browser asks for the key. */
+  onPasskey(): void
   /** The chooser's email option: show the address step. */
   onEmail(): void
   onSendCode(email: string): void
@@ -49,7 +51,7 @@ function emailValue(root: Element | null): string {
 
 /** The chooser: Google is the surface's one filled brand button; the others step aside politely. */
 function chooser(
-  state: { google: boolean; github: boolean; email: boolean },
+  state: { google: boolean; github: boolean; email: boolean; passkey: boolean },
   online: boolean,
   actions: SignInActions,
 ): TemplateResult {
@@ -75,6 +77,18 @@ function chooser(
             @click=${actions.onGitHub}
           >
             ${msg('Sign in with GitHub')}
+          </wa-button>`
+        : ''
+    }
+    ${
+      state.passkey
+        ? html`<wa-button
+            data-passkey-sign-in
+            appearance="outlined"
+            ?disabled=${!online}
+            @click=${actions.onPasskey}
+          >
+            ${msg('Sign in with a passkey')}
           </wa-button>`
         : ''
     }

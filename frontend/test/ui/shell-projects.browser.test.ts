@@ -2021,6 +2021,16 @@ describe('upgrading', () => {
     expect(body.scrollWidth).toBeLessThanOrEqual(body.clientWidth)
   }
 
+  it('lists the account in the German navigation at 360 px', async () => {
+    await page.viewport(360, 740)
+    await activateLocale('de')
+    const { element } = await mount({ session: 'signed-in' })
+    await waitUntil(() => element.querySelector('nav a[href="#/account"]') !== null, 'no entry')
+
+    const entry = element.querySelector('nav a[href="#/account"]') as HTMLElement
+    expect(text(entry)).toBe('Konto')
+  })
+
   it('wraps the German sign-in button at 360 px', async () => {
     await page.viewport(360, 740)
     await activateLocale('de')

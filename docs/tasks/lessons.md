@@ -1526,3 +1526,26 @@ legacy-Google heuristic).
 **Rule:** the writing-plans self-review's "spec coverage" pass is not a skim. For the spec's
 Testing section specifically, walk it line by line and point at the task test that pins each
 listed case; a line with no test is a gap to fix before the handoff.
+
+## Line-based filters cannot redact multi-line secrets
+
+Extracting "names only" from `docker inspect`'s Env with `cut -d= -f1` leaked two production EC
+private keys: the PEM values span lines, `cut` works per line, and every continuation line passed
+through verbatim (2026-10-13, forced a key rotation). Env entries are records, not lines.
+
+**Rule:** never run line-oriented filters (`cut`, `awk -F=`, `sed`) over output that can contain
+multi-line values when the goal is redaction. Use structure-aware extraction —
+`docker inspect --format '{{json .Config.Env}}' | jq -r '.[] | split("=")[0]'` — or do not read
+the data at all. Before proposing any "safe" read of secret-adjacent state, ask: what does this
+print if a value contains a newline?
+
+## Platform limits expire: verify before they drive architecture
+
+Stated as fact that a GitHub OAuth App has exactly one callback URL and derived a "second dev
+OAuth App" requirement from it — the limit fell in 2026-08 (up to 10 redirect URIs, selected by
+the `redirect_uri` parameter). The user corrected it from first-hand registration.
+
+**Rule:** before presenting a third-party platform constraint as the reason for an architectural
+step (extra app registrations, proxies, workarounds), check the provider's current docs or
+changelog — especially for fast-moving platforms and anything security-adjacent. Pre-training
+knowledge of such limits has a shelf life.

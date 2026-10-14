@@ -33,6 +33,8 @@ export const ROUTES: readonly Route[] = [
   // never shadow each other. `/devices/new` is the only ordering that carries weight here.
   { path: '/devices/:id/edit', view: 'edit-device' },
   { path: '/rooms', view: 'rooms', label: () => msg('Rooms'), icon: 'tags' },
+  // Listed only while signed in: the shell drops this entry from the navigation otherwise.
+  { path: '/account', view: 'account', label: () => msg('Account'), icon: 'user' },
   { path: '/settings', view: 'settings', label: () => msg('Settings'), icon: 'gear' },
 ]
 
