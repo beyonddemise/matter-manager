@@ -706,6 +706,7 @@ export class AppShell extends LitElement implements ViewHost {
       .passkeySupport=${this.passkeySupport}
       .email=${this.projects.facts?.email}
       .plan=${this.projects.facts?.plan}
+      .session=${this.session}
     ></account-view>`
   }
 
@@ -1054,9 +1055,11 @@ export class AppShell extends LitElement implements ViewHost {
       case 'dismissed':
         return
       case 'failed':
+        // The service answered and refused (a 401): it was reachable, so it is not said to be down.
+        this.signInNotice = msg('That did not work. Please try again.')
+        return
       case 'unavailable':
       case 'unreachable':
-        // One wording for all three: the reader's remedy is the same, try again or pick another way.
         this.signInNotice = msg('The sign-in service could not be reached. Please try again.')
         return
     }

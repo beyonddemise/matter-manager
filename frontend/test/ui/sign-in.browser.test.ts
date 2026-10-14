@@ -851,24 +851,23 @@ describe('signing in with an emailed code', () => {
       expect(dialog.querySelector('[data-sign-in-status]')?.textContent?.trim()).toBe('')
     })
 
-    it.each(['failed', 'unavailable', 'unreachable'] as const)(
-      '%s keeps the chooser and says the generic failure line',
-      async (kind) => {
-        const { client } = passkeyClient({ kind })
-        const { dialog } = await chooserWith(WITH_PASSKEYS, true, client)
-        await waitUntil(() => dialog.querySelector('[data-passkey-sign-in]') !== null, 'no passkey')
-        ;(dialog.querySelector('[data-passkey-sign-in]') as HTMLElement).click()
-        await waitUntil(
-          () => (dialog.querySelector('[data-sign-in-status]')?.textContent ?? '').trim() !== '',
-          'no notice',
-        )
+    it.each([
+      ['failed', 'That did not work. Please try again.'],
+      ['unavailable', 'The sign-in service could not be reached. Please try again.'],
+      ['unreachable', 'The sign-in service could not be reached. Please try again.'],
+    ] as const)('%s keeps the chooser and says its failure line', async (kind, line) => {
+      const { client } = passkeyClient({ kind })
+      const { dialog } = await chooserWith(WITH_PASSKEYS, true, client)
+      await waitUntil(() => dialog.querySelector('[data-passkey-sign-in]') !== null, 'no passkey')
+      ;(dialog.querySelector('[data-passkey-sign-in]') as HTMLElement).click()
+      await waitUntil(
+        () => (dialog.querySelector('[data-sign-in-status]')?.textContent ?? '').trim() !== '',
+        'no notice',
+      )
 
-        expect(dialog.querySelector('[data-sign-in-status]')?.textContent?.trim()).toBe(
-          'The sign-in service could not be reached. Please try again.',
-        )
-        expect(dialog.querySelector('[data-passkey-sign-in]')).not.toBeNull()
-      },
-    )
+      expect(dialog.querySelector('[data-sign-in-status]')?.textContent?.trim()).toBe(line)
+      expect(dialog.querySelector('[data-passkey-sign-in]')).not.toBeNull()
+    })
 
     it('an outcome landing after the reader left the chooser changes nothing', async () => {
       let finish: (outcome: PasskeySignInOutcome) => void = () => {}

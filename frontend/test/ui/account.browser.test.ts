@@ -80,6 +80,9 @@ async function account(
 const status = (el: AccountView): string =>
   el.querySelector('[role="status"]')?.textContent?.trim() ?? ''
 const rows = (el: AccountView): Element[] => [...el.querySelectorAll('[data-passkey]')]
+/** A control inside the n-th passkey row. */
+const rowButton = (el: AccountView, row: number, selector: string): HTMLElement =>
+  rows(el)[row]?.querySelector(selector) as HTMLElement
 const button = (el: AccountView, selector: string): HTMLElement =>
   el.querySelector(selector) as HTMLElement
 
@@ -183,6 +186,69 @@ describe('the account view', () => {
     await waitUntil(() => rows(el).length === 0, 'row still there')
     expect(api.remove).toHaveBeenCalledWith('p1')
     expect(status(el)).not.toBe('')
+  })
+
+  describe('focus after a change', () => {
+    const twoPasskeys = () =>
+      stubApi({
+        read: async () => ({
+          kind: 'methods',
+          methods: { google: true, github: false, email: true, passkeys: [laptop, phone] },
+        }),
+      })
+    const settle = async (el: AccountView) => {
+      await el.updateComplete
+      await el.updateComplete
+    }
+
+    it("returns to that row's Rename button after Save", async () => {
+      const el = await account(twoPasskeys())
+      rowButton(el, 1, '[data-rename]').click()
+      await el.updateComplete
+      const input = el.querySelector('wa-input[data-rename-input]') as HTMLInputElement
+      input.value = 'Mobile'
+      button(el, '[data-rename-save]').click()
+      await waitUntil(() => rows(el)[1]?.textContent?.includes('Mobile') === true)
+      await settle(el)
+      expect(document.activeElement).toBe(rows(el)[1]?.querySelector('[data-rename]'))
+    })
+
+    it("returns to that row's Rename button after Cancel", async () => {
+      const el = await account(twoPasskeys())
+      rowButton(el, 1, '[data-rename]').click()
+      await el.updateComplete
+      ;(el.querySelector('[data-rename-cancel]') as HTMLElement).click()
+      await settle(el)
+      expect(document.activeElement).toBe(rows(el)[1]?.querySelector('[data-rename]'))
+    })
+
+    it('returns to the Rename button after Escape', async () => {
+      const el = await account(twoPasskeys())
+      rowButton(el, 0, '[data-rename]').click()
+      await el.updateComplete
+      el.querySelector('wa-input[data-rename-input]')?.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
+      )
+      await settle(el)
+      expect(document.activeElement).toBe(rows(el)[0]?.querySelector('[data-rename]'))
+    })
+
+    it("moves to the next row's Rename button after Delete", async () => {
+      const el = await account(twoPasskeys())
+      rowButton(el, 0, '[data-delete]').click()
+      await waitUntil(() => rows(el).length === 1, 'row still there')
+      await settle(el)
+      expect(document.activeElement).toBe(rows(el)[0]?.querySelector('[data-rename]'))
+      expect(rows(el)[0]?.getAttribute('data-passkey')).toBe('p2')
+    })
+
+    it('moves to the Add button after deleting the last row', async () => {
+      const el = await account(stubApi())
+      button(el, '[data-delete]').click()
+      await waitUntil(() => rows(el).length === 0, 'row still there')
+      await settle(el)
+      expect(document.activeElement).toBe(el.querySelector('[data-add-passkey]'))
+    })
   })
 
   it('shows the signed-out state for a signed-out outcome', async () => {

@@ -13,6 +13,7 @@ import { BACKFILL_WANTED } from '../../src/ui/catalog.js'
 import type { CatalogBackfill } from '../../src/ui/catalog-backfill.js'
 import type { ConnectivitySource } from '../../src/ui/connectivity.js'
 import { PROJECT_CHANGED } from '../../src/ui/current-project.js'
+import type { SignInMethodsApi } from '../../src/ui/sign-in-methods.js'
 // The application's CSS: the sticky footer and its scroll padding are asserted below.
 import '../../src/ui/styles/app.css'
 import { NAV_ROUTES } from '../../src/ui/router/routes.js'
@@ -106,6 +107,35 @@ it('offers the Account page above Settings once signed in', async () => {
   const links = [...element.querySelectorAll('nav a')].map((a) => a.getAttribute('href'))
   expect(links.filter((href) => href === '#/account').length).toBe(1)
   expect(links.indexOf('#/account')).toBe(links.indexOf('#/settings') - 1)
+})
+
+it('re-reads the Account view once the session arrives after it mounted', async () => {
+  // A reload on #/account mounts the view before the refresher's first exchange has set the
+  // access token, so its one read finds nobody signed in. It must read again on sign-in.
+  window.location.hash = '#/account'
+  let signedIn = false
+  const api = {
+    read: vi.fn(async () =>
+      signedIn
+        ? {
+            kind: 'methods' as const,
+            methods: { google: true, github: false, email: false, passkeys: [] },
+          }
+        : { kind: 'signed-out' as const },
+    ),
+    add: vi.fn(),
+    rename: vi.fn(),
+    remove: vi.fn(),
+  } as unknown as SignInMethodsApi
+  const { element, play } = await driven(NETWORK, spyBackfill(), true, api)
+  await waitUntil(() => element.querySelector('[data-signed-out]') !== null, 'never signed-out')
+  signedIn = true
+  await play({ kind: 'refreshed', expiresIn: 300 })
+  await waitUntil(
+    () => element.querySelector('account-view [data-provider]') !== null,
+    'the view stayed signed-out after the session arrived',
+  )
+  expect(element.querySelector('[data-signed-out]')).toBeNull()
 })
 
 it('marks the current navigation entry', async () => {
@@ -475,6 +505,8 @@ const driven = async (
   backfill = spyBackfill(),
   /** False leaves `backfill` unbound, so the shell would build the real one if anything asked. */
   injectBackfill = true,
+  /** The Account view's sign-in-methods api; unbound, the shell builds the real client. */
+  signInMethods?: SignInMethodsApi,
 ) => {
   // Two downloaded copies, so the projects the tests report states for are ones replication is
   // handed: states of anything else are forgotten at the next refresh.
@@ -521,6 +553,7 @@ const driven = async (
         }))}
       .makeSync=${makeSync}
       .signOutOf=${signOutOf}
+      .signInMethodsApi=${signInMethods}
       .projectStore=${store}
     ></app-shell>
   `)) as HTMLElement & { updateComplete: Promise<unknown> }

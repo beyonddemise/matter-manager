@@ -1,7 +1,8 @@
 import { msg, updateWhenLocaleChanges } from '@lit/localize'
-import { html, LitElement, nothing, type TemplateResult } from 'lit'
+import { html, LitElement, nothing, type PropertyValues, type TemplateResult } from 'lit'
 import type { Plan } from '../../domain/plan.js'
 import type { CredentialsLike } from '../passkey-signin.js'
+import type { SessionState } from '../session.js'
 import type { Passkey, SignInMethods, SignInMethodsApi } from '../sign-in-methods.js'
 
 /** Each plan's name, a table so no plan is named by comparison (ADR 0009). */
@@ -39,6 +40,7 @@ export class AccountView extends LitElement {
     passkeySupport: { attribute: false },
     email: {},
     plan: {},
+    session: {},
     loaded: { state: true },
     editing: { state: true },
     busy: { state: true },
@@ -59,6 +61,14 @@ export class AccountView extends LitElement {
 
   /** The cached profile's plan. */
   declare plan?: Plan
+
+  /**
+   * What the shell believes about the session. Optional: a view mounted without it reads once on
+   * connect. Why it exists: a reload on this page mounts the view before the token refresher's
+   * first exchange, so the connect-time read finds nobody signed in; the view reads again when
+   * the session becomes `signed-in`.
+   */
+  declare session?: SessionState
 
   /**
    * What the account signs in with. `undefined` until the first read lands, `'signed-out'` when
@@ -85,12 +95,22 @@ export class AccountView extends LitElement {
 
   override connectedCallback(): void {
     super.connectedCallback()
-    void this.refresh()
+    // A view that arrives already signed-in is read by `willUpdate`, so it is not read twice.
+    if (this.session !== 'signed-in') void this.refresh()
   }
+
+  protected override willUpdate(changed: PropertyValues<this>): void {
+    if (changed.has('session') && this.session === 'signed-in') void this.refresh()
+  }
+
+  /** Counts reads, so an answer to an older read never overwrites a newer one. */
+  private reads = 0
 
   /** Reads the methods and shows what came back. */
   private async refresh(): Promise<void> {
+    const read = ++this.reads
     const outcome = await this.api.read()
+    if (read !== this.reads) return
     this.loaded = outcome.kind === 'methods' ? outcome.methods : outcome.kind
     if (outcome.kind === 'unreachable')
       this.announcement = msg('That did not work. Please try again.')
@@ -99,6 +119,39 @@ export class AccountView extends LitElement {
   /** The signed-in methods, or undefined in any other state. */
   private get methods(): SignInMethods | undefined {
     return typeof this.loaded === 'object' ? this.loaded : undefined
+  }
+
+  /** Where focus goes once the DOM has caught up and no request holds the buttons disabled. */
+  private pendingFocus: (() => Element | null | undefined) | undefined
+
+  /**
+   * Moves focus after a change. Why deferred: the control that had focus (Save, Cancel, Delete)
+   * is removed by the re-render, which would drop focus to `<body>` (WCAG 2.4.3); and while a
+   * request is in flight every button is disabled, which cannot take focus, so the move waits
+   * for `run` to release the busy flag.
+   */
+  private focusAfterRender(find: () => Element | null | undefined): void {
+    this.pendingFocus = find
+    if (!this.busy) void this.flushFocus()
+  }
+
+  /** Applies the pending focus move, once the render that follows the latest change is done. */
+  private async flushFocus(): Promise<void> {
+    await this.updateComplete
+    const find = this.pendingFocus
+    this.pendingFocus = undefined
+    ;(find?.() as HTMLElement | null | undefined)?.focus()
+  }
+
+  /** The Rename button of the row for `id`. */
+  private renameButton(id: string): Element | null {
+    return this.querySelector(`[data-passkey="${CSS.escape(id)}"] [data-rename]`)
+  }
+
+  /** Ends editing and returns focus to the row's Rename button. */
+  private stopEditing(id: string): void {
+    this.editing = undefined
+    this.focusAfterRender(() => this.renameButton(id))
   }
 
   /** Replaces the passkey list, keeping the providers. */
@@ -116,6 +169,7 @@ export class AccountView extends LitElement {
       await action()
     } finally {
       this.busy = false
+      if (this.pendingFocus !== undefined) void this.flushFocus()
     }
   }
 
@@ -156,7 +210,7 @@ export class AccountView extends LitElement {
         this.setPasskeys(
           (this.methods?.passkeys ?? []).map((p) => (p.id === passkey.id ? { ...p, label } : p)),
         )
-        this.editing = undefined
+        this.stopEditing(passkey.id)
         this.announcement = msg('Passkey renamed.')
       } else if (outcome.kind === 'missing') {
         // Removed on another device: the list is stale, so it is read again.
@@ -175,8 +229,16 @@ export class AccountView extends LitElement {
     this.run(async () => {
       const outcome = await this.api.remove(passkey.id)
       if (outcome.kind === 'done' || outcome.kind === 'missing') {
-        this.setPasskeys((this.methods?.passkeys ?? []).filter((p) => p.id !== passkey.id))
+        const before = this.methods?.passkeys ?? []
+        const next = before[before.findIndex((p) => p.id === passkey.id) + 1]
+        this.setPasskeys(before.filter((p) => p.id !== passkey.id))
         this.announcement = msg('Passkey deleted.')
+        // The next row stands where the deleted one was; with none left, the Add button.
+        this.focusAfterRender(() =>
+          next === undefined
+            ? this.querySelector('[data-add-passkey]')
+            : this.renameButton(next.id),
+        )
       } else if (outcome.kind === 'signed-out') {
         this.loaded = 'signed-out'
       } else {
@@ -197,7 +259,7 @@ export class AccountView extends LitElement {
       event.preventDefault()
       void this.commitRename(passkey, event.currentTarget as unknown as { value: string })
     } else if (event.key === 'Escape') {
-      this.editing = undefined
+      this.stopEditing(passkey.id)
     }
   }
 
@@ -235,7 +297,11 @@ export class AccountView extends LitElement {
         >
           ${msg('Save')}
         </wa-button>
-        <wa-button appearance="plain" @click=${() => (this.editing = undefined)}>
+        <wa-button
+          data-rename-cancel
+          appearance="plain"
+          @click=${() => this.stopEditing(passkey.id)}
+        >
           ${msg('Cancel')}
         </wa-button>
       </div>
