@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { activateLocale } from '../../../src/ui/i18n/localization.js'
 import {
+  introText,
   locationText,
   openRefusalText,
   overLimitText,
@@ -80,11 +81,30 @@ describe('reasons as sentences', () => {
     expect(said).toContain('Projects you own: 2')
   })
 
+  it('introduces the page: what a project is, then the allowance as a count', () => {
+    const said = introText(1, false)
+    expect(said).toContain('A project holds the rooms and Matter devices of one home or site.')
+    expect(said).toContain('Projects your plan includes: 1, kept on this device.')
+  })
+
+  it('leaves the device out of an allowance that syncs', () => {
+    expect(introText(5, true)).toContain('Projects your plan includes: 5.')
+    expect(introText(5, true)).not.toContain('kept on this device')
+  })
+
+  it('says an unlimited allowance in words, not a number', () => {
+    const said = introText(-1, true)
+    expect(said).toContain('Your plan has no project limit.')
+    expect(said).not.toContain('-1')
+  })
+
   it('says all of it in German', async () => {
     await activateLocale('de')
     expect(reasonText('offline')).toBe('Benötigt eine Verbindung')
     expect(openRefusalText('offline')).toBe('Offline nicht verfügbar')
     expect(locationText('synced')).toBe('Synchronisiert')
     expect(overLimitText(1, 2)).toContain('Ihr Tarif')
+    expect(introText(1, false)).toContain('Ein Projekt')
+    expect(introText(-1, true)).toContain('Projektlimit')
   })
 })

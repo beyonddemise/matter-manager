@@ -58,6 +58,7 @@ const credentials = {} as CredentialsLike
 async function account(
   api: SignInMethodsApi,
   support: () => boolean = () => true,
+  plan = 'free',
 ): Promise<AccountView> {
   const element = (await fixture(
     html`<account-view
@@ -65,7 +66,7 @@ async function account(
       .credentials=${credentials}
       .passkeySupport=${support}
       email="ada@example.org"
-      plan="free"
+      plan=${plan}
     ></account-view>`,
   )) as AccountView
   await waitUntil(
@@ -95,6 +96,12 @@ describe('the account view', () => {
     const el = await account(stubApi())
     expect(el.textContent).toContain('ada@example.org')
     expect(el.textContent).toContain('Free')
+  })
+
+  it('names the member tier by its public name, Home', async () => {
+    const el = await account(stubApi(), () => true, 'member')
+    expect(el.textContent).toContain('Home')
+    expect(el.textContent).not.toContain('Member')
   })
 
   it('has real headings', async () => {

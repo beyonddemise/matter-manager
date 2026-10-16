@@ -41,10 +41,14 @@ import type { PlanMatrix } from './plans.js'
 import type { PlanRequest } from './profile.js'
 import type { SessionState } from './session.js'
 
-/** Each plan's name as the dialog shows it. A table, so no plan is named by comparison. */
+/**
+ * Each plan's public name as the dialog shows it. A table, so no plan is named by comparison.
+ * The `member` tier is marketed as "Home" (`MARKETING_TIERS` in `domain/plan.ts`); the internal
+ * tier name never reaches the reader.
+ */
 const PLAN_NAMES: Readonly<Record<Plan, () => string>> = {
   free: () => msg('Free'),
-  member: () => msg('Member'),
+  member: () => msg('Home'),
   pro: () => msg('Pro'),
 }
 

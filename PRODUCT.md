@@ -47,7 +47,7 @@ Success: no one who used Matter Manager ever has to factory-reset a device becau
   - share with roles;
   - transfer ownership.
 - **Roles per project:** owner, manage, write, read. Ownership moves only by transfer.
-- **Plans:** free (1 project, local only), member (5), pro (unlimited, with a client name per project). Plan limits count local and server projects together, and shared projects don't count.
+- **Plans:** free (1 project, local only), member (5), pro (unlimited, with a client name per project). Plan limits count local and server projects together, and shared projects don't count. `member` is the internal tier name; the interface and all marketing say **"Home"** (the mapping lives in `MARKETING_TIERS`, `frontend/src/domain/plan.ts`).
 - **Sign-in:** Google OIDC. Facebook sign-in is planned for later.
 - **Languages:** English and German. German uses the formal *Sie*. The language follows the browser and can be overridden in the profile.
 

@@ -5,10 +5,14 @@ import type { CredentialsLike } from '../passkey-signin.js'
 import type { SessionState } from '../session.js'
 import type { Passkey, SignInMethods, SignInMethodsApi } from '../sign-in-methods.js'
 
-/** Each plan's name, a table so no plan is named by comparison (ADR 0009). */
+/**
+ * Each plan's public name, a table so no plan is named by comparison (ADR 0009). The `member`
+ * tier is marketed as "Home" (see `MARKETING_TIERS` in `domain/plan.ts`); the internal tier name
+ * never reaches the reader.
+ */
 const PLAN_NAMES: Readonly<Record<Plan, () => string>> = {
   free: () => msg('Free'),
-  member: () => msg('Member'),
+  member: () => msg('Home'),
   pro: () => msg('Pro'),
 }
 

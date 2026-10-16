@@ -1,7 +1,7 @@
 import { msg, str, updateWhenLocaleChanges } from '@lit/localize'
 import { html, LitElement, nothing, type TemplateResult } from 'lit'
 import type { LocalProjectEntry } from '../../data/index.js'
-import { DEFAULT_PLAN, showsUpgrade } from '../../domain/plan.js'
+import { DEFAULT_PLAN, planSyncs, showsUpgrade } from '../../domain/plan.js'
 import { projects } from '../composition.js'
 import { writeCurrentProjectId } from '../current-project.js'
 import { currentProjectDatabaseName, useProjectDatabase } from '../db/project-database.js'
@@ -45,6 +45,7 @@ import {
 } from './project-action-menu.js'
 import { clearFields, fieldValue, replicated, type Sort, sortRows } from './projects-helpers.js'
 import {
+  introText,
   locationText,
   type MenuAction,
   openRefusalText,
@@ -420,6 +421,9 @@ export class ProjectsView extends LitElement {
     return html`
       <section class="wa-stack wa-gap-l app-projects">
         <h1>${msg('Projects')}</h1>
+        <p data-projects-intro class="app-empty">
+          ${introText(model.limit, planSyncs(this.input.plan))}
+        </p>
         ${this.renderHints(model)}
         ${
           this.error === undefined
