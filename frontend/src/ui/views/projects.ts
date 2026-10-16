@@ -614,15 +614,21 @@ export class ProjectsView extends LitElement {
    */
   private renderMember(model: ProjectsModel): TemplateResult {
     // One slot where the allowance was never reported. Counting by looking only works if the
-    // number of slots is the number the account actually has; drawing the plan table's guess
-    // would answer "how many more can I have" with a figure nobody promised. One slot says what
-    // is true either way — there is room to create — and says nothing about how much.
-    const free =
-      model.overLimit || model.limit < 0
+    // number of slots is the number the account actually has; drawing the guess from the plan
+    // table would answer "how many more can I have" with a figure nobody promised. One slot says
+    // what is true either way — there is room to create — and says nothing about how much.
+    //
+    // `limitKnown` is asked FIRST, and that ordering is the whole point. `overLimit` compares the
+    // owned count against the same guess, so letting it decide here would put the guess back on
+    // screen through the side door: six projects and no reported allowance would show no slot at
+    // all, which asserts "no room" just as confidently as a count would. The Create button is
+    // still refused by `canOwnAnother` — conservative, and unchanged — and the callout above says
+    // why, so an unusable slot is explained rather than silently absent.
+    const free = !model.limitKnown
+      ? 1
+      : model.overLimit || model.limit < 0
         ? 0
-        : model.limitKnown
-          ? Math.max(0, model.limit - model.ownedCount)
-          : 1
+        : Math.max(0, model.limit - model.ownedCount)
     return html`
       ${this.renderCreateReason(model)}
       <ul class="wa-stack wa-gap-s app-project-slots">

@@ -1271,6 +1271,10 @@ describe('the project allowance', () => {
     expect(said).toContain('Your plan has no room for another project')
     expect(said).not.toContain('Projects your plan allows')
     expect(said).not.toContain('Projects you own')
+    // The blind spot in this test as first written, and CodeRabbit found it: asserting only the
+    // callout let the slot vanish unnoticed. `overLimit` is computed from the same guess, so
+    // honouring it here would assert "no room" exactly as confidently as a count would.
+    expect(view.querySelectorAll('[data-slot-empty]')).toHaveLength(1)
   })
 
   it('still counts the allowance it was told', async () => {
