@@ -35,7 +35,7 @@
     "verify": "npm run check:webawesome && npm run check:i18n && npm run check:deploy && npm run check:routes && npm run check:functions && npm run check:graph && npm run check && npm run typecheck && npm run test:coverage && npm run build && npm run check:lazy && npm run check:lazy-pdf && npm run check:offline"
   },
   "dependencies": {
-    "@awesome.me/webawesome-pro": "^3.12.0",
+    "@awesome.me/webawesome-pro": "^3.14.0",
     "@lit/localize": "^0.12.2",
     "@zxing/browser": "^0.2.1",
     "events": "^3.3.0",
