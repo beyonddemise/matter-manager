@@ -164,6 +164,14 @@ export interface LocalProjectEntry {
    * Meaningless while local-only.
    */
   readonly role?: 'owner' | 'manage' | 'write' | 'read'
+  /**
+   * The signed-in account (the profile's `sub`) that put this entry in the index — whose copy
+   * it is, not who owns the project on the server (`role` speaks to that). Absent on an entry
+   * made while signed out, which is the device's and everyone's, and on entries that predate
+   * the field. The projects page hides an entry whose account is somebody else's; the data
+   * itself stays on the device (hiding is listing, removal is a sign-out's decision).
+   */
+  readonly account?: string
   /** When this device first knew of the project, ISO-8601. */
   readonly createdAt: string
 }
@@ -209,6 +217,15 @@ export interface LocalCache {
   readProfile(): Promise<CachedProfile | undefined>
   /** Replaces the cached profile. */
   writeProfile(profile: CachedProfile): Promise<void>
+  /**
+   * Forgets the cached profile, and only it; a no-op when none is cached.
+   *
+   * Called when a different refresh token is stored (`pouchRefreshTokenStore`): a new sign-in,
+   * which may be somebody else's, because an expired session keeps local data. The profile
+   * cached is the previous account's until the new one is fetched; read in that window, it
+   * would stamp and filter the newcomer's projects as the previous account's.
+   */
+  clearProfile(): Promise<void>
   /** The cached plan matrix, or `undefined` if `GET /plans` has never answered. */
   readPlanMatrix(): Promise<CachedPlanMatrix | undefined>
   /** Replaces the cached plan matrix. */
@@ -424,6 +441,13 @@ export function localCache(database: PouchDB.Database): LocalCache {
 
     async writeProfile(profile: CachedProfile): Promise<void> {
       await writeSingleton(PROFILE_ID, profile)
+    },
+
+    async clearProfile(): Promise<void> {
+      // A tombstone is fine here, unlike in `clear`: it carries the fixed id, nothing personal.
+      const existing = await readSingleton<{ _id: string; _rev: string }>(PROFILE_ID)
+      if (existing === undefined) return
+      await database.remove(existing._id, existing._rev)
     },
 
     async readPlanMatrix(): Promise<CachedPlanMatrix | undefined> {

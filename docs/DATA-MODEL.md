@@ -244,6 +244,7 @@ range and one database has exactly one entry (`LocalProjectEntry`, `frontend/src
   "client": "Familie Muster",     // absent rather than empty
   "projectId": "8f14e45f-...",    // the server's id; absent while local-only
   "role": "owner",                // owner | manage | write | read; meaningless while local-only
+  "account": "google-oauth2|1",   // whose copy: the profile sub that indexed it; absent = everyone's
   "createdAt": "2026-10-03T08:00:00.000Z"
 }
 ```
@@ -259,9 +260,29 @@ range and one database has exactly one entry (`LocalProjectEntry`, `frontend/src
   the local entry the moment `POST /projects` answers, before any data has moved, so the
   *database name* decides (`isLocalOnlyDatabase`): `project_local` and `project_local_<uuid>`
   are local-only whatever the entry says.
+- **`account` is whose copy it is, not who owns the project** (`role` speaks to ownership on the
+  server): the signed-in profile's `sub` at create/index time, absent on entries created signed
+  out and on entries that predate the field. The stored refresh token alone says whether anyone
+  is signed in — neither a cached profile nor its absence does, and neither does the shell's
+  session state, which is unknown until the refresher answers. Storing a *different* refresh
+  token forgets the cached profile first (`pouchRefreshTokenStore` → `clearProfile`): every
+  sign-in method ends there, and the new token may be somebody else's, since an expired session
+  keeps local data. A refresh stores the same token and forgets nothing. Signed in with no
+  profile cached, creating fetches it first, and refuses (`unreachable`) rather than write an
+  entry with no owner (`resolveAccount`). Indexing a server copy never refuses — the server
+  already holds the project — so when it learns no account (signed out, or not resolvable) it
+  keeps the entry's existing stamp, and a new entry stays unstamped.
+- **The projects page hides — and does not count — another account's entries.** Signed in, it
+  shows unstamped entries and those stamped with the cached profile's `sub`; with no profile
+  cached yet, unstamped entries only — and the stored current project is opened from a fallback
+  but not overwritten (`accountPending`), since it may be this account's, hidden only until the
+  profile arrives. Signed out, it hides nothing. Hiding is listing only: the data stays on the
+  device, and removal remains a sign-out's decision. Not a security boundary — anyone with the
+  browser profile can read IndexedDB.
 - Rewritten by the same revision-retry loop as the rest of `mm-local`. On sign-out the index is
   destroyed with `mm-local`, and the entries of the local-only projects that were kept are
-  written again into the fresh one.
+  written again into the fresh one — their `account` stamps included, so a later different
+  account does not see them.
 
 ### Database naming on the device
 

@@ -84,6 +84,7 @@ const NO_FACTS: ProjectFacts = {
   server: undefined,
   serverStale: true,
   plan: DEFAULT_PLAN,
+  accountPending: false,
 }
 
 /** See the module comment. */
@@ -373,6 +374,10 @@ export class ProjectsController implements ReactiveController {
     const facts = await readProjectFacts(
       store.cache(),
       this.host.session === 'signed-in' ? this.fresh : undefined,
+      // The stored token, not `host.session`: that is unknown until the refresher answers (and
+      // through an offline start), and an early read must not filter by a stale profile. An
+      // `expired` session keeps its token: still that person's device, still their view.
+      await store.signedIn().catch(() => false),
     )
     if (generation !== this.sessionGeneration) return
     // Read across an action: possibly from before it, so neither shown nor applied. Applying it
@@ -402,8 +407,11 @@ export class ProjectsController implements ReactiveController {
     const stored = readCurrentProjectId(() => localStorage)
     const current = resolveCurrentProject(stored, model)
     // The *choice* is corrected too, not only the database: a stored id that matches nothing
-    // would be re-resolved, and fall back again, on every load.
-    if (current.id !== stored) writeCurrentProjectId(() => localStorage, current.id)
+    // would be re-resolved, and fall back again, on every load. Not while the account is
+    // pending: the stored project may be this account's, hidden only until its profile arrives,
+    // and the fallback is for now - written over the choice, the next read could not restore it.
+    const pending = (this.facts ?? NO_FACTS).accountPending
+    if (current.id !== stored && !pending) writeCurrentProjectId(() => localStorage, current.id)
     useProjectDatabase(current.dbName, current.editable)
     if (this.sync === undefined) return
     const replicated = synchronizedProjects(model)

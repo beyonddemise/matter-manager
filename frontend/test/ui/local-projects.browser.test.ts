@@ -10,14 +10,19 @@ import {
   removeLocalDatabases,
 } from '../../src/ui/db/project-database.js'
 import {
+  type AccountSources,
   adoptLegacyCatalogue,
   createLocalProject,
   destroyLocalProject,
   indexServerProject,
   localProjectDefaults,
   renameLocalProject,
+  resolveAccount,
   setLocalClient,
 } from '../../src/ui/local-projects.js'
+import type { Profile } from '../../src/ui/profile.js'
+import { ProjectCreationError } from '../../src/ui/projects.js'
+import { pouchRefreshTokenStore } from '../../src/ui/tokens.js'
 
 /** Whether a database holds any document, opened fresh so no memoised handle can answer. */
 async function documentCount(name: string): Promise<number> {
@@ -151,6 +156,196 @@ describe('indexing a copy of a server project', () => {
     const [entry] = await localProfileCache().readLocalProjects()
     expect(entry).toEqual({ ...first, name: 'Neu', client: undefined })
     expect(entry !== undefined && 'client' in entry).toBe(false)
+  })
+})
+
+describe('whose copy an entry is', () => {
+  const profile = { sub: 'google|1', plan: 'free' as const, fetchedAt: '2026-10-16T08:00:00.000Z' }
+
+  /** Signed in as `resolveAccount` sees it: a stored refresh token and the cached profile. */
+  async function signIn(): Promise<void> {
+    await pouchRefreshTokenStore(localDatabase()).write('refresh-token')
+    await localProfileCache().writeProfile(profile)
+  }
+
+  it('stamps a created project with the signed-in account', async () => {
+    await signIn()
+
+    const entry = await createLocalProject({ name: 'Mine' })
+
+    expect(entry.account).toBe('google|1')
+    expect(await localProfileCache().readLocalProjects()).toMatchObject([{ account: 'google|1' }])
+  })
+
+  it('leaves a project created signed out unstamped', async () => {
+    const entry = await createLocalProject({ name: 'Device' })
+
+    expect(entry.account).toBeUndefined()
+  })
+
+  it('stamps an indexed server copy', async () => {
+    await signIn()
+
+    await indexServerProject({ projectId: 'p7', dbName: 'project_p7', name: 'Beta', role: 'owner' })
+
+    expect(await localProfileCache().readLocalProjects()).toMatchObject([{ account: 'google|1' }])
+  })
+
+  it('never adopts on a rename: an unstamped entry stays unstamped', async () => {
+    const { dbName } = await createLocalProject({ name: 'Old' })
+    await signIn()
+
+    await renameLocalProject(dbName, 'New')
+    await setLocalClient(dbName, 'Acme')
+
+    const [entry] = await localProfileCache().readLocalProjects()
+    expect(entry?.name).toBe('New')
+    expect(entry?.account).toBeUndefined()
+  })
+})
+
+describe('a new credential forgets whose profile was cached', () => {
+  // Every way in - email, passkey, and the Google and GitHub redirects, whose first token
+  // exchange stores the cookie's token - ends by storing a refresh token. A different one may
+  // be somebody else's (an expired session keeps local data), so the cached profile goes with
+  // the old token, before the new one is stored.
+  const previous = { sub: 'google|previous', fetchedAt: '2026-10-16T08:00:00.000Z' }
+
+  it('forgets the cached profile when a different token is stored', async () => {
+    const store = pouchRefreshTokenStore(localDatabase())
+    await store.write('token-a')
+    await localProfileCache().writeProfile(previous)
+
+    await store.write('token-b')
+
+    expect(await localProfileCache().readProfile()).toBeUndefined()
+    expect(await store.read()).toBe('token-b')
+  })
+
+  it('keeps it when the same token is stored again, as every refresh does', async () => {
+    const store = pouchRefreshTokenStore(localDatabase())
+    await store.write('token-a')
+    await localProfileCache().writeProfile(previous)
+
+    await store.write('token-a')
+
+    expect(await localProfileCache().readProfile()).toMatchObject({ sub: 'google|previous' })
+  })
+
+  it('forgets a profile left from before any token was stored', async () => {
+    await localProfileCache().writeProfile(previous)
+
+    await pouchRefreshTokenStore(localDatabase()).write('token-a')
+
+    expect(await localProfileCache().readProfile()).toBeUndefined()
+  })
+})
+
+describe('resolving the account to stamp', () => {
+  const fetched: Profile = {
+    sub: 'google|2',
+    email: 'a@example.com',
+    displayName: 'A',
+    locale: 'auto',
+    plan: 'free',
+    projectLimit: 1,
+  }
+
+  /** Sources for `resolveAccount`, each overridable; by default signed in with nothing cached. */
+  function sources(overrides: Partial<AccountSources> = {}) {
+    const remembered: Profile[] = []
+    const all: AccountSources = {
+      cachedSub: async () => undefined,
+      signedIn: async () => true,
+      fetchProfile: async () => fetched,
+      remember: async (profile) => {
+        remembered.push(profile)
+      },
+      ...overrides,
+    }
+    return { all, remembered }
+  }
+
+  it('uses the cached profile without asking the server', async () => {
+    const { all } = sources({
+      cachedSub: async () => 'google|1',
+      fetchProfile: () => Promise.reject(new Error('must not be asked')),
+    })
+
+    expect(await resolveAccount(all)).toBe('google|1')
+  })
+
+  it('ignores a profile left cached after signing out', async () => {
+    const { all } = sources({ cachedSub: async () => 'google|1', signedIn: async () => false })
+
+    expect(await resolveAccount(all)).toBeUndefined()
+  })
+
+  it('answers undefined when signed out, without asking the server', async () => {
+    const { all } = sources({
+      signedIn: async () => false,
+      fetchProfile: () => Promise.reject(new Error('must not be asked')),
+    })
+
+    expect(await resolveAccount(all)).toBeUndefined()
+  })
+
+  it('fetches and caches the profile when signed in before it was cached', async () => {
+    const { all, remembered } = sources()
+
+    expect(await resolveAccount(all)).toBe('google|2')
+    expect(remembered).toEqual([fetched])
+  })
+
+  it('treats an unreadable cache like an empty one', async () => {
+    const { all } = sources({ cachedSub: () => Promise.reject(new Error('unreadable')) })
+
+    expect(await resolveAccount(all)).toBe('google|2')
+  })
+
+  it('still stamps when the fetched profile cannot be cached', async () => {
+    const { all } = sources({ remember: () => Promise.reject(new Error('full')) })
+
+    expect(await resolveAccount(all)).toBe('google|2')
+  })
+
+  it('refuses, rather than leave the entry unstamped, when signed in and the server fails', async () => {
+    const { all } = sources({ fetchProfile: () => Promise.reject(new TypeError('offline')) })
+
+    await expect(resolveAccount(all)).rejects.toThrow(ProjectCreationError)
+  })
+
+  it('refuses when signed in but no access token is held yet', async () => {
+    const { all } = sources({ fetchProfile: async () => undefined })
+
+    await expect(resolveAccount(all)).rejects.toMatchObject({ reason: 'unreachable' })
+  })
+
+  it('creates nothing when the account cannot be resolved', async () => {
+    const before = await localProfileCache().readLocalProjects()
+
+    await expect(
+      createLocalProject(
+        { name: 'Orphan' },
+        {
+          ...localProjectDefaults,
+          account: () => Promise.reject(new ProjectCreationError('unreachable')),
+        },
+      ),
+    ).rejects.toThrow(ProjectCreationError)
+    expect(await localProfileCache().readLocalProjects()).toEqual(before)
+  })
+
+  it('still indexes a server copy the server already holds when the account is unknown', async () => {
+    await indexServerProject(
+      { projectId: 'p8', dbName: 'project_p8', name: 'Gamma', role: 'owner' },
+      {
+        ...localProjectDefaults,
+        account: () => Promise.reject(new ProjectCreationError('unreachable')),
+      },
+    )
+
+    expect(await localProfileCache().readLocalProjects()).toMatchObject([{ dbName: 'project_p8' }])
   })
 })
 

@@ -42,6 +42,7 @@ function fakeCache(initial?: CachedPlanMatrix, broken?: 'read' | 'write') {
   const cache: LocalCache = {
     readProfile: unused,
     writeProfile: unused,
+    clearProfile: unused,
     readProjects: unused,
     writeProjects: unused,
     setLocalState: unused,

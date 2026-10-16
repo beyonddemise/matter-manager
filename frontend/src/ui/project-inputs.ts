@@ -37,6 +37,12 @@ export interface ProjectFacts {
   readonly email?: string
   /** The plan the account is waiting for, when the cached profile says it is (#224). */
   readonly request?: PlanRequest
+  /**
+   * Signed in, but whose session this is is not known yet: no profile is cached (a new token
+   * forgets it). {@link local} then holds only unstamped entries, so a choice it lacks may only be
+   * waiting for the profile - something to fall back from for now, not to overwrite.
+   */
+  readonly accountPending: boolean
 }
 
 /** A device that never signed in and holds nothing: what an unreadable cache reads as. */
@@ -45,6 +51,7 @@ const NOTHING: ProjectFacts = {
   server: undefined,
   serverStale: true,
   plan: DEFAULT_PLAN,
+  accountPending: false,
 }
 
 /** What of a listed project is remembered: the fields an offline page has questions about. */
@@ -102,16 +109,31 @@ export async function fetchProjectList(
  * @param fresh this signed-in session's list, if it was fetched; otherwise the remembered one is
  *   used, flagged stale. The caller passes `undefined` whenever the session is not signed in, so
  *   a list nobody is entitled to have just heard is never presented as fresh.
+ * @param signedIn whether this device holds a session (a stored refresh token). Signed out,
+ *   nothing is hidden; signed in, entries stamped for any other account are
  */
 export async function readProjectFacts(
   cache: LocalCache,
   fresh: readonly ListedProject[] | undefined,
+  signedIn: boolean,
 ): Promise<ProjectFacts> {
   const [local, profile, cachedList] = await Promise.all([
     cache.readLocalProjects().catch(() => NOTHING.local),
     cache.readProfile().catch(() => undefined),
     fresh === undefined ? cache.readProjects().catch(() => []) : Promise.resolve([]),
   ])
+  // Another account's entries are not this account's to see: an entry stamped with a different
+  // `sub` is left out of the list — and so out of the plan count — while its data stays on the
+  // device (hiding is listing; removal is a sign-out's decision). An unstamped entry predates
+  // the stamp or was made signed out, and shows for everyone. Signed out, nothing is hidden:
+  // there is nobody to hide it from, and a profile a half-failed sign-out left behind names
+  // nobody who is still here. Signed in with no profile yet - a fresh sign-in forgets it, so the
+  // next person is never shown as the last - every stamped entry is somebody else's until the
+  // profile says whose this session is.
+  const sub = profile?.sub
+  const visible = signedIn
+    ? local.filter((entry) => entry.account === undefined || entry.account === sub)
+    : local
   // A project marked `accessRemoved` was not in the last list heard; it is not part of it.
   const lastHeard = cachedList.filter((project) => !project.accessRemoved).map(listed)
   // An empty remembered list cannot be told from none (the cache has no "heard" marker), and the
@@ -119,12 +141,13 @@ export async function readProjectFacts(
   const server = fresh ?? (lastHeard.length === 0 ? undefined : lastHeard)
   const request = cachedRequest(profile)
   return {
-    local,
+    local: visible,
     server,
     serverStale: fresh === undefined,
     plan: cachedPlan(profile),
     ...(profile?.projectLimit === undefined ? {} : { reportedLimit: profile.projectLimit }),
     ...(profile?.email === undefined ? {} : { email: profile.email }),
     ...(request === undefined ? {} : { request }),
+    accountPending: signedIn && sub === undefined,
   }
 }
