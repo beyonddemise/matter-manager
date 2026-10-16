@@ -688,6 +688,37 @@ describe('every plan', () => {
   })
 })
 
+describe('what a project is, and what the plan allows', () => {
+  it('explains the project and the free allowance, kept on this device', async () => {
+    const view = await page()
+
+    const said = text(find(view, '[data-projects-intro]'))
+    expect(said).toContain('A project holds the rooms and Matter devices of one home or site.')
+    expect(said).toContain('Projects your plan includes: 1, kept on this device.')
+  })
+
+  it('states the allowance from the limit in force', async () => {
+    const view = await page({ plan: 'member', reportedLimit: 3 })
+
+    expect(text(find(view, '[data-projects-intro]'))).toContain('Projects your plan includes: 3.')
+  })
+
+  it('states an unlimited allowance in words, not a number', async () => {
+    const view = await page({ plan: 'pro' })
+
+    expect(text(find(view, '[data-projects-intro]'))).toContain('Your plan has no project limit.')
+  })
+
+  it('speaks German', async () => {
+    await activateLocale('de')
+    const view = await page()
+
+    const said = text(find(view, '[data-projects-intro]'))
+    expect(said).toContain('Ein Projekt')
+    expect(said).not.toContain('A project')
+  })
+})
+
 describe('the actions menu', () => {
   const member = (input: Partial<ProjectsInput> = {}) =>
     page({ plan: 'member', reportedLimit: 3, ...input })

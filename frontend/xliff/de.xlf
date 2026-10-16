@@ -1011,10 +1011,6 @@
   <source>Free</source>
   <target>Kostenlos</target>
 </trans-unit>
-<trans-unit id="s751678adb0aa2b23">
-  <source>Member</source>
-  <target>Mitglied</target>
-</trans-unit>
 <trans-unit id="s8e067719f45b0458">
   <source>Pro</source>
   <target>Pro</target>
@@ -1226,6 +1222,26 @@
 <trans-unit id="s067e44ade6b9e558">
   <source>Sign in to manage how you sign in.</source>
   <target>Melden Sie sich an, um Ihre Anmeldemethoden zu verwalten.</target>
+</trans-unit>
+<trans-unit id="s6abb1cd87fe0114e">
+  <source>Home</source>
+  <target>Home</target>
+</trans-unit>
+<trans-unit id="sb571f38ff79bf461">
+  <source>A project holds the rooms and Matter devices of one home or site.</source>
+  <target>Ein Projekt umfasst die Räume und Matter-Geräte eines Zuhauses oder Standorts.</target>
+</trans-unit>
+<trans-unit id="s2fe37ddee0cfb7e8">
+  <source>Your plan has no project limit.</source>
+  <target>Ihr Tarif hat kein Projektlimit.</target>
+</trans-unit>
+<trans-unit id="sf9ec6fbd6124932c">
+  <source>Projects your plan includes: <x id="0" equiv-text="${limit}"/>.</source>
+  <target>Projekte, die Ihr Tarif umfasst: <x id="0" equiv-text="${limit}"/>.</target>
+</trans-unit>
+<trans-unit id="s8a9e9389a21bac7d">
+  <source>Projects your plan includes: <x id="0" equiv-text="${limit}"/>, kept on this device.</source>
+  <target>Projekte, die Ihr Tarif umfasst: <x id="0" equiv-text="${limit}"/>, nur auf diesem Gerät.</target>
 </trans-unit>
 </body>
 </file>

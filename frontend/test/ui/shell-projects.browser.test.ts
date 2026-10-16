@@ -1235,7 +1235,7 @@ describe('upgrading', () => {
         th.getAttribute('data-plan-column'),
       ),
     ).toEqual(['free', 'member', 'pro'])
-    expect(texts(table, 'th[data-plan-column]')).toEqual(['Free', 'Member Your plan', 'Pro'])
+    expect(texts(table, 'th[data-plan-column]')).toEqual(['Free', 'Home Your plan', 'Pro'])
     expect(
       [...table.querySelectorAll('.app-plan-current')].every(
         (cell) =>
@@ -1302,7 +1302,7 @@ describe('upgrading', () => {
     const dialog = await openUpgrade(element)
 
     expect(text(dialog)).toContain('Ihr Plan')
-    expect(text(dialog)).toContain('Mitglied')
+    expect(text(dialog)).toContain('Home')
     expect(text(dialog)).toContain('Wird noch bekannt gegeben')
     expect(text(dialog)).toContain('Synchronisation und Teilen')
     expect(text(dialog.querySelector('[data-waitlist-statement]'))).toBe(
@@ -1548,7 +1548,7 @@ describe('upgrading', () => {
 
     expect(joinButtons(dialog)).toEqual(['member', 'pro'])
     expect(texts(dialog, '[data-join]')).toEqual([
-      'Join the waitlist for Member',
+      'Join the waitlist for Home',
       'Join the waitlist for Pro',
     ])
     expect(dialog.querySelector('[data-leave-waitlist]')).toBeNull()
@@ -1614,7 +1614,7 @@ describe('upgrading', () => {
       'You are on the waitlist for Pro (since Oct 9, 2026).',
     )
     expect(joinButtons(dialog)).toEqual(['member'])
-    expect(texts(dialog, '[data-join]')).toEqual(['Change to Member'])
+    expect(texts(dialog, '[data-join]')).toEqual(['Change to Home'])
     expect(text(dialog.querySelector('[data-leave-waitlist]'))).toBe('Leave the waitlist')
     // Not focusable until a change lands on it: the dialog's own first focus must not pick it.
     expect(dialog.querySelector('[data-waiting]')?.hasAttribute('tabindex')).toBe(false)
@@ -1919,7 +1919,7 @@ describe('upgrading', () => {
     await waitUntil(() => dialog.querySelector('[data-waiting]') !== null, 'the join never showed')
 
     expect(waitlist.calls).toEqual([{ kind: 'join', plan: 'member' }])
-    expect(text(dialog.querySelector('[data-waiting]'))).toContain('Member')
+    expect(text(dialog.querySelector('[data-waiting]'))).toContain('Home')
     // Focus lands on what changed, not on the page behind the dialog (WCAG 2.4.3). Waited for:
     // the line renders a moment before the shell moves focus to it.
     await waitUntil(
@@ -2065,7 +2065,7 @@ describe('upgrading', () => {
     const dialog = await openUpgrade(element)
     await waitUntil(() => dialog.querySelector('[data-waiting]') !== null, 'not waiting')
 
-    expect(texts(dialog, '[data-join]')).toEqual(['Zu Mitglied wechseln'])
+    expect(texts(dialog, '[data-join]')).toEqual(['Zu Home wechseln'])
     expect(text(dialog.querySelector('[data-leave-waitlist]'))).toBe('Warteliste verlassen')
     fitsAt360(dialog)
   })
@@ -2303,7 +2303,7 @@ describe('upgrading', () => {
     const dialog = await openUpgrade(element)
 
     expect(texts(dialog, '[data-join]')).toEqual([
-      'Auf die Warteliste für Mitglied',
+      'Auf die Warteliste für Home',
       'Auf die Warteliste für Pro',
     ])
   })

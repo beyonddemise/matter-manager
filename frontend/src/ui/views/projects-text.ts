@@ -115,6 +115,27 @@ export function locationText(location: Location): string {
 }
 
 /**
+ * The intro under the page heading: what a project is, then what the plan includes. The
+ * allowance is worded as a count rather than "includes N projects", which would read
+ * "includes 1 projects" for a plan of one — `@lit/localize` has no plural forms (see
+ * {@link overLimitText}).
+ *
+ * @param limit the limit in force; `-1` is unlimited
+ * @param syncs whether the plan puts projects on the server; a plan that does not keeps its
+ *   projects on this device, and the sentence says so
+ */
+export function introText(limit: number, syncs: boolean): string {
+  const what = msg('A project holds the rooms and Matter devices of one home or site.')
+  const allowance =
+    limit < 0
+      ? msg('Your plan has no project limit.')
+      : syncs
+        ? msg(str`Projects your plan includes: ${limit}.`)
+        : msg(str`Projects your plan includes: ${limit}, kept on this device.`)
+  return `${what} ${allowance}`
+}
+
+/**
  * The over-limit sentence. Worded as two counts rather than "allows N projects", which would
  * read "allows 1 projects" for a plan of one, and `@lit/localize` has no plural forms.
  */
