@@ -419,7 +419,7 @@ describe('signing in with an emailed code', () => {
           removeEventListener: () => {},
           onLine: overrides.onLine ?? true,
         }}
-        .projectStore=${isolatedProjectStore()}
+        .projectStore=${overrides.projectStore ?? isolatedProjectStore()}
         .followLocale=${async () => undefined}
         .listProjects=${async () => []}
         .makeSync=${makeSync}
@@ -486,6 +486,26 @@ describe('signing in with an emailed code', () => {
       () => document.activeElement === element.querySelector('[data-scheme-toggle]'),
       'focus went nowhere',
     )
+  })
+
+  it('forgets the previous account’s cached profile when somebody signs in', async () => {
+    // An expired session keeps local data, profile included, and offers sign-in again - to
+    // whoever is at the keyboard. Until their own profile is fetched, the old one must not
+    // stamp or filter their projects.
+    const store = isolatedProjectStore()
+    await store.cache().writeProfile({ sub: 'google|previous', fetchedAt: '2026-10-16T08:00:00Z' })
+    const { client } = fakeEmailAuth(
+      () => ({ kind: 'challenge', challenge: 'c-1' }),
+      () => ({ kind: 'signed-in', expiresIn: 300 }),
+    )
+    const { element } = await emailShell(client, { projectStore: store })
+
+    const dialog = await requestCode(element)
+    await waitUntil(() => dialog.querySelector('[data-code-input]') !== null, 'no code step')
+    typeCode(dialog, '123456')
+    await waitUntil(() => element.querySelector('[data-sign-out]') !== null, 'never signed in')
+
+    expect(await store.cache().readProfile()).toBeUndefined()
   })
 
   it('moves focus into each step: the address field, then the code field', async () => {

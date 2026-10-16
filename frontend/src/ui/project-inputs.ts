@@ -102,13 +102,13 @@ export async function fetchProjectList(
  * @param fresh this signed-in session's list, if it was fetched; otherwise the remembered one is
  *   used, flagged stale. The caller passes `undefined` whenever the session is not signed in, so
  *   a list nobody is entitled to have just heard is never presented as fresh.
- * @param signedIn `false` once the session is signed out: the cached profile no longer names
- *   who is looking, so nothing is hidden by it
+ * @param signedIn whether this device holds a session (a stored refresh token). Signed out,
+ *   nothing is hidden; signed in, entries stamped for any other account are
  */
 export async function readProjectFacts(
   cache: LocalCache,
   fresh: readonly ListedProject[] | undefined,
-  signedIn = true,
+  signedIn: boolean,
 ): Promise<ProjectFacts> {
   const [local, profile, cachedList] = await Promise.all([
     cache.readLocalProjects().catch(() => NOTHING.local),
@@ -118,14 +118,15 @@ export async function readProjectFacts(
   // Another account's entries are not this account's to see: an entry stamped with a different
   // `sub` is left out of the list — and so out of the plan count — while its data stays on the
   // device (hiding is listing; removal is a sign-out's decision). An unstamped entry predates
-  // the stamp or was made signed out, and shows for everyone. Signed out, or with no cached
-  // profile (the cache unreadable), nothing is hidden, because there is nobody to hide it from -
-  // a profile a half-failed sign-out left behind names nobody who is still here.
-  const sub = signedIn ? profile?.sub : undefined
-  const visible =
-    sub === undefined
-      ? local
-      : local.filter((entry) => entry.account === undefined || entry.account === sub)
+  // the stamp or was made signed out, and shows for everyone. Signed out, nothing is hidden:
+  // there is nobody to hide it from, and a profile a half-failed sign-out left behind names
+  // nobody who is still here. Signed in with no profile yet - a fresh sign-in forgets it, so the
+  // next person is never shown as the last - every stamped entry is somebody else's until the
+  // profile says whose this session is.
+  const sub = profile?.sub
+  const visible = signedIn
+    ? local.filter((entry) => entry.account === undefined || entry.account === sub)
+    : local
   // A project marked `accessRemoved` was not in the last list heard; it is not part of it.
   const lastHeard = cachedList.filter((project) => !project.accessRemoved).map(listed)
   // An empty remembered list cannot be told from none (the cache has no "heard" marker), and the

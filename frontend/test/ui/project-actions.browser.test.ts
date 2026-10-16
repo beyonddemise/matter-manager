@@ -110,6 +110,7 @@ function world(options: { fault?: FaultAt } = {}) {
     database,
     forget: (dbName) => handles.delete(dbName),
     account: async () => (await cache.readProfile().catch(() => undefined))?.sub,
+    signedIn: async () => false,
     uuid: () => `${run}-${crypto.randomUUID().slice(0, 8)}`,
     now: () => '2026-10-03T09:00:00.000Z',
   }

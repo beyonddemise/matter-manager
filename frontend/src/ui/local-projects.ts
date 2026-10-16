@@ -50,6 +50,12 @@ export interface LocalProjectDependencies {
    *   learned yet
    */
   readonly account: () => Promise<string | undefined>
+  /**
+   * Whether this device holds a session: a stored refresh token. What decides whether the
+   * projects page filters by account — not the shell's session state, which is unknown until the
+   * refresher first answers, and stays unknown through an offline start.
+   */
+  readonly signedIn: () => Promise<boolean>
 }
 
 /** Where {@link resolveAccount} learns who is signed in: injectable, like the rest. */
@@ -115,6 +121,7 @@ export const localProjectDefaults: LocalProjectDependencies = {
   uuid: () => crypto.randomUUID(),
   now: () => new Date().toISOString(),
   account: () => resolveAccount(accountSources),
+  signedIn: accountSources.signedIn,
 }
 
 /** An optional account stamp, absent rather than empty, like {@link clientField}. */

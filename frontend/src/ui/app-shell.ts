@@ -982,7 +982,7 @@ export class AppShell extends LitElement implements ViewHost {
     }
 
     if (outcome.kind === 'signed-in') {
-      this.commitSignIn(attempt)
+      await this.commitSignIn(attempt)
       return
     }
     if (attempt !== this.signInAttempt) return
@@ -1008,10 +1008,19 @@ export class AppShell extends LitElement implements ViewHost {
    * offering "Sign in" over live credentials would be a lie the next reload exposes. Only the
    * dialog-local words are gated by the attempt counter.
    */
-  private commitSignIn(attempt: number): void {
+  private async commitSignIn(attempt: number): Promise<void> {
     if (attempt === this.signInAttempt) this.closeSignIn()
     // The dialog's status region is gone; the shell's own live region says it instead.
     this.announcement = msg('Signed in.')
+    // Before the refresher restarts, so the profile `startSyncing` fetches lands in an empty
+    // slot: this sign-in may be somebody else's (an expired session keeps local data), and the
+    // previous account's profile would stamp and filter their projects until it is replaced.
+    // A cache that refuses leaves that window open until the fetch overwrites it; the sign-in
+    // itself stands either way.
+    await (this.projectStore ?? localProjectDefaults)
+      .cache()
+      .clearProfile()
+      .catch(() => undefined)
     // The refresher answered `signed-out` at startup and armed nothing more. Started afresh,
     // its first exchange presents the just-stored refresh token, answers `refreshed`, and the
     // ordinary transition does the rest — session, replication, backfill, and the next
@@ -1046,7 +1055,7 @@ export class AppShell extends LitElement implements ViewHost {
     }
 
     if (outcome.kind === 'signed-in') {
-      this.commitSignIn(attempt)
+      await this.commitSignIn(attempt)
       return
     }
     if (attempt !== this.signInAttempt || this.signingIn?.step !== 'chooser') return

@@ -76,6 +76,9 @@ function fakeCache(initial?: CachedProfile, broken = false) {
       writes.push(profile)
       stored = profile
     },
+    async clearProfile() {
+      stored = undefined
+    },
     async clear() {
       stored = undefined
     },
@@ -260,6 +263,7 @@ describe('resolving the locale to render with', () => {
       writeProfile: async () => {
         throw new Error('quota')
       },
+      clearProfile: async () => {},
       clear: async () => {},
     }
     const changes: Locale[] = []

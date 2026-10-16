@@ -217,6 +217,14 @@ export interface LocalCache {
   readProfile(): Promise<CachedProfile | undefined>
   /** Replaces the cached profile. */
   writeProfile(profile: CachedProfile): Promise<void>
+  /**
+   * Forgets the cached profile, and only it; a no-op when none is cached.
+   *
+   * Called on a fresh sign-in, which may be somebody else's: an expired session keeps local
+   * data, so the profile cached is the previous account's until the new one is fetched. Read in
+   * that window, it would stamp and filter the newcomer's projects as the previous account's.
+   */
+  clearProfile(): Promise<void>
   /** The cached plan matrix, or `undefined` if `GET /plans` has never answered. */
   readPlanMatrix(): Promise<CachedPlanMatrix | undefined>
   /** Replaces the cached plan matrix. */
@@ -432,6 +440,13 @@ export function localCache(database: PouchDB.Database): LocalCache {
 
     async writeProfile(profile: CachedProfile): Promise<void> {
       await writeSingleton(PROFILE_ID, profile)
+    },
+
+    async clearProfile(): Promise<void> {
+      // A tombstone is fine here, unlike in `clear`: it carries the fixed id, nothing personal.
+      const existing = await readSingleton<{ _id: string; _rev: string }>(PROFILE_ID)
+      if (existing === undefined) return
+      await database.remove(existing._id, existing._rev)
     },
 
     async readPlanMatrix(): Promise<CachedPlanMatrix | undefined> {

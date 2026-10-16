@@ -93,6 +93,31 @@ describe('caching what the server said', () => {
 
     await expect(localCache(broken).readProfile()).rejects.toThrow(/disk is gone/)
   })
+
+  it('forgets the profile and nothing else', async () => {
+    const cache = localCache(memoryDatabase())
+    await cache.writeProfile(PROFILE)
+    await cache.addLocalProject({ dbName: 'project_local', name: 'Kept', createdAt: '2026-10-16' })
+
+    await cache.clearProfile()
+
+    expect(await cache.readProfile()).toBeUndefined()
+    expect(await cache.readLocalProjects()).toMatchObject([{ name: 'Kept' }])
+  })
+
+  it('forgets a profile that was never cached without complaint', async () => {
+    await expect(localCache(memoryDatabase()).clearProfile()).resolves.toBeUndefined()
+  })
+
+  it('can cache a profile again once it was forgotten', async () => {
+    const cache = localCache(memoryDatabase())
+    await cache.writeProfile(PROFILE)
+    await cache.clearProfile()
+
+    await cache.writeProfile({ ...PROFILE, sub: 'github|2' })
+
+    expect((await cache.readProfile())?.sub).toBe('github|2')
+  })
 })
 
 describe('caching the plan matrix', () => {
@@ -165,6 +190,7 @@ describe('the cache is never replicated', () => {
     expect(Object.keys(cache).sort()).toEqual([
       'addLocalProject',
       'clear',
+      'clearProfile',
       'markAccessRemoved',
       'readLocalProjects',
       'readPlanMatrix',

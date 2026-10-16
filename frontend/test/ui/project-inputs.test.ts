@@ -52,13 +52,21 @@ describe('whose local projects are listed', () => {
   it('hides another account’s entries from the signed-in account', async () => {
     await cache.writeProfile({ sub: 'google|1', plan: 'free', fetchedAt: FETCHED })
 
-    const facts = await readProjectFacts(cache, undefined)
+    const facts = await readProjectFacts(cache, undefined, true)
 
     expect(facts.local.map((entry) => entry.name)).toEqual(['Mine', 'Device'])
   })
 
-  it('shows everything while no account is known', async () => {
-    const facts = await readProjectFacts(cache, undefined)
+  it('shows only the device’s entries while signed in and the account is not yet known', async () => {
+    // A fresh sign-in forgets the profile, so the next person cannot be shown as the last one;
+    // until theirs arrives, every account's entries are somebody else's.
+    const facts = await readProjectFacts(cache, undefined, true)
+
+    expect(facts.local.map((entry) => entry.name)).toEqual(['Device'])
+  })
+
+  it('shows everything signed out', async () => {
+    const facts = await readProjectFacts(cache, undefined, false)
 
     expect(facts.local.map((entry) => entry.name)).toEqual(['Mine', 'Theirs', 'Device'])
   })
@@ -84,7 +92,7 @@ describe('the server list', () => {
 
     expect(fresh).toEqual(listed)
     // Remembered with what an offline page needs: the archive and the client.
-    const facts = await readProjectFacts(cache, undefined)
+    const facts = await readProjectFacts(cache, undefined, false)
     expect(facts.server).toEqual([
       {
         projectId: 'p1',
@@ -121,7 +129,7 @@ describe('the server list', () => {
     )
 
     expect(fresh).toBeUndefined()
-    expect((await readProjectFacts(cache, undefined)).server).toHaveLength(1)
+    expect((await readProjectFacts(cache, undefined, false)).server).toHaveLength(1)
   })
 
   it('forgets a client the server has cleared', async () => {
@@ -137,7 +145,7 @@ describe('the server list', () => {
       () => FETCHED,
     )
 
-    const [remembered] = (await readProjectFacts(cache, undefined)).server ?? []
+    const [remembered] = (await readProjectFacts(cache, undefined, false)).server ?? []
     expect(remembered !== undefined && 'client' in remembered).toBe(false)
   })
 })
@@ -145,7 +153,7 @@ describe('the server list', () => {
 describe('the facts the page is computed from', () => {
   it('uses a fresh list as it is', async () => {
     const fresh = [project()]
-    const facts = await readProjectFacts(cache, fresh)
+    const facts = await readProjectFacts(cache, fresh, true)
     expect(facts.server).toBe(fresh)
     expect(facts.serverStale).toBe(false)
   })
@@ -156,20 +164,20 @@ describe('the facts the page is computed from', () => {
       cache,
       () => FETCHED,
     )
-    const facts = await readProjectFacts(cache, undefined)
+    const facts = await readProjectFacts(cache, undefined, false)
     expect(facts.server?.map((p) => p.projectId)).toEqual(['p1'])
     expect(facts.serverStale).toBe(true)
   })
 
   it('has no list at all when none was ever heard', async () => {
-    const facts = await readProjectFacts(cache, undefined)
+    const facts = await readProjectFacts(cache, undefined, false)
     expect(facts.server).toBeUndefined()
     expect(facts.serverStale).toBe(true)
   })
 
   it('reads the local index', async () => {
     await cache.addLocalProject(entry)
-    expect((await readProjectFacts(cache, undefined)).local).toEqual([entry])
+    expect((await readProjectFacts(cache, undefined, false)).local).toEqual([entry])
   })
 
   it('takes the plan, the limit and the email from the cached profile', async () => {
@@ -180,12 +188,12 @@ describe('the facts the page is computed from', () => {
       projectLimit: 7,
       fetchedAt: FETCHED,
     })
-    const facts = await readProjectFacts(cache, undefined)
+    const facts = await readProjectFacts(cache, undefined, false)
     expect(facts).toMatchObject({ plan: 'member', reportedLimit: 7, email: 'ada@example.org' })
   })
 
   it('reads a device that never signed in as free, with no limit heard and no email', async () => {
-    const facts = await readProjectFacts(cache, undefined)
+    const facts = await readProjectFacts(cache, undefined, false)
     expect(facts.plan).toBe('free')
     expect(facts.reportedLimit).toBeUndefined()
     expect(facts.email).toBeUndefined()
@@ -199,7 +207,7 @@ describe('the facts the page is computed from', () => {
         throw new Error('unreadable')
       },
     })
-    const facts = await readProjectFacts(broken, undefined)
+    const facts = await readProjectFacts(broken, undefined, false)
     expect(facts).toEqual({ local: [], server: undefined, serverStale: true, plan: 'free' })
   })
 })
@@ -214,7 +222,7 @@ describe('the waitlist request in the facts', () => {
       fetchedAt: FETCHED,
     })
 
-    expect((await readProjectFacts(cache, undefined)).request).toEqual({
+    expect((await readProjectFacts(cache, undefined, false)).request).toEqual({
       plan: 'member',
       at: '2026-10-09T08:00:00.000Z',
     })
@@ -223,6 +231,6 @@ describe('the waitlist request in the facts', () => {
   it('is absent when the account is not waiting', async () => {
     await cache.writeProfile({ sub: 'google|1', plan: 'free', fetchedAt: FETCHED })
 
-    expect(await readProjectFacts(cache, undefined)).not.toHaveProperty('request')
+    expect(await readProjectFacts(cache, undefined, false)).not.toHaveProperty('request')
   })
 })

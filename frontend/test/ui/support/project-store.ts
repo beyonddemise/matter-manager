@@ -23,6 +23,9 @@ export function isolatedProjectStore(): LocalProjectDependencies {
   return {
     cache: () => cache,
     account: async () => (await cache.readProfile().catch(() => undefined))?.sub,
+    // Signed out unless a test says otherwise: the shell's sessions here are stubs that store no
+    // refresh token, and a store that claimed one would filter listings no test asked to filter.
+    signedIn: async () => false,
     database: (dbName) => {
       let database = opened.get(dbName)
       if (database === undefined) {
