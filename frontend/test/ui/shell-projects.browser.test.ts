@@ -1251,6 +1251,28 @@ describe('the project allowance', () => {
     expect(view.querySelectorAll('[data-slot-empty]')).toHaveLength(1)
   })
 
+  it('refuses without counts when an allowance it never had is exceeded', async () => {
+    // The third thing an unreported allowance touches, and the one I first left untested:
+    // `overLimit` is still computed from the table, deliberately, because it refuses promotion
+    // and not knowing must never grant an action. So the callout must still appear — what it
+    // must not do is state the two counts, both of which would be guesses.
+    const owned = Array.from({ length: 6 }, (_, index) =>
+      entry({ dbName: `project_local_${index}`, name: `Project ${index}` }),
+    )
+    const { element } = await mount({ local: owned, cachedProfile: memberWithoutLimit() })
+    await inputSettles(element, (i) => i.plan === 'member', 'plan never read')
+    const view = projectsView(element) as ProjectsView
+    await waitUntil(
+      () => view.querySelector('[data-over-limit]') !== null,
+      'the over-limit callout never appeared',
+    )
+    const said = text(view.querySelector('[data-over-limit]'))
+
+    expect(said).toContain('Your plan has no room for another project')
+    expect(said).not.toContain('Projects your plan allows')
+    expect(said).not.toContain('Projects you own')
+  })
+
   it('still counts the allowance it was told', async () => {
     // The guard above must not cost the known case anything.
     const { element } = await mount({ cachedProfile: profile({ plan: 'member', projectLimit: 3 }) })
