@@ -567,11 +567,17 @@ paths:
     get:
       operationId: listCustomers
       tags: [admin]
-      summary: List every account with its plan
+      summary: List every account with its plan, a page at a time
       description: |
         What an operator sees per user: the plan, and the plan waited for when the account is on
-        the waitlist. Ordered by plan (`free`, `member`, `pro` — the `by_plan` view's key), then
-        by record id within a plan.
+        the waitlist. Ordered by plan (`free`, `member`, `pro` — the `by_plan` view's key, which is
+        the plan the record *reads as*, so a mis-cased or unknown stored value sorts where it is
+        listed), then by record id within a plan.
+
+        **Paged.** Each response carries at most `limit` entries and, unless it is the last page,
+        a `next` cursor; send it back as `cursor` for the following page. The cursor is opaque and
+        marks a position rather than a record, so it survives that record's deletion. A record
+        whose plan changes during a walk may be listed twice or skipped.
 
         Built for the admin UI at `admin.matter-manager.io`; until that exists, operators call
         this directly. The same gate as the PUT: only an account whose record holds the
@@ -581,14 +587,30 @@ paths:
         `sub` and no `displayName` until that person signs in, and a listing that promised both
         would have to invent them. `projectLimit` stays out too: it is policy, not account state,
         and a listing is not the place for a second copy of the policy table (ADR 0009).
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          description: Page size. An empty value counts as absent.
+          schema: { type: integer, minimum: 1, maximum: 500, default: 100 }
+        - name: cursor
+          in: query
+          required: false
+          description: The `next` of the previous page; absent (or empty) for the first page.
+          schema: { type: string }
       responses:
         '200':
-          description: Every user record, one entry each
+          description: One page of user records, one entry each
           content:
             application/json:
-              schema:
-                type: array
-                items: { $ref: '#/components/schemas/Customer' }
+              schema: { $ref: '#/components/schemas/CustomerPage' }
+        '400':
+          description: |
+            `limit` is not an integer from 1 to 500, or `cursor` is not one this listing issued.
+            Decided only after the role, so a non-operator still gets the 403.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403':
           description: |
@@ -1382,6 +1404,17 @@ components:
           description: >-
             When the account joined the waitlist or last changed the plan it waits for. Present
             exactly when `planRequested` is.
+
+    CustomerPage:
+      type: object
+      required: [customers]
+      properties:
+        customers:
+          type: array
+          items: { $ref: '#/components/schemas/Customer' }
+        next:
+          type: string
+          description: Cursor for the following page. Absent exactly when this is the last page.
 
     Customer:
       type: object
