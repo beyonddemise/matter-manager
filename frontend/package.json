@@ -56,7 +56,7 @@
     "@vitest/browser": "^5.0.4",
     "@vitest/browser-playwright": "^5.0.4",
     "@vitest/coverage-v8": "^5.0.4",
-    "playwright": "^1.63.0",
+    "playwright": "^1.64.0",
     "pouchdb-adapter-memory": "^9.0.0",
     "pouchdb-core": "^9.0.0",
     "pouchdb-replication": "^9.0.0",
