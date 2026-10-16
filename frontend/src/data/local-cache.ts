@@ -220,9 +220,10 @@ export interface LocalCache {
   /**
    * Forgets the cached profile, and only it; a no-op when none is cached.
    *
-   * Called on a fresh sign-in, which may be somebody else's: an expired session keeps local
-   * data, so the profile cached is the previous account's until the new one is fetched. Read in
-   * that window, it would stamp and filter the newcomer's projects as the previous account's.
+   * Called when a different refresh token is stored (`pouchRefreshTokenStore`): a new sign-in,
+   * which may be somebody else's, because an expired session keeps local data. The profile
+   * cached is the previous account's until the new one is fetched; read in that window, it
+   * would stamp and filter the newcomer's projects as the previous account's.
    */
   clearProfile(): Promise<void>
   /** The cached plan matrix, or `undefined` if `GET /plans` has never answered. */

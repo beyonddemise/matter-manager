@@ -55,6 +55,7 @@ describe('whose local projects are listed', () => {
     const facts = await readProjectFacts(cache, undefined, true)
 
     expect(facts.local.map((entry) => entry.name)).toEqual(['Mine', 'Device'])
+    expect(facts.accountPending).toBe(false)
   })
 
   it('shows only the device’s entries while signed in and the account is not yet known', async () => {
@@ -63,6 +64,7 @@ describe('whose local projects are listed', () => {
     const facts = await readProjectFacts(cache, undefined, true)
 
     expect(facts.local.map((entry) => entry.name)).toEqual(['Device'])
+    expect(facts.accountPending).toBe(true)
   })
 
   it('shows everything signed out', async () => {
@@ -208,7 +210,13 @@ describe('the facts the page is computed from', () => {
       },
     })
     const facts = await readProjectFacts(broken, undefined, false)
-    expect(facts).toEqual({ local: [], server: undefined, serverStale: true, plan: 'free' })
+    expect(facts).toEqual({
+      local: [],
+      server: undefined,
+      serverStale: true,
+      plan: 'free',
+      accountPending: false,
+    })
   })
 })
 

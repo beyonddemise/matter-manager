@@ -37,6 +37,12 @@ export interface ProjectFacts {
   readonly email?: string
   /** The plan the account is waiting for, when the cached profile says it is (#224). */
   readonly request?: PlanRequest
+  /**
+   * Signed in, but whose session this is is not known yet: no profile is cached (a new token
+   * forgets it). {@link local} then holds only unstamped entries, so a choice it lacks may only be
+   * waiting for the profile - something to fall back from for now, not to overwrite.
+   */
+  readonly accountPending: boolean
 }
 
 /** A device that never signed in and holds nothing: what an unreadable cache reads as. */
@@ -45,6 +51,7 @@ const NOTHING: ProjectFacts = {
   server: undefined,
   serverStale: true,
   plan: DEFAULT_PLAN,
+  accountPending: false,
 }
 
 /** What of a listed project is remembered: the fields an offline page has questions about. */
@@ -141,5 +148,6 @@ export async function readProjectFacts(
     ...(profile?.projectLimit === undefined ? {} : { reportedLimit: profile.projectLimit }),
     ...(profile?.email === undefined ? {} : { email: profile.email }),
     ...(request === undefined ? {} : { request }),
+    accountPending: signedIn && sub === undefined,
   }
 }

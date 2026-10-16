@@ -662,6 +662,17 @@ describe('which project is open', () => {
     await waitUntil(() => currentProjectDatabaseName() === 'project_local_a', 'no fallback')
   })
 
+  it('a fallback while the account is unknown, without forgetting the stored choice', async () => {
+    // Signed in with no profile cached yet - a new token forgets it - so the stored project,
+    // stamped for an account, is hidden until the profile says whose this session is. The
+    // fallback opens meanwhile; writing it over the choice would lose that choice for good.
+    localStorage.setItem(CURRENT_PROJECT_KEY, 'p1')
+    const store = { ...isolatedProjectStore(), signedIn: async () => true }
+    await mount({ store, local: [entry(), { ...copy, account: 'google|1' }] })
+    await waitUntil(() => currentProjectDatabaseName() === 'project_local_a', 'no fallback')
+    expect(localStorage.getItem(CURRENT_PROJECT_KEY)).toBe('p1')
+  })
+
   it('a lapsed owner’s server project, read-only', async () => {
     localStorage.setItem(CURRENT_PROJECT_KEY, 'p1')
     await mount({

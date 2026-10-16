@@ -204,6 +204,43 @@ describe('whose copy an entry is', () => {
   })
 })
 
+describe('a new credential forgets whose profile was cached', () => {
+  // Every way in - email, passkey, and the Google and GitHub redirects, whose first token
+  // exchange stores the cookie's token - ends by storing a refresh token. A different one may
+  // be somebody else's (an expired session keeps local data), so the cached profile goes with
+  // the old token, before the new one is stored.
+  const previous = { sub: 'google|previous', fetchedAt: '2026-10-16T08:00:00.000Z' }
+
+  it('forgets the cached profile when a different token is stored', async () => {
+    const store = pouchRefreshTokenStore(localDatabase())
+    await store.write('token-a')
+    await localProfileCache().writeProfile(previous)
+
+    await store.write('token-b')
+
+    expect(await localProfileCache().readProfile()).toBeUndefined()
+    expect(await store.read()).toBe('token-b')
+  })
+
+  it('keeps it when the same token is stored again, as every refresh does', async () => {
+    const store = pouchRefreshTokenStore(localDatabase())
+    await store.write('token-a')
+    await localProfileCache().writeProfile(previous)
+
+    await store.write('token-a')
+
+    expect(await localProfileCache().readProfile()).toMatchObject({ sub: 'google|previous' })
+  })
+
+  it('forgets a profile left from before any token was stored', async () => {
+    await localProfileCache().writeProfile(previous)
+
+    await pouchRefreshTokenStore(localDatabase()).write('token-a')
+
+    expect(await localProfileCache().readProfile()).toBeUndefined()
+  })
+})
+
 describe('resolving the account to stamp', () => {
   const fetched: Profile = {
     sub: 'google|2',

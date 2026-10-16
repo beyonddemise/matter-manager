@@ -19,6 +19,8 @@
  * @module
  */
 
+import { localCache } from '../data/local-cache.js'
+
 /**
  * How long before its stated expiry a token stops being offered, in seconds.
  *
@@ -155,12 +157,25 @@ export function pouchRefreshTokenStore(db: PouchDB.Database): RefreshTokenStore 
       }
     },
     async write(token) {
-      let rev: string | undefined
+      let existing: { _rev: string; token?: string } | undefined
       try {
-        rev = (await db.get(id))._rev
+        existing = (await db.get(id)) as unknown as { _rev: string; token?: string }
       } catch {
-        rev = undefined
+        existing = undefined
       }
+      // A different token is a new sign-in, and maybe somebody else's: an expired session keeps
+      // local data. The cached profile is the old token's, and read in the window before the new
+      // one is fetched it would stamp and filter the newcomer's projects as the previous
+      // account's. Forgotten first, so the new token never sits beside it. Every way in stores
+      // a token here - email, passkey, and the Google and GitHub redirects through the first
+      // exchange - so this one place covers them all. A refresh stores the same token (#209), so
+      // nothing is forgotten then. A cache that refuses does not stop the sign-in.
+      if (existing?.token !== token) {
+        await localCache(db)
+          .clearProfile()
+          .catch(() => undefined)
+      }
+      const rev = existing?._rev
       await db.put({ _id: id, ...(rev === undefined ? {} : { _rev: rev }), token } as never)
     },
     async clear() {
