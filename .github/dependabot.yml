@@ -9,10 +9,19 @@ version: 2
 # The token comes from the DEPENDABOT secret store, not the Actions one. They are separate
 # by design: a workflow run triggered by an update to an untrusted dependency must not be
 # able to reach the credentials the rest of CI holds. Both stores need the value.
+#
+# `scope` is load-bearing. The only .npmrc is `frontend/.npmrc`, but the npm entry below also
+# covers `/` and `/e2e`, and without a scope Dependabot cannot tell which packages this
+# registry serves there. Once the secret was in place, every npm run from 2026-09-15 aborted
+# with `private_registry_config_not_found` - before any directory was looked at, so
+# `/frontend` went unwatched too. The failure is the same silent kind described above: the
+# updater's red run shows nowhere near a pull request. With `scope` set, Dependabot generates the .npmrc mapping itself, in
+# every directory, and stops depending on where the committed one happens to live.
 registries:
   webawesome:
     type: npm-registry
     url: https://npm.webawesome.com
+    scope: '@awesome.me'
     token: ${{secrets.WEBAWESOME_NPM_TOKEN}}
 
 updates:
