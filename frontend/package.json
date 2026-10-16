@@ -48,7 +48,7 @@
     "@fortawesome/fontawesome-free": "^7.3.1",
     "@lit/localize-tools": "^0.8.2",
     "@open-wc/testing-helpers": "^3.0.1",
-    "@types/node": "^24.13.4",
+    "@types/node": "^24.19.2",
     "@types/pouchdb-adapter-memory": "^6.1.6",
     "@types/pouchdb-browser": "^6.1.5",
     "@types/pouchdb-core": "^7.0.15",
