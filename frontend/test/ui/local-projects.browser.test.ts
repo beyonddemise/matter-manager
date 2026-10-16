@@ -154,6 +154,45 @@ describe('indexing a copy of a server project', () => {
   })
 })
 
+describe('whose copy an entry is', () => {
+  const profile = { sub: 'google|1', plan: 'free' as const, fetchedAt: '2026-10-16T08:00:00.000Z' }
+
+  it('stamps a created project with the signed-in account', async () => {
+    await localProfileCache().writeProfile(profile)
+
+    const entry = await createLocalProject({ name: 'Mine' })
+
+    expect(entry.account).toBe('google|1')
+    expect(await localProfileCache().readLocalProjects()).toMatchObject([{ account: 'google|1' }])
+  })
+
+  it('leaves a project created signed out unstamped', async () => {
+    const entry = await createLocalProject({ name: 'Device' })
+
+    expect(entry.account).toBeUndefined()
+  })
+
+  it('stamps an indexed server copy', async () => {
+    await localProfileCache().writeProfile(profile)
+
+    await indexServerProject({ projectId: 'p7', dbName: 'project_p7', name: 'Beta', role: 'owner' })
+
+    expect(await localProfileCache().readLocalProjects()).toMatchObject([{ account: 'google|1' }])
+  })
+
+  it('never adopts on a rename: an unstamped entry stays unstamped', async () => {
+    const { dbName } = await createLocalProject({ name: 'Old' })
+    await localProfileCache().writeProfile(profile)
+
+    await renameLocalProject(dbName, 'New')
+    await setLocalClient(dbName, 'Acme')
+
+    const [entry] = await localProfileCache().readLocalProjects()
+    expect(entry?.name).toBe('New')
+    expect(entry?.account).toBeUndefined()
+  })
+})
+
 describe('adopting the legacy catalogue', () => {
   it('names it and indexes it without touching its devices', async () => {
     await projectDatabase().devices.save(device('device:lamp'))

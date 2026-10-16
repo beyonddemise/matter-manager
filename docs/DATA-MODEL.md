@@ -244,6 +244,7 @@ range and one database has exactly one entry (`LocalProjectEntry`, `frontend/src
   "client": "Familie Muster",     // absent rather than empty
   "projectId": "8f14e45f-...",    // the server's id; absent while local-only
   "role": "owner",                // owner | manage | write | read; meaningless while local-only
+  "account": "google-oauth2|1",   // whose copy: the profile sub that indexed it; absent = everyone's
   "createdAt": "2026-10-03T08:00:00.000Z"
 }
 ```
@@ -259,9 +260,16 @@ range and one database has exactly one entry (`LocalProjectEntry`, `frontend/src
   the local entry the moment `POST /projects` answers, before any data has moved, so the
   *database name* decides (`isLocalOnlyDatabase`): `project_local` and `project_local_<uuid>`
   are local-only whatever the entry says.
+- **`account` is whose copy it is, not who owns the project** (`role` speaks to ownership on the
+  server): the signed-in profile's `sub` at create/index time, absent on entries made signed out
+  and on entries that predate the field. The projects page hides — and does not count — an entry
+  stamped with a different account; with no cached profile nothing is hidden. Hiding is listing
+  only: the data stays on the device, and removal remains a sign-out's decision. Not a security
+  boundary — anyone with the browser profile can read IndexedDB.
 - Rewritten by the same revision-retry loop as the rest of `mm-local`. On sign-out the index is
   destroyed with `mm-local`, and the entries of the local-only projects that were kept are
-  written again into the fresh one.
+  written again into the fresh one — their `account` stamps included, so a later different
+  account does not see them.
 
 ### Database naming on the device
 

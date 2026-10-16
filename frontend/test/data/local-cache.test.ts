@@ -210,6 +210,16 @@ describe('the local project index', () => {
     createdAt: '2026-10-03T09:00:00.000Z',
   })
 
+  it('keeps whose copy an entry is', async () => {
+    const cache = localCache(memoryDatabase())
+    await cache.addLocalProject({ ...entry('project_local_a', 'A'), account: 'google|1' })
+    await cache.updateLocalProject('project_local_a', { name: 'A2' })
+
+    expect(await cache.readLocalProjects()).toEqual([
+      { ...entry('project_local_a', 'A2'), account: 'google|1' },
+    ])
+  })
+
   it('lists what was added, in name order', async () => {
     const cache = localCache(memoryDatabase())
     await cache.addLocalProject(entry('project_local_b', 'B'))

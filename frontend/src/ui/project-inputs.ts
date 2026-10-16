@@ -112,6 +112,16 @@ export async function readProjectFacts(
     cache.readProfile().catch(() => undefined),
     fresh === undefined ? cache.readProjects().catch(() => []) : Promise.resolve([]),
   ])
+  // Another account's entries are not this account's to see: an entry stamped with a different
+  // `sub` is left out of the list — and so out of the plan count — while its data stays on the
+  // device (hiding is listing; removal is a sign-out's decision). An unstamped entry predates
+  // the stamp or was made signed out, and shows for everyone; with no cached profile (signed
+  // out, or the cache unreadable) nothing is hidden, because there is nobody to hide it from.
+  const sub = profile?.sub
+  const visible =
+    sub === undefined
+      ? local
+      : local.filter((entry) => entry.account === undefined || entry.account === sub)
   // A project marked `accessRemoved` was not in the last list heard; it is not part of it.
   const lastHeard = cachedList.filter((project) => !project.accessRemoved).map(listed)
   // An empty remembered list cannot be told from none (the cache has no "heard" marker), and the
@@ -119,7 +129,7 @@ export async function readProjectFacts(
   const server = fresh ?? (lastHeard.length === 0 ? undefined : lastHeard)
   const request = cachedRequest(profile)
   return {
-    local,
+    local: visible,
     server,
     serverStale: fresh === undefined,
     plan: cachedPlan(profile),

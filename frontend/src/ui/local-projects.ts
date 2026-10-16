@@ -38,6 +38,12 @@ export interface LocalProjectDependencies {
   readonly forget: (dbName: string) => void
   readonly uuid: () => string
   readonly now: () => string
+  /**
+   * The signed-in account's `sub`, or `undefined` while nobody is — what a new index entry is
+   * stamped with (`LocalProjectEntry#account`). Never throws: an unreadable cache reads as
+   * signed out, and the entry is then the device's.
+   */
+  readonly account: () => Promise<string | undefined>
 }
 
 /** The real dependencies: the browser's databases and the shared `mm-local` index. */
@@ -47,7 +53,18 @@ export const localProjectDefaults: LocalProjectDependencies = {
   forget: forgetProject,
   uuid: () => crypto.randomUUID(),
   now: () => new Date().toISOString(),
+  account: async () => {
+    try {
+      return (await localProfileCache().readProfile())?.sub
+    } catch {
+      return undefined
+    }
+  },
 }
+
+/** An optional account stamp, absent rather than empty, like {@link clientField}. */
+const accountField = (account: string | undefined): { account?: string } =>
+  account === undefined ? {} : { account }
 
 /** An optional client, absent rather than empty so the stored shape matches `isProjectDocument`. */
 const clientField = (client: string | undefined): { client?: string } =>
@@ -130,6 +147,7 @@ export async function createLocalProject(
     dbName,
     name: input.name,
     ...clientField(input.client),
+    ...accountField(await deps.account()),
     createdAt: deps.now(),
   }
   await deps.cache().addLocalProject(entry)
@@ -196,6 +214,9 @@ export async function indexServerProject(
     ...clientField(project.client),
     projectId: project.projectId,
     role: project.role,
+    // The server listed it for whoever is signed in now, so the stamp is theirs; an earlier
+    // stamp stands in only when nobody is (a refresh racing a sign-out).
+    ...accountField((await deps.account()) ?? existing?.account),
     createdAt: existing?.createdAt ?? deps.now(),
   })
 }

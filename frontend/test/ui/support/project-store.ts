@@ -22,6 +22,7 @@ export function isolatedProjectStore(): LocalProjectDependencies {
   const opened = new Map<string, PouchDB.Database>()
   return {
     cache: () => cache,
+    account: async () => (await cache.readProfile().catch(() => undefined))?.sub,
     database: (dbName) => {
       let database = opened.get(dbName)
       if (database === undefined) {

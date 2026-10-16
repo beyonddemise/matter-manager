@@ -164,6 +164,14 @@ export interface LocalProjectEntry {
    * Meaningless while local-only.
    */
   readonly role?: 'owner' | 'manage' | 'write' | 'read'
+  /**
+   * The signed-in account (the profile's `sub`) that put this entry in the index — whose copy
+   * it is, not who owns the project on the server (`role` speaks to that). Absent on an entry
+   * made while signed out, which is the device's and everyone's, and on entries that predate
+   * the field. The projects page hides an entry whose account is somebody else's; the data
+   * itself stays on the device (hiding is listing, removal is a sign-out's decision).
+   */
+  readonly account?: string
   /** When this device first knew of the project, ISO-8601. */
   readonly createdAt: string
 }

@@ -35,6 +35,35 @@ beforeEach(() => {
   cache = localCache(memoryDatabase())
 })
 
+describe('whose local projects are listed', () => {
+  const stamped = (dbName: string, name: string, account?: string) => ({
+    dbName,
+    name,
+    createdAt: '2026-10-01T00:00:00.000Z',
+    ...(account === undefined ? {} : { account }),
+  })
+
+  beforeEach(async () => {
+    await cache.addLocalProject(stamped('project_local_a', 'Mine', 'google|1'))
+    await cache.addLocalProject(stamped('project_local_b', 'Theirs', 'github|2'))
+    await cache.addLocalProject(stamped('project_local_c', 'Device'))
+  })
+
+  it('hides another account’s entries from the signed-in account', async () => {
+    await cache.writeProfile({ sub: 'google|1', plan: 'free', fetchedAt: FETCHED })
+
+    const facts = await readProjectFacts(cache, undefined)
+
+    expect(facts.local.map((entry) => entry.name)).toEqual(['Mine', 'Device'])
+  })
+
+  it('shows everything while no account is known', async () => {
+    const facts = await readProjectFacts(cache, undefined)
+
+    expect(facts.local.map((entry) => entry.name)).toEqual(['Mine', 'Theirs', 'Device'])
+  })
+})
+
 describe('the server list', () => {
   it('is returned and remembered when it can be fetched', async () => {
     const listed = [project(), project({ projectId: 'p2', dbName: 'project_p2', archived: true })]
