@@ -69,10 +69,16 @@ updates:
       # safe together, and reviewing them as a batch is faster than fifteen separate PRs.
       #
       # `group-by: dependency-name` for the reason the container-images group gives: with
-      # `directories:`, the default is a separate pull request PER DIRECTORY, and Biome,
-      # TypeScript and Vitest are installed in both halves. Ungrouped, one half could take a
-      # Biome major and the other not - and the two halves would then format the same code
-      # differently, which surfaces as a lint failure in whichever one was not updated.
+      # `directories:`, the default is a separate pull request PER DIRECTORY, and Biome and
+      # Playwright are installed in more than one. Ungrouped, one could take a Biome major and
+      # another not - and the two would then format the same code differently, which surfaces
+      # as a lint failure in whichever one was not updated.
+      #
+      # `group-by` is also why Vitest is NOT in this group: it means one pull request per
+      # dependency NAME. `@vitest/browser`, `@vitest/browser-playwright` and
+      # `@vitest/coverage-v8` each declare an exact `vitest` peer, so a pull request moving one
+      # of them alone cannot install - Vitest 5 arrived as #270, #271 and #272, each failing
+      # `npm ci` with ERESOLVE. See the `vitest` group below.
       dev-tooling:
         # Bare `playwright` as well as `@playwright/*`: `frontend` depends on the first for
         # its browser-mode tests and the root `e2e` workspace on the second. They were one
@@ -83,9 +89,13 @@ updates:
         # back to separate pull requests when directories carry incompatible requirements, and
         # covers version updates only, not security ones. So this reduces the drift; the CI job
         # is what tolerates it, by installing a browser for each Playwright it finds.
-        patterns:
-          ['@biomejs/*', 'vitest', '@vitest/*', 'typescript', 'playwright', '@playwright/*']
+        patterns: ['@biomejs/*', 'typescript', 'playwright', '@playwright/*']
         group-by: dependency-name
+      # The whole Vitest family in one pull request: the plugins pin `vitest` exactly, so they
+      # only ever install together. No `group-by` - Vitest lives in `/frontend` alone, so the
+      # default one-pull-request-per-directory already gives exactly one.
+      vitest:
+        patterns: ['vitest', '@vitest/*']
       lit:
         patterns: ['lit', '@lit/*', '@lit-labs/*']
       pouchdb:
