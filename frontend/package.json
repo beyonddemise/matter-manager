@@ -54,7 +54,7 @@
     "@types/pouchdb-core": "^7.0.15",
     "@types/pouchdb-replication": "^6.4.7",
     "@vitest/browser": "^4.1.11",
-    "@vitest/browser-playwright": "^4.1.11",
+    "@vitest/browser-playwright": "^5.0.4",
     "@vitest/coverage-v8": "^4.1.11",
     "playwright": "^1.63.0",
     "pouchdb-adapter-memory": "^9.0.0",
