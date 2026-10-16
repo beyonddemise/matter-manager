@@ -27,6 +27,6 @@
     "verify": "npm run check:deps && npm run check:npmrc && npm run check:node && npm run check:dependabot && npm run check && npm --prefix frontend run verify"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.12"
+    "@biomejs/biome": "^2.5.15"
   }
 }
