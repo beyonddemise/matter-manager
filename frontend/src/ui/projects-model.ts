@@ -183,6 +183,20 @@ export interface ProjectsModel {
   readonly shared: readonly Row[]
   /** The limit in force; `-1` is unlimited. */
   readonly limit: number
+  /**
+   * Whether {@link limit} is the number the server reported, rather than the plan table's
+   * assumption about it.
+   *
+   * The table stays the authority for *refusing* — ADR 0009's whole point is that the page
+   * predicts what the service will answer instead of discovering it from a refused request, and
+   * that is what lets Create be decided offline. What the table may not do is put a number on
+   * screen as though the account had been told it: an account whose allowance was adjusted would
+   * be told something untrue, with exactly the confidence of a known answer.
+   *
+   * So: the table may gate, it may not narrate. False here means the page says what it can do,
+   * not how much it is allowed.
+   */
+  readonly limitKnown: boolean
   /** Owned projects wherever they live, each once; archived and shared ones excluded. */
   readonly ownedCount: number
   /** Whether a downgrade left more projects than the plan allows. */
@@ -290,6 +304,9 @@ export function projectsModel(input: ProjectsInput): ProjectsModel {
         source.kind === 'promoting'),
   ).length
   const limit = limitFor(plan, input.reportedLimit)
+  const limitKnown = input.reportedLimit !== undefined
+  // Deliberately computed from `limit` whether or not it was reported: `overLimit` refuses
+  // promotion below, and not knowing the allowance must never be what grants an action.
   const overLimit = exceedsLimit(ownedCount, limit)
 
   // Every action that needs the server asks these, in this order. Only a fresh list lets one
@@ -380,6 +397,7 @@ export function projectsModel(input: ProjectsInput): ProjectsModel {
     owned,
     shared,
     limit,
+    limitKnown,
     ownedCount,
     overLimit,
     canCreate: gate<CreateRefusal>(

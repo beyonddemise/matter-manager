@@ -124,8 +124,11 @@ export function locationText(location: Location): string {
  * @param syncs whether the plan puts projects on the server; a plan that does not keeps its
  *   projects on this device, and the sentence says so
  */
-export function introText(limit: number, syncs: boolean): string {
+export function introText(limit: number | undefined, syncs: boolean): string {
   const what = msg('A project holds the rooms and Matter devices of one home or site.')
+  // `undefined` is "the server has not said": the page describes what a project is and stops,
+  // rather than reciting the plan table's guess as though the account had been told it.
+  if (limit === undefined) return what
   const allowance =
     limit < 0
       ? msg('Your plan has no project limit.')

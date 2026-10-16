@@ -1210,6 +1210,63 @@ const pageView = (element: Element, view: 'desktop' | 'mobile') =>
 const texts = (root: Element, selector: string): string[] =>
   [...root.querySelectorAll(selector)].map((each) => text(each))
 
+describe('the project allowance', () => {
+  beforeEach(async () => {
+    await activateLocale(SOURCE_LOCALE)
+  })
+
+  /**
+   * A cached profile holding a plan and no limit. Both fields are independently optional on
+   * `CachedProfile` precisely so a cache written by another build can be read by this one, and a
+   * build that predates `projectLimit` wrote exactly this. `GET /profile` requires the field, so
+   * this is an upgrade path rather than a server that omits it.
+   */
+  const memberWithoutLimit = (): CachedProfile => {
+    const { projectLimit: _unset, ...rest } = profile({ plan: 'member' })
+    return rest
+  }
+
+  it('says nothing about the allowance when the cached profile carries none', async () => {
+    // `PROJECT_LIMITS` is there to predict what the service will answer, so Create can be
+    // decided offline (ADR 0009). It is not a number to put on screen as though it were the
+    // account's own: an adjusted account would be told something untrue, with full confidence.
+    const { element } = await mount({ cachedProfile: memberWithoutLimit() })
+    await inputSettles(element, (i) => i.plan === 'member', 'plan never read')
+    const view = projectsView(element) as ProjectsView
+
+    expect(text(view.querySelector('[data-projects-intro]'))).not.toContain(
+      'Projects your plan includes',
+    )
+  })
+
+  it('offers one empty slot rather than as many as it guessed', async () => {
+    const { element } = await mount({ cachedProfile: memberWithoutLimit() })
+    await inputSettles(element, (i) => i.plan === 'member', 'plan never read')
+    const view = projectsView(element) as ProjectsView
+    await waitUntil(
+      () => view.querySelector('.app-project-slots') !== null,
+      'the member layout never rendered',
+    )
+
+    expect(view.querySelectorAll('[data-slot-empty]')).toHaveLength(1)
+  })
+
+  it('still counts the allowance it was told', async () => {
+    // The guard above must not cost the known case anything.
+    const { element } = await mount({ cachedProfile: profile({ plan: 'member', projectLimit: 3 }) })
+    await inputSettles(element, (i) => i.reportedLimit === 3, 'limit never read')
+    const view = projectsView(element) as ProjectsView
+    await waitUntil(
+      () => view.querySelectorAll('[data-slot-empty]').length === 3,
+      'the told allowance was not rendered',
+    )
+
+    expect(text(view.querySelector('[data-projects-intro]'))).toContain(
+      'Projects your plan includes: 3',
+    )
+  })
+})
+
 describe('upgrading', () => {
   afterEach(async () => {
     // Vitest's default browser viewport; one test's size must not leak into the next file.

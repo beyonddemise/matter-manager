@@ -92,6 +92,15 @@ describe('reasons as sentences', () => {
     expect(introText(5, true)).not.toContain('kept on this device')
   })
 
+  it('says nothing about an allowance it was not given', () => {
+    // `undefined` is "the server has not reported one". Describing the page is still useful;
+    // reciting the plan table's assumption as the account's allowance is not.
+    const said = introText(undefined, true)
+    expect(said).toContain('A project holds the rooms and Matter devices of one home or site.')
+    expect(said).not.toContain('Projects your plan includes')
+    expect(said).not.toContain('project limit')
+  })
+
   it('says an unlimited allowance in words, not a number', () => {
     const said = introText(-1, true)
     expect(said).toContain('Your plan has no project limit.')

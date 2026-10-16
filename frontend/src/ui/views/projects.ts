@@ -422,7 +422,7 @@ export class ProjectsView extends LitElement {
       <section class="wa-stack wa-gap-l app-projects">
         <h1>${msg('Projects')}</h1>
         <p data-projects-intro class="app-empty">
-          ${introText(model.limit, planSyncs(this.input.plan))}
+          ${introText(model.limitKnown ? model.limit : undefined, planSyncs(this.input.plan))}
         </p>
         ${this.renderHints(model)}
         ${
@@ -493,7 +493,14 @@ export class ProjectsView extends LitElement {
         model.overLimit
           ? html`<wa-callout variant="neutral" data-over-limit>
               <wa-icon slot="icon" name="circle-info"></wa-icon>
-              ${overLimitText(model.limit, model.ownedCount)}
+              <!-- Over an allowance nobody reported, the two counts would both be guesses, so
+                   the refusal is given in the words it is given everywhere else. The callout
+                   still appears: Create is refused either way, and why is worth saying. -->
+              ${
+                model.limitKnown
+                  ? overLimitText(model.limit, model.ownedCount)
+                  : reasonText('limit')
+              }
             </wa-callout>`
           : nothing
       }
@@ -600,12 +607,22 @@ export class ProjectsView extends LitElement {
   }
 
   /**
-   * Member: exactly as many rows as the plan allows. The empty ones are where projects are
-   * created, so "how many more can I have" is answered by looking rather than by a number.
+   * Member: as many rows as the plan allows, where the allowance is known. The empty ones are
+   * where projects are created, so "how many more can I have" is answered by looking rather than
+   * by a number — which is exactly why an allowance the server never reported gets one slot and
+   * not a guessed count. See {@link ProjectsModel.limitKnown}.
    */
   private renderMember(model: ProjectsModel): TemplateResult {
+    // One slot where the allowance was never reported. Counting by looking only works if the
+    // number of slots is the number the account actually has; drawing the plan table's guess
+    // would answer "how many more can I have" with a figure nobody promised. One slot says what
+    // is true either way — there is room to create — and says nothing about how much.
     const free =
-      model.overLimit || model.limit < 0 ? 0 : Math.max(0, model.limit - model.ownedCount)
+      model.overLimit || model.limit < 0
+        ? 0
+        : model.limitKnown
+          ? Math.max(0, model.limit - model.ownedCount)
+          : 1
     return html`
       ${this.renderCreateReason(model)}
       <ul class="wa-stack wa-gap-s app-project-slots">
