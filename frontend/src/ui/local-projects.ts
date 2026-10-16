@@ -20,13 +20,17 @@ import {
   PROJECT_DOCUMENT_ID,
   type ProjectDocument,
 } from '../domain/documents/project.js'
+import { profile } from './composition.js'
 import {
   forgetProject,
+  localDatabase,
   localProfileCache,
   PROJECT_DATABASE_NAME,
   rawDatabase,
 } from './db/project-database.js'
-import type { Project } from './projects.js'
+import { cachedProfileOf, type Profile } from './profile.js'
+import { type Project, ProjectCreationError } from './projects.js'
+import { pouchRefreshTokenStore } from './tokens.js'
 
 /** The prefix of a local-only project's database name. */
 const LOCAL_PROJECT_PREFIX = 'project_local_'
@@ -40,10 +44,64 @@ export interface LocalProjectDependencies {
   readonly now: () => string
   /**
    * The signed-in account's `sub`, or `undefined` while nobody is — what a new index entry is
-   * stamped with (`LocalProjectEntry#account`). Never throws: an unreadable cache reads as
-   * signed out, and the entry is then the device's.
+   * stamped with (`LocalProjectEntry#account`). See {@link resolveAccount}.
+   *
+   * @throws ProjectCreationError (`unreachable`) when somebody is signed in but who cannot be
+   *   learned yet
    */
   readonly account: () => Promise<string | undefined>
+}
+
+/** Where {@link resolveAccount} learns who is signed in: injectable, like the rest. */
+export interface AccountSources {
+  /** The cached profile's `sub`, or `undefined` when none is cached. May throw if unreadable. */
+  readonly cachedSub: () => Promise<string | undefined>
+  /** Whether this device holds a session — a stored refresh token — whatever is cached. */
+  readonly signedIn: () => Promise<boolean>
+  /** `GET /profile`; `undefined` while no access token is held. Throws when unreachable. */
+  readonly fetchProfile: () => Promise<Profile | undefined>
+  /** Caches a fetched profile, as startup does. */
+  readonly remember: (profile: Profile) => Promise<void>
+}
+
+/**
+ * Who a new index entry belongs to: the signed-in account's `sub`, or `undefined` when nobody
+ * is signed in on this device.
+ *
+ * Why not just the cached profile: the profile is cached by a fetch that `startSyncing` fires
+ * and does not await, and that may fail. A project created in that window - or for the whole
+ * session, if the fetch failed - would read as made signed out and go unstamped, and nothing
+ * stamps it later, so the next account on the device would see it. "No cached profile" is
+ * therefore not taken as "signed out": the stored refresh token decides that, and while there is
+ * one the profile is fetched (and cached, so the listing filter has it too). If it cannot be,
+ * the caller is refused rather than handed an entry with no owner.
+ *
+ * @throws ProjectCreationError (`unreachable`) when signed in and the profile cannot be fetched
+ */
+export async function resolveAccount(sources: AccountSources): Promise<string | undefined> {
+  const cached = await sources.cachedSub().catch(() => undefined)
+  if (cached !== undefined) return cached
+  if (!(await sources.signedIn())) return undefined
+  let fresh: Profile | undefined
+  try {
+    fresh = await sources.fetchProfile()
+  } catch {
+    throw new ProjectCreationError('unreachable')
+  }
+  // No access token yet: the refresher is between tokens. Same answer for the reader - try again.
+  if (fresh === undefined) throw new ProjectCreationError('unreachable')
+  // A cache that refuses the write still leaves this stamp right; the listing catches up later.
+  await sources.remember(fresh).catch(() => undefined)
+  return fresh.sub
+}
+
+/** The real sources: the `mm-local` profile cache, the stored refresh token, and the API. */
+const accountSources: AccountSources = {
+  cachedSub: async () => (await localProfileCache().readProfile())?.sub,
+  signedIn: async () => (await pouchRefreshTokenStore(localDatabase()).read()) !== undefined,
+  fetchProfile: () => profile().read(),
+  remember: (fresh) =>
+    localProfileCache().writeProfile(cachedProfileOf(fresh, new Date().toISOString())),
 }
 
 /** The real dependencies: the browser's databases and the shared `mm-local` index. */
@@ -53,13 +111,7 @@ export const localProjectDefaults: LocalProjectDependencies = {
   forget: forgetProject,
   uuid: () => crypto.randomUUID(),
   now: () => new Date().toISOString(),
-  account: async () => {
-    try {
-      return (await localProfileCache().readProfile())?.sub
-    } catch {
-      return undefined
-    }
-  },
+  account: () => resolveAccount(accountSources),
 }
 
 /** An optional account stamp, absent rather than empty, like {@link clientField}. */
@@ -141,13 +193,15 @@ export async function createLocalProject(
   input: { readonly name: string; readonly client?: string },
   deps: LocalProjectDependencies = localProjectDefaults,
 ): Promise<LocalProjectEntry> {
+  // Asked first: a refusal (signed in, account not yet known) must leave nothing behind.
+  const account = await deps.account()
   const dbName = `${LOCAL_PROJECT_PREFIX}${deps.uuid()}`
   await writeProjectDocument(deps.database(dbName), input.name, input.client)
   const entry: LocalProjectEntry = {
     dbName,
     name: input.name,
     ...clientField(input.client),
-    ...accountField(await deps.account()),
+    ...accountField(account),
     createdAt: deps.now(),
   }
   await deps.cache().addLocalProject(entry)
@@ -215,8 +269,10 @@ export async function indexServerProject(
     projectId: project.projectId,
     role: project.role,
     // The server listed it for whoever is signed in now, so the stamp is theirs; an earlier
-    // stamp stands in only when nobody is (a refresh racing a sign-out).
-    ...accountField((await deps.account()) ?? existing?.account),
+    // stamp stands in only when nobody is (a refresh racing a sign-out). Unlike creating, a
+    // refusal is not passed on: the server already holds the project, and failing here would
+    // report a create or rename that happened as one that did not.
+    ...accountField((await deps.account().catch(() => undefined)) ?? existing?.account),
     createdAt: existing?.createdAt ?? deps.now(),
   })
 }

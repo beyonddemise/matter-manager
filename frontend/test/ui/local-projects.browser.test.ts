@@ -10,14 +10,18 @@ import {
   removeLocalDatabases,
 } from '../../src/ui/db/project-database.js'
 import {
+  type AccountSources,
   adoptLegacyCatalogue,
   createLocalProject,
   destroyLocalProject,
   indexServerProject,
   localProjectDefaults,
   renameLocalProject,
+  resolveAccount,
   setLocalClient,
 } from '../../src/ui/local-projects.js'
+import type { Profile } from '../../src/ui/profile.js'
+import { ProjectCreationError } from '../../src/ui/projects.js'
 
 /** Whether a database holds any document, opened fresh so no memoised handle can answer. */
 async function documentCount(name: string): Promise<number> {
@@ -190,6 +194,108 @@ describe('whose copy an entry is', () => {
     const [entry] = await localProfileCache().readLocalProjects()
     expect(entry?.name).toBe('New')
     expect(entry?.account).toBeUndefined()
+  })
+})
+
+describe('resolving the account to stamp', () => {
+  const fetched: Profile = {
+    sub: 'google|2',
+    email: 'a@example.com',
+    displayName: 'A',
+    locale: 'auto',
+    plan: 'free',
+    projectLimit: 1,
+  }
+
+  /** Sources for `resolveAccount`, each overridable; by default signed in with nothing cached. */
+  function sources(overrides: Partial<AccountSources> = {}) {
+    const remembered: Profile[] = []
+    const all: AccountSources = {
+      cachedSub: async () => undefined,
+      signedIn: async () => true,
+      fetchProfile: async () => fetched,
+      remember: async (profile) => {
+        remembered.push(profile)
+      },
+      ...overrides,
+    }
+    return { all, remembered }
+  }
+
+  it('uses the cached profile without asking the server', async () => {
+    const { all } = sources({
+      cachedSub: async () => 'google|1',
+      fetchProfile: () => Promise.reject(new Error('must not be asked')),
+    })
+
+    expect(await resolveAccount(all)).toBe('google|1')
+  })
+
+  it('answers undefined when signed out, without asking the server', async () => {
+    const { all } = sources({
+      signedIn: async () => false,
+      fetchProfile: () => Promise.reject(new Error('must not be asked')),
+    })
+
+    expect(await resolveAccount(all)).toBeUndefined()
+  })
+
+  it('fetches and caches the profile when signed in before it was cached', async () => {
+    const { all, remembered } = sources()
+
+    expect(await resolveAccount(all)).toBe('google|2')
+    expect(remembered).toEqual([fetched])
+  })
+
+  it('treats an unreadable cache like an empty one', async () => {
+    const { all } = sources({ cachedSub: () => Promise.reject(new Error('unreadable')) })
+
+    expect(await resolveAccount(all)).toBe('google|2')
+  })
+
+  it('still stamps when the fetched profile cannot be cached', async () => {
+    const { all } = sources({ remember: () => Promise.reject(new Error('full')) })
+
+    expect(await resolveAccount(all)).toBe('google|2')
+  })
+
+  it('refuses, rather than leave the entry unstamped, when signed in and the server fails', async () => {
+    const { all } = sources({ fetchProfile: () => Promise.reject(new TypeError('offline')) })
+
+    await expect(resolveAccount(all)).rejects.toThrow(ProjectCreationError)
+  })
+
+  it('refuses when signed in but no access token is held yet', async () => {
+    const { all } = sources({ fetchProfile: async () => undefined })
+
+    await expect(resolveAccount(all)).rejects.toMatchObject({ reason: 'unreachable' })
+  })
+
+  it('creates nothing when the account cannot be resolved', async () => {
+    const before = await localProfileCache().readLocalProjects()
+
+    await expect(
+      createLocalProject(
+        { name: 'Orphan' },
+        {
+          ...localProjectDefaults,
+          account: () => Promise.reject(new ProjectCreationError('unreachable')),
+        },
+      ),
+    ).rejects.toThrow(ProjectCreationError)
+    expect(await localProfileCache().readLocalProjects()).toEqual(before)
+  })
+
+  it('still indexes a server copy the server already holds when the account is unknown', async () => {
+    await indexServerProject(
+      { projectId: 'p8', dbName: 'project_p8', name: 'Gamma', role: 'owner' },
+      {
+        ...localProjectDefaults,
+        account: () => Promise.reject(new ProjectCreationError('unreachable')),
+      },
+    )
+
+    expect(await localProfileCache().readLocalProjects()).toMatchObject([{ dbName: 'project_p8' }])
   })
 })
 

@@ -262,7 +262,9 @@ range and one database has exactly one entry (`LocalProjectEntry`, `frontend/src
   are local-only whatever the entry says.
 - **`account` is whose copy it is, not who owns the project** (`role` speaks to ownership on the
   server): the signed-in profile's `sub` at create/index time, absent on entries made signed out
-  and on entries that predate the field. The projects page hides — and does not count — an entry
+  and on entries that predate the field. "Signed out" means no stored refresh token, not "no
+  cached profile": signed in before the profile is cached, creating fetches it first, and refuses
+  (`unreachable`) rather than write an entry with no owner (`resolveAccount`). The projects page hides — and does not count — an entry
   stamped with a different account; with no cached profile nothing is hidden. Hiding is listing
   only: the data stays on the device, and removal remains a sign-out's decision. Not a security
   boundary — anyone with the browser profile can read IndexedDB.
