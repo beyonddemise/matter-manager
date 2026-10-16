@@ -22,6 +22,7 @@ import {
 } from '../../src/ui/local-projects.js'
 import type { Profile } from '../../src/ui/profile.js'
 import { ProjectCreationError } from '../../src/ui/projects.js'
+import { pouchRefreshTokenStore } from '../../src/ui/tokens.js'
 
 /** Whether a database holds any document, opened fresh so no memoised handle can answer. */
 async function documentCount(name: string): Promise<number> {
@@ -161,8 +162,14 @@ describe('indexing a copy of a server project', () => {
 describe('whose copy an entry is', () => {
   const profile = { sub: 'google|1', plan: 'free' as const, fetchedAt: '2026-10-16T08:00:00.000Z' }
 
-  it('stamps a created project with the signed-in account', async () => {
+  /** Signed in as `resolveAccount` sees it: a stored refresh token and the cached profile. */
+  async function signIn(): Promise<void> {
+    await pouchRefreshTokenStore(localDatabase()).write('refresh-token')
     await localProfileCache().writeProfile(profile)
+  }
+
+  it('stamps a created project with the signed-in account', async () => {
+    await signIn()
 
     const entry = await createLocalProject({ name: 'Mine' })
 
@@ -177,7 +184,7 @@ describe('whose copy an entry is', () => {
   })
 
   it('stamps an indexed server copy', async () => {
-    await localProfileCache().writeProfile(profile)
+    await signIn()
 
     await indexServerProject({ projectId: 'p7', dbName: 'project_p7', name: 'Beta', role: 'owner' })
 
@@ -186,7 +193,7 @@ describe('whose copy an entry is', () => {
 
   it('never adopts on a rename: an unstamped entry stays unstamped', async () => {
     const { dbName } = await createLocalProject({ name: 'Old' })
-    await localProfileCache().writeProfile(profile)
+    await signIn()
 
     await renameLocalProject(dbName, 'New')
     await setLocalClient(dbName, 'Acme')
@@ -229,6 +236,12 @@ describe('resolving the account to stamp', () => {
     })
 
     expect(await resolveAccount(all)).toBe('google|1')
+  })
+
+  it('ignores a profile left cached after signing out', async () => {
+    const { all } = sources({ cachedSub: async () => 'google|1', signedIn: async () => false })
+
+    expect(await resolveAccount(all)).toBeUndefined()
   })
 
   it('answers undefined when signed out, without asking the server', async () => {

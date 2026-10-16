@@ -373,6 +373,8 @@ export class ProjectsController implements ReactiveController {
     const facts = await readProjectFacts(
       store.cache(),
       this.host.session === 'signed-in' ? this.fresh : undefined,
+      // `expired` is still somebody's device, and their view stays theirs until they sign out.
+      this.host.session !== 'signed-out',
     )
     if (generation !== this.sessionGeneration) return
     // Read across an action: possibly from before it, so neither shown nor applied. Applying it

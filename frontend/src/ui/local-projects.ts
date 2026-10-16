@@ -71,17 +71,20 @@ export interface AccountSources {
  * Why not just the cached profile: the profile is cached by a fetch that `startSyncing` fires
  * and does not await, and that may fail. A project created in that window - or for the whole
  * session, if the fetch failed - would read as made signed out and go unstamped, and nothing
- * stamps it later, so the next account on the device would see it. "No cached profile" is
- * therefore not taken as "signed out": the stored refresh token decides that, and while there is
- * one the profile is fetched (and cached, so the listing filter has it too). If it cannot be,
- * the caller is refused rather than handed an entry with no owner.
+ * stamps it later, so the next account on the device would see it. The stored refresh token
+ * alone decides "signed out", in both directions: no cached profile is not proof of it, and a
+ * cached profile is not proof against it. While there is a token and no profile, the profile is
+ * fetched (and cached, so the listing filter has it too). If it cannot be, the caller is refused
+ * rather than handed an entry with no owner.
  *
  * @throws ProjectCreationError (`unreachable`) when signed in and the profile cannot be fetched
  */
 export async function resolveAccount(sources: AccountSources): Promise<string | undefined> {
+  // The session first: a profile can outlive it (a sign-out whose cleanup half failed), and
+  // stamping with it would hide a signed-out project from whoever signs in next.
+  if (!(await sources.signedIn())) return undefined
   const cached = await sources.cachedSub().catch(() => undefined)
   if (cached !== undefined) return cached
-  if (!(await sources.signedIn())) return undefined
   let fresh: Profile | undefined
   try {
     fresh = await sources.fetchProfile()

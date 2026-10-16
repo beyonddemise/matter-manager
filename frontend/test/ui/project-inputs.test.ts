@@ -62,6 +62,14 @@ describe('whose local projects are listed', () => {
 
     expect(facts.local.map((entry) => entry.name)).toEqual(['Mine', 'Theirs', 'Device'])
   })
+
+  it('shows everything once signed out, even with a profile still cached', async () => {
+    await cache.writeProfile({ sub: 'google|1', plan: 'free', fetchedAt: FETCHED })
+
+    const facts = await readProjectFacts(cache, undefined, false)
+
+    expect(facts.local.map((entry) => entry.name)).toEqual(['Mine', 'Theirs', 'Device'])
+  })
 })
 
 describe('the server list', () => {
