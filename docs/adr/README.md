@@ -28,6 +28,7 @@ decision to be wrong. That is the part people need eighteen months later.
 | [0017](0017-two-halves-one-contract.md) | Two halves and one contract, not a shared package | Accepted (supersedes 0004's reasoning) |
 | [0018](0018-own-qr-encoder.md) | Our own QR encoder, so the code matches the label | Accepted (supersedes the QR passages of 0007, 0008, 0013) |
 | [0019](0019-setup-code-to-own-api.md) | A setup code may travel to our own API for the catalogue lookup | Accepted (amends 0005) |
+| [0020](0020-project-limits-from-the-published-matrix.md) | Project limits come from the published matrix; accounts keep theirs | Accepted (amends 0009) |
 
 ## Writing one
 
