@@ -120,19 +120,39 @@ export function locationText(location: Location): string {
  * "includes 1 projects" for a plan of one — `@lit/localize` has no plural forms (see
  * {@link overLimitText}).
  *
- * @param limit the limit in force; `-1` is unlimited
+ * @param limit the limit in force: the account's own; `-1` is unlimited
  * @param syncs whether the plan puts projects on the server; a plan that does not keeps its
  *   projects on this device, and the sentence says so
+ * @param legacyPlanLimit what the plan includes today, when the account keeps a higher limit from
+ *   before the matrix lowered it (ADR 0020). Both numbers are then said, the account's marked as
+ *   a legacy plan, so the reader is not offered more than new accounts get without knowing why.
  */
-export function introText(limit: number, syncs: boolean): string {
+export function introText(limit: number, syncs: boolean, legacyPlanLimit?: number): string {
   const what = msg('A project holds the rooms and Matter devices of one home or site.')
-  const allowance =
-    limit < 0
-      ? msg('Your plan has no project limit.')
-      : syncs
-        ? msg(str`Projects your plan includes: ${limit}.`)
-        : msg(str`Projects your plan includes: ${limit}, kept on this device.`)
-  return `${what} ${allowance}`
+  return `${what} ${legacyPlanLimit === undefined ? allowanceText(limit, syncs) : legacyText(limit, syncs, legacyPlanLimit)}`
+}
+
+/** What the plan includes, when the account holds exactly that. */
+function allowanceText(limit: number, syncs: boolean): string {
+  if (limit < 0) return msg('Your plan has no project limit.')
+  return syncs
+    ? msg(str`Projects your plan includes: ${limit}.`)
+    : msg(str`Projects your plan includes: ${limit}, kept on this device.`)
+}
+
+/**
+ * The plan's limit today beside the account's higher one. Only the account's can be unlimited:
+ * a legacy limit is above the plan's, and nothing is above unlimited.
+ */
+function legacyText(limit: number, syncs: boolean, planLimit: number): string {
+  if (limit < 0) {
+    return msg(str`Projects your plan includes: ${planLimit}. Yours: no limit (legacy plan).`)
+  }
+  return syncs
+    ? msg(str`Projects your plan includes: ${planLimit}. Yours: ${limit} (legacy plan).`)
+    : msg(
+        str`Projects your plan includes: ${planLimit}. Yours: ${limit} (legacy plan), kept on this device.`,
+      )
 }
 
 /**

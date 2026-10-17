@@ -386,6 +386,12 @@ describe('the waitlist request in the cache', () => {
     expect(cached).not.toHaveProperty('planRequested')
     expect(cached).not.toHaveProperty('requestedAt')
     expect(cached).not.toHaveProperty('locale')
+    expect(cached).not.toHaveProperty('planProjectLimit')
+  })
+
+  it('caches what the plan includes beside what the account may own', () => {
+    const cached = cachedProfileOf({ ...PROFILE, projectLimit: 5, planProjectLimit: 3 }, AT)
+    expect(cached).toMatchObject({ projectLimit: 5, planProjectLimit: 3 })
   })
 
   it('reads the request back as a plan and a date', () => {
@@ -422,6 +428,10 @@ describe('the waitlist request in the cache', () => {
     expect(isProfile({ ...PROFILE, requestedAt: AT })).toBe(false)
     expect(isProfile({ ...PROFILE, planRequested: 'pro', requestedAt: 123 })).toBe(false)
     expect(isProfile({ ...PROFILE, sub: undefined })).toBe(false)
+    // What the plan includes today (ADR 0020): optional, a number when present.
+    expect(isProfile({ ...PROFILE, planProjectLimit: 3 })).toBe(true)
+    expect(isProfile({ ...PROFILE, planProjectLimit: -1 })).toBe(true)
+    expect(isProfile({ ...PROFILE, planProjectLimit: '3' })).toBe(false)
     expect(isProfile('<html>')).toBe(false)
     expect(isProfile(null)).toBe(false)
   })

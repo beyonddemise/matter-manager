@@ -140,7 +140,9 @@ export {
   selectForExport,
 } from './pdf/selection.js'
 export {
+  allowsMore,
   canOwnAnother,
+  isLegacyLimit,
   isPlan,
   isWaitlistPlan,
   LAYOUTS,
@@ -149,12 +151,12 @@ export {
   PLANS,
   type Plan,
   type PlanFeatures,
-  PROJECT_LIMITS,
   planOf,
   planSyncs,
   plansAbove,
   SYNCED_PLANS,
   showsUpgrade,
+  UNHEARD_PROJECT_LIMIT,
   withinLimit,
 } from './plan.js'
 export type { ProjectRole } from './role.js'

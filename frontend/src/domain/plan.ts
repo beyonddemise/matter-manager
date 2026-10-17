@@ -1,11 +1,14 @@
 /**
  * The plans, as the page needs to read them.
  *
- * **This mirrors `backend/src/domain/can.ts`** — `PROJECT_LIMITS`, `SYNCED_PLANS` and
- * `withinLimit` are the same tables with the same values, because the page must predict what the
- * service will answer rather than discover it from a refused request. The service stays the
- * authority; a drift here costs a disabled button that should have been enabled (or the reverse,
- * which the service then refuses), never a wrong write. ADR 0009 forbids `plan === '…'`
+ * **How many projects a plan includes is not here.** The published plan matrix decides it, and
+ * each account keeps the limit it was given (ADR 0020): the page reads both from `GET /profile`
+ * (`projectLimit`, `planProjectLimit`) and never from a table of its own, so management can change
+ * a limit without a release. `SYNCED_PLANS` and `withinLimit` mirror the backend's `PlanPolicy`,
+ * because the page must predict what the service will answer rather than discover it from a
+ * refused request. The service stays the authority; a drift here costs a disabled button that
+ * should have been enabled (or the reverse, which the service then refuses), never a wrong write.
+ * ADR 0009 forbids `plan === '…'`
  * anywhere outside this file: every question about a plan is a lookup in a table keyed by
  * {@link Plan}, so adding a fourth plan stops compiling until each table has an answer for it.
  *
@@ -15,12 +18,12 @@
 /** The account tiers, matching the contract's `Profile.plan` enum. */
 export type Plan = 'free' | 'member' | 'pro'
 
-/** The projects one account may own per plan; `-1` is unlimited. Mirrors the backend table. */
-export const PROJECT_LIMITS: Readonly<Record<Plan, number>> = Object.freeze({
-  free: 1,
-  member: 5,
-  pro: -1,
-} satisfies Record<Plan, number>)
+/**
+ * The limit assumed when the server never said one: a device that never signed in, or a cache
+ * written before limits were reported. One project, the least any plan grants, so a guess never
+ * offers more than the account may have; the server's answer replaces it once heard.
+ */
+export const UNHEARD_PROJECT_LIMIT = 1
 
 /** Whether each plan may own a server project at all. Mirrors the backend table. */
 export const SYNCED_PLANS: Readonly<Record<Plan, boolean>> = Object.freeze({
@@ -61,7 +64,7 @@ export function withinLimit(owned: number, limit: number): boolean {
 
 /** Whether a value is one of the plans this build knows. */
 export function isPlan(value: unknown): value is Plan {
-  return typeof value === 'string' && Object.hasOwn(PROJECT_LIMITS, value)
+  return typeof value === 'string' && Object.hasOwn(SYNCED_PLANS, value)
 }
 
 /**
@@ -80,9 +83,32 @@ export function planOf(value: unknown): Plan {
   return isPlan(value) ? value : DEFAULT_PLAN
 }
 
-/** The limit the page enforces: what the server reported when known, else the plan's table entry. */
-export function limitFor(plan: Plan, reported?: number): number {
-  return reported ?? PROJECT_LIMITS[plan]
+/** The limit the page enforces: what the server reported when known, else {@link UNHEARD_PROJECT_LIMIT}. */
+export function limitFor(reported?: number): number {
+  return reported ?? UNHEARD_PROJECT_LIMIT
+}
+
+/**
+ * Whether limit `a` allows more projects than limit `b`.
+ *
+ * Unlimited first, for the reason {@link withinLimit} gives: `-1` is the largest limit and the
+ * smallest number, so `a > b` answers every comparison involving it backwards.
+ */
+export function allowsMore(a: number, b: number): boolean {
+  if (a < 0) return b >= 0
+  return b >= 0 && a > b
+}
+
+/**
+ * Whether the account keeps a limit above what its plan includes today: the matrix lowered the
+ * plan after the account was given more (ADR 0020). Derived from the two numbers the profile
+ * reports; unknown when the plan's limit was not heard.
+ *
+ * @param accountLimit the profile's `projectLimit`
+ * @param planLimit the profile's `planProjectLimit`, when reported
+ */
+export function isLegacyLimit(accountLimit: number, planLimit: number | undefined): boolean {
+  return planLimit !== undefined && allowsMore(accountLimit, planLimit)
 }
 
 /** Whether the plan puts projects on the server. */
@@ -101,8 +127,8 @@ export function showsUpgrade(plan: Plan): boolean {
  * @param owned owned projects wherever they live; shared ones never count
  * @param reported the server's `projectLimit`, when it has been heard
  */
-export function canOwnAnother(plan: Plan, owned: number, reported?: number): boolean {
-  return withinLimit(owned, limitFor(plan, reported))
+export function canOwnAnother(owned: number, reported?: number): boolean {
+  return withinLimit(owned, limitFor(reported))
 }
 
 /**
@@ -136,8 +162,8 @@ export interface PlanFeatures {
 }
 
 /**
- * The comparison's rows that no other table answers. Projects come from {@link PROJECT_LIMITS}
- * and sync from {@link SYNCED_PLANS}, so they are not repeated here.
+ * The comparison's rows that no other table answers. Sync comes from {@link SYNCED_PLANS}, so it
+ * is not repeated here; projects are the published matrix's alone (ADR 0020).
  */
 export const PLAN_FEATURES: Readonly<Record<Plan, PlanFeatures>> = Object.freeze({
   free: { clientName: false, transfer: false, price: 'free' },

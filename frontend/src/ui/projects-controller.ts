@@ -326,6 +326,9 @@ export class ProjectsController implements ReactiveController {
       serverStale: facts.serverStale || session !== 'signed-in',
       plan: facts.plan,
       ...(facts.reportedLimit === undefined ? {} : { reportedLimit: facts.reportedLimit }),
+      ...(facts.reportedPlanLimit === undefined
+        ? {}
+        : { reportedPlanLimit: facts.reportedPlanLimit }),
       session,
       online: this.host.online,
       syncStates: (projectId) => this.shownState(projectId),

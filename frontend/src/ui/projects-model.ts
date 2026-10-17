@@ -56,6 +56,7 @@ import { isLocalOnlyDatabase, type LocalProjectEntry } from '../data/index.js'
 import {
   canOwnAnother,
   exceedsLimit,
+  isLegacyLimit,
   LAYOUTS,
   limitFor,
   type Plan,
@@ -183,6 +184,11 @@ export interface ProjectsModel {
   readonly shared: readonly Row[]
   /** The limit in force; `-1` is unlimited. */
   readonly limit: number
+  /**
+   * What the plan includes today, when the account keeps a higher {@link limit} from before the
+   * matrix lowered it (a legacy plan, ADR 0020); `undefined` otherwise. `-1` is unlimited.
+   */
+  readonly legacyPlanLimit: number | undefined
   /** Owned projects wherever they live, each once; archived and shared ones excluded. */
   readonly ownedCount: number
   /** Whether a downgrade left more projects than the plan allows. */
@@ -222,8 +228,10 @@ export interface ProjectsInput {
   readonly serverStale?: boolean
   /** The cached plan; `free` on a device that never signed in. */
   readonly plan: Plan
-  /** The server's `projectLimit`, when heard. Preferred over the plan table. */
+  /** The server's `projectLimit`, when heard: the account's own limit (ADR 0020). */
   readonly reportedLimit?: number
+  /** The server's `planProjectLimit`, when heard: what the plan includes today. */
+  readonly reportedPlanLimit?: number
   readonly session: Session
   readonly online: boolean
   /** `SyncManager.stateOf`. */
@@ -289,8 +297,11 @@ export function projectsModel(input: ProjectsInput): ProjectsModel {
         source.kind === 'local-only' ||
         source.kind === 'promoting'),
   ).length
-  const limit = limitFor(plan, input.reportedLimit)
+  const limit = limitFor(input.reportedLimit)
   const overLimit = exceedsLimit(ownedCount, limit)
+  const legacyPlanLimit = isLegacyLimit(limit, input.reportedPlanLimit)
+    ? input.reportedPlanLimit
+    : undefined
 
   // Every action that needs the server asks these, in this order. Only a fresh list lets one
   // through: a stale one (offline, or the request failed) is good enough to count against, never
@@ -380,11 +391,12 @@ export function projectsModel(input: ProjectsInput): ProjectsModel {
     owned,
     shared,
     limit,
+    legacyPlanLimit,
     ownedCount,
     overLimit,
     canCreate: gate<CreateRefusal>(
       [signedIn, input.session === 'checking' ? 'offline-server' : 'signed-out'],
-      [canOwnAnother(plan, ownedCount, input.reportedLimit), 'limit'],
+      [canOwnAnother(ownedCount, input.reportedLimit), 'limit'],
       // A server create needs the server to have just answered: an unheard or stale list cannot
       // vouch for the count the service will check.
       [createTarget === 'local' || fresh, 'offline-server'],

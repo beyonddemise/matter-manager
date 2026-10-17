@@ -583,6 +583,7 @@ describe('every plan', () => {
   it('lists projects shared with the reader separately', async () => {
     const view = await page({
       plan: 'member',
+      reportedLimit: 5,
       server: [project({ projectId: 'p2', dbName: 'project_p2', name: 'Theirs', role: 'write' })],
     })
 
@@ -704,9 +705,23 @@ describe('what a project is, and what the plan allows', () => {
   })
 
   it('states an unlimited allowance in words, not a number', async () => {
-    const view = await page({ plan: 'pro' })
+    const view = await page({ plan: 'pro', reportedLimit: -1 })
 
     expect(text(find(view, '[data-projects-intro]'))).toContain('Your plan has no project limit.')
+  })
+
+  it('states a legacy allowance beside what the plan includes today (ADR 0020)', async () => {
+    const view = await page({ plan: 'member', reportedLimit: 5, reportedPlanLimit: 3 })
+
+    expect(text(find(view, '[data-projects-intro]'))).toContain(
+      'Projects your plan includes: 3. Yours: 5 (legacy plan).',
+    )
+  })
+
+  it('assumes one project, not the plan, until the server reports a limit', async () => {
+    const view = await page({ plan: 'pro' })
+
+    expect(text(find(view, '[data-projects-intro]'))).toContain('Projects your plan includes: 1.')
   })
 
   it('speaks German', async () => {

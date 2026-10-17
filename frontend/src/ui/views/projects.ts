@@ -422,7 +422,7 @@ export class ProjectsView extends LitElement {
       <section class="wa-stack wa-gap-l app-projects">
         <h1>${msg('Projects')}</h1>
         <p data-projects-intro class="app-empty">
-          ${introText(model.limit, planSyncs(this.input.plan))}
+          ${introText(model.limit, planSyncs(this.input.plan), model.legacyPlanLimit)}
         </p>
         ${this.renderHints(model)}
         ${

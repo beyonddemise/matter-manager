@@ -11,7 +11,8 @@
  * verbatim — it is source copy, numbers and display strings alike, so there are no icons and no
  * translation of what the operator wrote. The dialog's own chrome (caption, "Your plan", the
  * waitlist) stays localized. Without a matrix — never fetched, nothing cached — the built-in
- * tables below render instead; they go once `/plans` is served in production.
+ * tables below render instead, without a projects row: the matrix alone says how many projects a
+ * plan includes (ADR 0020).
  *
  * **No plan literals** (ADR 0009). Built-in columns come from `PLANS` and values from the plan
  * tables; a matrix column's tier is `tierOf`'s lookup. The account's column is found by comparing
@@ -27,15 +28,7 @@
 
 import { msg, str } from '@lit/localize'
 import { html, type TemplateResult } from 'lit'
-import {
-  PLAN_FEATURES,
-  PLANS,
-  type Plan,
-  PROJECT_LIMITS,
-  planSyncs,
-  plansAbove,
-  tierOf,
-} from '../domain/plan.js'
+import { PLAN_FEATURES, PLANS, type Plan, planSyncs, plansAbove, tierOf } from '../domain/plan.js'
 import { getLocale } from './i18n/localization.js'
 import type { PlanMatrix } from './plans.js'
 import type { PlanRequest } from './profile.js'
@@ -65,14 +58,6 @@ const PRICES: Readonly<Record<'free' | 'tba', () => string>> = {
   tba: () => msg('To be announced'),
 }
 
-/** How many projects a plan may own: unlimited, a number, or a number kept on this device. */
-function projectsText(plan: Plan): string {
-  const limit = PROJECT_LIMITS[plan]
-  // `-1` is unlimited, and is tested before anything else reads the number.
-  if (limit < 0) return msg('Unlimited')
-  return planSyncs(plan) ? String(limit) : msg(str`${limit}, on this device`)
-}
-
 /** A check or a dash, labelled, so the table reads correctly to a screen reader. */
 function included(yes: boolean): TemplateResult {
   return html`<wa-icon
@@ -88,9 +73,13 @@ interface Row {
   readonly value: (plan: Plan) => TemplateResult | string
 }
 
-/** The comparison's rows, in the order the issue lists them. Every value is a table lookup. */
+/**
+ * The comparison's rows, in the order the issue lists them. Every value is a table lookup.
+ *
+ * No projects row: how many projects a plan includes is the published matrix's to say (ADR
+ * 0020), and this build has no number of its own to put in its place.
+ */
 const ROWS: readonly Row[] = [
-  { id: 'projects', label: () => msg('Projects'), value: projectsText },
   { id: 'sync', label: () => msg('Sync and sharing'), value: (plan) => included(planSyncs(plan)) },
   {
     id: 'client-name',
