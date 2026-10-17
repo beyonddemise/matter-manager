@@ -256,6 +256,17 @@ describe('the free plan', () => {
     expect(view.querySelector('[data-create-card]')).toBeNull()
   })
 
+  it('keeps the create card beside the project while a larger free limit has room (ADR 0020)', async () => {
+    const view = await page({ local: [entry()], reportedLimit: 2 })
+
+    expect(text(find(view, '[data-open]'))).toContain('Continue with “Alpha”')
+    expect(view.querySelector('[data-create-card]')).not.toBeNull()
+    // "More than one" would be false for a plan of two.
+    expect(text(find(view, '[data-upgrade-hint]')).trim()).toBe(
+      'Upgrade to keep your projects in sync across devices.',
+    )
+  })
+
   it('asks for a name on first run, when the adopted catalogue has none', async () => {
     const view = await page({ local: [entry({ dbName: PROJECT_DATABASE_NAME, name: '' })] })
 
@@ -578,6 +589,12 @@ describe('every plan', () => {
     const all = [...fields(free), ...fields(member), ...fields(pro)]
     expect(all.length).toBeGreaterThanOrEqual(6)
     for (const field of all) expect(field.getAttribute('maxlength')).toBe('200')
+  })
+
+  it('gives an unlimited member limit one empty row, not none (ADR 0020)', async () => {
+    const view = await page({ plan: 'member', reportedLimit: -1, local: [entry()] })
+
+    expect(view.querySelectorAll('[data-slot-empty]')).toHaveLength(1)
   })
 
   it('lists projects shared with the reader separately', async () => {

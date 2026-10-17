@@ -1566,6 +1566,24 @@ components:
             Pinned, so a handler that renamed it or stopped sending it fails the contract check
             rather than silently becoming a refusal no client recognises.
 
+    EntitlementsUnavailable:
+      type: object
+      description: |
+        No project limit can be stated for the account (ADR 0020); see the response of the same
+        name for when it is answered.
+      required: [title, status, reason]
+      properties:
+        type: { type: string, format: uri }
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: string }
+        reason:
+          type: string
+          const: entitlements-unavailable
+          description: >-
+            Pinned, so a handler that renamed it or stopped sending it fails the contract check
+            rather than silently becoming a refusal no client recognises.
+
     WaitlistRequest:
       type: object
       required: [plan]
@@ -1704,13 +1722,7 @@ components:
         once the matrix is published is safe either way.
       content:
         application/problem+json:
-          schema:
-            allOf:
-              - $ref: '#/components/schemas/Problem'
-              - type: object
-                required: [reason]
-                properties:
-                  reason: { type: string, const: entitlements-unavailable }
+          schema: { $ref: '#/components/schemas/EntitlementsUnavailable' }
     Unauthorized:
       description: Missing or invalid credentials
       content:

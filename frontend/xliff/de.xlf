@@ -1247,6 +1247,10 @@
   <source>Projects your plan includes: <x id="0" equiv-text="${planLimit}"/>. Yours: <x id="1" equiv-text="${limit}"/> (legacy plan), kept on this device.</source>
   <target>Projekte, die Ihr Tarif umfasst: <x id="0" equiv-text="${planLimit}"/>. Ihre: <x id="1" equiv-text="${limit}"/> (Bestandstarif), nur auf diesem Gerät.</target>
 </trans-unit>
+<trans-unit id="s6127afa01767fcc0">
+  <source>Upgrade to keep your projects in sync across devices.</source>
+  <target>Mit einem Upgrade bleiben Ihre Projekte auf allen Geräten synchron.</target>
+</trans-unit>
 </body>
 </file>
 </xliff>

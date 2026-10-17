@@ -123,6 +123,7 @@
 's601fb086b0961538': `Anmerkung speichern`,
 's60320a18282b2b33': `Umbenennen`,
 's60f8a9487f3f1996': `Auf dem Server`,
+'s6127afa01767fcc0': `Mit einem Upgrade bleiben Ihre Projekte auf allen Geräten synchron.`,
 's617dcf3e0a38ba6e': str`Geben Sie den Code ein, den wir an ${0} gesendet haben.`,
 's6464c2a7a815108b': `Räume`,
 's64de9eceb8172269': `Gerät bearbeiten`,

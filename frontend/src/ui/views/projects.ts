@@ -511,18 +511,28 @@ export class ProjectsView extends LitElement {
   }
 
   /**
-   * Free: one card. Naming the first-run project comes first, because until it has a name there
-   * is nothing to "continue with"; with no project, the card creates one.
+   * Free: one card per project. Naming the first-run project comes first, because until it has a
+   * name there is nothing to "continue with"; with no project, the card creates one. The matrix
+   * may give the free plan more than one project (ADR 0020), so the create card stays beside the
+   * projects for as long as there is room, and the upgrade hint promises "more than one" only to a
+   * plan of one.
    */
   private renderFree(model: ProjectsModel): TemplateResult {
     if (model.needsName !== undefined) return this.renderNameCard(model.needsName)
     if (model.owned.length === 0) return this.renderCreateCard(model)
     return html`
       ${model.owned.map((row) => this.renderProjectCard(row))}
+      ${model.canCreate.allowed ? this.renderCreateCard(model) : nothing}
       ${
         showsUpgrade(this.input.plan)
           ? html`<p class="app-empty" data-upgrade-hint>
-              ${msg('Upgrade to keep your projects in sync across devices, and to have more than one.')}
+              ${
+                model.limit === 1
+                  ? msg(
+                      'Upgrade to keep your projects in sync across devices, and to have more than one.',
+                    )
+                  : msg('Upgrade to keep your projects in sync across devices.')
+              }
             </p>`
           : nothing
       }
@@ -601,11 +611,16 @@ export class ProjectsView extends LitElement {
 
   /**
    * Member: exactly as many rows as the plan allows. The empty ones are where projects are
-   * created, so "how many more can I have" is answered by looking rather than by a number.
+   * created, so "how many more can I have" is answered by looking rather than by a number. An
+   * unlimited member limit (the matrix may grant one, ADR 0020) has no count to show, so it gets
+   * one empty row: always room for the next project, never an unbounded list.
    */
   private renderMember(model: ProjectsModel): TemplateResult {
-    const free =
-      model.overLimit || model.limit < 0 ? 0 : Math.max(0, model.limit - model.ownedCount)
+    const free = model.overLimit
+      ? 0
+      : model.limit < 0
+        ? 1
+        : Math.max(0, model.limit - model.ownedCount)
     return html`
       ${this.renderCreateReason(model)}
       <ul class="wa-stack wa-gap-s app-project-slots">
