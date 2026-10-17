@@ -33,6 +33,8 @@ export interface ProjectFacts {
   readonly plan: Plan
   /** The server's project limit, when one was ever heard. */
   readonly reportedLimit?: number
+  /** What the plan includes today, when the server ever said (ADR 0020). */
+  readonly reportedPlanLimit?: number
   /** The signed-in account's email, when the profile was ever heard. */
   readonly email?: string
   /** The plan the account is waiting for, when the cached profile says it is (#224). */
@@ -146,6 +148,9 @@ export async function readProjectFacts(
     serverStale: fresh === undefined,
     plan: cachedPlan(profile),
     ...(profile?.projectLimit === undefined ? {} : { reportedLimit: profile.projectLimit }),
+    ...(profile?.planProjectLimit === undefined
+      ? {}
+      : { reportedPlanLimit: profile.planProjectLimit }),
     ...(profile?.email === undefined ? {} : { email: profile.email }),
     ...(request === undefined ? {} : { request }),
     accountPending: signedIn && sub === undefined,

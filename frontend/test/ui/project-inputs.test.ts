@@ -192,6 +192,19 @@ describe('the facts the page is computed from', () => {
     })
     const facts = await readProjectFacts(cache, undefined, false)
     expect(facts).toMatchObject({ plan: 'member', reportedLimit: 7, email: 'ada@example.org' })
+    expect(facts.reportedPlanLimit).toBeUndefined()
+  })
+
+  it('takes what the plan includes today, when the profile says (ADR 0020)', async () => {
+    await cache.writeProfile({
+      sub: 'google|1',
+      plan: 'member',
+      projectLimit: 5,
+      planProjectLimit: 3,
+      fetchedAt: FETCHED,
+    })
+    const facts = await readProjectFacts(cache, undefined, false)
+    expect(facts).toMatchObject({ reportedLimit: 5, reportedPlanLimit: 3 })
   })
 
   it('reads a device that never signed in as free, with no limit heard and no email', async () => {

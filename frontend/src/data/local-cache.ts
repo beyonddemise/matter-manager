@@ -45,6 +45,8 @@ export interface CachedProfile {
   readonly plan?: string
   /** The server's project limit for the account; `-1` is unlimited. */
   readonly projectLimit?: number
+  /** What the account's plan includes today, as the server reported it; `-1` is unlimited. */
+  readonly planProjectLimit?: number
   /**
    * The plan the account is waiting for, as the server reported it (#224). A plain string, for
    * the reason `plan` is one; `cachedRequest` decides what this build makes of it.

@@ -1254,14 +1254,12 @@ describe('upgrading', () => {
           cell.getAttribute('data-plan-column') === 'member',
       ),
     ).toBe(true)
-    expect(table.querySelectorAll('.app-plan-current')).toHaveLength(6)
+    expect(table.querySelectorAll('.app-plan-current')).toHaveLength(5)
     expect(table.querySelectorAll('[data-your-plan]')).toHaveLength(1)
 
-    expect(texts(table, '[data-row="projects"] td')).toEqual([
-      '1, on this device',
-      '5',
-      'Unlimited',
-    ])
+    // No projects row without a matrix: how many projects a plan includes is the published
+    // matrix's alone (ADR 0020), and the built-in tables have no number to put in its place.
+    expect(table.querySelector('[data-row="projects"]')).toBeNull()
     expect(texts(table, '[data-row="price"] td')).toEqual([
       'Free',
       'To be announced',

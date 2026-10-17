@@ -1019,14 +1019,6 @@
   <source>To be announced</source>
   <target>Wird noch bekannt gegeben</target>
 </trans-unit>
-<trans-unit id="se9ef1815463f8000">
-  <source>Unlimited</source>
-  <target>Unbegrenzt</target>
-</trans-unit>
-<trans-unit id="s780a51fa741984b6">
-  <source><x id="0" equiv-text="${limit}"/>, on this device</source>
-  <target><x id="0" equiv-text="${limit}"/>, auf diesem Gerät</target>
-</trans-unit>
 <trans-unit id="s2929031238d41539">
   <source>Included</source>
   <target>Enthalten</target>
@@ -1242,6 +1234,22 @@
 <trans-unit id="s8a9e9389a21bac7d">
   <source>Projects your plan includes: <x id="0" equiv-text="${limit}"/>, kept on this device.</source>
   <target>Projekte, die Ihr Tarif umfasst: <x id="0" equiv-text="${limit}"/>, nur auf diesem Gerät.</target>
+</trans-unit>
+<trans-unit id="s52b617fa7f717923">
+  <source>Projects your plan includes: <x id="0" equiv-text="${planLimit}"/>. Yours: no limit (legacy plan).</source>
+  <target>Projekte, die Ihr Tarif umfasst: <x id="0" equiv-text="${planLimit}"/>. Ihre: unbegrenzt (Bestandstarif).</target>
+</trans-unit>
+<trans-unit id="s673e641cf756898d">
+  <source>Projects your plan includes: <x id="0" equiv-text="${planLimit}"/>. Yours: <x id="1" equiv-text="${limit}"/> (legacy plan).</source>
+  <target>Projekte, die Ihr Tarif umfasst: <x id="0" equiv-text="${planLimit}"/>. Ihre: <x id="1" equiv-text="${limit}"/> (Bestandstarif).</target>
+</trans-unit>
+<trans-unit id="s1836c2bf4ee755f2">
+  <source>Projects your plan includes: <x id="0" equiv-text="${planLimit}"/>. Yours: <x id="1" equiv-text="${limit}"/> (legacy plan), kept on this device.</source>
+  <target>Projekte, die Ihr Tarif umfasst: <x id="0" equiv-text="${planLimit}"/>. Ihre: <x id="1" equiv-text="${limit}"/> (Bestandstarif), nur auf diesem Gerät.</target>
+</trans-unit>
+<trans-unit id="s6127afa01767fcc0">
+  <source>Upgrade to keep your projects in sync across devices.</source>
+  <target>Mit einem Upgrade bleiben Ihre Projekte auf allen Geräten synchron.</target>
 </trans-unit>
 </body>
 </file>

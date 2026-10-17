@@ -92,6 +92,18 @@ describe('reasons as sentences', () => {
     expect(introText(5, true)).not.toContain('kept on this device')
   })
 
+  it('says both numbers, the account\u2019s marked legacy, when it keeps more than its plan', () => {
+    expect(introText(5, true, 3)).toContain(
+      'Projects your plan includes: 3. Yours: 5 (legacy plan).',
+    )
+    expect(introText(2, false, 1)).toContain(
+      'Projects your plan includes: 1. Yours: 2 (legacy plan), kept on this device.',
+    )
+    const unlimited = introText(-1, true, 25)
+    expect(unlimited).toContain('Projects your plan includes: 25. Yours: no limit (legacy plan).')
+    expect(unlimited).not.toContain('-1')
+  })
+
   it('says an unlimited allowance in words, not a number', () => {
     const said = introText(-1, true)
     expect(said).toContain('Your plan has no project limit.')
@@ -106,5 +118,6 @@ describe('reasons as sentences', () => {
     expect(overLimitText(1, 2)).toContain('Ihr Tarif')
     expect(introText(1, false)).toContain('Ein Projekt')
     expect(introText(-1, true)).toContain('Projektlimit')
+    expect(introText(5, true, 3)).toContain('Bestandstarif')
   })
 })

@@ -89,6 +89,9 @@ const CONNECTIONS = [true, false] as const
 /** This session's answer, the last one cached, or none ever heard. */
 const LISTS = ['fresh', 'stale', 'unheard'] as const
 
+/** Limits a profile might report for each plan; the numbers are the server's, never the page's. */
+const REPORTED_LIMITS: Readonly<Record<Plan, number>> = { free: 1, member: 5, pro: -1 }
+
 describe('the page for every plan × session × connection × server list × location', () => {
   for (const plan of PLANS) {
     for (const session of SESSIONS) {
@@ -99,6 +102,9 @@ describe('the page for every plan × session × connection × server list × loc
           const model = projectsModel(
             input({
               plan,
+              // The account's limit as its cached profile reports it (ADR 0020): the page has no
+              // table of its own to fall back on.
+              reportedLimit: REPORTED_LIMITS[plan],
               session,
               online,
               server: heard ? SERVER : undefined,
@@ -261,9 +267,24 @@ describe('the limit', () => {
     projectsModel(input({ local: entries, server: [], ...over }))
   const one = [local({ dbName: 'project_local_one', name: 'One' })]
 
-  it('is the plan table entry until the server reports one', () => {
-    expect(only([]).limit).toBe(5)
+  it('is one project until the server reports one, whatever the plan (ADR 0020)', () => {
+    expect(only([]).limit).toBe(1)
+    expect(only([], { plan: 'pro' }).limit).toBe(1)
     expect(only([], { reportedLimit: 2 }).limit).toBe(2)
+  })
+
+  it('names the plan limit only when the account keeps a higher one', () => {
+    expect(only([], { reportedLimit: 5, reportedPlanLimit: 3 }).legacyPlanLimit).toBe(3)
+    expect(only([], { reportedLimit: -1, reportedPlanLimit: 25 }).legacyPlanLimit).toBe(25)
+    expect(only([], { reportedLimit: 3, reportedPlanLimit: 3 }).legacyPlanLimit).toBeUndefined()
+    expect(only([], { reportedLimit: 3, reportedPlanLimit: 5 }).legacyPlanLimit).toBeUndefined()
+    expect(only([], { reportedLimit: 5 }).legacyPlanLimit).toBeUndefined()
+  })
+
+  it('a legacy limit is the one enforced, not the plan limit', () => {
+    const four = Array.from({ length: 4 }, (_, i) => local({ dbName: `project_local_${i}` }))
+    expect(only(four, { reportedLimit: 5, reportedPlanLimit: 3 }).canCreate).toEqual(ok)
+    expect(only(four, { reportedLimit: 5, reportedPlanLimit: 3 }).overLimit).toBe(false)
   })
 
   it('free may create its one project, then no more', () => {
@@ -273,8 +294,8 @@ describe('the limit', () => {
 
   it('pro is never at its limit', () => {
     const many = Array.from({ length: 40 }, (_, i) => local({ dbName: `project_local_${i}` }))
-    expect(only(many, { plan: 'pro' }).canCreate).toEqual(ok)
-    expect(only(many, { plan: 'pro' }).overLimit).toBe(false)
+    expect(only(many, { plan: 'pro', reportedLimit: -1 }).canCreate).toEqual(ok)
+    expect(only(many, { plan: 'pro', reportedLimit: -1 }).overLimit).toBe(false)
   })
 
   it('over the limit after a downgrade: everything listed and usable, creation refused', () => {

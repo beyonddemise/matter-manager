@@ -42,7 +42,9 @@ const EXPECTED: ReadonlyArray<
   ['PROJECT_DOCUMENT_ID', 'string'],
   ['isProjectDocument', 'function'],
   // plan
-  ['PROJECT_LIMITS', 'object'],
+  ['UNHEARD_PROJECT_LIMIT', 'number'],
+  ['allowsMore', 'function'],
+  ['isLegacyLimit', 'function'],
   ['SYNCED_PLANS', 'object'],
   ['LAYOUTS', 'object'],
   ['withinLimit', 'function'],
