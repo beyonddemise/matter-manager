@@ -1694,9 +1694,14 @@ components:
       description: |
         Nothing can say how many projects the account may own: the published plan matrix has no
         readable limit for its plan, and the account holds no entitlement recorded for that
-        plan (ADR 0020). A deployment error rather than a refusal; nothing was refused on the
-        account's behalf, and the answer is the same for every account on that plan until an
-        operator publishes the matrix. Safe to retry.
+        plan (ADR 0020). A deployment error rather than a refusal, and the same answer for every
+        account on that plan until an operator publishes the matrix.
+
+        Reading a profile and creating, unarchiving or accepting a project change nothing before
+        answering this. The writes that answer with a profile (`PATCH /profile`, `PUT /customer`,
+        `PUT` and `DELETE /waitlist`) may already have been applied: the limit is resolved for
+        the answer, after the write. Every one of them is idempotent, so repeating the request
+        once the matrix is published is safe either way.
       content:
         application/problem+json:
           schema:
