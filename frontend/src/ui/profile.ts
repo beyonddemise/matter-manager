@@ -35,8 +35,16 @@ export interface Profile {
   readonly locale: Locale
   /** The account's plan. */
   readonly plan: Plan
-  /** Projects the account may own; `-1` is unlimited. */
+  /**
+   * Projects the account may own: its recorded entitlement (ADR 0020), which can be above what
+   * the plan includes today. `-1` is unlimited.
+   */
   readonly projectLimit: number
+  /**
+   * Projects the plan includes today, from the published matrix; `-1` is unlimited. Absent when
+   * the server could not say, or from a server older than ADR 0020.
+   */
+  readonly planProjectLimit?: number
   /** The plan the account is waiting for (#224); absent unless it is on the waitlist. */
   readonly planRequested?: Plan
   /** When it joined the waitlist or last changed the plan, ISO-8601. */
@@ -134,6 +142,7 @@ export function isProfile(body: unknown): body is Profile {
     isLocale(value.locale) &&
     isPlan(value.plan) &&
     typeof value.projectLimit === 'number' &&
+    (value.planProjectLimit === undefined || typeof value.planProjectLimit === 'number') &&
     isWaitlistPair(value.planRequested, value.requestedAt)
   )
 }
@@ -150,6 +159,9 @@ export function cachedProfileOf(profile: Profile, fetchedAt: string): CachedProf
     name: profile.displayName,
     plan: profile.plan,
     projectLimit: profile.projectLimit,
+    ...(profile.planProjectLimit === undefined
+      ? {}
+      : { planProjectLimit: profile.planProjectLimit }),
     ...(profile.planRequested === undefined || profile.requestedAt === undefined
       ? {}
       : { planRequested: profile.planRequested, requestedAt: profile.requestedAt }),

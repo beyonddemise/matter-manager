@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
+  allowsMore,
   canOwnAnother,
   DEFAULT_PLAN,
   exceedsLimit,
+  isLegacyLimit,
   isPlan,
   isWaitlistPlan,
   LAYOUTS,
@@ -10,13 +12,13 @@ import {
   PLAN_FEATURES,
   PLANS as PLANS_IN_ORDER,
   type Plan,
-  PROJECT_LIMITS,
   planOf,
   planSyncs,
   plansAbove,
   SYNCED_PLANS,
   showsUpgrade,
   tierOf,
+  UNHEARD_PROJECT_LIMIT,
   withinLimit,
 } from '../../src/domain/plan.js'
 
@@ -24,7 +26,6 @@ const PLANS: readonly Plan[] = ['free', 'member', 'pro']
 
 describe('the plan tables', () => {
   it('mirror the backend', () => {
-    expect(PROJECT_LIMITS).toEqual({ free: 1, member: 5, pro: -1 })
     expect(SYNCED_PLANS).toEqual({ free: false, member: true, pro: true })
   })
 
@@ -65,38 +66,51 @@ describe('the plan tables', () => {
 })
 
 describe('the limit the page uses', () => {
-  it('is the table entry when the server has not said', () => {
-    expect(PLANS.map((p) => limitFor(p))).toEqual([1, 5, -1])
+  it('is one project when the server has not said, whatever the plan (ADR 0020)', () => {
+    expect(limitFor()).toBe(1)
+    expect(UNHEARD_PROJECT_LIMIT).toBe(1)
   })
 
   it('is what the server reported when it did, even -1 or 0', () => {
-    expect(limitFor('free', 3)).toBe(3)
-    expect(limitFor('member', -1)).toBe(-1)
-    expect(limitFor('pro', 0)).toBe(0)
+    expect(limitFor(3)).toBe(3)
+    expect(limitFor(-1)).toBe(-1)
+    expect(limitFor(0)).toBe(0)
   })
 })
 
 describe('whether another project may be owned', () => {
-  const owned = [0, 1, 4, 5, 6, 100]
-  const expected: Record<Plan, boolean[]> = {
-    free: [true, false, false, false, false, false],
-    member: [true, true, true, false, false, false],
-    pro: [true, true, true, true, true, true],
-  }
+  it.each([
+    [0, undefined, true],
+    [1, undefined, false],
+    [2, 3, true],
+    [3, 3, false],
+    [4, 5, true],
+    [5, 5, false],
+    [50, -1, true],
+  ])('owning %i with limit %s may own another: %s', (owned, reported, allowed) => {
+    expect(canOwnAnother(owned, reported)).toBe(allowed)
+  })
+})
 
-  for (const plan of PLANS) {
-    it.each(owned.map((n, i) => [n, expected[plan][i]]))(
-      `${plan} owning %i may own another: %s`,
-      (count, allowed) => {
-        expect(canOwnAnother(plan, count as number)).toBe(allowed)
-      },
-    )
-  }
+describe('a legacy limit', () => {
+  it.each([
+    [5, 3, true],
+    [3, 3, false],
+    [3, 5, false],
+    [-1, 5, true],
+    [-1, 0, true],
+    [5, -1, false],
+    [-1, -1, false],
+    [0, 0, false],
+  ])('limit %i allows more than %i: %s', (a, b, expected) => {
+    expect(allowsMore(a, b)).toBe(expected)
+  })
 
-  it('prefers the reported limit over the table', () => {
-    expect(canOwnAnother('free', 1, 2)).toBe(true)
-    expect(canOwnAnother('pro', 3, 3)).toBe(false)
-    expect(canOwnAnother('member', 50, -1)).toBe(true)
+  it('is an account limit above the plan limit, and unknown without the plan limit', () => {
+    expect(isLegacyLimit(5, 3)).toBe(true)
+    expect(isLegacyLimit(-1, 25)).toBe(true)
+    expect(isLegacyLimit(3, 3)).toBe(false)
+    expect(isLegacyLimit(5, undefined)).toBe(false)
   })
 })
 
@@ -120,7 +134,7 @@ describe('the plans in order', () => {
     expect(PLANS_IN_ORDER).toEqual(['free', 'member', 'pro'])
     // Every plan the tables know, and no other: a fourth plan added to the tables but not here
     // would be missing from the comparison.
-    expect([...PLANS_IN_ORDER].sort()).toEqual(Object.keys(PROJECT_LIMITS).sort())
+    expect([...PLANS_IN_ORDER].sort()).toEqual(Object.keys(SYNCED_PLANS).sort())
   })
 
   it.each([

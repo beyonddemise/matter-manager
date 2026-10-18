@@ -203,13 +203,14 @@ only role is `_admin` is refused, so re-adding it fails the build.
 
 #### What a plan enforces on projects
 
-Two actions, both real policies in `backend/src/domain/can.ts`, both answered from tables keyed
-by plan so no tier literal appears outside that file:
+Two actions, both real policies in the backend's entitlement seam (`Entitlements` and `PlanPolicy`
+in `matter-manager-backend`). Sync is answered from a table keyed by plan, so no tier literal appears
+elsewhere. The project limit is the account's, recorded from the published plan matrix (ADR 0020):
 
 | Action | Rule | Refusal (403, `reason`) |
 |---|---|---|
 | `project.sync` | `SYNCED_PLANS[plan]`: `free` no, `member` and `pro` yes | `plan-no-sync` |
-| `project.create` | owned active projects within `PROJECT_LIMITS[plan]` (`free` 1, `member` 5, `pro` unlimited) | `project-limit-reached` |
+| `project.create` | owned active projects within the account's recorded `projectLimit`, taken from the published plan matrix (ADR 0020) | `project-limit-reached` |
 
 Sync is asked first, so a free account is told to upgrade rather than to archive something.
 
