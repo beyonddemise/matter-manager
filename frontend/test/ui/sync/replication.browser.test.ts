@@ -1,6 +1,7 @@
 import PouchDB from 'pouchdb-browser'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
+  pullOnce,
   pushOnce,
   replicateProject,
   type SyncHandle,
@@ -460,5 +461,116 @@ describe('pushing once', () => {
     await expect(
       pushOnce(local as never, database(), { signal: controller.signal }),
     ).rejects.toThrow(/cancelled/)
+  })
+})
+
+describe('pulling once', () => {
+  it('resolves with the count once the server documents are here', async () => {
+    const local = database()
+    const remote = database()
+    await remote.put(device('device:one'))
+    await remote.put(device('device:two'))
+
+    const result = await pullOnce(local as never, remote)
+
+    expect(result.pulled).toBe(2)
+    expect(await has(local, 'device:two')()).toBe(true)
+  })
+
+  it('resolves with nothing pulled when this copy is already current', async () => {
+    // What lets the manager skip telling the views to re-read.
+    const local = database()
+    const remote = database()
+
+    expect((await pullOnce(local as never, remote)).pulled).toBe(0)
+  })
+
+  it('asks PouchDB for a one-shot pull that writes no checkpoint', async () => {
+    // The live sync of the same pair owns the checkpoint; a pull writing it too would let one
+    // of them skip documents the other had not seen.
+    let asked: unknown
+    const local = {
+      replicate: {
+        from: (_remote: unknown, options: unknown) => {
+          asked = options
+          return {
+            on: (event: string, handler: (info: unknown) => void) => {
+              if (event === 'complete') queueMicrotask(() => handler({ docs_written: 0 }))
+            },
+            cancel: () => {},
+          }
+        },
+      },
+    }
+
+    await pullOnce(local as never, {})
+
+    expect(asked).toEqual({ live: false, retry: false, checkpoint: false })
+  })
+
+  it('rejects against a server that cannot be reached', async () => {
+    const local = database()
+    const unreachable = new PouchDB('http://127.0.0.1:1/nowhere', { skip_setup: true })
+
+    await expect(pullOnce(local as never, unreachable)).rejects.toThrow()
+  })
+
+  it('wraps a failure that is not an Error, keeping it as the cause', async () => {
+    const handlers = new Map<string, (info: unknown) => void>()
+    const local = {
+      replicate: {
+        from: () => ({
+          on: (event: string, handler: (info: unknown) => void) => handlers.set(event, handler),
+          cancel: () => {},
+        }),
+      },
+    }
+
+    const pulled = pullOnce(local as never, {})
+    handlers.get('error')?.({ status: 500 })
+
+    await expect(pulled).rejects.toThrow(/pull failed/)
+  })
+
+  it('rejects when aborted before it starts, and cancels the replication', async () => {
+    let cancelled = false
+    const local = {
+      replicate: {
+        from: () => ({
+          on: () => {},
+          cancel: () => {
+            cancelled = true
+          },
+        }),
+      },
+    }
+    const controller = new AbortController()
+    controller.abort()
+
+    await expect(pullOnce(local as never, {}, { signal: controller.signal })).rejects.toThrow(
+      /cancelled/,
+    )
+    expect(cancelled).toBe(true)
+  })
+
+  it('rejects and cancels when aborted while it runs', async () => {
+    let cancelled = false
+    const local = {
+      replicate: {
+        from: () => ({
+          on: () => {},
+          cancel: () => {
+            cancelled = true
+          },
+        }),
+      },
+    }
+    const controller = new AbortController()
+
+    const pulled = pullOnce(local as never, {}, { signal: controller.signal })
+    controller.abort()
+
+    await expect(pulled).rejects.toThrow(/cancelled/)
+    expect(cancelled).toBe(true)
   })
 })

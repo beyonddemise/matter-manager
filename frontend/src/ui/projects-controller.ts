@@ -23,6 +23,7 @@ import { DEFAULT_PLAN } from '../domain/plan.js'
 import { projectSync, projects } from './composition.js'
 import {
   PROJECT_CHANGED,
+  PROJECT_DATA_CHANGED,
   readCurrentProjectId,
   resolveCurrentProject,
   writeCurrentProjectId,
@@ -56,7 +57,10 @@ export interface ProjectsHost extends ReactiveControllerHost {
   /** `GET /projects`; injected by tests. */
   readonly listProjects?: () => Promise<readonly Project[]>
   /** Builds the replication manager; injected by tests. */
-  readonly makeSync?: (onState: (id: string, state: SyncState) => void) => SyncManager
+  readonly makeSync?: (
+    onState: (id: string, state: SyncState) => void,
+    onIncoming: (id: string) => void,
+  ) => SyncManager
   /** The local index and databases; injected by tests. */
   readonly projectStore?: LocalProjectDependencies
   /** How long signing out waits for each push; injected by tests, 30 s otherwise. */
@@ -168,12 +172,16 @@ export class ProjectsController implements ReactiveController {
    */
   start(): void {
     const generation = this.sessionGeneration
-    const manager = (this.host.makeSync ?? ((onState) => projectSync(onState)))(
+    const manager = (this.host.makeSync ?? projectSync)(
       (projectId, state) => {
         if (generation !== this.sessionGeneration) return
         this.states.set(projectId, state)
         if (state === 'denied') this.denied.add(projectId)
         this.stateChanged()
+      },
+      (projectId) => {
+        if (generation !== this.sessionGeneration) return
+        if (projectId === this.openProjectId()) announceDataChanged()
       },
     )
     this.sync = {
@@ -186,6 +194,43 @@ export class ProjectsController implements ReactiveController {
       },
     }
     void this.refresh(true)
+  }
+
+  /**
+   * The server id of the open project, or `undefined` for one with no server copy.
+   *
+   * By database name, the one thing the open project is always known by, as
+   * {@link recomputeCurrent} finds it.
+   */
+  private openProjectId(): string | undefined {
+    if (this.facts === undefined) return undefined
+    const dbName = currentProjectDatabaseName()
+    const model = projectsModel(this.input())
+    return [...model.owned, ...model.shared].find((row) => row.dbName === dbName)?.projectId
+  }
+
+  /**
+   * The header's Refresh: the project list fetched again, the open project pulled once, and the
+   * views told to re-read.
+   *
+   * Every step is best effort. Offline, or for a local-only project, there is nothing to fetch
+   * or pull, and the re-read alone still shows what this device holds. A failed pull is not
+   * reported here: the status bar already says when the project is not syncing, and a Refresh
+   * that threw would leave the button spinning.
+   */
+  async refreshNow(): Promise<void> {
+    await this.refresh(true)
+    const projectId = this.openProjectId()
+    const sync = this.sync
+    if (
+      projectId !== undefined &&
+      sync !== undefined &&
+      this.host.online &&
+      sync.running().includes(projectId)
+    ) {
+      await sync.pullNow(projectId).catch(() => undefined)
+    }
+    announceDataChanged()
   }
 
   /** What the page shows for one project: a refusal outranks whatever it reported since. */
@@ -435,4 +480,9 @@ export class ProjectsController implements ReactiveController {
   private store(): LocalProjectDependencies {
     return this.host.projectStore ?? localProjectDefaults
   }
+}
+
+/** Tells the views that the open project's documents may have changed. See `PROJECT_DATA_CHANGED`. */
+function announceDataChanged(): void {
+  window.dispatchEvent(new CustomEvent(PROJECT_DATA_CHANGED))
 }

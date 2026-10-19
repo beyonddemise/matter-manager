@@ -14,7 +14,7 @@ import {
   type Unsaved,
   uuidOf,
 } from '../../domain/index.js'
-import { PROJECT_CHANGED } from '../current-project.js'
+import { PROJECT_CHANGED, PROJECT_DATA_CHANGED } from '../current-project.js'
 import { projectDatabase, projectIsEditable } from '../db/project-database.js'
 import { shownManufacturer } from '../i18n/manufacturer.js'
 import { currentAuthor } from '../identity.js'
@@ -243,13 +243,23 @@ export class DeviceView extends LitElement {
     void this.load()
   }
 
+  /**
+   * Re-reads the same project: replication brought documents down, or Refresh was pressed.
+   * The load generation keeps an older read from landing after this one.
+   */
+  private onDataChanged = (): void => {
+    void this.load()
+  }
+
   override connectedCallback(): void {
     super.connectedCallback()
     window.addEventListener(PROJECT_CHANGED, this.onProjectChanged)
+    window.addEventListener(PROJECT_DATA_CHANGED, this.onDataChanged)
   }
 
   override disconnectedCallback(): void {
     window.removeEventListener(PROJECT_CHANGED, this.onProjectChanged)
+    window.removeEventListener(PROJECT_DATA_CHANGED, this.onDataChanged)
     super.disconnectedCallback()
   }
 

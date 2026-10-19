@@ -34,6 +34,16 @@ export const CURRENT_PROJECT_KEY = 'matter-manager.project'
  */
 export const PROJECT_CHANGED = 'matter-manager:project-changed'
 
+/**
+ * Announced when the open project's documents may have changed under the views: replication
+ * brought some down, or somebody pressed Refresh.
+ *
+ * Unlike {@link PROJECT_CHANGED} the project is the same, so a view keeps its repositories and
+ * its state and only re-reads. The forms do not listen: a re-read there would overwrite what
+ * somebody is typing.
+ */
+export const PROJECT_DATA_CHANGED = 'matter-manager:project-data-changed'
+
 /** Which project to make current, and how to open it. */
 export interface CurrentTarget {
   readonly dbName: string

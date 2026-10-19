@@ -17,6 +17,7 @@ import {
   TEST_VENDOR_NAME,
   type Unsaved,
 } from '../../../src/domain/index.js'
+import { PROJECT_DATA_CHANGED } from '../../../src/ui/current-project.js'
 import { activateLocale } from '../../../src/ui/i18n/localization.js'
 import type { DeviceView } from '../../../src/ui/views/device.js'
 import '../../../src/ui/views/device.js'
@@ -1335,5 +1336,24 @@ describe('blank instruction text from another client', () => {
     const pairing = element.querySelector('wa-details[data-pairing-steps]')
     expect(pairing?.querySelector('a[data-link="commissioning-flow"]')).not.toBeNull()
     expect(pairing?.querySelector('.app-catalog-text')).toBeNull()
+  })
+})
+
+/** Replication brought documents down, or Refresh was pressed: the page re-reads its device. */
+describe('when the project’s documents change', () => {
+  it('shows the device as it now is', async () => {
+    await seed()
+    const element = await page()
+    expect(element.textContent).toContain('Kitchen ceiling light')
+    const stored = await database.repositories.devices.get(`device:${UUID}`)
+    if (stored === undefined) throw new Error('not seeded')
+    await database.repositories.devices.save({ ...stored, name: 'Renamed elsewhere' })
+
+    window.dispatchEvent(new CustomEvent(PROJECT_DATA_CHANGED))
+
+    await waitUntil(
+      () => element.textContent?.includes('Renamed elsewhere') === true,
+      'the page kept the old name',
+    )
   })
 })

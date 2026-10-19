@@ -24,7 +24,7 @@ async function until(condition: () => boolean | Promise<boolean>, what: string):
 }
 
 /** A manager over real databases, one pair per `dbName`, stopped after the test. */
-function realManager(unreachable = false) {
+function realManager(unreachable = false, onIncoming?: (projectId: string) => void) {
   const locals = new Map<string, PouchDB.Database>()
   const remotes = new Map<string, PouchDB.Database>()
   const pick = (map: Map<string, PouchDB.Database>, dbName: string) => {
@@ -37,6 +37,7 @@ function realManager(unreachable = false) {
       unreachable
         ? (new PouchDB('http://127.0.0.1:1/nowhere', { skip_setup: true }) as never)
         : (pick(remotes, dbName) as never),
+    ...(onIncoming === undefined ? {} : { onIncoming }),
   })
   managers.push(manager)
   return { manager, local: (n: string) => pick(locals, n), remote: (n: string) => pick(remotes, n) }
@@ -99,6 +100,68 @@ describe('pushing one project now', () => {
 
     expect(manager.running()).toEqual([])
     expect((await remote('project_p1').get('device:held'))._id).toBe('device:held')
+  })
+})
+
+describe('pulling one project now', () => {
+  /**
+   * A manager given `ONE` with its live sync stopped, so only `pullNow` moves documents and
+   * every `onIncoming` it records came from the pull. `stop` keeps the project known.
+   */
+  function stoppedManager(unreachable = false) {
+    const incoming: string[] = []
+    const real = realManager(unreachable, (projectId) => incoming.push(projectId))
+    real.manager.set([ONE])
+    real.manager.stop('p1')
+    return { ...real, incoming }
+  }
+
+  it('resolves after the server documents are here', async () => {
+    const { manager, local, remote } = stoppedManager()
+    await remote('project_p1').put(device('device:one'))
+
+    await manager.pullNow('p1')
+
+    expect((await local('project_p1').get('device:one'))._id).toBe('device:one')
+  })
+
+  it('tells the interface when something arrived', async () => {
+    const { manager, remote, incoming } = stoppedManager()
+    await remote('project_p1').put(device('device:one'))
+
+    await manager.pullNow('p1')
+
+    expect(incoming).toEqual(['p1'])
+  })
+
+  it('says nothing when nothing arrived', async () => {
+    // A Refresh on a current copy must not make every view re-read for nothing.
+    const { manager, incoming } = stoppedManager()
+
+    await manager.pullNow('p1')
+
+    expect(incoming).toEqual([])
+  })
+
+  it('rejects against an unreachable server, and says nothing', async () => {
+    const { manager, incoming } = stoppedManager(true)
+
+    await expect(manager.pullNow('p1')).rejects.toThrow()
+    expect(incoming).toEqual([])
+  })
+
+  it('rejects for a project it was never given', async () => {
+    const { manager } = realManager()
+
+    await expect(manager.pullNow('nope')).rejects.toThrow(/not being synchronized/)
+  })
+
+  it('rejects when cancelled', async () => {
+    const { manager } = stoppedManager()
+    const controller = new AbortController()
+    controller.abort()
+
+    await expect(manager.pullNow('p1', { signal: controller.signal })).rejects.toThrow(/cancelled/)
   })
 })
 

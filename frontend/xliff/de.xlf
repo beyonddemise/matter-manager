@@ -1254,6 +1254,10 @@
   <source>A room needs a name.</source>
   <target>Ein Raum braucht einen Namen.</target>
 </trans-unit>
+<trans-unit id="s7b7163270e57e8b4">
+  <source>Refresh</source>
+  <target>Aktualisieren</target>
+</trans-unit>
 </body>
 </file>
 </xliff>

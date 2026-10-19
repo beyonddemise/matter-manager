@@ -20,7 +20,11 @@ import type { CachedProfile, LocalProjectEntry } from '../../src/data/index.js'
 import type { Plan } from '../../src/domain/plan.js'
 import type { AppShell } from '../../src/ui/app-shell.js'
 import '../../src/ui/app-shell.js'
-import { CURRENT_PROJECT_KEY, writeCurrentProjectId } from '../../src/ui/current-project.js'
+import {
+  CURRENT_PROJECT_KEY,
+  PROJECT_DATA_CHANGED,
+  writeCurrentProjectId,
+} from '../../src/ui/current-project.js'
 import {
   currentProjectDatabaseName,
   projectIsEditable,
@@ -131,26 +135,33 @@ function fakeNetwork(onLine = true) {
   }
 }
 
-/** A replication manager that records every list it is handed. */
+/** A replication manager that records every list it is handed, and every push and pull. */
 function recordingSync(
   push: (projectId: string, signal?: AbortSignal) => Promise<void> = async () => {},
+  pull: (projectId: string) => Promise<void> = async () => {},
+  running: readonly string[] = [],
 ) {
   const sets: (readonly SyncableProject[])[] = []
   const pushes: string[] = []
+  const pulls: string[] = []
   const manager = {
     set: (projects: readonly SyncableProject[]) => void sets.push(projects),
-    running: () => [],
+    running: () => running,
     stateOf: () => undefined,
     stop: () => {},
     pushNow: async (projectId: string, options?: { signal?: AbortSignal }) => {
       pushes.push(projectId)
       await push(projectId, options?.signal)
     },
+    pullNow: async (projectId: string) => {
+      pulls.push(projectId)
+      await pull(projectId)
+    },
     suspend: () => {},
     resume: () => {},
     stopAll: () => {},
   }
-  return { manager, sets, pushes }
+  return { manager, sets, pushes, pulls }
 }
 
 interface Options {
@@ -165,6 +176,10 @@ interface Options {
   readonly store?: LocalProjectDependencies
   /** What each push does; succeeds by default. */
   readonly push?: (projectId: string, signal?: AbortSignal) => Promise<void>
+  /** What each pull does; succeeds by default. */
+  readonly pull?: (projectId: string) => Promise<void>
+  /** The projects the fake replication reports as running; none by default. */
+  readonly running?: readonly string[]
   /** How long signing out waits for each push. */
   readonly signOutPushTimeoutMs?: number
   /** The waitlist API; one that is never expected to be called by default. */
@@ -182,7 +197,10 @@ async function mount(options: Options = {}) {
   const store = options.store ?? isolatedProjectStore()
   for (const indexed of options.local ?? []) await store.cache().addLocalProject(indexed)
   if (options.cachedProfile !== undefined) await store.cache().writeProfile(options.cachedProfile)
-  const sync = recordingSync(options.push)
+  const sync = recordingSync(options.push, options.pull, options.running)
+  // The manager's `onIncoming`, as the controller hands it over; a test calls it to stand in
+  // for documents arriving.
+  let incoming: (projectId: string) => void = () => {}
   // Injected so a signed-in shell never builds the real backfill, which would read the open
   // project's devices and ask the real API about them: a test must not depend on either.
   const backfill = { trigger: vi.fn(), stop: vi.fn(), idle: async () => {} }
@@ -203,7 +221,10 @@ async function mount(options: Options = {}) {
       .connectivity=${options.network ?? fakeNetwork(true)}
       .followLocale=${options.followLocale ?? (async () => undefined)}
       .listProjects=${list}
-      .makeSync=${() => sync.manager}
+      .makeSync=${(_onState: unknown, onIncoming: (projectId: string) => void) => {
+        incoming = onIncoming
+        return sync.manager
+      }}
       .signOutOf=${signOutOf}
       .signIn=${options.signIn ?? (() => {})}
       .waitlist=${options.waitlist}
@@ -215,7 +236,15 @@ async function mount(options: Options = {}) {
     ></app-shell>
   `)) as AppShell
   await element.updateComplete
-  return { element, sync, list, store, signOutOf, backfill }
+  return {
+    element,
+    sync,
+    list,
+    store,
+    signOutOf,
+    backfill,
+    incoming: (projectId: string) => incoming(projectId),
+  }
 }
 
 const projectsView = (element: Element) =>
@@ -738,6 +767,203 @@ describe('the header', () => {
     const { element } = await mount({ local: [entry(), copy], list: async () => [project()] })
     await inputSettles(element, (i) => i.server !== undefined, 'no list arrived')
     expect(element.querySelector('[data-project-switcher]')).toBeNull()
+  })
+})
+
+/**
+ * The header's Refresh: the project list fetched again, the open project pulled once when it is
+ * a server project being replicated, and the views told to re-read (`PROJECT_DATA_CHANGED`).
+ */
+describe('refreshing', () => {
+  /** How many times the views were told to re-read since the test began. */
+  let announced = 0
+  const count = (): void => {
+    announced += 1
+  }
+
+  beforeEach(() => {
+    announced = 0
+    window.addEventListener(PROJECT_DATA_CHANGED, count)
+  })
+
+  afterEach(() => {
+    window.removeEventListener(PROJECT_DATA_CHANGED, count)
+  })
+
+  type Button = HTMLElement & { loading?: boolean }
+  const refreshButton = (element: Element) => element.querySelector('[data-refresh]') as Button
+
+  /** The shell with the server project `p1` open and settled, replicating unless told not to. */
+  async function openOnServer(options: Options = {}) {
+    localStorage.setItem(CURRENT_PROJECT_KEY, 'p1')
+    const mounted = await mount({
+      local: [copy],
+      cachedProfile: profile(),
+      list: async () => [project()],
+      running: ['p1'],
+      ...options,
+    })
+    await waitUntil(() => currentProjectDatabaseName() === 'project_p1', 'p1 never opened')
+    await inputSettles(mounted.element, (i) => i.server !== undefined, 'no list arrived')
+    await waitUntil(() => refreshButton(mounted.element) !== null, 'no Refresh button')
+    return mounted
+  }
+
+  /** Presses Refresh and waits for it to finish. */
+  async function refresh(element: AppShell): Promise<void> {
+    const before = announced
+    refreshButton(element).click()
+    await waitUntil(() => announced > before, 'Refresh never told the views to re-read')
+    await waitUntil(() => refreshButton(element).loading !== true, 'Refresh never finished')
+  }
+
+  it('sits in the header, before Upgrade, labelled for a screen reader', async () => {
+    const { element } = await mount({ cachedProfile: profile({ plan: 'member', projectLimit: 5 }) })
+    await waitUntil(() => element.querySelector('[data-upgrade]') !== null, 'no Upgrade')
+
+    const button = refreshButton(element)
+    expect(button.closest('.app-header-actions')).not.toBeNull()
+    const upgrade = element.querySelector('[data-upgrade]') as Element
+    expect(button.compareDocumentPosition(upgrade) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(button.querySelector('wa-icon')?.getAttribute('label')).toBe('Refresh')
+  })
+
+  it('is there signed out too, where it re-reads what this device holds', async () => {
+    const { element } = await mount({ session: 'signed-out' })
+    await waitUntil(() => element.querySelector('[data-sign-in]') !== null, 'no sign-in')
+    expect(refreshButton(element)).not.toBeNull()
+  })
+
+  it('fetches the project list, pulls the open project and tells the views', async () => {
+    const { element, list, sync } = await openOnServer()
+    const fetched = list.mock.calls.length
+
+    await refresh(element)
+
+    expect(list.mock.calls.length).toBeGreaterThan(fetched)
+    expect(sync.pulls).toEqual(['p1'])
+    expect(announced).toBe(1)
+  })
+
+  it('pulls nothing offline, and still tells the views', async () => {
+    const network = fakeNetwork(true)
+    const { element, sync } = await openOnServer({ network })
+    network.go(false)
+    await element.updateComplete
+
+    await refresh(element)
+
+    expect(sync.pulls).toEqual([])
+    expect(announced).toBe(1)
+  })
+
+  it('pulls nothing for a project that is not replicating', async () => {
+    // A suspended or refused project: pulling it behind the live sync's back would undo the
+    // reason it was stopped.
+    const { element, sync } = await openOnServer({ running: [] })
+
+    await refresh(element)
+
+    expect(sync.pulls).toEqual([])
+    expect(announced).toBe(1)
+  })
+
+  it('pulls nothing for a project with no server copy', async () => {
+    useProjectDatabase('project_local')
+    const { element, sync } = await mount({
+      local: [entry()],
+      cachedProfile: profile(),
+      running: ['p1'],
+    })
+    await waitUntil(() => currentProjectDatabaseName() === 'project_local_a', 'not opened')
+    await waitUntil(() => refreshButton(element) !== null, 'no Refresh button')
+
+    await refresh(element)
+
+    expect(sync.pulls).toEqual([])
+    expect(announced).toBe(1)
+  })
+
+  it('finishes, and still tells the views, when the pull fails', async () => {
+    // The status bar says when a project is not syncing; a Refresh that threw would leave the
+    // button spinning.
+    const { element, sync } = await openOnServer({
+      pull: async () => Promise.reject(new Error('unreachable')),
+    })
+
+    await refresh(element)
+
+    expect(sync.pulls).toEqual(['p1'])
+    expect(announced).toBe(1)
+    expect(refreshButton(element).loading).toBe(false)
+  })
+
+  it('shows it is working, and ignores a second press meanwhile', async () => {
+    let release: () => void = () => {}
+    const { element, sync } = await openOnServer({
+      pull: () =>
+        new Promise<void>((resolve) => {
+          release = resolve
+        }),
+    })
+
+    refreshButton(element).click()
+    await waitUntil(() => sync.pulls.length === 1, 'the pull never started')
+    await element.updateComplete
+    expect(refreshButton(element).loading).toBe(true)
+    refreshButton(element).click()
+    await element.updateComplete
+
+    release()
+    await waitUntil(() => refreshButton(element).loading === false, 'Refresh never finished')
+    expect(sync.pulls).toEqual(['p1'])
+    expect(announced).toBe(1)
+  })
+})
+
+describe('documents arriving by replication', () => {
+  let announced = 0
+  const count = (): void => {
+    announced += 1
+  }
+
+  beforeEach(() => {
+    announced = 0
+    window.addEventListener(PROJECT_DATA_CHANGED, count)
+  })
+
+  afterEach(() => {
+    window.removeEventListener(PROJECT_DATA_CHANGED, count)
+  })
+
+  async function openP1() {
+    localStorage.setItem(CURRENT_PROJECT_KEY, 'p1')
+    const mounted = await mount({
+      local: [copy, entry({ dbName: 'project_p2', name: 'Gamma', projectId: 'p2' })],
+      cachedProfile: profile(),
+      list: async () => [project(), project({ projectId: 'p2', dbName: 'project_p2' })],
+    })
+    await waitUntil(() => currentProjectDatabaseName() === 'project_p1', 'p1 never opened')
+    await inputSettles(mounted.element, (i) => i.server !== undefined, 'no list arrived')
+    return mounted
+  }
+
+  it('tells the views when they arrived in the open project', async () => {
+    const { incoming } = await openP1()
+
+    incoming('p1')
+
+    expect(announced).toBe(1)
+  })
+
+  it('says nothing about another project', async () => {
+    // A re-read of the page would show nothing new, and in the device form would cost nothing
+    // only because the forms do not listen; better not to ask.
+    const { incoming } = await openP1()
+
+    incoming('p2')
+
+    expect(announced).toBe(0)
   })
 })
 

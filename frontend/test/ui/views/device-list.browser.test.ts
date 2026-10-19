@@ -14,6 +14,7 @@ import { fixture, html, waitUntil } from '@open-wc/testing-helpers'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { page, userEvent } from 'vitest/browser'
 import { type DeviceDocument, TEST_VENDOR_NAME, type Unsaved } from '../../../src/domain/index.js'
+import { PROJECT_DATA_CHANGED } from '../../../src/ui/current-project.js'
 import { activateLocale } from '../../../src/ui/i18n/localization.js'
 import type { DeviceListView } from '../../../src/ui/views/device-list.js'
 import '../../../src/ui/views/device-list.js'
@@ -1030,5 +1031,37 @@ describe('filtered to one room', () => {
     )
     expect(owns.sort()).toEqual(['Kitchen', 'kitchen'].sort())
     expect(heading?.textContent).toContain(', ')
+  })
+})
+
+/** Replication brought documents down, or Refresh was pressed: the list re-reads in place. */
+describe('when the project’s documents change', () => {
+  const announce = () => window.dispatchEvent(new CustomEvent(PROJECT_DATA_CHANGED))
+
+  it('shows a device that arrived', async () => {
+    await seed()
+    const element = await list()
+    await database.repositories.devices.save(device('device:new', 'Porch light', 'Porch'))
+
+    announce()
+
+    await waitUntil(() => shown(element).includes('device:new'), 'the new device never showed')
+  })
+
+  it('keeps the search, rather than starting over', async () => {
+    // Same project, same reader: what they typed still applies to what arrived.
+    await seed()
+    const element = await list()
+    await search(element, 'light')
+    await database.repositories.devices.save(device('device:new', 'Porch light', 'Porch'))
+    await database.repositories.devices.save(device('device:fan', 'Porch fan', 'Porch'))
+
+    announce()
+
+    await waitUntil(() => shown(element).includes('device:new'), 'the new device never showed')
+    expect(shown(element)).not.toContain('device:fan')
+    expect((element.querySelector('[data-search]') as HTMLElement & { value?: string }).value).toBe(
+      'light',
+    )
   })
 })

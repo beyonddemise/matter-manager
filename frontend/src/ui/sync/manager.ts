@@ -10,7 +10,13 @@
  * @module
  */
 
-import { pushOnce, replicateProject, type SyncHandle, type SyncState } from './replication.js'
+import {
+  pullOnce,
+  pushOnce,
+  replicateProject,
+  type SyncHandle,
+  type SyncState,
+} from './replication.js'
 
 /** The projects to replicate, as `GET /projects` describes them. */
 export interface SyncableProject {
@@ -67,6 +73,13 @@ export interface SyncManager {
    * not one this manager was given - never resolves on a guess. The optional signal cancels it.
    */
   pushNow(projectId: string, options?: { signal?: AbortSignal }): Promise<void>
+  /**
+   * Pulls one project's server changes once and resolves when this copy has them all.
+   *
+   * Rejects as {@link pushNow} does. Reports arrivals through `onIncoming` like the live sync,
+   * so a view re-reads whichever way the documents came.
+   */
+  pullNow(projectId: string, options?: { signal?: AbortSignal }): Promise<void>
   /** Stops everything. For signing out, and for a page being torn down. */
   stopAll(): void
 }
@@ -149,6 +162,17 @@ export function syncManager(deps: ManagerDependencies): SyncManager {
       // The same factories the live sync uses: the local handle is the shared memoised one, and
       // the remote is a lightweight HTTP client with nothing to close.
       await pushOnce(deps.local(project.dbName), deps.remote(project.dbName), options)
+    },
+
+    async pullNow(projectId: string, options?: { signal?: AbortSignal }): Promise<void> {
+      const project = known.get(projectId)
+      if (project === undefined) throw new Error(`Project ${projectId} is not being synchronized`)
+      const { pulled } = await pullOnce(
+        deps.local(project.dbName),
+        deps.remote(project.dbName),
+        options,
+      )
+      if (pulled > 0) deps.onIncoming?.(projectId)
     },
 
     stopAll(): void {
