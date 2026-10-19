@@ -25,10 +25,14 @@
  *
  * Readings the table leaves open are decided here:
  *
- * - **A copy of an archived project** (fresh or stale list) — a remnant — reads `local`, opens
- *   read-only and offers "delete local copy" and, to its owner, "put back on the server". CouchDB
- *   refuses every write to an archived project, so an edit could never arrive, and promoting it
- *   would mint a second project from one that was deliberately put away. Putting it back
+ * - **A copy of an archived project** (fresh or stale list) — a remnant — reads `local` and
+ *   offers "delete local copy" and, to its owner, "put back on the server". The owner's copy stays
+ *   editable: removing a project from the server takes it from the collaborators, not from the
+ *   owner, whose edits wait on this device. Nothing replicates while it is archived (CouchDB
+ *   refuses every write to it), and putting it back sends them. Anyone else's copy opens
+ *   read-only: their access went with the archive. Promoting it would mint a second project from
+ *   one that was deliberately put away, and renaming it would rename only this copy, since the
+ *   name lives on the server, so both wait for putting it back. Putting it back
  *   unarchives that same project instead, which the service allows until it deletes it, 90 days
  *   after the archive; afterwards a fresh list no longer names it, and the copy is an orphan. It
  *   is not counted: the service does not count archived projects — so putting it back needs room
@@ -350,9 +354,11 @@ export function projectsModel(input: ProjectsInput): ProjectsModel {
             ? ALLOWED
             : kind === 'promoting'
               ? gate<Refusal>([false, 'not-applicable'])
-              : kind === 'remnant' || kind === 'orphan'
-                ? gate<Refusal>([false, 'read-only'])
-                : gate<Refusal>(...needsServer, [manages, 'role']),
+              : kind === 'remnant' && owner
+                ? gate<Refusal>([false, 'not-applicable'])
+                : kind === 'remnant' || kind === 'orphan'
+                  ? gate<Refusal>([false, 'read-only'])
+                  : gate<Refusal>(...needsServer, [manages, 'role']),
         // Slot-neutral on this page, but `POST /projects` counts the server's active projects
         // only, so over the limit the server refuses what the page would offer. Finishing a
         // half-done promotion creates nothing, so the limit does not apply to it.
@@ -527,13 +533,15 @@ function kindOf(
  * Whether the project may be written to when opened.
  *
  * Local-only projects always, half-promoted ones included: nothing outside this device judges
- * their data yet. A remnant or an orphan
- * never: the server refuses (or no longer takes) its writes. Otherwise the validator's rule is
+ * their data yet. The owner's remnant too: its edits wait on this device until it is put back
+ * on the server. Anyone else's remnant, and an orphan, never: their writes have nowhere to go.
+ * Otherwise the validator's rule is
  * predicted — readers never write, an owner only on a plan that syncs (the lapsed owner), and a
  * writer or manager always, since the owner's plan, not theirs, is what the project rests on.
  */
 function editable(kind: Kind, role: Project['role'] | undefined, owner: boolean, syncs: boolean) {
   if (kind === 'local-only' || kind === 'promoting') return true
-  if (kind === 'remnant' || kind === 'orphan' || role === 'read') return false
+  if (kind === 'remnant') return owner
+  if (kind === 'orphan' || role === 'read') return false
   return owner ? syncs : true
 }

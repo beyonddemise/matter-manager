@@ -103,9 +103,9 @@ export interface ProjectActions {
   removeLocalCopy(model: ProjectsModel, row: Row): Promise<void>
   /** Destroys a local database that has nowhere else to go, given its exact name. */
   deleteLocalProject(model: ProjectsModel, row: Row, typedName: string): Promise<void>
-  /** Archives the project on the server. A local copy stays, read-only. */
+  /** Archives the project on the server. The owner's local copy stays, and stays editable. */
   removeFromServer(model: ProjectsModel, row: Row): Promise<void>
-  /** Unarchives the project a read-only copy belongs to, and synchronizes the copy again. */
+  /** Unarchives the project a removed copy belongs to, and synchronizes the copy again. */
   restore(model: ProjectsModel, row: Row): Promise<void>
 }
 
@@ -379,7 +379,7 @@ export function projectActions(deps: ProjectActionDependencies): ProjectActions 
         if (row.location === 'synced') await push(projectId).catch(() => undefined)
         await updateProject(serverDeps, projectId, { archived: true })
         // The server now refuses every write to it, so replicating it would only report denials.
-        // A local copy stays, and the model opens it read-only.
+        // The local copy stays, editable: the owner's edits wait here until it is put back.
         sync.set(replicated(model, { drop: projectId }))
       }),
 

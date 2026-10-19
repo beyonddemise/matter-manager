@@ -171,10 +171,18 @@ describe('which project the views open', () => {
     expect(current).toEqual({ dbName: 'project_p1', id: 'p1', editable: false })
   })
 
-  it('opens an archived project’s copy read-only', () => {
+  it('opens the owner’s copy of an archived project editable', () => {
     const current = resolveCurrentProject(
       'p1',
       model({ local: [synced], server: [project({ archived: true })] }),
+    )
+    expect(current.editable).toBe(true)
+  })
+
+  it('opens a collaborator’s copy of an archived project read-only', () => {
+    const current = resolveCurrentProject(
+      'p1',
+      model({ local: [synced], server: [project({ archived: true, role: 'write' })] }),
     )
     expect(current.editable).toBe(false)
   })
