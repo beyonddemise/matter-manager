@@ -14,7 +14,8 @@
  * @module
  */
 
-import type { LocalCache, LocalProjectEntry } from '../data/index.js'
+import { type LocalCache, type LocalProjectEntry, projectRepositories } from '../data/index.js'
+import type { ImportedProject } from '../domain/archive/project-archive.js'
 import {
   isProjectDocument,
   PROJECT_DOCUMENT_ID,
@@ -211,6 +212,64 @@ export async function createLocalProject(
     dbName,
     name: input.name,
     ...clientField(input.client),
+    ...accountField(account),
+    createdAt: deps.now(),
+  }
+  await deps.cache().addLocalProject(entry)
+  return entry
+}
+
+/**
+ * A name no listed local project has: the one offered, else `<name> (imported)`, then
+ * `<name> (imported 2)` and so on.
+ *
+ * Only this device's index is consulted. Two projects with one name are allowed, but an import
+ * that silently lands beside the project it was exported from would be picked by mistake.
+ */
+function unusedName(name: string, taken: ReadonlySet<string>): string {
+  if (!taken.has(name)) return name
+  for (let n = 1; ; n++) {
+    const candidate = n === 1 ? `${name} (imported)` : `${name} (imported ${n})`
+    if (!taken.has(candidate)) return candidate
+  }
+}
+
+/**
+ * Creates a local-only project from an import: its database, its `project` document, its
+ * devices, and last its index entry.
+ *
+ * The order is {@link createLocalProject}'s, and here it carries more weight: a failure while
+ * the devices are written leaves a project with some of them, and listing that would present a
+ * partial backup as the whole one. So on any failure the database is destroyed and nothing is
+ * listed - the import either happened or did not.
+ *
+ * @param imported the project and devices, from `readProjectArchive`; validated already
+ * @returns the new index entry
+ */
+export async function importLocalProject(
+  imported: ImportedProject,
+  deps: LocalProjectDependencies = localProjectDefaults,
+): Promise<LocalProjectEntry> {
+  const account = await deps.account()
+  const taken = new Set((await deps.cache().readLocalProjects()).map((entry) => entry.name))
+  const name = unusedName(imported.project.name, taken)
+  const dbName = `${LOCAL_PROJECT_PREFIX}${deps.uuid()}`
+  const database = deps.database(dbName)
+  try {
+    await writeProjectDocument(database, name, imported.project.client)
+    // Through the repository, so each device gets this device's `updatedAt` stamp (ADR 0010)
+    // rather than whatever the file said.
+    const { devices } = projectRepositories(database, deps.now)
+    for (const device of imported.devices) await devices.save(device)
+  } catch (error) {
+    await database.destroy().catch(() => undefined)
+    deps.forget(dbName)
+    throw error
+  }
+  const entry: LocalProjectEntry = {
+    dbName,
+    name,
+    ...clientField(imported.project.client),
     ...accountField(account),
     createdAt: deps.now(),
   }

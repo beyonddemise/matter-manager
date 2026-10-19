@@ -1,3 +1,4 @@
+import './project-import.js'
 import { msg, updateWhenLocaleChanges } from '@lit/localize'
 import { html, LitElement, nothing, type PropertyValues, type TemplateResult } from 'lit'
 import type { Plan } from '../../domain/plan.js'
@@ -418,6 +419,8 @@ export class AccountView extends LitElement {
               : this.renderMethods(methods)
         }
         <p role="status">${this.announcement}</p>
+        <!-- Signed in or not: an import makes a project on this device and needs no account. -->
+        <project-import-section></project-import-section>
       </div>
     `
   }

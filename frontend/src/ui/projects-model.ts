@@ -153,6 +153,11 @@ export interface RowActions {
   readonly removeServer: Permission
   /** Unarchive the project a remnant is a copy of, so it is synchronized again. Owner only. */
   readonly restore: Permission
+  /**
+   * Save this device's copy as a zip of JSON documents. Any role, offline too: it reads only
+   * what is here. Not for a server-only row, which has nothing here to read.
+   */
+  readonly export: Permission
 }
 
 /** One project on the page. */
@@ -398,6 +403,7 @@ export function projectsModel(input: ProjectsInput): ProjectsModel {
           [syncs, 'plan'],
           [canOwnAnother(ownedCount, input.reportedLimit), 'limit'],
         ),
+        export: gate<Refusal>([kind !== 'server', 'not-applicable']),
       },
     }
   }

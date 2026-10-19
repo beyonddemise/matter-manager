@@ -85,6 +85,8 @@ const ICONS = [
   'image',
   'expand',
   'file-pdf',
+  // The Account page's import button, in `views/project-import.ts`.
+  'file-import',
   'pen',
   'plus',
   // The sort direction of the projects table's active column, in `views/projects.ts`, and

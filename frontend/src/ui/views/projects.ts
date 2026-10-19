@@ -2,6 +2,7 @@ import { msg, str, updateWhenLocaleChanges } from '@lit/localize'
 import { html, LitElement, nothing, type TemplateResult } from 'lit'
 import type { LocalProjectEntry } from '../../data/index.js'
 import { DEFAULT_PLAN, planSyncs, showsUpgrade } from '../../domain/plan.js'
+import { exportProject } from '../archive/project-export.js'
 import { projects } from '../composition.js'
 import { writeCurrentProjectId } from '../current-project.js'
 import { currentProjectDatabaseName, useProjectDatabase } from '../db/project-database.js'
@@ -146,6 +147,7 @@ export class ProjectsView extends LitElement {
     navigate: { attribute: false },
     refresh: { attribute: false },
     actions: { attribute: false },
+    exportProject: { attribute: false },
     busy: { state: true },
     confirming: { state: true },
     typed: { state: true },
@@ -176,6 +178,8 @@ export class ProjectsView extends LitElement {
   declare refresh?: () => Promise<void>
   /** Promote, download and the removals. Unset in the application, where they are the real ones. */
   declare actions?: ProjectActions
+  /** The export, injected by tests; the real one reads the database and offers a download. */
+  declare exportProject?: (row: Row) => Promise<void>
 
   /** Whether an action is running. Every control that starts one is disabled meanwhile. */
   declare busy: boolean
@@ -352,6 +356,12 @@ export class ProjectsView extends LitElement {
     if (needsConfirmation(action)) {
       this.typed = ''
       this.confirming = { action, row }
+      return
+    }
+    if (action === 'export') {
+      // Reads this device's copy only, so it is not a project action: nothing on the server or
+      // in the index changes, and replication need not be held for it.
+      void this.run(() => (this.exportProject ?? exportProject)(row))
       return
     }
     const model = this.model()

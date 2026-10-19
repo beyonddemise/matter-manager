@@ -138,6 +138,7 @@ describe('the page for every plan × session × connection × server list × loc
               deleteLocal: ok,
               removeServer: na,
               restore: na,
+              export: ok,
             })
           })
 
@@ -158,6 +159,7 @@ describe('the page for every plan × session × connection × server list × loc
               deleteLocal: na,
               removeServer: server() ?? ok,
               restore: na,
+              export: ok,
             })
           })
 
@@ -208,6 +210,7 @@ describe('the page for every plan × session × connection × server list × loc
                 deleteLocal: na,
                 removeServer: server() ?? ok,
                 restore: na,
+                export: na,
               })
             })
 
@@ -226,6 +229,7 @@ describe('the page for every plan × session × connection × server list × loc
                 removeServer: na,
                 // Three owned projects leave room under every limit of a plan that syncs.
                 restore: server() ?? (syncs ? ok : no('plan')),
+                export: ok,
               })
             })
 
@@ -242,6 +246,7 @@ describe('the page for every plan × session × connection × server list × loc
                 deleteLocal: na,
                 removeServer: server() ?? no('role'),
                 restore: na,
+                export: na,
               })
             })
 
@@ -553,6 +558,7 @@ describe('a promotion that stopped half way', () => {
       deleteLocal: ok,
       removeServer: na,
       restore: na,
+      export: ok,
     })
   })
 
@@ -684,5 +690,40 @@ describe('a session not yet known', () => {
 
   it('still opens what is on this device', () => {
     expect(byKey(checking, 'project_local_alpha').actions.open).toEqual(ok)
+  })
+})
+
+/**
+ * Export reads only this device's copy: allowed wherever there is one, for any role, offline and
+ * signed out too; never for a row that is only on the server.
+ */
+describe('exporting a project', () => {
+  const halfway = local({ dbName: 'project_local_hotel', name: 'Hotel', projectId: 'hotel' })
+
+  it.each([
+    ['a local-only project', 'project_local_alpha', input()],
+    ['a synchronized copy', 'project_bravo', input()],
+    ['a copy shared for reading', 'project_foxtrot', input()],
+    ['the owner’s copy of an archived project', 'project_delta', input()],
+    ['a copy the server no longer lists', 'project_bravo', input({ server: [] })],
+    [
+      'a promotion that stopped half way',
+      'project_local_hotel',
+      input({ local: [halfway], server: [server('hotel', { name: 'Hotel' })] }),
+    ],
+    [
+      'a copy, offline and signed out',
+      'project_bravo',
+      input({ online: false, session: 'signed-out', serverStale: true }),
+    ],
+  ])('is allowed for %s', (_label, dbName, given) => {
+    expect(byKey(projectsModel(given), dbName).actions.export).toEqual(ok)
+  })
+
+  it.each([
+    ['owned', 'project_charlie'],
+    ['shared', 'project_echo'],
+  ])('is not applicable to a project only on the server (%s)', (_label, dbName) => {
+    expect(byKey(projectsModel(input()), dbName).actions.export).toEqual(na)
   })
 })

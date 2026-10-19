@@ -190,6 +190,10 @@ async function page(input: Partial<ProjectsInput> = {}): Promise<ProjectsView> {
       }}
       .navigate=${(hash: string) => recorded.navigated.push(hash)}
       .actions=${actions}
+      .exportProject=${async (row: Row) => {
+        recorded.acted.push(['export', row.dbName])
+        await actionAnswer()
+      }}
       .refresh=${async () => {
         recorded.refreshed += 1
       }}
@@ -806,15 +810,17 @@ describe('the actions menu', () => {
   it('separates the removals from the safe actions with a divider', async () => {
     const view = await member({ local: [entry(), synced], server: [project()], online: true })
 
-    // Promote, then the removals: one divider, right before the first removal.
-    const local = find(view, '[data-row="project_local_a"] [data-actions]')
-    const children = [...local.children].map((child) =>
-      child.localName === 'wa-divider' ? 'divider' : child.getAttribute('data-action'),
-    )
-    expect(children.filter((c) => c !== null)).toEqual(['promote', 'divider', 'deleteLocal'])
+    /** A row's menu, in order, with `divider` where one sits. */
+    const menu = (key: string) =>
+      [...find(view, `[data-row="${key}"] [data-actions]`).children]
+        .map((child) =>
+          child.localName === 'wa-divider' ? 'divider' : child.getAttribute('data-action'),
+        )
+        .filter((c) => c !== null)
 
-    // Only removals: nothing to separate.
-    expect(view.querySelector('[data-row="project_p1"] [data-actions] wa-divider')).toBeNull()
+    // The safe actions, then the removals: one divider, right before the first removal.
+    expect(menu('project_local_a')).toEqual(['promote', 'export', 'divider', 'deleteLocal'])
+    expect(menu('project_p1')).toEqual(['export', 'divider', 'removeLocal', 'removeServer'])
   })
 
   it('starts a removal confirmation on Cancel, and a delete on the name field', async () => {
@@ -860,6 +866,72 @@ describe('the actions menu', () => {
 
     expect(recorded.acted).toEqual([['removeLocal', 'project_p1']])
     expect(view.querySelector('[data-confirm-dialog][open]')).toBeNull()
+  })
+
+  it('offers Export on every row with a copy here, warning that it holds the setup codes', async () => {
+    const view = await member({
+      local: [entry(), synced],
+      server: [project(), project({ projectId: 'p3', dbName: 'project_p3', name: 'Remote' })],
+    })
+
+    for (const key of ['project_local_a', 'project_p1']) {
+      expect(text(item(view, key, 'export'))).toContain('Export project')
+      expect(item(view, key, 'export').disabled).toBe(false)
+      expect(
+        text(find(view, `[data-row="${key}"] [data-action="export"] [data-export-warning]`)),
+      ).toContain('Contains the setup codes. Keep it safe.')
+    }
+    // Only on the server: nothing here to export.
+    expect(view.querySelector('[data-row="project_p3"] [data-action="export"]')).toBeNull()
+  })
+
+  it('offers Export offline and signed out too, since it reads only this device', async () => {
+    const view = await member({
+      local: [synced],
+      server: [project()],
+      online: false,
+      serverStale: true,
+      session: 'signed-out',
+    })
+
+    expect(item(view, 'project_p1', 'export').disabled).toBe(false)
+  })
+
+  it('exports the row it was chosen on, without asking first', async () => {
+    const view = await member({ local: [entry(), synced], server: [project()] })
+
+    await choose(view, 'project_p1', 'export')
+    expect(view.querySelector('[data-confirm-dialog][open]')).toBeNull()
+    await settled(view)
+
+    expect(recorded.acted).toEqual([['export', 'project_p1']])
+    expect(view.querySelector('[data-error]')).toBeNull()
+  })
+
+  it('holds the page busy while exporting', async () => {
+    let finish: () => void = () => {}
+    actionAnswer = () =>
+      new Promise<void>((resolve) => {
+        finish = resolve
+      })
+    const view = await member({ local: [entry()] })
+
+    await choose(view, 'project_local_a', 'export')
+    expect(view.busy).toBe(true)
+    finish()
+    await settled(view)
+  })
+
+  it('says so when the export fails', async () => {
+    actionAnswer = async () => {
+      throw new Error('storage refused the read')
+    }
+    const view = await member({ local: [entry()] })
+
+    await choose(view, 'project_local_a', 'export')
+    await settled(view)
+
+    expect(text(find(view, '[data-error]'))).toContain('That did not work. Please try again.')
   })
 
   it('says why a local copy was kept when the upload did not get through', async () => {
@@ -954,7 +1026,12 @@ describe('the actions menu', () => {
     const children = [...menu.children].map((child) =>
       child.localName === 'wa-divider' ? 'divider' : child.getAttribute('data-action'),
     )
-    expect(children.filter((c) => c !== null)).toEqual(['restore', 'divider', 'deleteLocal'])
+    expect(children.filter((c) => c !== null)).toEqual([
+      'restore',
+      'export',
+      'divider',
+      'deleteLocal',
+    ])
     expect(text(item(view, 'project_p1', 'restore'))).toContain('Put back on the server')
 
     // Nothing is lost by it, so nothing is asked first.

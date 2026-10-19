@@ -484,7 +484,38 @@ of **both** the existing and the incoming revision, so an entry cannot escape im
 by being rewritten under a different `type`. Because nothing ever rewrites
 them, **audit entries cannot conflict** — a property worth preserving deliberately.
 
-## Conflicts
+## Project export: a zip of JSON documents
+
+A project's ⋯ menu offers **Export project**: this device's copy as a zip. **Import a project**,
+on the Account page, reads one back as a new local-only project. It is never merged into an
+existing one. The format is `domain/archive/project-archive.ts`, and the container
+`domain/archive/zip.ts`: stored or deflated entries with UTF-8 names, and no encryption or Zip64.
+
+```
+manifest.json          { "format": "matter-manager-project", "version": 1, "exportedAt": "…", "devices": 2 }
+project.json           { "name": "Hillside", "client": "…" }
+devices/<uuid>.json    one device document each, without _rev, _conflicts, _attachments or updatedAt
+```
+
+- **The file holds every setup code in plain text.** That is what makes it a backup, and the
+  menu entry says so.
+- **Import rebuilds each device rather than trusting it.**
+  - It goes through `planNewDevice`, so the credential fields are derived again from the setup
+    code.
+  - A payload that disagrees with its manual code refuses the import.
+  - Catalogue links that are not `https:` are dropped.
+  - A device without a usable `room` is filed under `Imported`.
+- **The import is all or nothing.** The zip is read and checked against limits before anything
+  is inflated:
+  - at most 5 MB as a file and 50 MB inflated;
+  - the inflate is capped as well;
+  - every CRC is verified;
+  - every device is validated.
+
+  The database and devices are written before the index entry, and a failure destroys the
+  database.
+- **A newer `version` is refused by name.** It is not imported partially.
+
 
 CouchDB detects conflicts and picks a deterministic winner. It does not merge. Without an
 explicit strategy, a remark added offline on one device silently disappears when another
