@@ -25,10 +25,14 @@
  *
  * Readings the table leaves open are decided here:
  *
- * - **A copy of an archived project** (fresh or stale list) reads `local`, opens read-only and
- *   offers only "delete local copy". CouchDB refuses every write to an archived project, so an
- *   edit could never arrive, and promoting it would mint a second project from one that was
- *   deliberately put away. It is not counted: the service does not count archived projects.
+ * - **A copy of an archived project** (fresh or stale list) — a remnant — reads `local`, opens
+ *   read-only and offers "delete local copy" and, to its owner, "put back on the server". CouchDB
+ *   refuses every write to an archived project, so an edit could never arrive, and promoting it
+ *   would mint a second project from one that was deliberately put away. Putting it back
+ *   unarchives that same project instead, which the service allows until it deletes it, 90 days
+ *   after the archive; afterwards a fresh list no longer names it, and the copy is an orphan. It
+ *   is not counted: the service does not count archived projects — so putting it back needs room
+ *   under the limit, as creating does.
  * - **A copy a fresh list no longer names** (access revoked, deleted) — an orphan — is treated
  *   the same, and its delete carries a stronger warning, since unpushed changes cannot leave.
  *   Only a fresh list proves this; a stale one may simply predate the project.
@@ -112,7 +116,7 @@ export type Refusal =
   | 'limit'
   /** The caller's role on a shared project does not allow it. */
   | 'role'
-  /** The server has put the project away; only deleting the local copy is left. */
+  /** The server has put the project away; only deleting the copy or putting it back is left. */
   | 'read-only'
 
 /** Whether an action is allowed, and why not when it is not. */
@@ -143,6 +147,8 @@ export interface RowActions {
   readonly deleteLocal: Permission
   /** Archive the project on the server. */
   readonly removeServer: Permission
+  /** Unarchive the project a remnant is a copy of, so it is synchronized again. Owner only. */
+  readonly restore: Permission
 }
 
 /** One project on the page. */
@@ -373,6 +379,18 @@ export function projectsModel(input: ProjectsInput): ProjectsModel {
           [kind === 'server' || kind === 'synced', 'not-applicable'],
           ...needsServer,
           [owner, 'role'],
+        ),
+        // Why owner only, though the service lets a manager unarchive too: putting a project
+        // back spends a slot of the owner's plan, which is the owner's decision, and the plan
+        // and count the page holds are the caller's own — a manager's would answer for the
+        // wrong account. Why `not-applicable` rather than `role` for anyone else: a share's
+        // remnant offers nothing to ask for. Room is asked as for creating: a remnant is not
+        // counted, and putting it back makes it count.
+        restore: gate<Refusal>(
+          [kind === 'remnant' && owner, 'not-applicable'],
+          ...needsServer,
+          [syncs, 'plan'],
+          [canOwnAnother(ownedCount, input.reportedLimit), 'limit'],
         ),
       },
     }

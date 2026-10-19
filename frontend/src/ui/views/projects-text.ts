@@ -91,6 +91,8 @@ export function actionText(action: MenuAction): string {
       return msg('Delete from this device')
     case 'removeServer':
       return msg('Remove from server')
+    case 'restore':
+      return msg('Put back on the server')
   }
 }
 

@@ -343,8 +343,8 @@ export class ProjectsView extends LitElement {
   }
 
   /**
-   * Starts a menu action: promoting and downloading at once, a removal by asking first.
-   * Ignored while another action runs; the menu is disabled then, but a click can race it.
+   * Starts a menu action: promoting, downloading and putting back at once, a removal by asking
+   * first. Ignored while another action runs; the menu is disabled then, but a click can race it.
    */
   private choose(row: Row, action: MenuAction): void {
     if (this.busy || !row.actions[action].allowed) return
@@ -355,10 +355,13 @@ export class ProjectsView extends LitElement {
       return
     }
     const model = this.model()
+    const actions = this.projectActions()
     void this.run(() =>
       action === 'promote'
-        ? this.projectActions().promote(model, row)
-        : this.projectActions().download(model, row),
+        ? actions.promote(model, row)
+        : action === 'restore'
+          ? actions.restore(model, row)
+          : actions.download(model, row),
     )
   }
 
@@ -601,6 +604,7 @@ export class ProjectsView extends LitElement {
             ${renderActionsMenu(row, this.busy, (action) => this.choose(row, action), [
               'promote',
               'download',
+              'restore',
             ])}
           </div>
           ${this.renderRowNote(row)}

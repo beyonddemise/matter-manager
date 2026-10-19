@@ -40,6 +40,28 @@ describe('opening a project on the server', () => {
     expect(calls[0]?.url).toBe('https://couch.example/project_abc')
   })
 
+  it('resolves a path against the page origin, so PouchDB opens it over HTTP', () => {
+    // A bare `/db/project_abc` is a local IndexedDB name to PouchDB: replication into it
+    // "succeeds" and nothing reaches the server.
+    const { calls, open } = opened()
+    remoteProject('project_abc', {
+      couchUrl: '/db',
+      origin: 'https://app.example',
+      token: () => 't',
+      open,
+    })
+
+    expect(calls[0]?.url).toBe('https://app.example/db/project_abc')
+  })
+
+  it('refuses a path with no origin to resolve it against', () => {
+    const { open } = opened()
+
+    expect(() =>
+      remoteProject('project_abc', { couchUrl: '/db', token: () => 't', open }),
+    ).toThrow()
+  })
+
   it('uses the database name it was given rather than assembling one', () => {
     // One place assembles that name, and it is the API's `projects/names.ts`. A second rule
     // here would be a second rule that could disagree — and the two would only disagree for

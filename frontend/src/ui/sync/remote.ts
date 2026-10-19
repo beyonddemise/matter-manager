@@ -28,8 +28,16 @@ export type OpenRemote = (
 
 /** Where the project databases live, and how to prove who is asking. */
 export interface RemoteOptions {
-  /** The CouchDB origin, e.g. `https://couch.matter-manager.example`. */
+  /**
+   * Where CouchDB is: an absolute URL (`https://couch.matter-manager.example`), or a path on
+   * {@link origin} (`/db`, the same-origin proxy in `functions/db/`).
+   */
   readonly couchUrl: string
+  /**
+   * What a relative {@link couchUrl} is resolved against: the page's own origin in production.
+   * Without it, a relative `couchUrl` throws rather than opening anything.
+   */
+  readonly origin?: string
   /** The current access token, or `undefined` when there is none to send. */
   readonly token: () => string | undefined
   /** Opens the database. `new PouchDB` in production. */
@@ -50,7 +58,10 @@ export interface RemoteOptions {
  *   project id here: one place assembles that name, and it is the API's `projects/names.ts`.
  */
 export function remoteProject(dbName: string, options: RemoteOptions): RemoteDatabase {
-  const base = options.couchUrl.replace(/\/+$/, '')
+  // Why resolved: PouchDB picks its adapter from the name. Only `http(s)://` reaches a server;
+  // anything else, `/db/project_…` included, silently becomes a second IndexedDB database in this
+  // browser, and replicating into it reports "synced" while nothing leaves the device.
+  const base = new URL(options.couchUrl, options.origin).href.replace(/\/+$/, '')
   const fetchImpl = options.fetchImpl ?? fetch
 
   return options.open(`${base}/${dbName}`, {

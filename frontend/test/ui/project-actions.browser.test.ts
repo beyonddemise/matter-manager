@@ -19,6 +19,7 @@ import {
   type Project,
   ProjectCreationError,
   type ProjectPatch,
+  ProjectUpdateError,
 } from '../../src/ui/projects.js'
 import { type ProjectsModel, projectsModel, type Row } from '../../src/ui/projects-model.js'
 import type { SyncableProject } from '../../src/ui/sync/manager.js'
@@ -125,6 +126,7 @@ function world(options: { fault?: FaultAt } = {}) {
     online: true,
     current: PROJECT_DATABASE_NAME,
     createFails: undefined as ConstructorParameters<typeof ProjectCreationError>[0] | undefined,
+    updateFails: undefined as ConstructorParameters<typeof ProjectUpdateError>[0] | undefined,
     pushFails: false,
     /**
      * Runs while a push is in flight, before it settles: a write made by another tab or a
@@ -156,6 +158,7 @@ function world(options: { fault?: FaultAt } = {}) {
       },
       update: async (projectId, patch) => {
         updated.push([projectId, patch])
+        if (state.updateFails !== undefined) throw new ProjectUpdateError(state.updateFails)
         const index = server.findIndex((project) => project.projectId === projectId)
         const changed = { ...(server[index] as Project), ...(patch as Partial<Project>) }
         server[index] = changed
@@ -251,7 +254,11 @@ async function refusal(action: Promise<void>): Promise<string> {
     () => undefined,
     (thrown: unknown) => thrown,
   )
-  if (error instanceof ProjectActionError || error instanceof ProjectCreationError) {
+  if (
+    error instanceof ProjectActionError ||
+    error instanceof ProjectCreationError ||
+    error instanceof ProjectUpdateError
+  ) {
     return error.reason
   }
   throw new Error(`expected a refusal, got ${String(error)}`)
@@ -681,5 +688,84 @@ describe('removing a project from the server', () => {
     expect(await w.cache.readLocalProjects()).toHaveLength(1)
     expect((await w.view(bravo.dbName)).row).toMatchObject({ location: 'local', editable: false })
     expect(w.state.refreshed).toBe(1)
+  })
+})
+
+describe('putting a removed project back on the server', () => {
+  /** A synchronized project, then removed from the server: its copy stays here, read-only. */
+  const removed = async (w: ReturnType<typeof world>) => {
+    const bravo = await w.syncedProject()
+    const first = await w.view(bravo.dbName)
+    await w.actions.removeFromServer(first.model, first.row)
+    w.updated.length = 0
+    w.sets.length = 0
+    w.log.length = 0
+    w.state.refreshed = 0
+    return bravo
+  }
+
+  it('unarchives it, synchronizes the copy again and keeps its data', async () => {
+    const w = world()
+    const bravo = await removed(w)
+    const { model, row } = await w.view(bravo.dbName)
+    expect(row.actions.restore).toEqual({ allowed: true })
+
+    await w.actions.restore(model, row)
+
+    expect(w.updated).toEqual([[bravo.projectId, { archived: false }]])
+    // Handed to replication at once, so whatever the copy holds goes up.
+    expect(w.sets.at(-1)).toEqual([{ projectId: bravo.projectId, dbName: bravo.dbName }])
+    expect(await w.count(bravo.dbName)).toBe(1)
+    expect((await w.view(bravo.dbName)).row).toMatchObject({
+      location: 'synced',
+      archived: false,
+      editable: true,
+    })
+    expect(w.state.refreshed).toBe(1)
+  })
+
+  it('holds the tab busy while it works, and lets go before refreshing', async () => {
+    const w = world()
+    const bravo = await removed(w)
+    const { model, row } = await w.view(bravo.dbName)
+    const seen: boolean[] = []
+    // A shell refresh between the unarchive and the hand-over could replace the replication list.
+    const set = w.deps.sync.set
+    w.deps.sync.set = (projects) => {
+      seen.push(projectActionRunning())
+      set(projects)
+    }
+    w.state.onRefresh = () => seen.push(projectActionRunning())
+
+    await w.actions.restore(model, row)
+
+    expect(seen).toEqual([true, false])
+  })
+
+  it('says why the server refused, and leaves the copy as it was', async () => {
+    const w = world()
+    const bravo = await removed(w)
+    const { model, row } = await w.view(bravo.dbName)
+
+    w.state.updateFails = 'project-limit-reached'
+    expect(await refusal(w.actions.restore(model, row))).toBe('project-limit-reached')
+    w.state.updateFails = 'plan-no-sync'
+    expect(await refusal(w.actions.restore(model, row))).toBe('plan-no-sync')
+    w.state.updateFails = 'failed'
+    expect(await refusal(w.actions.restore(model, row))).toBe('failed')
+
+    expect(w.sets).toEqual([])
+    expect((await w.view(bravo.dbName)).row).toMatchObject({ location: 'local', archived: true })
+    expect(await w.count(bravo.dbName)).toBe(1)
+  })
+
+  it('does not ask the server when the model already refuses', async () => {
+    const w = world()
+    const bravo = await removed(w)
+    w.state.online = false
+    const { model, row } = await w.view(bravo.dbName)
+
+    expect(await refusal(w.actions.restore(model, row))).toBe('offline')
+    expect(w.updated).toEqual([])
   })
 })
