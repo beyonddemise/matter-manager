@@ -159,6 +159,7 @@
 's7ded9f88edfb9be9': `Zum hellen Erscheinungsbild wechseln`,
 's7e3aa186499429cf': `Exportieren…`,
 's7e73afd34eaa3f7e': `Anmeldemethoden`,
+'s7e9cc98495b49af0': `Wieder auf den Server stellen`,
 's7ecf9c10b781225c': `Dieser Code widerspricht sich darin, wie das Gerät gefunden werden kann.`,
 's7f0c66f43666be59': `Offline: Neue Projekte bleiben vorerst auf diesem Gerät.`,
 's8046acaa9bfd4751': `Keine Berechtigung zum Synchronisieren`,

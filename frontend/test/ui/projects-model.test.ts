@@ -137,6 +137,7 @@ describe('the page for every plan × session × connection × server list × loc
               removeLocal: na,
               deleteLocal: ok,
               removeServer: na,
+              restore: na,
             })
           })
 
@@ -156,6 +157,7 @@ describe('the page for every plan × session × connection × server list × loc
               removeLocal: server() ?? ok,
               deleteLocal: na,
               removeServer: server() ?? ok,
+              restore: na,
             })
           })
 
@@ -205,10 +207,11 @@ describe('the page for every plan × session × connection × server list × loc
                 removeLocal: na,
                 deleteLocal: na,
                 removeServer: server() ?? ok,
+                restore: na,
               })
             })
 
-            it(`${label}: the copy of an archived project is local, read-only, delete-only`, () => {
+            it(`${label}: the copy of an archived project is local, read-only, delete or put back`, () => {
               const row = byKey(model, 'project_delta')
               expect(row).toMatchObject({ location: 'local', archived: true, editable: false })
               expect(row.actions).toEqual<RowActions>({
@@ -220,6 +223,8 @@ describe('the page for every plan × session × connection × server list × loc
                 // Archiving pushed only as best it could: what did not get through goes now.
                 deleteLocal: { allowed: true, warn: 'unpushed-may-be-lost' },
                 removeServer: na,
+                // Three owned projects leave room under every limit of a plan that syncs.
+                restore: server() ?? (syncs ? ok : no('plan')),
               })
             })
 
@@ -235,6 +240,7 @@ describe('the page for every plan × session × connection × server list × loc
                 removeLocal: na,
                 deleteLocal: na,
                 removeServer: server() ?? no('role'),
+                restore: na,
               })
             })
 
@@ -426,6 +432,8 @@ describe('joining the local index with the server list', () => {
     const row = byKey(model, 'project_delta')
     expect(row).toMatchObject({ location: 'local', archived: true, editable: false })
     expect(row.actions.deleteLocal).toEqual({ allowed: true, warn: 'unpushed-may-be-lost' })
+    // Facts from the last list, never acts: putting it back waits for a fresh one.
+    expect(row.actions.restore).toEqual(no('offline'))
   })
 
   it('with no server list, a copy takes the role its index entry recorded', () => {
@@ -543,6 +551,7 @@ describe('a promotion that stopped half way', () => {
       removeLocal: na,
       deleteLocal: ok,
       removeServer: na,
+      restore: na,
     })
   })
 
@@ -592,6 +601,54 @@ describe('a promotion that stopped half way', () => {
     const row = byKey(projectsModel(input({ local: [halfway], server: [] })), 'project_local_hotel')
     expect(row).toMatchObject({ location: 'local', editable: true })
     expect(row.actions.deleteLocal).toEqual(ok)
+  })
+})
+
+describe('putting a removed project back on the server', () => {
+  // Delta is archived, with a copy here: a remnant. Alone, so nothing else fills the limit.
+  const delta = local({ dbName: 'project_delta', name: 'Delta', projectId: 'delta' })
+  const archived = server('delta', { name: 'Delta', archived: true })
+  const restore = (over: Partial<ProjectsInput> = {}) =>
+    byKey(
+      projectsModel(input({ local: [delta], server: [archived], reportedLimit: 5, ...over })),
+      'project_delta',
+    ).actions.restore
+
+  it('is offered to the owner, signed in and online, on a plan that syncs, with room', () => {
+    expect(restore()).toEqual(ok)
+  })
+
+  it('needs this session’s list and a connection', () => {
+    expect(restore({ online: false })).toEqual(no('offline'))
+    expect(restore({ serverStale: true })).toEqual(no('stale'))
+    expect(restore({ session: 'signed-out', serverStale: true })).toEqual(no('signed-out'))
+  })
+
+  it('needs a plan that syncs', () => {
+    expect(restore({ plan: 'free', reportedLimit: 1 })).toEqual(no('plan'))
+  })
+
+  it('needs room under the limit, since the project counts again once it is back', () => {
+    const others = [server('p1'), server('p2')]
+    expect(restore({ server: [archived, ...others], reportedLimit: 2 })).toEqual(no('limit'))
+    expect(restore({ server: [archived, ...others], reportedLimit: 3 })).toEqual(ok)
+    expect(restore({ server: [archived, ...others], reportedLimit: -1 })).toEqual(ok)
+  })
+
+  it('is not offered for a share’s copy: the owner’s plan pays for it', () => {
+    const shared = server('delta', { archived: true, role: 'manage' })
+    expect(restore({ server: [shared] })).toEqual(na)
+  })
+
+  it('is not offered once the server no longer lists it: deleted, or no longer the caller’s', () => {
+    expect(restore({ server: [] })).toEqual(na)
+  })
+
+  it('is not offered for any other kind of project', () => {
+    const model = projectsModel(input({ reportedLimit: 5 }))
+    for (const dbName of ['project_local_alpha', 'project_bravo', 'project_charlie']) {
+      expect(byKey(model, dbName).actions.restore).toEqual(na)
+    }
   })
 })
 

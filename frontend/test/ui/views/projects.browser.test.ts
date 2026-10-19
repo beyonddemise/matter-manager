@@ -26,6 +26,7 @@ import {
   ProjectCreationError,
   type ProjectPatch,
   type ProjectsApi,
+  ProjectUpdateError,
 } from '../../../src/ui/projects.js'
 import type { ProjectsInput, Row } from '../../../src/ui/projects-model.js'
 import type { SyncableProject } from '../../../src/ui/sync/manager.js'
@@ -106,6 +107,10 @@ const actions: ProjectActions = {
   },
   removeFromServer: async (_model, row: Row) => {
     recorded.acted.push(['removeServer', row.dbName])
+    await actionAnswer()
+  },
+  restore: async (_model, row: Row) => {
+    recorded.acted.push(['restore', row.dbName])
     await actionAnswer()
   },
 }
@@ -942,6 +947,49 @@ describe('the actions menu', () => {
     expect(recorded.acted).toEqual([['removeServer', 'project_p1']])
   })
 
+  it('puts a removed project back straight from the menu, above the removals', async () => {
+    const view = await member({ local: [synced], server: [project({ archived: true })] })
+
+    const menu = find(view, '[data-row="project_p1"] [data-actions]')
+    const children = [...menu.children].map((child) =>
+      child.localName === 'wa-divider' ? 'divider' : child.getAttribute('data-action'),
+    )
+    expect(children.filter((c) => c !== null)).toEqual(['restore', 'divider', 'deleteLocal'])
+    expect(text(item(view, 'project_p1', 'restore'))).toContain('Put back on the server')
+
+    // Nothing is lost by it, so nothing is asked first.
+    await choose(view, 'project_p1', 'restore')
+    expect(view.querySelector('[data-confirm-dialog][open]')).toBeNull()
+    await settled(view)
+
+    expect(recorded.acted).toEqual([['restore', 'project_p1']])
+  })
+
+  it('says why the server would not put a project back', async () => {
+    actionAnswer = async () => {
+      throw new ProjectUpdateError('project-limit-reached')
+    }
+    const view = await member({ local: [synced], server: [project({ archived: true })] })
+
+    await choose(view, 'project_p1', 'restore')
+    await settled(view)
+
+    expect(text(find(view, '[data-error]'))).toContain('Your plan has no room for another project')
+  })
+
+  it('says why a project cannot be put back while the plan has no room', async () => {
+    const view = await member({
+      local: [synced],
+      server: [project({ archived: true }), project({ projectId: 'p2', dbName: 'project_p2' })],
+      reportedLimit: 1,
+    })
+
+    expect(item(view, 'project_p1', 'restore').disabled).toBe(true)
+    expect(text(item(view, 'project_p1', 'restore'))).toContain(
+      'Your plan has no room for another project',
+    )
+  })
+
   it('disables every action while one runs', async () => {
     let finish = () => {}
     actionAnswer = () =>
@@ -971,6 +1019,11 @@ describe('the actions menu', () => {
     expect(view.querySelector('[data-row="project_local_a"] [data-action="download"]')).toBeNull()
     expect(item(view, 'project_local_a', 'deleteLocal').disabled).toBe(false)
     expect(view.querySelector('[data-upgrade-hint]')).not.toBeNull()
+
+    // Nor a way back to the server for a removed project's copy.
+    const removed = await page({ local: [synced], server: [project({ archived: true })] })
+    expect(removed.querySelector('[data-row="project_p1"] [data-action="restore"]')).toBeNull()
+    expect(item(removed, 'project_p1', 'deleteLocal').disabled).toBe(false)
   })
 
   it('says only the owner can remove a shared project from the server', async () => {
@@ -1004,5 +1057,8 @@ describe('the actions menu', () => {
     await choose(view, 'project_p1', 'removeServer')
 
     expect(text(dialog(view))).not.toContain('Collaborators lose access')
+
+    const removed = await member({ local: [synced], server: [project({ archived: true })] })
+    expect(text(item(removed, 'project_p1', 'restore'))).toContain('Wieder auf den Server stellen')
   })
 })
