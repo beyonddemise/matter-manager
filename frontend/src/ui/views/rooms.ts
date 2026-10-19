@@ -10,7 +10,7 @@ import {
 } from '../../domain/index.js'
 import { PROJECT_CHANGED } from '../current-project.js'
 import { projectDatabase, projectIsEditable } from '../db/project-database.js'
-import { getLocale } from '../i18n/localization.js'
+import { displayOrder } from '../i18n/localization.js'
 import { fieldValue } from './device-form.js'
 import { projectLine } from './project-line.js'
 import { roomSpellings } from './room-breadcrumb.js'
@@ -121,7 +121,7 @@ export class RoomsView extends LitElement {
 
   /** In the interface's locale, so the list sorts as the device list does. */
   private rooms(): readonly Room[] {
-    return roomsOf(this.devices, new Intl.Collator(getLocale()).compare)
+    return roomsOf(this.devices, displayOrder())
   }
 
   /**

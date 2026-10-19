@@ -19,7 +19,7 @@ import {
 } from '../../domain/index.js'
 import { PROJECT_CHANGED } from '../current-project.js'
 import { projectDatabase, projectIsEditable } from '../db/project-database.js'
-import { getLocale } from '../i18n/localization.js'
+import { displayOrder } from '../i18n/localization.js'
 import {
   inventoryFilename,
   inventoryLabels,
@@ -267,7 +267,7 @@ export class DeviceListView extends LitElement {
       query: this.query,
       ...(this.room === undefined ? {} : { room: this.room }),
       includeDisabled: this.includeDisabled,
-      compare: new Intl.Collator(getLocale()).compare,
+      compare: displayOrder(),
       // The stored name is English; people search for what the interface shows (#248).
       testVendorTerm: msg('Test vendor'),
     })
@@ -449,6 +449,11 @@ export class DeviceListView extends LitElement {
    */
   private renderRoomFilter() {
     if (this.room === undefined) return nothing
+    // Built outside the template: the i18n scan cannot follow a nested template that itself
+    // has a substitution, and would read the rest of the file as unwrapped text.
+    const label = msg(str`Room: ${roomPathBreadcrumb(this.room)}`, {
+      desc: 'A removable filter above the device list.',
+    })
     return html`<div class="wa-cluster">
       <wa-tag
         data-room-filter
@@ -457,7 +462,7 @@ export class DeviceListView extends LitElement {
           window.location.hash = '#/devices'
         }}
       >
-        ${msg(str`Room: ${roomPathBreadcrumb(this.room)}`, { desc: 'A removable filter above the device list.' })}
+        ${label}
       </wa-tag>
     </div>`
   }

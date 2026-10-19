@@ -71,3 +71,15 @@ export async function activateLocale(locale: Locale): Promise<void> {
   if (getLocale() !== locale) await setLocale(locale)
   document.documentElement.lang = locale
 }
+
+/**
+ * How the views order names and room paths: the current locale's collator, capitals first.
+ *
+ * `caseFirst: 'upper'` only decides between strings that differ in case alone. It matters for
+ * rooms, where `Kitchen` and `kitchen` can be two spellings of one room (ADR 0021): the first
+ * spelling is the one the Rooms page links with and the merge dialog offers, and the capitalised
+ * one is the likelier intended name.
+ */
+export function displayOrder(): (a: string, b: string) => number {
+  return new Intl.Collator(getLocale(), { caseFirst: 'upper' }).compare
+}

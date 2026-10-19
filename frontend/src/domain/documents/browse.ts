@@ -131,7 +131,10 @@ export function browseDevices(
   options: BrowseOptions = {},
 ): readonly DeviceGroup[] {
   const compare = options.compare ?? foldedOrder
-  const byPath = (a: string, b: string): number => compareRoomPaths(a, b, compare)
+  // Code point breaks a tie, so the first spelling (the group's `path`) does not depend on the
+  // order the devices came in when the comparator calls two spellings equal; see `roomsOf`.
+  const byPath = (a: string, b: string): number =>
+    compareRoomPaths(a, b, compare) || (a < b ? -1 : a > b ? 1 : 0)
   const { room } = options
 
   // Every term must match, so "kitchen light" finds the light in the kitchen rather than

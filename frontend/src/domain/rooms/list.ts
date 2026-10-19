@@ -66,7 +66,10 @@ export function roomsOf(
     }
   }
 
-  const byPath = (a: string, b: string): number => compareRoomPaths(a, b, compare)
+  // Code point breaks a tie, so spellings the collator calls equal (a composed and a decomposed
+  // `Küche`) still come out in one order on every replica, whatever order the devices came in.
+  const byPath = (a: string, b: string): number =>
+    compareRoomPaths(a, b, compare) || compareText(a, b)
   return [...byKey]
     .map(([key, { spellings, deviceCount }]) => ({
       key,

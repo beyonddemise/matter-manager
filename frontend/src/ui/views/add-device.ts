@@ -390,12 +390,14 @@ export class AddDeviceView extends DeviceFormView {
     return html`
       <form class="wa-stack wa-gap-l app-form" @submit=${this.onSubmit} novalidate>
         <h1>${msg('Add a device')}</h1>
+        ${this.renderRequiredNote()}
 
         ${this.renderError()}
 
         <div class="wa-stack wa-gap-2xs">
           <wa-input
             data-field="credential"
+            required
             label=${msg('Setup code')}
             hint=${this.messageFor('credential') ?? msg('The MT: code from the QR label, or the numeric pairing code beneath it.')}
             autocomplete="off"

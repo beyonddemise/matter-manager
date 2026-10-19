@@ -14,7 +14,7 @@ import {
 } from '../../domain/index.js'
 import { PROJECT_CHANGED } from '../current-project.js'
 import { projectDatabase } from '../db/project-database.js'
-import { getLocale } from '../i18n/localization.js'
+import { displayOrder } from '../i18n/localization.js'
 import { shownManufacturer } from '../i18n/manufacturer.js'
 import { problemMessage } from '../i18n/problems.js'
 
@@ -146,7 +146,7 @@ export abstract class DeviceFormView extends LitElement {
 
   /** The rooms the devices are in, in the interface's locale order. */
   protected async readRooms(): Promise<readonly Room[]> {
-    return roomsOf(await this.repos().devices.list(), new Intl.Collator(getLocale()).compare)
+    return roomsOf(await this.repos().devices.list(), displayOrder())
   }
 
   protected async loadRooms(): Promise<void> {
@@ -370,11 +370,24 @@ export abstract class DeviceFormView extends LitElement {
     return ''
   }
 
+  /**
+   * What the asterisk on a label means, said once above the controls.
+   *
+   * `required` on a control makes Web Awesome append the asterisk and set `aria-required`, so a
+   * screen reader announces it per field; this line is for everyone reading the asterisks.
+   * The forms keep `novalidate`: the planners' own messages name the problem, and the browser's
+   * generic "fill in this field" would arrive first and say less.
+   */
+  protected renderRequiredNote(): TemplateResult {
+    return html`<p class="app-empty" data-required-note>${msg('Fields marked * are required.')}</p>`
+  }
+
   /** The five controls both forms have, in the order both forms show them. */
   protected renderFields(): TemplateResult {
     return html`
       <wa-input
         data-field="name"
+        required
         label=${msg('Name')}
         hint=${this.messageFor('name') ?? msg('What you would call it out loud: "kitchen ceiling light".')}
       ></wa-input>
@@ -382,6 +395,7 @@ export abstract class DeviceFormView extends LitElement {
       <wa-combobox
         data-field="room"
         allow-create
+        required
         label=${msg('Room')}
         hint=${this.messageFor('room') ?? msg('Pick a room, or type a new one to create it. Use "/" for floors: "Ground Floor/Kitchen".')}
         @wa-create=${this.onCreateRoom}
@@ -400,6 +414,7 @@ export abstract class DeviceFormView extends LitElement {
       <wa-input
         data-field="installed-at"
         type="date"
+        required
         label=${msg('Installed')}
         hint=${this.messageFor('installedAt') ?? ''}
       ></wa-input>

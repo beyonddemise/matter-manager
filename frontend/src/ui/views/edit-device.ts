@@ -168,6 +168,7 @@ export class EditDeviceView extends DeviceFormView {
     return html`
       <form class="wa-stack wa-gap-l app-form" @submit=${this.onSubmit} novalidate>
         <h1>${msg('Edit device')}</h1>
+        ${this.renderRequiredNote()}
 
         ${this.renderError()}
 
