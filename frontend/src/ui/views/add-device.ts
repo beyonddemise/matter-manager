@@ -333,6 +333,9 @@ export class AddDeviceView extends DeviceFormView {
     // Set before the first `await`, not after the planning: two quick clicks would otherwise
     // both get past the guard while the room read below was still in flight.
     this.saving = true
+    // Before the first wait: a project switch during it must not write this device into the
+    // next project (see `projectSnapshot`).
+    const since = this.projectSnapshot()
 
     try {
       // Re-read the rooms rather than planning against `this.rooms`.
@@ -377,7 +380,7 @@ export class AddDeviceView extends DeviceFormView {
 
       // Stay on the form when storage refuses the write: navigating to a list that does not
       // contain the device would be the application saying it saved something it did not.
-      if (!(await this.write(creation))) return
+      if (!(await this.write(creation, since))) return
       this.askForBackfill(creation)
     } finally {
       this.saving = false

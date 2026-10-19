@@ -13,6 +13,7 @@ import {
   TEST_VENDOR_NAME,
   type Unsaved,
 } from '../../../src/domain/index.js'
+import { PROJECT_CHANGED } from '../../../src/ui/current-project.js'
 import { activateLocale } from '../../../src/ui/i18n/localization.js'
 import type { EditDeviceView } from '../../../src/ui/views/edit-device.js'
 import '../../../src/ui/views/edit-device.js'
@@ -402,5 +403,48 @@ describe('a write storage refuses', () => {
     await submit(element, () => element.querySelector('[data-save-failed]') !== null)
 
     expect(element.querySelector('[data-error]')).toBeNull()
+  })
+})
+
+describe('switching project while a save is planned', () => {
+  afterEach(() => {
+    window.location.hash = ''
+  })
+
+  it('writes nothing when the project changes during the room re-read', async () => {
+    // The edit form re-reads the rooms before it plans, like the add form; a switch in that
+    // wait must not write this project's device into the next one (#291 review).
+    await seed()
+    const real = database.repositories
+    let release: (devices: DeviceDocument[]) => void = () => {}
+    const reread = new Promise<DeviceDocument[]>((settle) => {
+      release = settle
+    })
+    let lists = 0
+    let saves = 0
+    const repositories: ProjectRepositories = {
+      ...real,
+      devices: {
+        ...real.devices,
+        list: () => (++lists === 1 ? real.devices.list() : reread),
+        save: async (device) => {
+          saves += 1
+          return real.devices.save(device)
+        },
+      },
+    }
+    const element = await form(UUID, repositories)
+    fill(element, 'name', 'Renamed under the old project')
+
+    element
+      .querySelector('form')
+      ?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    await waitUntil(() => lists >= 2, 'the save never re-read the rooms')
+    window.dispatchEvent(new CustomEvent(PROJECT_CHANGED))
+    release(await real.devices.list())
+    await waitUntil(() => !element.saving, 'the save never settled')
+
+    expect(saves).toBe(0)
+    expect((await stored()).name).toBe('Kitchen ceiling light')
   })
 })

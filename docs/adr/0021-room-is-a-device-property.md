@@ -63,6 +63,9 @@ is shown, rather than by a second document.
   what was read and is safe to retry after a partial failure.
 - Manual room order is gone. Rooms sort by path, segment by segment (#242), as the device list
   always did.
-- Case and accents no longer distinguish rooms. ADR 0006 treated `Ground Floor` and
-  `ground floor` as different rooms with a warning. They are now one room with two
-  spellings, which is what a person reading them assumes.
+- Case no longer distinguishes rooms. ADR 0006 treated `Ground Floor` and `ground floor` as
+  different rooms with a warning. They are now one room with two spellings, which is what a
+  person reading them assumes.
+  - The key is `foldForComparison` per segment: whitespace collapsed, case folded (`ß` and
+    `SS` match), and Unicode composed, so a pasted decomposed `ü` matches a typed one.
+  - Accents are kept: `Küche` and `Kuche` remain two rooms, as they are two words.

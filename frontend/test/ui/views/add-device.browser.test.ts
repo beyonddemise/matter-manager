@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ProjectRepositories } from '../../../src/data/index.js'
 import type { DeviceDocument, Unsaved } from '../../../src/domain/index.js'
 import { BACKFILL_WANTED, type CatalogApi, type LookupOutcome } from '../../../src/ui/catalog.js'
+import { PROJECT_CHANGED } from '../../../src/ui/current-project.js'
 import { activateLocale } from '../../../src/ui/i18n/localization.js'
 import { ImageScanError } from '../../../src/ui/scan/image.js'
 import type { ScanSource } from '../../../src/ui/scan/source.js'
@@ -1009,5 +1010,47 @@ describe('asking for backfill after a save', () => {
     } finally {
       done()
     }
+  })
+})
+
+describe('switching project while a save is planned', () => {
+  afterEach(() => {
+    window.location.hash = ''
+  })
+
+  it('writes nothing when the project changes during the room re-read', async () => {
+    // The save waits for the rooms before it plans. A switch in that wait must not let the
+    // device typed under one project be written once the form resolves the next project's
+    // database (#291 review).
+    const real = database.repositories
+    const reread = deferred<DeviceDocument[]>()
+    let lists = 0
+    let saves = 0
+    const repositories: ProjectRepositories = {
+      ...real,
+      devices: {
+        ...real.devices,
+        list: () => (++lists === 1 ? real.devices.list() : reread.promise),
+        save: async (device) => {
+          saves += 1
+          return real.devices.save(device)
+        },
+      },
+    }
+    const element = await form(repositories)
+    typeCode(element, PAYLOAD)
+    fill(element, 'name', 'Lamp')
+    typeRoom(element, 'Kitchen')
+
+    element
+      .querySelector('form')
+      ?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    await waitUntil(() => lists >= 2, 'the save never re-read the rooms')
+    window.dispatchEvent(new CustomEvent(PROJECT_CHANGED))
+    reread.resolve([])
+    await waitUntil(() => !element.saving, 'the save never settled')
+
+    expect(saves).toBe(0)
+    expect(await devices()).toEqual([])
   })
 })

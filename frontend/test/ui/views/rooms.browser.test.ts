@@ -198,6 +198,27 @@ describe('renaming a room', () => {
     )
   })
 
+  it('keeps the dialog open and says why when the new name is not a room path', async () => {
+    // The footer button saves without the browser's own validation, so an unusable name has to
+    // be answered here rather than doing nothing (#291 review).
+    await database.repositories.devices.save(device('device:k', 'Kitchen'))
+    const element = await view()
+
+    await rename(element, 'kitchen', '   ')
+    await element.updateComplete
+    const input = () =>
+      element.querySelector('[data-rename-input]') as HTMLElement & { hint: string; value: string }
+    expect(element.querySelector('[data-rename-dialog]')).not.toBeNull()
+    expect(input().hint).toBe('A room needs a name.')
+
+    input().value = 'Floor//Kitchen'
+    ;(element.querySelector('[data-save-rename]') as HTMLElement).click()
+    await element.updateComplete
+    expect(input().hint).toContain('separated by "/"')
+
+    expect(await filed()).toEqual({ 'device:k': 'Kitchen' })
+  })
+
   it('says so when a write fails, and shows what was saved', async () => {
     await database.repositories.devices.save(device('device:one', 'Kitchen'))
 

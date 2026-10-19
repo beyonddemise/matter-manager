@@ -380,7 +380,8 @@ There is no room document (ADR 0021). Each device carries its room's materialise
 derived by splitting the path on `/` (ADR 0006); there is no `parentId`, so there are no
 reparenting conflicts to resolve under offline sync.
 
-A room is identified by its folded key (`roomPathKey`: case, accents and spacing folded), so
+A room is identified by its folded key (`roomPathKey`: spacing collapsed, case folded and
+Unicode composed per segment; accents are kept, so `Küche` and `Kuche` are two rooms), so
 `Kitchen` and `kitchen` on two devices are one room with two spellings. The Rooms page lists
 both and offers to merge them; renaming rewrites `room` on every device in the subtree.
 

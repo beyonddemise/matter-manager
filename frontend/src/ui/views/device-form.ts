@@ -110,6 +110,8 @@ export abstract class DeviceFormView extends LitElement {
    * for no reason, and Lit says so in dev mode.
    */
   private resolved: ProjectRepositories | undefined
+  /** Moves on every project switch; see {@link projectSnapshot}. */
+  private projectGeneration = 0
   protected repos(): ProjectRepositories {
     this.resolved ??= this.repositories ?? projectDatabase()
     return this.resolved
@@ -128,6 +130,7 @@ export abstract class DeviceFormView extends LitElement {
    * deliberate act, and a device filed in the wrong building is a device nobody finds again.
    */
   protected onProjectChanged = (): void => {
+    this.projectGeneration++
     this.resolved = undefined
     this.rooms = []
     this.error = undefined
@@ -171,6 +174,18 @@ export abstract class DeviceFormView extends LitElement {
   }
 
   /**
+   * Which project the form is on, as a number that moves with every switch.
+   *
+   * A save captures it **before its first wait** (the room re-read) and hands it to
+   * {@link write}. A switch in between moves it, and `write` then refuses: by that point
+   * `repos()` resolves the *next* project's database, and the device was typed under the old
+   * one.
+   */
+  protected projectSnapshot(): number {
+    return this.projectGeneration
+  }
+
+  /**
    * Writes the planned device, and says whether it worked.
    *
    * A rejected write is reported rather than thrown. Left to propagate out of a submit
@@ -183,8 +198,13 @@ export abstract class DeviceFormView extends LitElement {
    * into whatever a user pastes into a bug report — is the one leak this application must not
    * have. What the user needs is on screen; what a developer needs is the failing operation,
    * which is this one.
+   *
+   * @param device what to save
+   * @param since the {@link projectSnapshot} taken when the save began; after a switch since
+   *   then nothing is written (the form has already left for the device list)
    */
-  protected async write(device: Unsaved<DeviceDocument>): Promise<boolean> {
+  protected async write(device: Unsaved<DeviceDocument>, since: number): Promise<boolean> {
+    if (since !== this.projectGeneration) return false
     try {
       await this.repos().devices.save(device)
       // Not observable today: a successful save always navigates away from the form, so

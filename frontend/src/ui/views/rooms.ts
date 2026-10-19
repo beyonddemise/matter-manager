@@ -3,14 +3,16 @@ import { html, LitElement, nothing, type PropertyDeclarations, type TemplateResu
 import type { ProjectRepositories } from '../../data/index.js'
 import {
   type DeviceDocument,
-  isValidRoomPath,
   type Room,
+  type RoomPathProblem,
   renameRoom,
+  roomPathProblem,
   roomsOf,
 } from '../../domain/index.js'
 import { PROJECT_CHANGED } from '../current-project.js'
 import { projectDatabase, projectIsEditable } from '../db/project-database.js'
 import { displayOrder } from '../i18n/localization.js'
+import { problemMessage } from '../i18n/problems.js'
 import { fieldValue } from './device-form.js'
 import { projectLine } from './project-line.js'
 import { roomSpellings } from './room-breadcrumb.js'
@@ -48,6 +50,7 @@ export class RoomsView extends LitElement {
     loaded: { state: true },
     failed: { state: true },
     editing: { state: true },
+    renameProblem: { state: true },
     busy: { state: true },
   }
 
@@ -61,6 +64,8 @@ export class RoomsView extends LitElement {
   declare failed: boolean
   /** The room in the rename dialog, or `undefined` when it is closed. */
   declare editing: Editing | undefined
+  /** Why the name last tried in the dialog is not a room path, until it is changed or closed. */
+  declare renameProblem: RoomPathProblem | undefined
   declare busy: boolean
 
   constructor() {
@@ -137,7 +142,14 @@ export class RoomsView extends LitElement {
    */
   private async onRename(room: Room, to: string): Promise<void> {
     const target = to.trim()
-    if (!isValidRoomPath(target)) return
+    // Answered in the dialog, which stays open: the footer button saves without the browser's
+    // own validation, so returning silently would be a button that does nothing.
+    const problem = roomPathProblem(target)
+    if (problem !== null) {
+      this.renameProblem = problem
+      return
+    }
+    this.renameProblem = undefined
     this.editing = undefined
 
     const planned = renameRoom(this.devices, room.spellings[0], target)
@@ -222,6 +234,7 @@ export class RoomsView extends LitElement {
                           appearance="outlined"
                           ?disabled=${this.busy}
                           @click=${() => {
+                            this.renameProblem = undefined
                             this.editing = { room, merge: true }
                           }}
                         >
@@ -234,6 +247,7 @@ export class RoomsView extends LitElement {
                     appearance="plain"
                     ?disabled=${this.busy}
                     @click=${() => {
+                      this.renameProblem = undefined
                       this.editing = { room, merge: false }
                     }}
                   >
@@ -268,7 +282,9 @@ export class RoomsView extends LitElement {
         label=${editing.merge ? msg('Merge the spellings') : msg('Rename the room')}
         @wa-after-hide=${(event: Event) => {
           // Only the dialog's own close: a select or tooltip inside it bubbles the same event.
-          if (event.target === event.currentTarget) this.editing = undefined
+          if (event.target !== event.currentTarget) return
+          this.editing = undefined
+          this.renameProblem = undefined
         }}
       >
         <form
@@ -284,11 +300,13 @@ export class RoomsView extends LitElement {
             value=${editing.room.spellings[0]}
             label=${msg('Room name')}
             hint=${
-              editing.merge
-                ? msg('All devices in this room will use this name.')
-                : msg(
-                    'Every device in this room, and in the rooms inside it, moves to the new name.',
-                  )
+              this.renameProblem !== undefined
+                ? renameProblemText(this.renameProblem)
+                : editing.merge
+                  ? msg('All devices in this room will use this name.')
+                  : msg(
+                      'Every device in this room, and in the rooms inside it, moves to the new name.',
+                    )
             }
           ></wa-input>
         </form>
@@ -299,6 +317,15 @@ export class RoomsView extends LitElement {
       </wa-dialog>
     `
   }
+}
+
+/**
+ * Why a new room name cannot be used, in the dialog's words. The doubled-slash case shares the
+ * device form's message; an empty one gets its own, since "a device needs a room" would be the
+ * wrong sentence in a dialog about renaming one.
+ */
+function renameProblemText(problem: RoomPathProblem): string {
+  return problem === 'empty' ? msg('A room needs a name.') : problemMessage('roomPathEmptySegment')
 }
 
 customElements.define('rooms-view', RoomsView)

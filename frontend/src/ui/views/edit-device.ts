@@ -112,6 +112,8 @@ export class EditDeviceView extends DeviceFormView {
     const device = this.device
     if (this.saving || device === undefined) return
     this.saving = true
+    // Before the first wait, as on the add form: see `projectSnapshot`.
+    const since = this.projectSnapshot()
 
     try {
       // Re-read for the same reason the add form does: a room another tab filed a device under
@@ -133,7 +135,9 @@ export class EditDeviceView extends DeviceFormView {
 
       this.error = undefined
 
-      if (!(await this.write(update))) {
+      if (!(await this.write(update, since))) {
+        // Another project is open now: the form has left, and this device is not in it.
+        if (since !== this.projectSnapshot()) return
         // A rejected write here is most often a conflict: another tab or another replica has
         // moved the document on, so the `_rev` in hand is stale and every retry fails exactly
         // the same way. Re-reading makes the next attempt plan against what is actually

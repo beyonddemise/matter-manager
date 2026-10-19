@@ -146,6 +146,7 @@
 's71ef3da92599264c': str`Projekt ${0}`,
 's7225937736471faf': `Ein Raum entsteht, sobald Sie das erste Gerät in einen neuen Raum eintragen.`,
 's723b96896cf3ae07': `Matter Manager`,
+'s73f6752e0cda4d16': `Ein Raum braucht einen Namen.`,
 's75a9cb5fe18cff15': `Vergrößern`,
 's75bfec52c10b0a16': `Im Netzwerk`,
 's7608573759aa7525': `Testhersteller`,

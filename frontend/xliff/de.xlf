@@ -1250,6 +1250,10 @@
   <source>Fields marked * are required.</source>
   <target>Mit * markierte Felder sind Pflichtfelder.</target>
 </trans-unit>
+<trans-unit id="s73f6752e0cda4d16">
+  <source>A room needs a name.</source>
+  <target>Ein Raum braucht einen Namen.</target>
+</trans-unit>
 </body>
 </file>
 </xliff>
