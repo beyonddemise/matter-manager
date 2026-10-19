@@ -1,417 +1,290 @@
 import { describe, expect, it } from 'vitest'
 import type { DeviceDocument } from '../../../src/domain/index.js'
 import {
-  devicesInRoom,
   documentId,
-  planRoomDeletion,
-  type RoomDocument,
+  RoomPathError,
   renameRoom,
-  reorderRooms,
-  roomsInOrder,
+  roomPathKey,
+  roomsOf,
 } from '../../../src/domain/index.js'
 
 /**
- * Editing the room list (M5-9).
+ * The room list, derived from the devices (ADR 0021).
  *
- * `path.ts` answers questions about one path. This is the layer above: what a whole list of
- * rooms becomes when one is renamed, reordered or deleted, and what happens to the devices
- * that were in it.
- *
- * Every function here **plans and does not write**, like `documents/`. The caller performs the
- * writes, which is what lets a deletion that touches a room, a new room and nine devices be
- * decided in one pure function and then written in whatever order the store needs.
+ * There is no room document. A room is the set of devices whose `room` folds to one
+ * `roomPathKey`, so the list is a pure function of the devices and a rename is a rewrite of
+ * them. Like `documents/`, everything here **plans and does not write**: a rename returns the
+ * devices to save, and only those that change.
  */
 
-const id = (uuid: string): string => documentId('room', uuid)
-
-const room = (uuid: string, path: string, sortKey?: number): RoomDocument => ({
-  _id: id(uuid),
-  _rev: `1-${uuid}`,
-  updatedAt: '2026-08-20T08:00:00.000Z',
-  type: 'room',
-  path,
-  ...(sortKey === undefined ? {} : { sortKey }),
-})
-
-const device = (uuid: string, roomId: string, name = 'A lamp'): DeviceDocument => ({
+const device = (
+  uuid: string,
+  room: string,
+  extra: Partial<DeviceDocument> = {},
+): DeviceDocument => ({
   _id: documentId('device', uuid),
   _rev: `1-${uuid}`,
   updatedAt: '2026-08-20T08:00:00.000Z',
   type: 'device',
-  name,
-  roomId,
+  name: 'A lamp',
+  room,
   manualCode: '34970112332',
   installedAt: '2026-08-19',
   addedAt: '2026-08-19T08:00:00.000Z',
   disabled: false,
   remarks: [],
+  ...extra,
 })
 
-const KITCHEN = room('kitchen', 'Ground Floor/Kitchen')
-const HALL = room('hall', 'Ground Floor/Hall')
-const ATTIC = room('attic', 'Attic')
-
-const uuids = (...values: readonly string[]): (() => string) => {
-  let index = 0
-  return () => {
-    const value = values[index] ?? values[values.length - 1]
-    index += 1
-    if (value === undefined) throw new Error('the test needs at least one uuid')
-    return value
-  }
+/** A device written before ADR 0021: it has a `roomId` and no `room`. No repair is made. */
+const legacy = (uuid: string): DeviceDocument => {
+  const { room: _room, ...rest } = device(uuid, '')
+  return { ...rest, roomId: 'room:gone' } as unknown as DeviceDocument
 }
 
-describe('the order rooms are shown in', () => {
-  it('puts the ones somebody arranged first, in that order', () => {
-    const ordered = roomsInOrder([room('c', 'C', 2), room('a', 'A', 0), room('b', 'B', 1)])
+describe('the rooms the devices are in', () => {
+  it('orders spellings a collator calls equal the same way, whichever device comes first', () => {
+    // Composed and decomposed `Küche` fold to one room, and a locale collator compares them as
+    // equal. Without a tiebreak, the first spelling (the link and the merge default) would be
+    // whichever device was read first, and two replicas could disagree.
+    const composed = 'K\u00fcche'
+    const decomposed = 'Ku\u0308che'
+    const collator = new Intl.Collator('de').compare
+    const devices = [device('a', composed), device('b', decomposed)]
 
-    expect(ordered.map((entry) => entry.path)).toEqual(['A', 'B', 'C'])
+    const one = roomsOf(devices, collator)
+    const other = roomsOf([...devices].reverse(), collator)
+
+    expect(one).toHaveLength(1)
+    expect(one[0]?.spellings).toHaveLength(2)
+    expect(one[0]?.spellings).toEqual(other[0]?.spellings)
   })
 
-  it('puts never-arranged rooms after them, by path', () => {
-    // Not interleaved by any invented position. A room nobody has placed has no place, and
-    // guessing one would move it the first time somebody dragged something else.
-    const ordered = roomsInOrder([room('z', 'Attic'), room('a', 'Cellar', 0)])
-
-    expect(ordered.map((entry) => entry.path)).toEqual(['Cellar', 'Attic'])
-  })
-
-  it('is stable for two rooms nobody has arranged', () => {
-    const ordered = roomsInOrder([room('b', 'Ground Floor/Kitchen'), room('a', 'Attic')])
-
-    expect(ordered.map((entry) => entry.path)).toEqual(['Attic', 'Ground Floor/Kitchen'])
-  })
-
-  it('keeps a never-arranged sub-room straight after its parent (#242)', () => {
-    // Segment by segment, like the device list, so a space in a sibling's name no longer splits
-    // the attic in two. Only for rooms nobody arranged, and compared by code point here, where
-    // the device list uses the locale collator.
-    const ordered = roomsInOrder([
-      room('b', 'Attic Bedroom'),
-      room('s', 'Attic/Studio'),
-      room('a', 'Attic'),
+  it('lists each path the devices carry, with how many devices are in it', () => {
+    const rooms = roomsOf([
+      device('a', 'Ground Floor/Kitchen'),
+      device('b', 'Ground Floor/Kitchen'),
+      device('c', 'Attic'),
     ])
 
-    expect(ordered.map((entry) => entry.path)).toEqual(['Attic', 'Attic/Studio', 'Attic Bedroom'])
-  })
-
-  it('does not modify the list it was given', () => {
-    // `sort` is in place, and a comparator applied to the caller's array would reorder a room
-    // list somebody else is rendering.
-    const rooms = [room('b', 'B', 1), room('a', 'A', 0)]
-
-    roomsInOrder(rooms)
-
-    expect(rooms.map((entry) => entry.path)).toEqual(['B', 'A'])
-  })
-})
-
-describe('reordering', () => {
-  it('numbers the rooms in the order given', () => {
-    const changed = reorderRooms([ATTIC._id, KITCHEN._id, HALL._id], [KITCHEN, HALL, ATTIC])
-
-    expect(changed.map((entry) => [entry._id, entry.sortKey])).toEqual([
-      [ATTIC._id, 0],
-      [KITCHEN._id, 1],
-      [HALL._id, 2],
+    expect(rooms).toEqual([
+      { key: roomPathKey('Attic'), spellings: ['Attic'], deviceCount: 1 },
+      {
+        key: roomPathKey('Ground Floor/Kitchen'),
+        spellings: ['Ground Floor/Kitchen'],
+        deviceCount: 2,
+      },
     ])
   })
 
-  it('returns only the rooms whose position actually changed', () => {
-    // A drag moves one room past another. Rewriting all forty would replicate forty documents,
-    // and on a shared project every one of them is a change somebody else's device downloads.
-    const rooms = [room('a', 'A', 0), room('b', 'B', 1), room('c', 'C', 2)]
-
-    const changed = reorderRooms([id('a'), id('c'), id('b')], rooms)
-
-    expect(changed.map((entry) => entry._id)).toEqual([id('c'), id('b')])
+  it('is empty when there are no devices, because a room cannot exist without one', () => {
+    expect(roomsOf([])).toEqual([])
   })
 
-  it('carries the rest of each room through untouched', () => {
-    const changed = reorderRooms([HALL._id, KITCHEN._id], [KITCHEN, HALL])
+  it('groups the spellings of one room by key, and lists them all', () => {
+    // Two people typed the kitchen differently before their devices synced. Neither spelling
+    // is chosen as the room's real name; the page shows all three and offers a merge.
+    const rooms = roomsOf([
+      device('a', 'kitchen'),
+      device('b', 'Kitchen'),
+      device('c', 'kitCHEN'),
+      device('d', 'Kitchen'),
+    ])
 
-    expect(changed[0]).toMatchObject({ _id: HALL._id, path: 'Ground Floor/Hall', _rev: '1-hall' })
+    expect(rooms).toHaveLength(1)
+    expect(rooms[0]?.key).toBe(roomPathKey('Kitchen'))
+    expect(rooms[0]?.deviceCount).toBe(4)
   })
 
-  it('refuses an order that is not the whole list', () => {
-    // A partial order has no meaning: it says where two rooms go and nothing about the rest,
-    // so any answer would be invented. Refusing is the only honest option, and a silent
-    // "reorder what I recognise" would drop a room off the end of the list.
-    expect(() => reorderRooms([KITCHEN._id], [KITCHEN, HALL])).toThrow(RangeError)
+  it('sorts the spellings, so every replica lists them in the same order', () => {
+    const one = roomsOf([device('a', 'kitchen'), device('b', 'Kitchen'), device('c', 'kitCHEN')])
+    const other = roomsOf([device('c', 'kitCHEN'), device('a', 'kitchen'), device('b', 'Kitchen')])
+
+    // Code-point order by default: upper case before lower case.
+    expect(one[0]?.spellings).toEqual(['Kitchen', 'kitCHEN', 'kitchen'])
+    expect(other[0]?.spellings).toEqual(one[0]?.spellings)
   })
 
-  it('refuses an order naming a room that is not there', () => {
-    expect(() => reorderRooms([KITCHEN._id, id('nowhere')], [KITCHEN, HALL])).toThrow(RangeError)
+  it('counts a disabled device, which is still in a room', () => {
+    // A room that vanished while its only device was out of service would be a rename nobody
+    // could reach.
+    const rooms = roomsOf([device('a', 'Cellar', { disabled: true })])
+
+    expect(rooms).toEqual([{ key: roomPathKey('Cellar'), spellings: ['Cellar'], deviceCount: 1 }])
   })
 
-  it('refuses an order naming the same room twice', () => {
-    expect(() => reorderRooms([KITCHEN._id, KITCHEN._id], [KITCHEN, HALL])).toThrow(RangeError)
+  it('counts devices filed exactly here, not those in sub-rooms', () => {
+    const rooms = roomsOf([
+      device('a', 'Ground Floor'),
+      device('b', 'Ground Floor/Kitchen'),
+      device('c', 'Ground Floor/Kitchen'),
+    ])
+
+    expect(rooms.map((room) => [room.spellings[0], room.deviceCount])).toEqual([
+      ['Ground Floor', 1],
+      ['Ground Floor/Kitchen', 2],
+    ])
+  })
+
+  it('leaves out a device with no room, rather than listing an empty one', () => {
+    // A document from before ADR 0021 has `roomId` and no `room`. It must not crash the page,
+    // and it must not appear as a room with no name.
+    const rooms = roomsOf([legacy('old'), device('a', ''), device('b', '  '), device('c', 'Hall')])
+
+    expect(rooms.map((room) => room.spellings)).toEqual([['Hall']])
+  })
+
+  it('sorts rooms segment by segment, so a sub-room follows its parent (#242)', () => {
+    const rooms = roomsOf([
+      device('a', 'Attic Bedroom'),
+      device('b', 'Attic/Studio'),
+      device('c', 'Attic'),
+      device('d', 'Cellar'),
+    ])
+
+    expect(rooms.map((room) => room.spellings[0])).toEqual([
+      'Attic',
+      'Attic/Studio',
+      'Attic Bedroom',
+      'Cellar',
+    ])
+  })
+
+  it('orders segments with the comparator it is given', () => {
+    // The web layer passes its locale collator, so the list sorts as the device list does.
+    const reversed = (a: string, b: string): number => (a < b ? 1 : a > b ? -1 : 0)
+    const rooms = roomsOf([device('a', 'Attic'), device('b', 'Cellar')], reversed)
+
+    expect(rooms.map((room) => room.spellings[0])).toEqual(['Cellar', 'Attic'])
   })
 })
 
 describe('renaming a room', () => {
-  it('renames the room and everything inside it', () => {
-    const rooms = [room('gf', 'Ground Floor'), KITCHEN, HALL, ATTIC]
-
-    const changed = renameRoom('Ground Floor', 'Erdgeschoss', rooms)
-
-    expect(changed.map((entry) => entry.path).sort()).toEqual([
-      'Erdgeschoss',
-      'Erdgeschoss/Hall',
-      'Erdgeschoss/Kitchen',
-    ])
-  })
-
-  it('leaves rooms that merely start with the same letters alone', () => {
-    // The failure this guards against does not look wrong afterwards: `Floor 10/Kitchen` moves
-    // into a building it was never in, and the room list still reads plausibly.
-    const rooms = [room('a', 'Floor 1/Kitchen'), room('b', 'Floor 10/Kitchen')]
-
-    const changed = renameRoom('Floor 1', 'Ground Floor', rooms)
-
-    expect(changed.map((entry) => entry.path)).toEqual(['Ground Floor/Kitchen'])
-  })
-
-  it('returns nothing when no room is affected', () => {
-    expect(renameRoom('Cellar', 'Basement', [KITCHEN, ATTIC])).toEqual([])
-  })
-
-  it('carries each renamed room through with its revision', () => {
-    // Without the `_rev` the caller cannot save the room it was just handed, and a rename
-    // becomes a create.
-    const changed = renameRoom('Attic', 'Loft', [ATTIC])
-
-    expect(changed[0]).toMatchObject({ _id: ATTIC._id, path: 'Loft', _rev: '1-attic' })
-  })
-
-  it('refuses a rename onto a room that already exists', () => {
-    // Two documents with the same path are two rooms a person cannot tell apart, which is the
-    // duplicate M1-5 and M2-5 both exist to prevent — reached here through the one door
-    // nobody was watching.
-    expect(() => renameRoom('Attic', 'Ground Floor/Kitchen', [KITCHEN, ATTIC])).toThrow(RangeError)
-  })
-
-  it('refuses when a descendant would collide', () => {
-    // The subtle half: the room being renamed is fine, and one of the rooms it drags with it
-    // lands on top of something else.
-    const rooms = [room('gf', 'Ground Floor'), KITCHEN, room('uk', 'Upper Floor/Kitchen')]
-
-    expect(() => renameRoom('Ground Floor', 'Upper Floor', rooms)).toThrow(RangeError)
-  })
-
-  it('refuses a rename onto a room that differs only in ways nobody would notice', () => {
-    // `ground floor / kitchen` is the same room to a reader. ADR 0006 keeps case meaningful
-    // for storage, and M1-5 decided people do not read it that way.
-    expect(() => renameRoom('Attic', 'ground floor / kitchen', [KITCHEN, ATTIC])).toThrow(
-      RangeError,
-    )
-  })
-
-  it('does not treat a room as colliding with itself', () => {
-    // Renaming `Attic` to `Attic ` is a rename to the same path once normalised. The collision
-    // check must not object — the only room it matches is the one being renamed — and, since
-    // nothing actually moves, there is nothing to write either.
-    expect(renameRoom('Attic', 'Attic ', [ATTIC])).toEqual([])
-  })
-
-  it('allows a room to be renamed past one that is also moving', () => {
-    // `Ground Floor/Kitchen` lands where `Ground Floor/Hall` was, and `Hall` has itself moved
-    // on. Comparing against the whole list rather than against the rooms staying put would
-    // call that a collision and refuse a rename that is perfectly well defined.
-    const rooms = [room('a', 'Ground Floor/Kitchen'), room('b', 'Ground Floor/Kitchen/Sink')]
-
-    const changed = renameRoom('Ground Floor/Kitchen', 'Ground Floor/Kitchen/Sink', rooms)
-
-    expect(changed.map((entry) => entry.path).sort()).toEqual([
-      'Ground Floor/Kitchen/Sink',
-      'Ground Floor/Kitchen/Sink/Sink',
-    ])
-  })
-})
-
-describe('the devices a deletion would strand', () => {
-  it('finds the ones pointing at the room', () => {
-    const devices = [device('a', KITCHEN._id), device('b', ATTIC._id), device('c', KITCHEN._id)]
-
-    expect(devicesInRoom(KITCHEN._id, devices).map((entry) => entry._id)).toEqual([
-      documentId('device', 'a'),
-      documentId('device', 'c'),
-    ])
-  })
-
-  it('is empty for a room nothing is in', () => {
-    // What the interface checks to decide whether it has to ask anything at all.
-    expect(devicesInRoom(ATTIC._id, [device('a', KITCHEN._id)])).toEqual([])
-  })
-
-  it('counts a disabled device, which is still a device somewhere', () => {
-    const disabled = { ...device('a', KITCHEN._id), disabled: true }
-
-    expect(devicesInRoom(KITCHEN._id, [disabled])).toHaveLength(1)
-  })
-})
-
-describe('deleting a room that has devices in it', () => {
-  const devices = [device('a', KITCHEN._id), device('b', ATTIC._id)]
-
-  it('moves them to the room that was chosen', () => {
-    const plan = planRoomDeletion(
-      KITCHEN._id,
-      [KITCHEN, HALL, ATTIC],
-      devices,
-      { kind: 'room', roomId: HALL._id },
-      uuids('unused'),
-    )
-
-    expect(plan.remove).toBe(KITCHEN)
-    expect(plan.reassign.map((entry) => [entry._id, entry.roomId])).toEqual([
-      [documentId('device', 'a'), HALL._id],
-    ])
-    expect(plan.create).toBeUndefined()
-  })
-
-  it('moves them to Unassigned when that is what was chosen', () => {
-    const plan = planRoomDeletion(
-      KITCHEN._id,
-      [KITCHEN, HALL],
-      devices,
-      { kind: 'unassigned' },
-      uuids('new-unassigned'),
-    )
-
-    // The room has to exist before a device can point at it, so the plan carries it.
-    expect(plan.create).toMatchObject({ path: 'Unassigned', type: 'room' })
-    expect(plan.reassign[0]?.roomId).toBe(plan.create?._id)
-  })
-
-  it('reuses an Unassigned room that is already there', () => {
-    const unassigned = room('unassigned', 'Unassigned')
-
-    const plan = planRoomDeletion(
-      KITCHEN._id,
-      [KITCHEN, unassigned],
-      devices,
-      { kind: 'unassigned' },
-      uuids('should-not-be-used'),
-    )
-
-    // A second `Unassigned` would be two rooms with one name — exactly what `chooseRoom`
-    // exists to prevent everywhere else.
-    expect(plan.create).toBeUndefined()
-    expect(plan.reassign[0]?.roomId).toBe(unassigned._id)
-  })
-
-  it('leaves every other device alone', () => {
-    const plan = planRoomDeletion(
-      KITCHEN._id,
-      [KITCHEN, HALL],
-      devices,
-      { kind: 'room', roomId: HALL._id },
-      uuids('unused'),
-    )
-
-    expect(plan.reassign.map((entry) => entry._id)).not.toContain(documentId('device', 'b'))
-  })
-
-  it('carries each moved device through whole', () => {
-    // A reassignment is not an edit of anything else. Rebuilding the device here would be a
-    // rewrite of the one document shape where a rewrite loses remarks.
-    const withRemark: DeviceDocument = {
-      ...device('a', KITCHEN._id),
-      spot: 'ceiling, north end',
-      remarks: [
-        {
-          id: 'r1',
-          text: 'Replaced batteries',
-          authorSub: 'sub',
-          authorName: 'Anna',
-          createdAt: '2026-08-19T09:00:00.000Z',
-        },
+  it('rewrites every device in the room and in the rooms inside it', () => {
+    const renamed = renameRoom(
+      [
+        device('a', 'Floor 1'),
+        device('b', 'Floor 1/Kitchen'),
+        device('c', 'Floor 1/Kitchen/Pantry'),
       ],
-    }
-
-    const plan = planRoomDeletion(
-      KITCHEN._id,
-      [KITCHEN, HALL],
-      [withRemark],
-      { kind: 'room', roomId: HALL._id },
-      uuids('unused'),
+      'Floor 1',
+      'Ground Floor',
     )
 
-    expect(plan.reassign[0]).toMatchObject({
-      spot: 'ceiling, north end',
-      remarks: withRemark.remarks,
-      _rev: '1-a',
-    })
+    expect(renamed.map((entry) => entry.room)).toEqual([
+      'Ground Floor',
+      'Ground Floor/Kitchen',
+      'Ground Floor/Kitchen/Pantry',
+    ])
   })
 
-  it('does not stamp updatedAt, which the repository owns', () => {
-    const plan = planRoomDeletion(
-      KITCHEN._id,
-      [KITCHEN, HALL],
-      devices,
-      { kind: 'room', roomId: HALL._id },
-      uuids('unused'),
+  it('returns only the devices that change', () => {
+    // On a shared project every document rewritten is one somebody else's phone downloads.
+    const renamed = renameRoom(
+      [device('a', 'Floor 1/Kitchen'), device('b', 'Attic'), device('c', 'Floor 10/Kitchen')],
+      'Floor 1',
+      'Ground Floor',
     )
 
-    // Half of the total order the conflict merge depends on (ADR 0010). A device saved with a
-    // stale stamp does not fail; it quietly loses every future conflict.
-    expect(plan.reassign[0]).not.toHaveProperty('updatedAt')
-  })
-})
-
-describe('deleting a room, refusals', () => {
-  it('refuses a room that is not in the list', () => {
-    expect(() =>
-      planRoomDeletion(
-        id('nowhere'),
-        [KITCHEN],
-        [],
-        { kind: 'room', roomId: KITCHEN._id },
-        uuids('unused'),
-      ),
-    ).toThrow(RangeError)
+    expect(renamed.map((entry) => entry._id)).toEqual([documentId('device', 'a')])
   })
 
-  it('refuses to move devices into the room being deleted', () => {
-    // Reads as a no-op and is not one: the room goes, and every device in it now points at a
-    // document that does not exist.
-    expect(() =>
-      planRoomDeletion(
-        KITCHEN._id,
-        [KITCHEN],
-        [device('a', KITCHEN._id)],
-        { kind: 'room', roomId: KITCHEN._id },
-        uuids('unused'),
-      ),
-    ).toThrow(RangeError)
+  it('returns nothing when no device is in the room', () => {
+    expect(renameRoom([device('a', 'Attic')], 'Cellar', 'Basement')).toEqual([])
   })
 
-  it('refuses a destination that does not exist', () => {
-    expect(() =>
-      planRoomDeletion(
-        KITCHEN._id,
-        [KITCHEN],
-        [device('a', KITCHEN._id)],
-        { kind: 'room', roomId: id('nowhere') },
-        uuids('unused'),
-      ),
-    ).toThrow(RangeError)
+  it('returns nothing when the new name is the old one', () => {
+    expect(renameRoom([device('a', 'Attic')], 'Attic', 'Attic')).toEqual([])
   })
 
-  it('still deletes a room nothing is in', () => {
-    const plan = planRoomDeletion(
-      ATTIC._id,
-      [KITCHEN, ATTIC],
-      [device('a', KITCHEN._id)],
-      { kind: 'unassigned' },
-      uuids('unused'),
+  it('merges every spelling of the room into one', () => {
+    // Rename doubles as merge: every spelling folds to the key being renamed, so every one is
+    // rewritten and afterwards the room is listed once, with one spelling.
+    const devices = [device('a', 'Kitchen'), device('b', 'kitchen'), device('c', 'kitCHEN')]
+    const renamed = renameRoom(devices, 'Kitchen', 'Kitchen')
+
+    // `Kitchen` itself does not change, so it is not returned; the other two are.
+    expect(renamed.map((entry) => [entry._id, entry.room])).toEqual([
+      [documentId('device', 'b'), 'Kitchen'],
+      [documentId('device', 'c'), 'Kitchen'],
+    ])
+    const after = devices.map((one) => renamed.find((entry) => entry._id === one._id) ?? one)
+    expect(roomsOf(after as DeviceDocument[])).toEqual([
+      { key: roomPathKey('Kitchen'), spellings: ['Kitchen'], deviceCount: 3 },
+    ])
+  })
+
+  it('merges the spellings of a sub-room too, keeping what lies below', () => {
+    const renamed = renameRoom(
+      [device('a', 'ground floor/Pantry'), device('b', 'GROUND FLOOR')],
+      'Ground Floor',
+      'Ground Floor',
     )
 
-    // A destination is required even here, and that is the point: there is no way to express
-    // "delete it and see what happens". Nothing is moved and nothing is created, because
-    // nothing was in it.
-    expect(plan.reassign).toEqual([])
-    expect(plan.create).toBeUndefined()
+    expect(renamed.map((entry) => entry.room)).toEqual(['Ground Floor/Pantry', 'Ground Floor'])
+  })
+
+  it('merges into a room that already exists, needing no special case', () => {
+    // A room is nothing but the devices in it, so filing these under `Hall` is the merge.
+    const devices = [device('a', 'Hallway'), device('b', 'Hall')]
+    const renamed = renameRoom(devices, 'Hallway', 'Hall')
+
+    expect(renamed.map((entry) => [entry._id, entry.room])).toEqual([
+      [documentId('device', 'a'), 'Hall'],
+    ])
+  })
+
+  it('drops updatedAt, which the repository owns', () => {
+    // It is half of the total order the conflict merge depends on (ADR 0010).
+    const [renamed] = renameRoom([device('a', 'Attic')], 'Attic', 'Loft')
+
+    expect(renamed).toBeDefined()
+    expect(renamed).not.toHaveProperty('updatedAt')
+  })
+
+  it('carries the rest of each device through untouched', () => {
+    const original = device('a', 'Attic', { spot: 'by the hatch', disabled: true })
+    const [renamed] = renameRoom([original], 'Attic', 'Loft')
+
+    const { updatedAt: _stamp, ...rest } = original
+    expect(renamed).toEqual({ ...rest, room: 'Loft' })
+  })
+
+  it('does not modify the devices it was given', () => {
+    const devices = [device('a', 'Attic')]
+    const snapshot = JSON.stringify(devices)
+
+    renameRoom(devices, 'Attic', 'Loft')
+
+    expect(JSON.stringify(devices)).toBe(snapshot)
+  })
+
+  it('passes over a device with no room', () => {
+    expect(renameRoom([legacy('old'), device('a', '')], 'Attic', 'Loft')).toEqual([])
+  })
+
+  it('is safe to repeat after a partial failure', () => {
+    // A device already renamed is no longer inside `from`, so a retry does not touch it again.
+    const devices = [device('a', 'Floor 1/Kitchen'), device('b', 'Floor 1/Hall')]
+    const [first] = renameRoom(devices, 'Floor 1', 'Ground Floor')
+    if (first === undefined) throw new Error('the rename should have changed device a')
+
+    const retry = renameRoom(
+      [
+        { ...first, updatedAt: '2026-08-21T08:00:00.000Z' } as DeviceDocument,
+        devices[1] as DeviceDocument,
+      ],
+      'Floor 1',
+      'Ground Floor',
+    )
+
+    expect(retry.map((entry) => entry._id)).toEqual([documentId('device', 'b')])
+  })
+
+  it('refuses an unusable path at either end', () => {
+    const devices = [device('a', 'Attic')]
+
+    expect(() => renameRoom(devices, '', 'Loft')).toThrow(RoomPathError)
+    expect(() => renameRoom(devices, 'Attic', 'Lo//ft')).toThrow(RoomPathError)
   })
 })

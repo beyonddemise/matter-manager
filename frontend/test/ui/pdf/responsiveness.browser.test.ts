@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { browseDevices, type DeviceDocument, type RoomDocument } from '../../../src/domain/index.js'
+import { browseDevices, type DeviceDocument } from '../../../src/domain/index.js'
 import {
   buildInventoryPdf,
   ExportCancelled,
@@ -36,16 +36,6 @@ const LABELS: InventoryLabels = {
   testVendor: 'Test vendor',
 }
 
-const ROOMS: readonly RoomDocument[] = [
-  {
-    _id: 'room:kitchen',
-    _rev: '1-a',
-    updatedAt: '2026-08-19T08:00:00.000Z',
-    type: 'room',
-    path: 'Ground Floor/Kitchen',
-  },
-]
-
 const devices = (count: number): DeviceDocument[] =>
   Array.from({ length: count }, (_, index) => ({
     _id: `device:${index}`,
@@ -53,7 +43,7 @@ const devices = (count: number): DeviceDocument[] =>
     updatedAt: '2026-08-19T08:00:00.000Z',
     type: 'device' as const,
     name: `Device ${index}`,
-    roomId: 'room:kitchen',
+    room: 'Ground Floor/Kitchen',
     payload: PAYLOAD,
     manualCode: '34970112332',
     installedAt: '2026-08-19',
@@ -174,7 +164,7 @@ describe('a large export', () => {
     // The property, stated so that it survives being run on a slow machine: no single stretch
     // of unyielded work accounts for much of the export. Before this feature existed, one
     // block was 98% of it.
-    const groups = browseDevices(devices(DEVICES), ROOMS)
+    const groups = browseDevices(devices(DEVICES))
     let seen = 0
 
     const started = performance.now()
@@ -193,7 +183,7 @@ describe('a large export', () => {
     // save time — so two hundred images used to be processed in a single synchronous call
     // *after* the last progress callback, while the loop above looked perfectly well-behaved.
     // Measured 5.6 seconds; measured 24ms once the work was flushed inside the loop.
-    const groups = browseDevices(devices(DEVICES), ROOMS)
+    const groups = browseDevices(devices(DEVICES))
     let lastProgress = 0
 
     const started = performance.now()
@@ -216,7 +206,7 @@ describe('a large export', () => {
   it('reports progress the whole way through, not in one burst at the end', async () => {
     // Progress that arrives as 200 callbacks in the final millisecond is a progress bar that
     // jumps from 0 to 100, which is what a frozen interface looks like from the outside.
-    const groups = browseDevices(devices(DEVICES), ROOMS)
+    const groups = browseDevices(devices(DEVICES))
     const stamps: number[] = []
 
     await buildInventoryPdf(groups, {
@@ -235,7 +225,7 @@ describe('a large export', () => {
   it('stops within a device or two of being told to', async () => {
     // "The export can be cancelled" is only true if it stops *soon*. A cancel that is honoured
     // after the remaining four hundred devices have been drawn is not a cancel.
-    const groups = browseDevices(devices(DEVICES), ROOMS)
+    const groups = browseDevices(devices(DEVICES))
     let done = 0
     let stopAfter = 0
 

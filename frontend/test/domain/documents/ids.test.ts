@@ -12,7 +12,6 @@ const UUID = '6ba7b810-9dad-11d1-80b4-00c04fd430c8'
 describe('document ids', () => {
   it('prefixes an id with its type', () => {
     expect(documentId('device', UUID)).toBe(`device:${UUID}`)
-    expect(documentId('room', UUID)).toBe(`room:${UUID}`)
   })
 
   it('round-trips through the type and the uuid', () => {
@@ -72,16 +71,17 @@ describe('the _all_docs range', () => {
 
   it('excludes the id that sorts immediately after the range', () => {
     // ';' is the character after ':', so `device;…` is the nearest thing to a device id that
-    // is not one. A too-generous endkey passes a devices-versus-rooms test and fails here.
+    // is not one. A too-generous endkey passes a test against a far-away prefix and fails here.
     const { startkey, endkey } = idRange('device')
     for (const id of ['device;', `device;${UUID}`, 'devicf:x', 'room:x']) {
       expect(id >= startkey && id <= endkey).toBe(false)
     }
   })
 
-  it('does not overlap another type’s range', () => {
-    const device = idRange('device')
-    const room = idRange('room')
-    expect(device.endkey < room.startkey || room.endkey < device.startkey).toBe(true)
+  it('does not claim a room document, which this application no longer writes (ADR 0021)', () => {
+    // A `room:` document left on a server from before rooms became a path on the device must
+    // read as somebody else's, so the change feed and every range read pass over it.
+    expect(documentTypeOf(`room:${UUID}`)).toBeUndefined()
+    expect(uuidOf(`room:${UUID}`)).toBeUndefined()
   })
 })

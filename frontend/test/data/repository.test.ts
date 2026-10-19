@@ -1,14 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { type ProjectRepositories, projectRepositories } from '../../src/data/index.js'
-import {
-  type DeviceDocument,
-  documentId,
-  type RoomDocument,
-  type Unsaved,
-} from '../../src/domain/index.js'
+import { type DeviceDocument, documentId, type Unsaved } from '../../src/domain/index.js'
 import { fixedClock, memoryDatabase } from './support/memory-database.js'
 
-const KITCHEN = documentId('room', '3fa85f64-5717-4562-b3fc-2c963f66afa6')
+/** A room document from before ADR 0021. This application no longer writes or reads them. */
+const KITCHEN = 'room:3fa85f64-5717-4562-b3fc-2c963f66afa6'
 const LAMP = documentId('device', '6ba7b810-9dad-11d1-80b4-00c04fd430c8')
 
 /**
@@ -21,7 +17,7 @@ const lamp = (): Unsaved<DeviceDocument> => ({
   _id: LAMP,
   type: 'device',
   name: 'Kitchen ceiling light',
-  roomId: KITCHEN,
+  room: 'Ground Floor/Kitchen',
   spot: 'ceiling, north end',
   payload: 'MT:Y.K9042C00KA0648G00',
   manualCode: '34970112332',
@@ -46,7 +42,7 @@ const lamp = (): Unsaved<DeviceDocument> => ({
   ],
 })
 
-const kitchen = (): Unsaved<RoomDocument> => ({
+const kitchen = () => ({
   _id: KITCHEN,
   type: 'room',
   path: 'Ground Floor/Kitchen',
@@ -151,12 +147,13 @@ describe('save', () => {
     await expect(repositories.devices.save({ ...first, name: 'renamed twice' })).rejects.toThrow()
   })
 
-  it('refuses a document whose id belongs to another type', async () => {
-    // Saved through the wrong repository, a document lands outside both prefix ranges' reach:
-    // it reads back by id and appears in no list at all.
+  it('refuses a document whose id is not a device id', async () => {
+    // Saved through the device repository, a `room:` document would land outside the device
+    // range: it reads back by id and appears in no list at all. Room documents are gone since
+    // ADR 0021, so the id is one this application does not write.
     await expect(
       repositories.devices.save(kitchen() as unknown as Unsaved<DeviceDocument>),
-    ).rejects.toThrow(/room:/)
+    ).rejects.toThrow(/not one this application writes/)
   })
 
   it('refuses an id this application does not write at all', async () => {
@@ -206,19 +203,19 @@ describe('get', () => {
 
 describe('list', () => {
   it('returns the documents of its own type and nothing else', async () => {
+    // A room document left on the server from before ADR 0021 replicates in like any other.
+    // The device list must pass over it rather than mistake it for a device.
     await repositories.devices.save(lamp())
-    await repositories.rooms.save(kitchen())
+    await database.put(kitchen())
 
     const devices = await repositories.devices.list()
-    const rooms = await repositories.rooms.list()
 
     expect(devices.map((device) => device._id)).toEqual([LAMP])
-    expect(rooms.map((room) => room._id)).toEqual([KITCHEN])
   })
 
   it('excludes an id that sorts immediately after the range', async () => {
     // `;` is the character right after `:`, so `device;…` is the closest thing to a device id
-    // that is not one. Devices and rooms are far apart alphabetically, so the test above
+    // that is not one. `device:` and `room:` are far apart alphabetically, so the test above
     // passes with a far too generous endkey; this is the one that pins the bound.
     await repositories.devices.save(lamp())
     await database.put({ _id: 'device;not-a-device', type: 'device' })

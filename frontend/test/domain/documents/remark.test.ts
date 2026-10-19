@@ -20,7 +20,7 @@ const device = (remarks: readonly Remark[] = []): DeviceDocument => ({
   updatedAt: '2026-08-19T08:00:00.000Z',
   type: 'device',
   name: 'Kitchen ceiling light',
-  roomId: 'room:kitchen',
+  room: 'Ground Floor/Kitchen',
   manualCode: '34970112332',
   installedAt: '2026-08-19',
   addedAt: '2026-08-19T08:00:00.000Z',

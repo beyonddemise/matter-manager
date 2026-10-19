@@ -4,11 +4,8 @@ import {
   latestRevision,
   mergeDevice,
   mergeRemarks,
-  mergeRoom,
   type Remark,
   type Revision,
-  type RoomRevision,
-  UNASSIGNED_ROOM_PREFIX,
 } from '../../../src/domain/sync/merge.js'
 
 const remark = (id: string, createdAt: string, text = `remark ${id}`): Remark => ({
@@ -27,7 +24,7 @@ const remark = (id: string, createdAt: string, text = `remark ${id}`): Remark =>
 type DeviceFixture = Revision & {
   readonly remarks: readonly Remark[]
   readonly name: string
-  readonly roomId?: string
+  readonly room?: string
   readonly vendorName?: string
   readonly supportUrl?: string
   readonly catalogCheckedAt?: string
@@ -47,12 +44,6 @@ const device = (
   name: 'Kitchen light',
   ...extra,
 })
-
-const room = (
-  _rev: string,
-  updatedAt: string,
-  extra: Partial<RoomRevision> = {},
-): RoomRevision => ({ _id: 'room:1', _rev, updatedAt, path: 'Ground Floor/Kitchen', ...extra })
 
 /**
  * CouchDB revision ids are `generation-hash`. Comparing them as plain strings is wrong in a
@@ -281,108 +272,6 @@ describe('mergeDevice', () => {
 })
 
 /**
- * ADR 0010: a room deleted on one replica while a device still points at it must not orphan
- * that device. The room comes back as `Unassigned/<old path>` so the device stays findable and
- * the loss is visible rather than silent.
- */
-describe('mergeRoom', () => {
-  it('takes the path from the latest revision when nothing is deleted', () => {
-    const older = room('1-a', '2026-08-01T00:00:00.000Z', { path: 'Ground Floor/Kitchen' })
-    const newer = room('1-b', '2026-08-02T00:00:00.000Z', { path: 'Ground Floor/Küche' })
-
-    expect(mergeRoom(older, [newer], { hasLiveDevices: true }).path).toBe('Ground Floor/Küche')
-  })
-
-  it('restores a deleted room that devices still reference', () => {
-    const deleted = room('2-a', '2026-08-02T00:00:00.000Z', { _deleted: true })
-    const live = room('1-b', '2026-08-01T00:00:00.000Z', { path: 'Ground Floor/Kitchen' })
-
-    const merged = mergeRoom(deleted, [live], { hasLiveDevices: true })
-
-    expect(merged.path).toBe(`${UNASSIGNED_ROOM_PREFIX}/Ground Floor/Kitchen`)
-    expect(merged._deleted).toBeFalsy()
-  })
-
-  it('keeps the room id, which is how the device still reaches it', () => {
-    // Devices reference rooms by id, so preserving the id is what makes the device
-    // un-orphaned. A new id would leave the device pointing at nothing.
-    const deleted = room('2-a', '2026-08-02T00:00:00.000Z', { _deleted: true })
-    const live = room('1-b', '2026-08-01T00:00:00.000Z', { path: 'Ground Floor/Kitchen' })
-
-    expect(mergeRoom(deleted, [live], { hasLiveDevices: true })._id).toBe('room:1')
-  })
-
-  it('lets a deleted room stay deleted when no device references it', () => {
-    const deleted = room('2-a', '2026-08-02T00:00:00.000Z', { _deleted: true })
-    const live = room('1-b', '2026-08-01T00:00:00.000Z', { path: 'Ground Floor/Kitchen' })
-
-    expect(mergeRoom(deleted, [live], { hasLiveDevices: false })._deleted).toBe(true)
-  })
-
-  it('does not re-prefix a room that is already unassigned', () => {
-    // Otherwise a room deleted twice becomes Unassigned/Unassigned/... and the name grows
-    // every time it happens.
-    const deleted = room('3-a', '2026-08-03T00:00:00.000Z', { _deleted: true })
-    const live = room('2-b', '2026-08-02T00:00:00.000Z', {
-      path: `${UNASSIGNED_ROOM_PREFIX}/Ground Floor/Kitchen`,
-    })
-
-    expect(mergeRoom(deleted, [live], { hasLiveDevices: true }).path).toBe(
-      `${UNASSIGNED_ROOM_PREFIX}/Ground Floor/Kitchen`,
-    )
-  })
-
-  it('takes the old path from the latest revision that still has one', () => {
-    const deleted = room('3-a', '2026-08-03T00:00:00.000Z', { _deleted: true })
-    const recent = room('2-b', '2026-08-02T00:00:00.000Z', { path: 'Ground Floor/Utility' })
-    const ancient = room('1-c', '2026-08-01T00:00:00.000Z', { path: 'Ground Floor/Kitchen' })
-
-    expect(mergeRoom(deleted, [ancient, recent], { hasLiveDevices: true }).path).toBe(
-      `${UNASSIGNED_ROOM_PREFIX}/Ground Floor/Utility`,
-    )
-  })
-
-  it('leaves a room deleted when no revision remembers its path', () => {
-    // A room whose name is unrecoverable cannot be meaningfully resurrected. Inventing one
-    // would put a room in the list that nobody created; leaving it deleted at least keeps
-    // the loss visible where the device's missing room is.
-    const deleted = {
-      _id: 'room:1',
-      _rev: '2-a',
-      updatedAt: '2026-08-02T00:00:00.000Z',
-      _deleted: true,
-    }
-    const alsoDeleted = {
-      _id: 'room:1',
-      _rev: '1-b',
-      updatedAt: '2026-08-01T00:00:00.000Z',
-      _deleted: true,
-    }
-
-    expect(mergeRoom(deleted, [alsoDeleted], { hasLiveDevices: true })._deleted).toBe(true)
-  })
-
-  it('gives an identical result for every permutation', () => {
-    const deleted = room('3-a', '2026-08-03T00:00:00.000Z', { _deleted: true })
-    const recent = room('2-b', '2026-08-02T00:00:00.000Z', { path: 'Ground Floor/Utility' })
-    const ancient = room('1-c', '2026-08-01T00:00:00.000Z', { path: 'Ground Floor/Kitchen' })
-    const options = { hasLiveDevices: true }
-
-    const results = [
-      mergeRoom(deleted, [recent, ancient], options),
-      mergeRoom(recent, [deleted, ancient], options),
-      mergeRoom(ancient, [deleted, recent], options),
-    ]
-    for (const result of results) expect(result).toEqual(results[0])
-  })
-
-  it('leaves a live room untouched when it is the only revision', () => {
-    const only = room('1-a', '2026-08-01T00:00:00.000Z')
-    expect(mergeRoom(only, [], { hasLiveDevices: true })).toEqual(only)
-  })
-})
-
-/**
  * The property the whole module exists to guarantee. Anything not carried in the documents -
  * local time, arrival order, which replica ran the merge - breaks convergence, and the
  * symptom is two replicas that disagree permanently rather than an error anyone can see.
@@ -465,17 +354,17 @@ describe('mergeDevice and the catalogue block', () => {
     // is not an edit), so although its `_rev` sorts after the rename's, the rename is later.
     const renamed = device('2-a', '2026-10-05T10:00:00.000Z', [], {
       name: 'Hall sensor',
-      roomId: 'room:hall',
+      room: 'Hall',
     })
     const backfilled = device('2-b', '2026-10-05T09:00:00.000Z', [], {
-      roomId: 'room:kitchen',
+      room: 'Kitchen',
       ...FOUND,
       catalogCheckedAt: '2026-10-05T10:05:00.000Z',
     })
 
     for (const merged of [mergeDevice(renamed, [backfilled]), mergeDevice(backfilled, [renamed])]) {
       expect(merged.name).toBe('Hall sensor')
-      expect(merged.roomId).toBe('room:hall')
+      expect(merged.room).toBe('Hall')
       expect(merged.vendorName).toBe('Aqara')
       expect(merged.catalogCheckedAt).toBe('2026-10-05T10:05:00.000Z')
     }

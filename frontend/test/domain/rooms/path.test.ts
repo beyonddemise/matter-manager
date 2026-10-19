@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
   compareRoomPaths,
-  isNearDuplicateRoomPath,
+  isSameRoom,
   isValidRoomPath,
+  isWithinRoom,
   normaliseRoomPath,
   ROOM_PATH_CRUMB,
   ROOM_PATH_SEPARATOR,
@@ -122,19 +123,18 @@ describe('roomPathProblem', () => {
 })
 
 /**
- * Near-duplicate detection exists because the path is the room's identity as far as a human
- * reading it is concerned. ADR 0006 accepts that `Ground Floor/Kitchen` and
- * `ground floor/Kitchen` are genuinely different rooms, and requires a warning at creation
- * time so nobody makes that second room by accident.
+ * A room is identified by its key, not by its exact text (ADR 0021). Each device stores the
+ * path it was saved with, so `Ground Floor/Kitchen` and `ground floor/Kitchen` can both turn
+ * up; they are one room, listed with both spellings until somebody merges them.
  */
-describe('near-duplicate detection', () => {
+describe('isSameRoom', () => {
   it.each([
     ['case alone', 'Ground Floor/Kitchen', 'ground floor/kitchen'],
     ['untrimmed whitespace', 'Ground Floor/Kitchen', ' Ground Floor / Kitchen '],
     ['both together', 'Ground Floor/Kitchen', ' ground floor / KITCHEN '],
     ['repeated inner spaces', 'Living  Room', 'Living Room'],
-  ])('treats paths differing by %s as near-duplicates', (_label, a, b) => {
-    expect(isNearDuplicateRoomPath(a, b)).toBe(true)
+  ])('treats paths differing by %s as one room', (_label, a, b) => {
+    expect(isSameRoom(a, b)).toBe(true)
   })
 
   it.each([
@@ -142,8 +142,8 @@ describe('near-duplicate detection', () => {
     ['different depth', 'Ground Floor/Kitchen', 'Ground Floor'],
     ['different parent', 'Ground Floor/Kitchen', 'First Floor/Kitchen'],
     ['same segments, different order', 'Kitchen/Ground Floor', 'Ground Floor/Kitchen'],
-  ])('does not treat paths differing by %s as near-duplicates', (_label, a, b) => {
-    expect(isNearDuplicateRoomPath(a, b)).toBe(false)
+  ])('does not treat paths differing by %s as one room', (_label, a, b) => {
+    expect(isSameRoom(a, b)).toBe(false)
   })
 
   /**
@@ -152,12 +152,12 @@ describe('near-duplicate detection', () => {
    * the form, a user who types one and pastes the other gets two rooms that look the same on
    * screen and cannot be told apart.
    */
-  it('treats the two Unicode spellings of the same name as duplicates', () => {
+  it('treats the two Unicode spellings of the same name as one room', () => {
     const composed = 'K\u00FCche' // U+00FC, one code point
     const decomposed = 'Ku\u0308che' // u followed by U+0308, combining diaeresis
 
     expect(composed).not.toBe(decomposed) // different strings...
-    expect(isNearDuplicateRoomPath(composed, decomposed)).toBe(true) // ...same room
+    expect(isSameRoom(composed, decomposed)).toBe(true) // ...same room
   })
 
   /**
@@ -175,36 +175,34 @@ describe('near-duplicate detection', () => {
     ['Greek medial and final sigma', 'ΟΣ', 'οσ'],
     ['a ligature against its letters', 'ﬁle', 'file'],
   ])('folds %s', (_label, a, b) => {
-    expect(isNearDuplicateRoomPath(a, b)).toBe(true)
+    expect(isSameRoom(a, b)).toBe(true)
   })
 
   /**
    * A measured consequence of folding by case conversion, recorded rather than hidden.
    *
-   * `ı`.toUpperCase() is `I`, so it matches `i`; true Unicode folding keeps them apart. This
-   * costs one extra warning and nothing else — the comparison never merges rooms. If Turkish
-   * becomes a supported locale, where these are separate letters, this test fails and forces
-   * the decision instead of letting it drift.
+   * `ı`.toUpperCase() is `I`, so it matches `i`; true Unicode folding keeps them apart. Since
+   * the key now identifies a room, the two are listed as spellings of one room, which a rename
+   * can still separate. If Turkish becomes a supported locale, where these are separate
+   * letters, this test fails and forces the decision instead of letting it drift.
    */
-  it('treats the Turkish dotless i as a near-duplicate of i, deliberately', () => {
-    expect(isNearDuplicateRoomPath('\u0131', 'i')).toBe(true)
+  it('treats the Turkish dotless i as the same room as i, deliberately', () => {
+    expect(isSameRoom('\u0131', 'i')).toBe(true)
   })
 
   it('still distinguishes genuinely different names after folding', () => {
     // Folding is deliberately more aggressive than lowercasing, so this pins that it has not
     // become aggressive enough to merge unrelated rooms.
-    expect(isNearDuplicateRoomPath('Straße', 'Strand')).toBe(false)
-    expect(isNearDuplicateRoomPath('Küche', 'Kuchen')).toBe(false)
+    expect(isSameRoom('Straße', 'Strand')).toBe(false)
+    expect(isSameRoom('Küche', 'Kuchen')).toBe(false)
   })
 
   it('is reflexive and symmetric', () => {
-    expect(isNearDuplicateRoomPath('Kitchen', 'Kitchen')).toBe(true)
-    expect(isNearDuplicateRoomPath('KITCHEN', 'kitchen')).toBe(
-      isNearDuplicateRoomPath('kitchen', 'KITCHEN'),
-    )
+    expect(isSameRoom('Kitchen', 'Kitchen')).toBe(true)
+    expect(isSameRoom('KITCHEN', 'kitchen')).toBe(isSameRoom('kitchen', 'KITCHEN'))
   })
 
-  it('gives equal keys exactly to near-duplicates', () => {
+  it('gives equal keys exactly to the same room', () => {
     expect(roomPathKey('Ground Floor/Kitchen')).toBe(roomPathKey(' GROUND floor /kitchen'))
     expect(roomPathKey('Ground Floor/Kitchen')).not.toBe(roomPathKey('Ground Floor/Bath'))
   })
@@ -276,10 +274,23 @@ describe('renameRoomPath', () => {
     )
   })
 
-  it('matches case-sensitively, because case distinguishes rooms', () => {
-    // ADR 0006: `Ground Floor/Kitchen` and `ground floor/Kitchen` are different rooms.
-    // Renaming one must not silently take the other with it.
-    expect(renameRoomPath('floor 1/Kitchen', 'Floor 1', 'Ground Floor')).toBe('floor 1/Kitchen')
+  it('matches every spelling of the room, because the spellings are one room (ADR 0021)', () => {
+    // This is what makes a rename a merge: renaming `Floor 1` also rewrites a device that was
+    // saved as `floor 1/Kitchen`, so afterwards there is one spelling left.
+    expect(renameRoomPath('floor 1/Kitchen', 'Floor 1', 'Ground Floor')).toBe(
+      'Ground Floor/Kitchen',
+    )
+    expect(renameRoomPath('FLOOR 1', 'Floor 1', 'Ground Floor')).toBe('Ground Floor')
+  })
+
+  it('replaces the matched ancestor by segment count, not by string length', () => {
+    // Folding changes length: `Straße` folds to `strasse`, one character longer. Slicing the
+    // matched prefix off by the length of the typed source would cut into `Bad`.
+    expect(renameRoomPath('Straße/Bad', 'STRASSE', 'Lane')).toBe('Lane/Bad')
+  })
+
+  it('still respects segment boundaries while ignoring case', () => {
+    expect(renameRoomPath('floor 10/Kitchen', 'Floor 1', 'Ground Floor')).toBe('floor 10/Kitchen')
   })
 
   /**
@@ -379,5 +390,21 @@ describe('roomPathBreadcrumb', () => {
     expect(roomPathBreadcrumb('Ground Floor/Kitchen/Pantry')).toBe(
       'Ground Floor › Kitchen › Pantry',
     )
+  })
+})
+
+describe('isWithinRoom', () => {
+  it('matches a sub-room spelled differently from the room it is in', () => {
+    // A filter or export of `Kitchen` that dropped `kitchen/Pantry` would drop devices.
+    expect(isWithinRoom('kitchen/Pantry', 'Kitchen')).toBe(true)
+    expect(isWithinRoom(' KITCHEN ', 'Kitchen')).toBe(true)
+  })
+
+  it('does not reach across a segment boundary, whatever the case', () => {
+    expect(isWithinRoom('FLOOR 10/Kitchen', 'Floor 1')).toBe(false)
+  })
+
+  it('does not count a parent as inside its child', () => {
+    expect(isWithinRoom('Ground Floor', 'ground floor/Kitchen')).toBe(false)
   })
 })

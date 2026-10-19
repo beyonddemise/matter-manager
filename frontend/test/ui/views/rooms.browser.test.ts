@@ -3,39 +3,31 @@ import '@awesome.me/webawesome-pro/dist/components/callout/callout.js'
 import '@awesome.me/webawesome-pro/dist/components/dialog/dialog.js'
 import '@awesome.me/webawesome-pro/dist/components/icon/icon.js'
 import '@awesome.me/webawesome-pro/dist/components/input/input.js'
-import '@awesome.me/webawesome-pro/dist/components/option/option.js'
-import '@awesome.me/webawesome-pro/dist/components/select/select.js'
 import { fixture, html, waitUntil } from '@open-wc/testing-helpers'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { ProjectRepositories } from '../../../src/data/index.js'
+import { type DeviceDocument, roomPathKey, type Unsaved } from '../../../src/domain/index.js'
 import { useProjectDatabase } from '../../../src/ui/db/project-database.js'
 import type { RoomsView } from '../../../src/ui/views/rooms.js'
 import '../../../src/ui/views/rooms.js'
 import { browserDatabase, type TestDatabase } from '../support/browser-database.js'
 
 /**
- * #142: `planRoomDeletion`, `renameRoom`, `reorderRooms` and `roomsInOrder` were written and
- * tested at M5-9 and imported by nothing — #120's defect one package over.
+ * The Rooms page (ADR 0021): a room is the path its devices carry, so the page lists what the
+ * devices say and a rename rewrites the devices.
  *
- * The decisions are covered exhaustively in `core/test/rooms/list.test.ts`. What is tested here
- * is the half that was missing: that a caller exists, and that it writes what each plan produced
- * in the order the plan says.
+ * The decisions (grouping by key, the subtree rule, spelling order) are covered in
+ * `test/domain/rooms/list.test.ts`. What is tested here is that the page shows them and writes
+ * what `renameRoom` planned.
  */
 
 let database: TestDatabase
 
-const room = (id: string, path: string, sortKey?: number) => ({
+const device = (id: string, room: string, name = 'Lamp'): Unsaved<DeviceDocument> => ({
   _id: id,
-  type: 'room' as const,
-  path,
-  ...(sortKey === undefined ? {} : { sortKey }),
-})
-
-const device = (id: string, name: string, roomId: string) => ({
-  _id: id,
-  type: 'device' as const,
+  type: 'device',
   name,
-  roomId,
+  room,
   manualCode: '34970112332',
   installedAt: '2026-09-02',
   addedAt: '2026-09-02T09:00:00.000Z',
@@ -43,17 +35,50 @@ const device = (id: string, name: string, roomId: string) => ({
   remarks: [],
 })
 
-const view = async (): Promise<RoomsView> => {
+const view = async (
+  repositories: ProjectRepositories = database.repositories,
+  projectName = '',
+): Promise<RoomsView> => {
   const element = (await fixture(
-    html`<rooms-view .repositories=${database.repositories}></rooms-view>`,
+    html`<rooms-view .repositories=${repositories} .projectName=${projectName}></rooms-view>`,
   )) as RoomsView
   await waitUntil(() => element.loaded, 'never loaded')
   await element.updateComplete
   return element
 }
 
-const paths = (element: RoomsView): string[] =>
-  [...element.querySelectorAll('[data-room-path]')].map((node) => node.textContent?.trim() ?? '')
+/** Each room's key, in the order the page lists them. Compare with {@link key}. */
+const keys = (element: RoomsView): string[] =>
+  [...element.querySelectorAll('[data-room]')].map(
+    (node) => node.getAttribute('data-room-key') ?? '',
+  )
+
+/** The key a room path folds to, so expectations do not restate the folding rule. */
+const key = (path: string): string => roomPathKey(path)
+
+/** The room each device is filed under, by id: what a rename is supposed to change. */
+const filed = async (): Promise<Record<string, string>> =>
+  Object.fromEntries(
+    (await database.repositories.devices.list()).map((stored) => [stored._id, stored.room]),
+  )
+
+/** The row of the room `path` names, by key, so any spelling finds it. */
+const row = (element: RoomsView, path: string): HTMLElement =>
+  element.querySelector(`[data-room-key="${CSS.escape(key(path))}"]`) as HTMLElement
+
+/** Opens the dialog through `button` in a row, types `name` and saves. */
+async function rename(
+  element: RoomsView,
+  path: string,
+  name: string,
+  button = '[data-rename]',
+): Promise<void> {
+  ;(row(element, path).querySelector(button) as HTMLElement).click()
+  await element.updateComplete
+  const input = element.querySelector('[data-rename-input]') as HTMLElement & { value: string }
+  input.value = name
+  ;(element.querySelector('[data-save-rename]') as HTMLElement).click()
+}
 
 beforeEach(() => {
   database = browserDatabase()
@@ -64,163 +89,176 @@ afterEach(async () => {
   await database.destroy()
 })
 
-describe('the rooms of a project', () => {
-  it('lists them in the order the domain decides', async () => {
-    // `roomsInOrder` puts a manual position first and falls back to text. Sorting here instead
-    // would be a second answer to a question `core` already answers.
-    await database.repositories.rooms.save(room('room:b', 'Bathroom', 2))
-    await database.repositories.rooms.save(room('room:a', 'Attic', 1))
+describe('the page', () => {
+  it('says where a room comes from', async () => {
+    // It is also the empty state: with no devices there is nothing else on the page.
+    const element = await view()
+    expect(element.querySelector('[data-rooms-intro]')?.textContent?.trim()).toBe(
+      'A room appears when you add the first device to a new room.',
+    )
+    expect(element.querySelector('[data-room]')).toBeNull()
+  })
 
-    expect(paths(await view())).toEqual(['Attic', 'Bathroom'])
+  it('names the open project under the heading', async () => {
+    const element = await view(database.repositories, 'Hillside')
+    expect(element.querySelector('[data-project-name]')?.textContent?.trim()).toBe(
+      'Project Hillside',
+    )
+  })
+
+  it('shows no project line for a project with no name yet', async () => {
+    // "Project " with nothing after it reads as a fault.
+    const element = await view()
+    expect(element.querySelector('[data-project-name]')).toBeNull()
+  })
+})
+
+describe('the rooms of a project', () => {
+  it('lists the rooms the devices are in, in path order', async () => {
+    await database.repositories.devices.save(device('device:b', 'Bathroom'))
+    await database.repositories.devices.save(device('device:a', 'Attic'))
+
+    expect(keys(await view())).toEqual([key('attic'), key('bathroom')])
+  })
+
+  it('links each room to the device list filtered to it', async () => {
+    await database.repositories.devices.save(device('device:k', 'Ground Floor/Kitchen'))
+
+    const link = (await view()).querySelector('[data-room-path]')
+    expect(link?.getAttribute('href')).toBe('#/devices?room=Ground+Floor%2FKitchen')
   })
 
   it('says how many devices a room holds', async () => {
-    await database.repositories.rooms.save(room('room:k', 'Kitchen'))
-    await database.repositories.devices.save(device('device:one', 'Lamp', 'room:k'))
+    await database.repositories.devices.save(device('device:one', 'Kitchen'))
+    await database.repositories.devices.save(device('device:two', 'Hall'))
+    await database.repositories.devices.save(device('device:three', 'Hall'))
 
     const element = await view()
-    expect(element.querySelector('[data-room-count]')?.textContent?.trim()).toBe('1')
+    const count = (path: string) =>
+      row(element, path).querySelector('[data-room-count]')?.textContent?.trim()
+    expect(count('kitchen')).toBe('1 device')
+    expect(count('hall')).toBe('2 devices')
   })
 
-  it('says so plainly when a room holds nothing', async () => {
-    await database.repositories.rooms.save(room('room:k', 'Kitchen'))
+  it('lists every spelling of one room together', async () => {
+    await database.repositories.devices.save(device('device:one', 'Kitchen'))
+    await database.repositories.devices.save(device('device:two', 'kitchen'))
+
     const element = await view()
-    expect(element.querySelector('[data-room-count]')?.textContent).toContain('No devices')
+    expect(keys(element)).toEqual([key('kitchen')])
+    // Both, in the collator's order; neither is preferred.
+    const shown = element.querySelector('[data-room-path]')?.textContent?.trim().split(', ')
+    expect(shown?.sort()).toEqual(['Kitchen', 'kitchen'].sort())
   })
 })
 
 describe('renaming a room', () => {
-  it('takes the rooms beneath it too', async () => {
-    // `renameRoom` moves the whole subtree: renaming `Ground Floor` has to take
-    // `Ground Floor/Kitchen` with it, or the child becomes a room nobody meant to create.
-    await database.repositories.rooms.save(room('room:floor', 'Ground Floor'))
-    await database.repositories.rooms.save(room('room:kitchen', 'Ground Floor/Kitchen'))
+  it('rewrites its devices, and the rooms beneath it too', async () => {
+    // Renaming `Ground Floor` has to take `Ground Floor/Kitchen` with it, or the child is left
+    // under a parent nobody can find any more.
+    await database.repositories.devices.save(device('device:floor', 'Ground Floor'))
+    await database.repositories.devices.save(device('device:kitchen', 'Ground Floor/Kitchen'))
+    await database.repositories.devices.save(device('device:attic', 'Attic'))
+
+    const element = await view()
+    await rename(element, 'ground floor', 'Erdgeschoss')
+
+    await waitUntil(() => keys(element).includes(key('Erdgeschoss')), 'never renamed')
+    expect(keys(element)).toEqual([key('attic'), key('erdgeschoss'), key('erdgeschoss/kitchen')])
+    expect(await filed()).toEqual({
+      'device:attic': 'Attic',
+      'device:floor': 'Erdgeschoss',
+      'device:kitchen': 'Erdgeschoss/Kitchen',
+    })
+  })
+
+  it('prefills the dialog with the room as it is spelled', async () => {
+    await database.repositories.devices.save(device('device:k', 'Ground Floor/Kitchen'))
 
     const element = await view()
     ;(element.querySelector('[data-rename]') as HTMLElement).click()
     await element.updateComplete
 
     const input = element.querySelector('[data-rename-input]') as HTMLElement & { value: string }
-    input.value = 'Erdgeschoss'
-    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
-
-    await waitUntil(() => paths(element).includes('Erdgeschoss'), 'never renamed')
-    expect(paths(element)).toEqual(['Erdgeschoss', 'Erdgeschoss/Kitchen'])
+    expect(input.value).toBe('Ground Floor/Kitchen')
   })
 
-  it('changes nothing when the new name would collide', async () => {
-    // `renameRoom` throws, and the list is left exactly as it was: the remedy is another name.
-    await database.repositories.rooms.save(room('room:a', 'Attic'))
-    await database.repositories.rooms.save(room('room:b', 'Bathroom'))
+  it('merges into a room that already exists', async () => {
+    // A room is nothing but its devices, so renaming onto another room files them there.
+    await database.repositories.devices.save(device('device:a', 'Attic'))
+    await database.repositories.devices.save(device('device:b', 'Bathroom'))
 
     const element = await view()
-    ;(element.querySelector('[data-rename]') as HTMLElement).click()
-    await element.updateComplete
+    await rename(element, 'attic', 'Bathroom')
 
-    const input = element.querySelector('[data-rename-input]') as HTMLElement & { value: string }
-    input.value = 'Bathroom'
-    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
-    await waitUntil(() => element.querySelector('[data-rooms-failed]') !== null, 'no message')
-
-    expect((await database.repositories.rooms.list()).map((r) => r.path).sort()).toEqual([
-      'Attic',
-      'Bathroom',
-    ])
-  })
-})
-
-describe('reordering', () => {
-  it('moves a room down one place', async () => {
-    await database.repositories.rooms.save(room('room:a', 'Attic', 1))
-    await database.repositories.rooms.save(room('room:b', 'Bathroom', 2))
-
-    const element = await view()
-    ;(element.querySelector('[data-move-down]') as HTMLElement).click()
-    await waitUntil(() => paths(element)[0] === 'Bathroom', 'never moved')
-
-    expect(paths(element)).toEqual(['Bathroom', 'Attic'])
-  })
-})
-
-describe('deleting a room', () => {
-  it('sends its devices to Unassigned rather than orphaning them', async () => {
-    // The destination is required by `planRoomDeletion`'s signature, which is the mechanism
-    // rather than a check: no value of `RoomDestination` means "never mind".
-    await database.repositories.rooms.save(room('room:k', 'Kitchen'))
-    await database.repositories.devices.save(device('device:one', 'Lamp', 'room:k'))
-
-    const element = await view()
-    ;(element.querySelector('[data-delete-room]') as HTMLElement).click()
-    await element.updateComplete
-    ;(element.querySelector('[data-confirm-delete-room]') as HTMLElement).click()
-
-    await waitUntil(
-      async () => (await database.repositories.rooms.list()).length === 1,
-      'not deleted',
+    await waitUntil(() => keys(element).length === 1, 'never merged')
+    expect(keys(element)).toEqual([key('bathroom')])
+    expect(row(element, 'bathroom').querySelector('[data-room-count]')?.textContent?.trim()).toBe(
+      '2 devices',
     )
-
-    const rooms = await database.repositories.rooms.list()
-    const devices = await database.repositories.devices.list()
-    expect(rooms[0]?.path).toContain('Unassigned')
-    expect(devices[0]?.roomId).toBe(rooms[0]?._id)
   })
 
-  it('keeps the devices, which is the whole point', async () => {
-    await database.repositories.rooms.save(room('room:k', 'Kitchen'))
-    await database.repositories.devices.save(device('device:one', 'Lamp', 'room:k'))
-
-    const element = await view()
-    ;(element.querySelector('[data-delete-room]') as HTMLElement).click()
-    await element.updateComplete
-    ;(element.querySelector('[data-confirm-delete-room]') as HTMLElement).click()
-    await waitUntil(
-      async () => (await database.repositories.rooms.list()).length === 1,
-      'not deleted',
-    )
-
-    expect(await database.repositories.devices.list()).toHaveLength(1)
-  })
-
-  it('reloads what was saved when a later write fails', async () => {
-    await database.repositories.rooms.save(room('room:k', 'Kitchen'))
-    await database.repositories.devices.save(device('device:one', 'Lamp', 'room:k'))
+  it('says so when a write fails, and shows what was saved', async () => {
+    await database.repositories.devices.save(device('device:one', 'Kitchen'))
 
     const repositories: ProjectRepositories = {
       ...database.repositories,
       devices: {
         ...database.repositories.devices,
         save: async () => {
-          throw new Error('later write failed')
+          throw new Error('write failed')
         },
       },
     }
-    const element = (await fixture(
-      html`<rooms-view .repositories=${repositories}></rooms-view>`,
-    )) as RoomsView
-    await waitUntil(() => element.loaded, 'never loaded')
-    ;(element.querySelector('[data-delete-room]') as HTMLElement).click()
-    await element.updateComplete
-    ;(element.querySelector('[data-confirm-delete-room]') as HTMLElement).click()
+    const element = await view(repositories)
+    await rename(element, 'kitchen', 'Cocina')
 
     await waitUntil(() => element.querySelector('[data-rooms-failed]') !== null, 'no message')
-    await element.updateComplete
-
-    expect(paths(element)).toContain('Unassigned')
     expect(element.querySelector('[data-rooms-failed]')?.textContent).toContain(
       'Some changes may have been saved',
     )
+    expect(keys(element)).toEqual([key('kitchen')])
   })
+})
 
-  it('asks even when the room is empty', async () => {
-    // An optional-when-empty parameter is an optional parameter, and the caller who forgets it
-    // is the caller who did not check. The interface asks for the same reason the signature does.
-    await database.repositories.rooms.save(room('room:k', 'Kitchen'))
+describe('merging spellings', () => {
+  it('is offered only for a room spelled more than one way', async () => {
+    await database.repositories.devices.save(device('device:one', 'Kitchen'))
+    await database.repositories.devices.save(device('device:two', 'kitchen'))
+    await database.repositories.devices.save(device('device:three', 'Hall'))
 
     const element = await view()
-    ;(element.querySelector('[data-delete-room]') as HTMLElement).click()
-    await element.updateComplete
+    expect(row(element, 'kitchen').querySelector('[data-merge]')).not.toBeNull()
+    expect(row(element, 'hall').querySelector('[data-merge]')).toBeNull()
+  })
 
-    expect(element.querySelector('[data-delete-room-dialog]')).not.toBeNull()
+  it('leaves one spelling, and the button goes', async () => {
+    await database.repositories.devices.save(device('device:one', 'Kitchen'))
+    await database.repositories.devices.save(device('device:two', 'kitchen'))
+    await database.repositories.devices.save(device('device:three', 'kitCHEN/Pantry'))
+
+    const element = await view()
+    const first = (row(element, 'Kitchen').querySelector('[data-room-path]')?.textContent ?? '')
+      .split(', ')[0]
+      ?.trim()
+    // The dialog is prefilled with the first spelling; saving it unchanged is the merge, and it
+    // takes the sub-room spelled a third way with it.
+    ;(row(element, 'kitchen').querySelector('[data-merge]') as HTMLElement).click()
+    await element.updateComplete
+    ;(element.querySelector('[data-save-rename]') as HTMLElement).click()
+
+    await waitUntil(
+      () => row(element, 'kitchen').querySelector('[data-merge]') === null,
+      'never merged',
+    )
+    expect(row(element, 'Kitchen').querySelector('[data-room-path]')?.textContent?.trim()).toBe(
+      first,
+    )
+    expect(await filed()).toEqual({
+      'device:one': first,
+      'device:two': first,
+      'device:three': `${first}/Pantry`,
+    })
   })
 })
 
@@ -228,119 +266,23 @@ describe('a project somebody may only read', () => {
   it('offers the controls when it can be written to', async () => {
     // The positive control: a view rendering no controls at all would satisfy the assertion
     // below while being broken for everybody.
-    await database.repositories.rooms.save(room('room:k', 'Kitchen'))
+    await database.repositories.devices.save(device('device:one', 'Kitchen'))
+    await database.repositories.devices.save(device('device:two', 'kitchen'))
+
     const element = await view()
-    expect(element.querySelector('[data-delete-room]')).not.toBeNull()
+    expect(element.querySelector('[data-rename]')).not.toBeNull()
+    expect(element.querySelector('[data-merge]')).not.toBeNull()
   })
 
   it('removes them entirely rather than disabling them', async () => {
     useProjectDatabase('project_readonly', false)
-    await database.repositories.rooms.save(room('room:k', 'Kitchen'))
+    await database.repositories.devices.save(device('device:one', 'Kitchen'))
+    await database.repositories.devices.save(device('device:two', 'kitchen'))
 
     const element = await view()
-    expect(element.querySelector('[data-delete-room]')).toBeNull()
     expect(element.querySelector('[data-rename]')).toBeNull()
-  })
-})
-
-describe('a room I deleted that comes back', () => {
-  /**
-   * #125. The deletion was correct and lost anyway: a live leaf beats a deleted one, so the
-   * other person's rename wins and the room returns under a name this reader has never seen.
-   * Without a word, the reasonable conclusion is that the deletion did not save.
-   */
-  const remember = (roomId: string, path: string) => {
-    localStorage.setItem(
-      `matter-manager.deleted-rooms.project_local`,
-      JSON.stringify([{ roomId, path, deletedAt: new Date().toISOString() }]),
-    )
-  }
-
-  beforeEach(() => {
-    localStorage.removeItem('matter-manager.deleted-rooms.project_local')
-  })
-
-  afterEach(() => {
-    localStorage.removeItem('matter-manager.deleted-rooms.project_local')
-  })
-
-  it('says it came back, and why', async () => {
-    remember('room:k', 'Kitchen')
-    await database.repositories.rooms.save(room('room:k', 'Cocina'))
-
-    const element = await view()
-    const said = element.querySelector('[data-returned-message]')?.textContent ?? ''
-    expect(said).toContain('Kitchen')
-    expect(said).toContain('Cocina')
-    expect(said).toContain('somebody else')
-  })
-
-  it('says nothing was lost, because nothing was', async () => {
-    // The alternative reading - that the application dropped the deletion - is the one that
-    // makes somebody stop trusting it.
-    remember('room:k', 'Kitchen')
-    await database.repositories.rooms.save(room('room:k', 'Cocina'))
-
-    const element = await view()
-    expect(element.querySelector('[data-returned-message]')?.textContent).toContain(
-      'Nothing was lost',
-    )
-  })
-
-  it('says nothing to a device that deleted nothing', async () => {
-    // The second scenario: the other person is unaffected. They have no record, so there is
-    // nothing to compare and nothing to show.
-    await database.repositories.rooms.save(room('room:k', 'Cocina'))
-    const element = await view()
-    expect(element.querySelector('[data-room-returned]')).toBeNull()
-  })
-
-  it('says nothing when the deletion stuck', async () => {
-    remember('room:gone', 'Cellar')
-    const element = await view()
-    expect(element.querySelector('[data-room-returned]')).toBeNull()
-  })
-
-  it('offers to delete it again in one action', async () => {
-    // "Deleting it again is one action, not a puzzle" - rather than hunting the list for a room
-    // under a name they did not choose.
-    remember('room:k', 'Kitchen')
-    await database.repositories.rooms.save(room('room:k', 'Cocina'))
-
-    const element = await view()
-    ;(element.querySelector('[data-delete-returned]') as HTMLElement).click()
-    await element.updateComplete
-
-    expect(element.querySelector('[data-delete-room-dialog]')).not.toBeNull()
-  })
-
-  it('stops mentioning it once the reader decides to keep it', async () => {
-    remember('room:k', 'Kitchen')
-    await database.repositories.rooms.save(room('room:k', 'Cocina'))
-
-    const element = await view()
-    ;(element.querySelector('[data-dismiss-returned]') as HTMLElement).click()
-    await element.updateComplete
-
-    expect(element.querySelector('[data-room-returned]')).toBeNull()
-    expect(localStorage.getItem('matter-manager.deleted-rooms.project_local')).toBe('[]')
-  })
-
-  it('remembers a deletion so a later return can be explained', async () => {
-    await database.repositories.rooms.save(room('room:k', 'Kitchen'))
-
-    const element = await view()
-    ;(element.querySelector('[data-delete-room]') as HTMLElement).click()
-    await element.updateComplete
-    ;(element.querySelector('[data-confirm-delete-room]') as HTMLElement).click()
-    await waitUntil(
-      () => localStorage.getItem('matter-manager.deleted-rooms.project_local') !== null,
-      'nothing remembered',
-    )
-
-    const stored = JSON.parse(
-      localStorage.getItem('matter-manager.deleted-rooms.project_local') ?? '[]',
-    ) as { roomId: string; path: string }[]
-    expect(stored.map((entry) => entry.path)).toContain('Kitchen')
+    expect(element.querySelector('[data-merge]')).toBeNull()
+    // The room itself is still listed and still a link.
+    expect(element.querySelector('[data-room-path]')).not.toBeNull()
   })
 })

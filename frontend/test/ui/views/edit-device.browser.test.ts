@@ -10,7 +10,6 @@ import type { ProjectRepositories } from '../../../src/data/index.js'
 import {
   CATALOG_FIELD_KEYS,
   type DeviceDocument,
-  type RoomDocument,
   TEST_VENDOR_NAME,
   type Unsaved,
 } from '../../../src/domain/index.js'
@@ -39,7 +38,7 @@ const lamp = (extra: Partial<DeviceDocument> = {}): Unsaved<DeviceDocument> => (
   _id: DEVICE_ID,
   type: 'device',
   name: 'Kitchen ceiling light',
-  roomId: 'room:kitchen',
+  room: 'Ground Floor/Kitchen',
   payload: PAYLOAD,
   manualCode: LONG_CODE,
   vendorId: 0xfff1,
@@ -54,17 +53,14 @@ const lamp = (extra: Partial<DeviceDocument> = {}): Unsaved<DeviceDocument> => (
   ...extra,
 })
 
+/** The id of the device {@link seed} files in the hall, so the hall is a room (ADR 0021). */
+const HALL_ID = 'device:0-hall'
+
+/** Saves `device`, and a second device so a second room exists to move it to. */
 async function seed(device: Unsaved<DeviceDocument> = lamp()): Promise<void> {
-  await database.repositories.rooms.save({
-    _id: 'room:kitchen',
-    type: 'room',
-    path: 'Ground Floor/Kitchen',
-  })
-  await database.repositories.rooms.save({
-    _id: 'room:hall',
-    type: 'room',
-    path: 'Ground Floor/Hall',
-  })
+  await database.repositories.devices.save(
+    lamp({ _id: HALL_ID, name: 'Hall sensor', room: 'Ground Floor/Hall' }),
+  )
   await database.repositories.devices.save(device)
 }
 
@@ -136,7 +132,6 @@ const stored = async (): Promise<DeviceDocument> => {
   if (device === undefined) throw new Error('the device is gone')
   return device
 }
-const rooms = (): Promise<RoomDocument[]> => database.repositories.rooms.list()
 
 describe('the catalogue names', () => {
   it('shows manufacturer and product read-only, and keeps them through a save', async () => {
@@ -254,27 +249,41 @@ describe('saving an edit', () => {
     expect(device.addedAt).toBe('2026-08-19T08:00:00.000Z')
   })
 
-  it('moves the device into another existing room without creating one', async () => {
+  it('moves the device into another existing room, spelled as that room is', async () => {
+    // Typed in other capitals on purpose: `matchRoom` files it under the existing spelling
+    // rather than starting a second one.
     await seed()
-    const before = (await rooms()).length
     const element = await form()
-    typeRoom(element, 'Ground Floor/Hall')
+    typeRoom(element, 'ground floor / HALL')
 
-    await submit(element, async () => (await stored()).roomId === 'room:hall')
+    await submit(element, async () => (await stored()).room !== 'Ground Floor/Kitchen')
 
-    expect((await rooms()).length).toBe(before)
+    expect((await stored()).room).toBe('Ground Floor/Hall')
   })
 
-  it('creates the room when the device is moved somewhere new', async () => {
+  it('moves the device somewhere new by typing the path', async () => {
     await seed()
     const element = await form()
     typeRoom(element, 'First Floor/Study')
 
-    await submit(element, async () => (await stored()).roomId !== 'room:kitchen')
+    await submit(element, async () => (await stored()).room !== 'Ground Floor/Kitchen')
 
-    const study = (await rooms()).find((room) => room.path === 'First Floor/Study')
-    expect(study).toBeDefined()
-    expect((await stored()).roomId).toBe(study?._id)
+    expect((await stored()).room).toBe('First Floor/Study')
+  })
+
+  it('shows the device in its own spelling of a room spelled more than one way', async () => {
+    // The combobox offers one spelling per room and refuses a value that matches no option, so
+    // the device's own spelling has to be offered too or the field would come up blank.
+    await database.repositories.devices.save(
+      lamp({ _id: HALL_ID, name: 'Other lamp', room: 'ground floor/kitchen' }),
+    )
+    await database.repositories.devices.save(lamp({ room: 'GROUND FLOOR/KITCHEN' }))
+    const element = await form()
+
+    await waitUntil(
+      () => shown(element, 'room') === 'GROUND FLOOR/KITCHEN',
+      "the room field never showed the device's own spelling",
+    )
   })
 
   it('removes a spot that was cleared rather than storing an empty one', async () => {
@@ -325,6 +334,29 @@ describe('saving an edit', () => {
   })
 })
 
+describe('the mandatory fields', () => {
+  it('marks the name, room and installation date, and nothing else', async () => {
+    // The setup code is not editable here, so of the add form's four only three remain.
+    await seed()
+    const element = await form()
+    const required = [...element.querySelectorAll('[data-field][required]')]
+      .map((control) => control.getAttribute('data-field'))
+      .sort()
+    expect(required).toEqual(['installed-at', 'name', 'room'])
+    expect(element.querySelector('[data-field="spot"]')?.hasAttribute('required')).toBe(false)
+    expect(element.querySelector('[data-field="serial"]')?.hasAttribute('required')).toBe(false)
+  })
+
+  it('says once what the asterisk means', async () => {
+    await seed()
+    const element = await form()
+    expect(element.querySelector('[data-required-note]')?.textContent?.trim()).toBe(
+      'Fields marked * are required.',
+    )
+    expect(element.querySelector('form')?.hasAttribute('novalidate')).toBe(true)
+  })
+})
+
 describe('navigating between devices', () => {
   it('loads the device the route now names', async () => {
     // The shell reuses one element and updates its `uuid`. Without a reload on that change
@@ -333,7 +365,7 @@ describe('navigating between devices', () => {
     const other = '11111111-2222-3333-4444-555555555555'
     await seed()
     await database.repositories.devices.save(
-      lamp({ _id: `device:${other}`, name: 'Hall sensor', roomId: 'room:hall' }),
+      lamp({ _id: `device:${other}`, name: 'Hall sensor', room: 'Ground Floor/Hall' }),
     )
 
     const element = await form()
