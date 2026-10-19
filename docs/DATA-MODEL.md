@@ -373,20 +373,20 @@ after it when unarchiving (the `narrowsAccess` rule) — and a repeated PATCH he
 `isOwner(principal, project)` in `core`, which is what makes organisations a later addition
 rather than a later migration.
 
-### `room:<uuid>`
+### Rooms
 
-```jsonc
-{
-  "_id": "room:3fa85f64-5717-4562-b3fc-2c963f66afa6",
-  "type": "room",
-  "path": "Ground Floor/Kitchen",   // materialised path, "/" separated (ADR 0006)
-  "sortKey": 100,
-  "updatedAt": "2026-08-19T08:00:00.000Z"
-}
-```
+There is no room document (ADR 0021). Each device carries its room's materialised path in
+`room`, and the rooms a project has are derived from its devices in memory. Hierarchy is
+derived by splitting the path on `/` (ADR 0006); there is no `parentId`, so there are no
+reparenting conflicts to resolve under offline sync.
 
-Hierarchy is derived by splitting `path`. There is no `parentId`, which is precisely why
-there are no reparenting conflicts to resolve under offline sync.
+A room is identified by its folded key (`roomPathKey`: case, accents and spacing folded), so
+`Kitchen` and `kitchen` on two devices are one room with two spellings. The Rooms page lists
+both and offers to merge them; renaming rewrites `room` on every device in the subtree.
+
+Databases written before ADR 0021 may still hold `room:<uuid>` documents and devices with
+`roomId`. They are not migrated: the documents are ignored, and such a device is listed under
+"Without a room".
 
 ### `device:<uuid>`
 
@@ -395,7 +395,7 @@ there are no reparenting conflicts to resolve under offline sync.
   "_id": "device:6ba7b810-9dad-11d1-80b4-00c04fd430c8",
   "type": "device",
   "name": "Kitchen ceiling light",
-  "roomId": "room:3fa85f64-5717-4562-b3fc-2c963f66afa6",
+  "room": "Ground Floor/Kitchen",   // materialised path, "/" separated (ADR 0006, 0021)
   "spot": "ceiling, north end",     // free text the room name cannot capture
 
   // --- from the QR code, decoded locally when the device is added ---
@@ -495,9 +495,8 @@ it.
 | Shape | Strategy |
 |---|---|
 | `remarks` | Union by `id`, sorted by `createdAt`. Nothing is discarded. |
-| Scalars (`name`, `roomId`, `disabled`, `spot`) | Last write wins by `updatedAt`. |
+| Scalars (`name`, `room`, `disabled`, `spot`) | Last write wins by `updatedAt`. |
 | Catalogue block (`vendorName` … `catalogSource`) | Taken whole from the revision with the newest `catalogCheckedAt`, ties by `(updatedAt, _rev)`. |
-| `room.path` | Last write wins. A deleted room still referenced by a live device is resurrected as `Unassigned/<old path>`. |
 | `audit:*` | Cannot conflict — append-only. |
 
 Losing revisions are deleted after a successful merge, or `_conflicts` grows without bound
@@ -507,7 +506,7 @@ See [ADR 0010](adr/0010-embedded-remarks-conflict-merge.md).
 
 ## Identifiers
 
-- Documents use a `type:` prefix (`device:`, `room:`, `audit:`) so ranged `_all_docs` queries
+- Documents use a `type:` prefix (`device:`, `audit:`) so ranged `_all_docs` queries
   can select a kind without a view.
 - Database names replace UUID hyphens with underscores: CouchDB database names are
   restricted to `[a-z][a-z0-9_$()+/-]*`, and underscores avoid ambiguity in URLs.

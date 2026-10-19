@@ -37,7 +37,7 @@ Two consequences shape the whole application:
 | ----------------- | ------------------------------------------------------------------------------------ |
 | **Scan**          | Camera capture with a manual-entry fallback for codes a camera cannot reach          |
 | **Catalogue**     | Name, room, device type, installation date, serial, photos, timestamped remarks      |
-| **Rooms**         | Hierarchical paths like `Ground Floor/Kitchen`, created inline while adding a device |
+| **Rooms**         | Hierarchical paths like `Ground Floor/Kitchen`, typed on a device; renamed in one go |
 | **Reproduce**     | On-screen QR plus the numeric manual pairing code                                    |
 | **PDF**           | Label sheets or a full inventory, grouped by room, all or selected devices           |
 | **Offline-first** | Everything works with no connectivity — the basement is exactly where you need this  |

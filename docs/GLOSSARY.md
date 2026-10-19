@@ -49,7 +49,8 @@ produces a physically smaller and more readable code than binary mode would.
 boundary. Creating one is the only operation requiring connectivity.
 
 **Room** — A location within a project, named with a materialised path such as
-`Ground Floor/Kitchen`. Hierarchy is derived by splitting on `/`; there is no parent link.
+`Ground Floor/Kitchen` and stored on each device (ADR 0021). Hierarchy is derived by splitting
+on `/`; there is no parent link. A room exists while at least one device is in it.
 
 **Spot** — Free text on a device for what a room name cannot capture: "ceiling, north end",
 "behind the panel".

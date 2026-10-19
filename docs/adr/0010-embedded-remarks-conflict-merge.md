@@ -4,7 +4,8 @@ Date: 2026-08-19
 
 ## Status
 
-Accepted
+Accepted. The Rooms row is removed by [0021](0021-room-is-a-device-property.md): a room is now a
+scalar on the device, so it merges with the other scalars.
 
 ## Context
 
