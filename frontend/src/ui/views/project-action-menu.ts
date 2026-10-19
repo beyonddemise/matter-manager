@@ -6,9 +6,10 @@
  * deciding whether it may run, are the page's and `project-actions.ts`'s business.
  *
  * **What is confirmed, and how.** Promoting and downloading put data in a second place and lose
- * nothing, so they run at once. Every removal asks first, saying what is lost and what is kept;
- * deleting a project from this device — the one act that may destroy data that is nowhere else —
- * is confirmed by typing its name.
+ * nothing, so they run at once; so does putting a removed project back on the server, which undoes
+ * a removal and loses nothing either. Every removal asks first, saying what is lost and what is
+ * kept; deleting a project from this device — the one act that may destroy data that is nowhere
+ * else — is confirmed by typing its name.
  *
  * @module
  */
@@ -23,13 +24,14 @@ import { actionText, type MenuAction, menuReasonText } from './projects-text.js'
 const MENU_ACTIONS: readonly MenuAction[] = [
   'promote',
   'download',
+  'restore',
   'removeLocal',
   'deleteLocal',
   'removeServer',
 ]
 
 /** The actions that ask before they run. */
-export type ConfirmedAction = Exclude<MenuAction, 'promote' | 'download'>
+export type ConfirmedAction = Exclude<MenuAction, 'promote' | 'download' | 'restore'>
 
 /** Whether an action asks before it runs. */
 export function needsConfirmation(action: MenuAction): action is ConfirmedAction {

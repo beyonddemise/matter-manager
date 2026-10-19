@@ -1251,6 +1251,10 @@
   <source>Upgrade to keep your projects in sync across devices.</source>
   <target>Mit einem Upgrade bleiben Ihre Projekte auf allen Geräten synchron.</target>
 </trans-unit>
+<trans-unit id="s7e9cc98495b49af0">
+  <source>Put back on the server</source>
+  <target>Wieder auf den Server stellen</target>
+</trans-unit>
 </body>
 </file>
 </xliff>

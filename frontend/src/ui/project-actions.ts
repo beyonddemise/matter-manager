@@ -1,5 +1,6 @@
 /**
- * Promoting, downloading and removing projects: the projects page's actions that move data.
+ * Promoting, downloading, removing and putting back projects: the projects page's actions that
+ * move data.
  *
  * **Data safety decides every order here.** Nothing is destroyed until the data is provably
  * somewhere else — a push that resolved, which `SyncManager.pushNow` only does once the server
@@ -104,6 +105,8 @@ export interface ProjectActions {
   deleteLocalProject(model: ProjectsModel, row: Row, typedName: string): Promise<void>
   /** Archives the project on the server. A local copy stays, read-only. */
   removeFromServer(model: ProjectsModel, row: Row): Promise<void>
+  /** Unarchives the project a read-only copy belongs to, and synchronizes the copy again. */
+  restore(model: ProjectsModel, row: Row): Promise<void>
 }
 
 /** Refuses with the model's reason when it does not allow the action. */
@@ -378,6 +381,20 @@ export function projectActions(deps: ProjectActionDependencies): ProjectActions 
         // The server now refuses every write to it, so replicating it would only report denials.
         // A local copy stays, and the model opens it read-only.
         sync.set(replicated(model, { drop: projectId }))
+      }),
+
+    restore: (model, row) =>
+      held(async () => {
+        ensure(row.actions.restore)
+        const { projectId, dbName } = row
+        if (projectId === undefined) throw new Error('Not a server project.')
+        // Nothing local moves: the copy already carries the server's name and id, so once the
+        // server lists the project as active again the page reads it `synced`. The server is
+        // asked first, and its refusal (no room, no sync, matrix unreadable) leaves all as it was.
+        await updateProject(serverDeps, projectId, { archived: false })
+        // The copy may hold what never got through before the archive; replication sends it now.
+        // Added here rather than left to the refresh: the model still reads the row `local`.
+        sync.set(replicated(model, { add: { projectId, dbName } }))
       }),
   }
 }
