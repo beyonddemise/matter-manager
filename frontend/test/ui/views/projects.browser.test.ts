@@ -939,7 +939,7 @@ describe('the actions menu', () => {
 
     await choose(view, 'project_p1', 'removeServer')
     expect(text(dialog(view))).toContain(
-      'Collaborators lose access. Deleted permanently after 90 days.',
+      'Collaborators lose access. Your copy on this device stays editable, and you can put it back on the server within 90 days. After that, the server deletes it.',
     )
     await click(view, '[data-confirm]', dialog(view))
     await settled(view)

@@ -686,7 +686,8 @@ describe('removing a project from the server', () => {
     expect(w.sets.at(-1)).toEqual([])
     expect(await w.count(bravo.dbName)).toBe(1)
     expect(await w.cache.readLocalProjects()).toHaveLength(1)
-    expect((await w.view(bravo.dbName)).row).toMatchObject({ location: 'local', editable: false })
+    // The owner keeps working on the copy; its edits go up once it is put back.
+    expect((await w.view(bravo.dbName)).row).toMatchObject({ location: 'local', editable: true })
     expect(w.state.refreshed).toBe(1)
   })
 })

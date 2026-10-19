@@ -211,12 +211,13 @@ describe('the page for every plan × session × connection × server list × loc
               })
             })
 
-            it(`${label}: the copy of an archived project is local, read-only, delete or put back`, () => {
+            it(`${label}: the owner's copy of an archived project is local, editable, delete or put back`, () => {
               const row = byKey(model, 'project_delta')
-              expect(row).toMatchObject({ location: 'local', archived: true, editable: false })
+              expect(row).toMatchObject({ location: 'local', archived: true, editable: true })
               expect(row.actions).toEqual<RowActions>({
                 open: ok,
-                rename: no('read-only'),
+                // The name lives on the server: renaming waits for putting it back.
+                rename: na,
                 promote: na,
                 download: na,
                 removeLocal: na,
@@ -427,10 +428,10 @@ describe('joining the local index with the server list', () => {
     expect(row.actions.removeLocal).toEqual(no('offline'))
   })
 
-  it('a copy of an archived project in the last known list is local and read-only', () => {
+  it('the owner’s copy of an archived project in the last known list is local and editable', () => {
     const model = projectsModel(input({ serverStale: true, online: false }))
     const row = byKey(model, 'project_delta')
-    expect(row).toMatchObject({ location: 'local', archived: true, editable: false })
+    expect(row).toMatchObject({ location: 'local', archived: true, editable: true })
     expect(row.actions.deleteLocal).toEqual({ allowed: true, warn: 'unpushed-may-be-lost' })
     // Facts from the last list, never acts: putting it back waits for a fresh one.
     expect(row.actions.restore).toEqual(no('offline'))
@@ -633,6 +634,24 @@ describe('putting a removed project back on the server', () => {
     expect(restore({ server: [archived, ...others], reportedLimit: 2 })).toEqual(no('limit'))
     expect(restore({ server: [archived, ...others], reportedLimit: 3 })).toEqual(ok)
     expect(restore({ server: [archived, ...others], reportedLimit: -1 })).toEqual(ok)
+  })
+
+  it('leaves the owner’s copy editable meanwhile: its edits go up once it is back', () => {
+    const row = byKey(
+      projectsModel(input({ local: [delta], server: [archived], reportedLimit: 5 })),
+      'project_delta',
+    )
+    expect(row.editable).toBe(true)
+  })
+
+  it('leaves a share’s copy read-only: the collaborator’s access went with the archive', () => {
+    const shared = server('delta', { archived: true, role: 'write' })
+    const row = byKey(
+      projectsModel(input({ local: [delta], server: [shared], reportedLimit: 5 })),
+      'project_delta',
+    )
+    expect(row.editable).toBe(false)
+    expect(row.actions.rename).toEqual(no('read-only'))
   })
 
   it('is not offered for a share’s copy: the owner’s plan pays for it', () => {

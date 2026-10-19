@@ -148,7 +148,9 @@ function wording({ action, row }: Confirmation): {
     case 'removeServer':
       return {
         title: msg('Remove from the server?'),
-        body: html`<p>${msg('Collaborators lose access. Deleted permanently after 90 days.')}</p>`,
+        body: html`<p>${msg(
+          'Collaborators lose access. Your copy on this device stays editable, and you can put it back on the server within 90 days. After that, the server deletes it.',
+        )}</p>`,
         confirm: actionText(action),
       }
     case 'deleteLocal':

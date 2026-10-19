@@ -810,10 +810,6 @@
   <source>Remove from the server?</source>
   <target>Vom Server entfernen?</target>
 </trans-unit>
-<trans-unit id="sd1fc9a3e720ca9b5">
-  <source>Collaborators lose access. Deleted permanently after 90 days.</source>
-  <target>Mitwirkende verlieren den Zugriff. Nach 90 Tagen wird das Projekt endgültig gelöscht.</target>
-</trans-unit>
 <trans-unit id="s5d6f2b65f6de0341">
   <source>Delete from this device?</source>
   <target>Von diesem Gerät löschen?</target>
@@ -1254,6 +1250,10 @@
 <trans-unit id="s7e9cc98495b49af0">
   <source>Put back on the server</source>
   <target>Wieder auf den Server stellen</target>
+</trans-unit>
+<trans-unit id="s6b427df33932c20d">
+  <source>Collaborators lose access. Your copy on this device stays editable, and you can put it back on the server within 90 days. After that, the server deletes it.</source>
+  <target>Mitwirkende verlieren den Zugriff. Ihre Kopie auf diesem Gerät bleibt bearbeitbar, und Sie können sie innerhalb von 90 Tagen wieder auf den Server stellen. Danach löscht der Server das Projekt.</target>
 </trans-unit>
 </body>
 </file>
