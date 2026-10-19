@@ -58,7 +58,7 @@ import { type WaitlistApi, waitlistApi } from './waitlist.js'
 /** The API, behind the application's own origin. See the module note. */
 export const API_BASE = '/api'
 
-/** CouchDB, likewise. Used when replication is wired. */
+/** CouchDB, likewise: the same-origin proxy, resolved against the page's origin when opened. */
 export const COUCH_BASE = '/db'
 
 /**
@@ -321,6 +321,7 @@ export function projectSync(
     remote: (dbName) =>
       remoteProject(dbName, {
         couchUrl: COUCH_BASE,
+        origin: window.location.origin,
         token: accessToken,
         open: (url, options) => new PouchDB(url, { fetch: options.fetch }),
       }),
