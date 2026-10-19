@@ -8,11 +8,13 @@ import {
   type DraftError,
   type DraftField,
   normaliseRoomPath,
-  type RoomDocument,
+  type Room,
+  roomsOf,
   type Unsaved,
 } from '../../domain/index.js'
 import { PROJECT_CHANGED } from '../current-project.js'
 import { projectDatabase } from '../db/project-database.js'
+import { getLocale } from '../i18n/localization.js'
 import { shownManufacturer } from '../i18n/manufacturer.js'
 import { problemMessage } from '../i18n/problems.js'
 
@@ -61,14 +63,18 @@ export abstract class DeviceFormView extends LitElement {
   }
 
   /**
-   * Where devices and rooms are read and written.
+   * Where devices are read and written.
    *
-   * Bound by a test to an in-memory pair; left unset in the application, where it resolves to
+   * Bound by a test to an in-memory database; left unset in the application, where it resolves to
    * the real database on first use.
    */
   declare repositories?: ProjectRepositories
-  declare rooms: readonly RoomDocument[]
-  /** A room path the user asked to create, not yet written. See {@link onCreateRoom}. */
+  /** The rooms the project's devices are in, for the combobox and for `matchRoom`. */
+  declare rooms: readonly Room[]
+  /**
+   * One more path to offer than the rooms' first spellings: a room the user typed that no
+   * device is in yet (see {@link onCreateRoom}), or the edited device's own spelling.
+   */
   declare createdRoom: string
   // `| undefined` rather than `?:`: the field is cleared on a successful attempt, and under
   // `exactOptionalPropertyTypes` assigning `undefined` to an optional property is an error.
@@ -80,7 +86,7 @@ export abstract class DeviceFormView extends LitElement {
    * Whether the existing rooms could not be read.
    *
    * Not fatal — a room can be typed — but worth saying, because offering no suggestions
-   * silently invites a duplicate room that outlives the failure that caused it.
+   * silently invites a second spelling of a room that outlives the failure that caused it.
    */
   declare roomsFailed: boolean
 
@@ -104,7 +110,6 @@ export abstract class DeviceFormView extends LitElement {
    * for no reason, and Lit says so in dev mode.
    */
   private resolved: ProjectRepositories | undefined
-  private projectGeneration = 0
   protected repos(): ProjectRepositories {
     this.resolved ??= this.repositories ?? projectDatabase()
     return this.resolved
@@ -123,7 +128,6 @@ export abstract class DeviceFormView extends LitElement {
    * deliberate act, and a device filed in the wrong building is a device nobody finds again.
    */
   protected onProjectChanged = (): void => {
-    this.projectGeneration++
     this.resolved = undefined
     this.rooms = []
     this.error = undefined
@@ -140,14 +144,19 @@ export abstract class DeviceFormView extends LitElement {
     super.disconnectedCallback()
   }
 
+  /** The rooms the devices are in, in the interface's locale order. */
+  protected async readRooms(): Promise<readonly Room[]> {
+    return roomsOf(await this.repos().devices.list(), new Intl.Collator(getLocale()).compare)
+  }
+
   protected async loadRooms(): Promise<void> {
     try {
-      this.rooms = await this.repos().rooms.list()
+      this.rooms = await this.readRooms()
     } catch {
       // The least severe of the three read failures, and still worth saying. The rooms are only
       // suggestions here — the form works without them, because a room can be typed. But
-      // silently offering none invites somebody to type "Kitchen" for a project that already
-      // has a Kitchen, and the duplicate outlives the failure that caused it.
+      // silently offering none invites somebody to type "kitchen" for a project that already
+      // has a Kitchen, and the second spelling outlives the failure that caused it.
       //
       // Not logged: the form holds a setup code.
       this.roomsFailed = true
@@ -155,11 +164,14 @@ export abstract class DeviceFormView extends LitElement {
   }
 
   /**
-   * Writes the planned documents, and says whether it worked.
-   *
-   * The room goes first. PouchDB has no transactions, so a failure between the two writes
-   * leaves either nothing or an empty room — and an empty room is harmless and reusable,
-   * whereas a device pointing at a room that does not exist is a broken record.
+   * Every spelling of every room, in `roomsOf` order: what `matchRoom` reuses a spelling from.
+   */
+  protected knownRoomPaths(rooms: readonly Room[] = this.rooms): readonly string[] {
+    return rooms.flatMap((room) => room.spellings)
+  }
+
+  /**
+   * Writes the planned device, and says whether it worked.
    *
    * A rejected write is reported rather than thrown. Left to propagate out of a submit
    * handler it becomes an unhandled rejection: the button un-busies, nothing appears on
@@ -172,16 +184,9 @@ export abstract class DeviceFormView extends LitElement {
    * have. What the user needs is on screen; what a developer needs is the failing operation,
    * which is this one.
    */
-  protected async write(plan: {
-    readonly room?: Unsaved<RoomDocument>
-    readonly device: Unsaved<DeviceDocument>
-  }): Promise<boolean> {
-    const generation = this.projectGeneration
+  protected async write(device: Unsaved<DeviceDocument>): Promise<boolean> {
     try {
-      const repositories = this.repos()
-      if (plan.room !== undefined) await repositories.rooms.save(plan.room)
-      if (generation !== this.projectGeneration) return false
-      await repositories.devices.save(plan.device)
+      await this.repos().devices.save(device)
       // Not observable today: a successful save always navigates away from the form, so
       // nothing renders this flag afterwards, and a mutation probe reports the line as a
       // survivor. It stays because it makes the flag a true statement about the last attempt
@@ -312,13 +317,15 @@ export abstract class DeviceFormView extends LitElement {
   }
 
   /**
-   * Every known room path, plus one the user just asked to create.
+   * Every known room, plus one the user just asked to create.
    *
    * De-duplicated because `wa-combobox` keys its options by value, and a room the user typed
    * that turns out to already exist would otherwise appear twice.
    */
   private roomPaths(): readonly string[] {
-    const paths = this.rooms.map((room) => room.path)
+    // One option per room, its first spelling: offering `Kitchen` and `kitchen` side by side
+    // would invite picking either, and `matchRoom` files both under the first anyway.
+    const paths = this.rooms.map((room) => room.spellings[0])
     return this.createdRoom === '' || paths.includes(this.createdRoom)
       ? paths
       : [...paths, this.createdRoom]

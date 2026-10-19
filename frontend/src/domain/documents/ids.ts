@@ -6,15 +6,15 @@
  * listable through `_all_docs` — which the database maintains itself, from the first write,
  * with no view to define, index, replicate or find stale.
  *
- * The cost of that choice is that the only free query is by id prefix. It is why a device
- * refers to its room by a full document id rather than a bare uuid: `roomId` is then something
- * `get` accepts directly.
+ * The cost of that choice is that the only free query is by id prefix, which is enough: a
+ * project is listed one type at a time, and everything else (rooms included, ADR 0021) is
+ * derived in memory from what that returns.
  *
  * @module
  */
 
 /** A document type that owns an id prefix. */
-export type DocumentType = 'device' | 'room'
+export type DocumentType = 'device'
 
 /** Separates the type from the uuid. Nothing else in an id may contain it. */
 export const ID_SEPARATOR = ':'
@@ -22,7 +22,6 @@ export const ID_SEPARATOR = ':'
 /** The id prefix of each type, separator included. */
 export const DOCUMENT_PREFIX = {
   device: `device${ID_SEPARATOR}`,
-  room: `room${ID_SEPARATOR}`,
 } as const satisfies Record<DocumentType, string>
 
 /**

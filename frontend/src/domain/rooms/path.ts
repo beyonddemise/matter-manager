@@ -1,9 +1,14 @@
 /**
- * Room paths: the materialised-path hierarchy from ADR 0006.
+ * Room paths: the materialised-path hierarchy from ADR 0006, carried on each device (ADR 0021).
  *
  * A room's name *is* its position — `Ground Floor/Kitchen`. Hierarchy is derived by splitting
  * the string, which buys grouping, filtering and PDF sectioning with no tree to maintain and,
  * more importantly, no reparenting conflicts under offline sync.
+ *
+ * **A room is identified by its {@link roomPathKey}, not by its exact text.** Each device stores
+ * the path it was saved with, so one room can turn up spelled `Kitchen` on one device and
+ * `kitchen` on another. Every question about rooms here (is this inside that, what does a rename
+ * touch) compares keys, so the spellings stay one room until somebody merges them.
  *
  * Two conventions run through this module, and they are deliberate opposites:
  *
@@ -24,16 +29,6 @@ import { foldForComparison } from '../text/fold.js'
 
 /** Segments are separated by `/`. Chosen over `.` in ADR 0006, which collides with `No. 2`. */
 export const ROOM_PATH_SEPARATOR = '/'
-
-/**
- * The room a device ends up in when it has nowhere else to be.
- *
- * Lives here rather than beside either of its users. `sync/merge.ts` resurrects a deleted room
- * beneath it, and `rooms/list.ts` moves devices into it when their room is deleted — two
- * features, arriving at different milestones, that must name the same room. A second constant
- * with the same value would be two rooms the day somebody changed one of them.
- */
-export const UNASSIGNED_ROOM_PREFIX = 'Unassigned'
 
 /** Why a room path cannot be used. A code rather than a sentence, so the interface can translate it. */
 export type RoomPathProblem =
@@ -60,9 +55,9 @@ export function splitRoomPath(path: string): readonly string[] {
 /**
  * Trims whitespace around each segment, leaving everything else alone.
  *
- * Case is preserved: how a user capitalises their own house is not this module's decision, and
- * ADR 0006 treats `Ground Floor` and `ground floor` as genuinely different rooms. Whitespace
- * *inside* a segment is preserved too — only the edges are noise.
+ * Case is preserved: how a user capitalises their own house is not this module's decision.
+ * Whitespace *inside* a segment is preserved too — only the edges are noise. That two spellings
+ * are the same room is {@link roomPathKey}'s business, not this function's.
  */
 export function normaliseRoomPath(path: string): string {
   return splitRoomPath(path)
@@ -90,27 +85,24 @@ export function isValidRoomPath(path: string): boolean {
 }
 
 /**
- * The key under which two paths count as the same room to a human reading them.
+ * The key that identifies a room: `Ground Floor/Kitchen` and `ground floor/kitchen` share one.
  *
- * ADR 0006 accepts that `Ground Floor/Kitchen` and `ground floor/Kitchen` are different rooms,
- * and asks for a warning at creation time so nobody makes the second one by accident. This is
- * that comparison: each segment folded by {@link foldForComparison}, which is where the reasoning
- * about case, whitespace and Unicode now lives - it is shared with device search, so "the same
- * room" and "matches what I typed" cannot drift apart.
+ * Each segment is folded by {@link foldForComparison}, which is where the reasoning about case,
+ * whitespace and Unicode lives - it is shared with device search, so "the same room" and
+ * "matches what I typed" cannot drift apart.
  *
  * Segment by segment rather than over the whole path, so the separator is never folded and a
  * path can still be split back apart afterwards.
  *
- * The folding is deliberately more aggressive than the comparison strictly needs. This drives
- * a *warning*, not a rejection, so an extra prompt costs a moment and a missed one costs a
- * duplicate room nobody can tell apart afterwards.
+ * The folding is deliberately aggressive. Two spellings a person would read as one room are one
+ * room (ADR 0021); the Rooms page lists both and offers to merge them.
  */
 export function roomPathKey(path: string): string {
   return splitRoomPath(normaliseRoomPath(path)).map(foldForComparison).join(ROOM_PATH_SEPARATOR)
 }
 
-/** Whether two paths differ only in ways a person would not notice. See {@link roomPathKey}. */
-export function isNearDuplicateRoomPath(a: string, b: string): boolean {
+/** Whether two paths name the same room. See {@link roomPathKey}. */
+export function isSameRoom(a: string, b: string): boolean {
   return roomPathKey(a) === roomPathKey(b)
 }
 
@@ -123,15 +115,12 @@ export function isNearDuplicateRoomPath(a: string, b: string): boolean {
  * was never in; get it wrong when exporting and a PDF quietly contains rooms nobody asked for
  * — which is worse, because it is handed to someone else.
  *
- * Case-sensitive, because ADR 0006 makes case distinguish rooms. Use
- * {@link isNearDuplicateRoomPath} to warn about a confusable pair at creation time instead.
- *
- * Both paths are normalised first, so a trailing separator or doubled spacing on either side
- * does not change the answer.
+ * Compared by {@link roomPathKey}, so `kitchen/Pantry` is within `Kitchen`: the spellings are one
+ * room, and a filter or export that dropped some of them would drop devices.
  */
 export function isWithinRoom(path: string, root: string): boolean {
-  const current = normaliseRoomPath(path)
-  const ancestor = normaliseRoomPath(root)
+  const current = roomPathKey(path)
+  const ancestor = roomPathKey(root)
   return current === ancestor || current.startsWith(ancestor + ROOM_PATH_SEPARATOR)
 }
 
@@ -201,16 +190,15 @@ function requireUsable(path: string, role: string): string {
  * Returns what `path` becomes when the room at `from` is renamed to `to`.
  *
  * Renames the room itself and every descendant, and leaves everything else untouched. The
- * caller maps this over the room list; ADR 0006 notes that moving a subtree is a loop over the
- * paths rather than a single write.
+ * caller maps this over the devices; moving a subtree is a loop over the paths rather than a
+ * single write.
  *
  * **Matching is on segment boundaries, not string prefixes.** A `startsWith` check would
  * rewrite `Floor 10/Kitchen` when `Floor 1` is renamed, moving a room into a building it was
  * never in, with nothing about the result looking wrong afterwards.
  *
- * Matching is case-sensitive, because ADR 0006 makes case distinguish rooms; renaming
- * `Floor 1` must not take `floor 1` with it. Use {@link isNearDuplicateRoomPath} to warn about
- * that pair at creation time instead.
+ * Matching is by {@link roomPathKey}, so renaming `Kitchen` also rewrites a device that says
+ * `kitchen/Pantry`, to `<to>/Pantry`. That is what makes a rename a merge of every spelling.
  *
  * @param path The path to rewrite. Returned normalised; it need not be valid, so a broken room
  *   list can still be repaired by renaming around it.
@@ -227,5 +215,8 @@ export function renameRoomPath(path: string, from: string, to: string): string {
   // rule described above has exactly one implementation. Two would be two chances to get
   // `Floor 10` versus `Floor 1` wrong, in two features, at different times.
   if (!isWithinRoom(current, source)) return current
-  return current === source ? target : target + current.slice(source.length)
+  // The matched ancestor is replaced by segment count, not by string length: its spelling here
+  // may differ from `source`, and folding can change a string's length.
+  const rest = splitRoomPath(current).slice(splitRoomPath(source).length)
+  return [target, ...rest].join(ROOM_PATH_SEPARATOR)
 }

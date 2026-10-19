@@ -9,7 +9,6 @@ import {
   isHttpsUrl,
   manufacturerName,
   type Remark,
-  type RoomDocument,
   remarksNewestFirst,
   setDeviceDisabled,
   type Unsaved,
@@ -98,7 +97,6 @@ export class DeviceView extends LitElement {
     uuid: { attribute: 'uuid' },
     repositories: { attribute: false },
     device: { state: true },
-    room: { state: true },
     loaded: { state: true },
     failed: { state: true },
     enlarged: { state: true },
@@ -119,7 +117,6 @@ export class DeviceView extends LitElement {
   /** Bound by a test to a database of its own; resolved to the real one otherwise. */
   declare repositories?: ProjectRepositories
   declare device: DeviceDocument | undefined
-  declare room: RoomDocument | undefined
   declare loaded: boolean
   /**
    * The device could not be read.
@@ -175,7 +172,6 @@ export class DeviceView extends LitElement {
   protected override willUpdate(changed: PropertyValues<this>): void {
     if (!changed.has('uuid')) return
     this.device = undefined
-    this.room = undefined
     this.loaded = false
     this.failed = false
     // An enlargement of the previous device's code has no business staying open over the new
@@ -263,13 +259,9 @@ export class DeviceView extends LitElement {
 
     try {
       const device = id === undefined ? undefined : await this.repos().devices.get(id)
-      // Only when there is a device, and only its own room: reading every room to show one
-      // path would grow with the project for no gain.
-      const room = device === undefined ? undefined : await this.repos().rooms.get(device.roomId)
 
       if (token !== this.request) return
 
-      this.room = room
       this.device = device
       this.loaded = true
     } catch {
@@ -767,11 +759,8 @@ export class DeviceView extends LitElement {
         ${this.field(
           msg('Room'),
           // The breadcrumb the list headings use (#248), so a room reads the same in both.
-          this.room === undefined
-            ? msg('Without a room')
-            : this.room.path === ''
-              ? ''
-              : roomBreadcrumb(this.room.path),
+          // `?? ''`: a device from before ADR 0021 has no `room`.
+          (device.room ?? '') === '' ? msg('Without a room') : roomBreadcrumb(device.room),
         )}
         ${this.field(msg('Spot'), device.spot)}
         ${this.field(

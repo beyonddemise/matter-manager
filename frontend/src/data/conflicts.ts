@@ -30,8 +30,8 @@ export type Conflicted<T> = T & { readonly _conflicts?: readonly string[] }
 /**
  * How one document type's conflicting revisions combine into the one to keep.
  *
- * `core`'s `mergeDevice` and `mergeRoom` have this shape. Asynchronous because a room's merge
- * needs to know whether any device still points at it, which is a query.
+ * `core`'s `mergeDevice` has this shape. A strategy may be asynchronous, so one that needs a
+ * query to decide can still be plugged in.
  */
 export type MergeStrategy<T extends Revision> = (winner: T, losers: readonly T[]) => T | Promise<T>
 
@@ -259,8 +259,7 @@ export interface WatchOptions {
  * feed — CouchDB puts those in `_deleted_conflicts`, which PouchDB does not implement, and only
  * `get(id, { open_revs: 'all' })` can see one at the cost of a second read per document. So
  * "deleted here, edited there" always resolves as *the edit survives*, which loses the deletion
- * and orphans nothing. `mergeRoom`'s resurrection branch is unreachable from here as a result;
- * see `docs/tasks/todo-53.md`.
+ * and loses nothing anybody wrote.
  *
  * `since: 'now'` rather than from the beginning — the existing backlog is what a read resolves,
  * and re-scanning the whole database on every start would cost most on the devices that can

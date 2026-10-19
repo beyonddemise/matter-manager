@@ -1,15 +1,14 @@
 /**
  * Turning what someone typed into the documents that get written.
  *
- * The interesting part of "add a device" is not the markup: it is which room this belongs to,
- * whether that room is new, what the id is, and what defaults apply. All of that is a decision
- * over plain data, so it lives here and is tested in Node in milliseconds rather than through
- * a rendered form.
+ * The interesting part of "add a device" is not the markup: it is which spelling of the room it
+ * is filed under, what the id is, and what defaults apply. All of that is a decision over plain
+ * data, so it lives here and is tested in Node in milliseconds rather than through a rendered
+ * form.
  *
- * This module **plans, and does not write**. Returning the documents instead of saving them is
+ * This module **plans, and does not write**. Returning the document instead of saving it is
  * what makes "an invalid payload creates no device" true by construction: there is nothing
- * here that could write one. It also means the caller controls the order, which matters —
- * a new room must reach the database before the device that points at it.
+ * here that could write one.
  *
  * The rules it shares with editing an existing device live in `draft.ts`; see `edit-device.ts`
  * for the other caller.
@@ -22,17 +21,17 @@ import type { CatalogLookup } from '../catalog/types.js'
 import { type DeviceCredential, readCredential } from '../matter/credential.js'
 import { PayloadError } from '../matter/payload.js'
 import {
-  chooseRoom,
   type DeviceFields,
   type DraftClock,
   DraftError,
+  matchRoom,
   optionalText,
   readInstalledAt,
   readName,
   readRoomPath,
 } from './draft.js'
 import { documentId } from './ids.js'
-import type { DeviceDocument, RoomDocument, Unsaved } from './types.js'
+import type { DeviceDocument, Unsaved } from './types.js'
 
 /** The add form's contents: the shared controls, plus the one only a new device has. */
 export interface DeviceDraft extends DeviceFields {
@@ -40,33 +39,27 @@ export interface DeviceDraft extends DeviceFields {
   readonly credential: string
 }
 
-/** What to write, in this order. */
-export interface DeviceCreation {
-  /** Write first. Absent when an existing room matched, which is the common case. */
-  readonly room?: Unsaved<RoomDocument>
-  readonly device: Unsaved<DeviceDocument>
-}
-
 /**
- * Plans the documents for a new device.
+ * Plans the document for a new device.
  *
  * @param draft the form's contents
- * @param rooms every room already in the project, so an existing one can be reused rather than
- *   duplicated. Passed in rather than read, because reading is I/O and this package does none.
+ * @param rooms every room path the project's devices already carry, so an existing spelling is
+ *   reused (see `matchRoom`). Passed in rather than read, because reading is I/O and this
+ *   package does none.
  * @param clock the uuid source and the wall clock
  * @param catalog the catalogue's answer for this code, when one arrived before Save. Passed in
  *   rather than fetched, so this stays pure. Ignored when its ids are not the code's: an answer
  *   that landed for a code since corrected would name this device after another one.
- * @returns the device, and the room to write before it when the room is new
+ * @returns the device to save
  * @throws {DraftError} for any unusable field, naming the field. Nothing is created; there is
  *   nothing here that could create anything.
  */
 export function planNewDevice(
   draft: DeviceDraft,
-  rooms: readonly RoomDocument[],
+  rooms: readonly string[],
   clock: DraftClock,
   catalog?: CatalogLookup,
-): DeviceCreation {
+): Unsaved<DeviceDocument> {
   let credential: DeviceCredential
   try {
     credential = readCredential(draft.credential)
@@ -89,7 +82,7 @@ export function planNewDevice(
   const name = readName(draft.name)
   const path = readRoomPath(draft.room)
   const installedAt = readInstalledAt(draft.installedAt)
-  const { roomId, room } = chooseRoom(path, rooms, clock.uuid)
+  const room = matchRoom(path, rooms)
   // Read once: `addedAt` and `catalogCheckedAt` are the same moment, and two reads of a real
   // clock can straddle a second.
   const now = clock.now()
@@ -103,7 +96,7 @@ export function planNewDevice(
     _id: documentId('device', clock.uuid()),
     type: 'device',
     name,
-    roomId,
+    room,
     manualCode: credential.manualCode,
     // Conditional spreads throughout: under `exactOptionalPropertyTypes` an explicit
     // `undefined` is not assignable to an optional field, which is the setting doing its job -
@@ -134,5 +127,5 @@ export function planNewDevice(
     ...(catalog !== undefined && answersThisCode ? catalogFields(catalog, now) : {}),
   }
 
-  return room === undefined ? { device } : { room, device }
+  return device
 }

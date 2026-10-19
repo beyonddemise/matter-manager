@@ -26,14 +26,6 @@
  */
 
 import { withCatalogBlock } from '../catalog/copy.js'
-import {
-  normaliseRoomPath,
-  ROOM_PATH_SEPARATOR,
-  splitRoomPath,
-  UNASSIGNED_ROOM_PREFIX,
-} from '../rooms/path.js'
-
-export { UNASSIGNED_ROOM_PREFIX }
 
 /** A remark on a device. Embedded in the device document, per ADR 0010. */
 export interface Remark {
@@ -56,12 +48,6 @@ export interface Revision {
 /** A revision carrying embedded remarks. */
 export interface RemarkBearing extends Revision {
   readonly remarks?: readonly Remark[]
-}
-
-/** A revision of a room document. */
-export interface RoomRevision extends Revision {
-  readonly path?: string
-  readonly _deleted?: boolean
 }
 
 /** Splits `generation-hash`, tolerating a malformed revision rather than throwing in a comparator. */
@@ -191,52 +177,4 @@ export function mergeDevice<T extends RemarkBearing & CatalogBearing>(
   const merged = { ...latest, remarks: mergeRemarks(revisions) }
   const source = catalogueSource(revisions)
   return source === undefined || source === latest ? merged : withCatalogBlock(merged, source)
-}
-
-/** The most recent path any surviving revision remembers, or `undefined` if none does. */
-function lastKnownPath(revisions: readonly RoomRevision[]): string | undefined {
-  const named = revisions.filter(
-    (revision) => revision._deleted !== true && revision.path !== undefined,
-  )
-  return named.length === 0 ? undefined : latestRevision(named).path
-}
-
-/** Prefixes a path with `Unassigned`, unless it is already there. */
-function unassign(path: string): string {
-  const segments = splitRoomPath(normaliseRoomPath(path))
-  // Without this, a room deleted twice becomes `Unassigned/Unassigned/...` and the name grows
-  // every time it happens.
-  if (segments[0] === UNASSIGNED_ROOM_PREFIX) return segments.join(ROOM_PATH_SEPARATOR)
-  return [UNASSIGNED_ROOM_PREFIX, ...segments].join(ROOM_PATH_SEPARATOR)
-}
-
-/**
- * Merges conflicting revisions of a room.
- *
- * Ordinarily last-write-wins on `path`. The exception is a room deleted on one replica while a
- * device still points at it: deleting it outright would orphan the device, so it comes back as
- * `Unassigned/<old path>`, keeping its id — which is what the device references, and therefore
- * what makes the device reachable again.
- *
- * A room whose path no surviving revision remembers stays deleted. Inventing a name would put
- * a room in the list nobody created; leaving it deleted keeps the loss visible at the device.
- *
- * @param options.hasLiveDevices Whether any device still references this room. Supplied by the
- *   caller because it cannot be known from these documents alone.
- */
-export function mergeRoom<T extends RoomRevision>(
-  winner: T,
-  conflicts: readonly T[],
-  options: { readonly hasLiveDevices: boolean },
-): T {
-  const revisions = [winner, ...conflicts]
-  const latest = latestRevision(revisions)
-
-  if (latest._deleted !== true || !options.hasLiveDevices) return latest
-
-  const path = lastKnownPath(revisions)
-  if (path === undefined) return latest
-
-  const { _deleted, ...survivor } = latest
-  return { ...survivor, path: unassign(path) } as unknown as T
 }

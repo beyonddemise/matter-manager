@@ -3,8 +3,7 @@
  * service.
  *
  * Everything here **plans and does not write**, for the same reason `new-device.ts` does: a
- * planner that returns documents cannot half-apply a change, and the caller keeps control of
- * the write order — a new room has to reach the database before the device that points at it.
+ * planner that returns a document cannot half-apply a change.
  *
  * What it deliberately cannot change is the setup code. `payload`, `vendorId`, `productId` and
  * `discriminator` are all derived from the credential, so editing one without re-deriving the
@@ -17,21 +16,14 @@
  */
 
 import {
-  chooseRoom,
   type DeviceFields,
+  matchRoom,
   optionalText,
   readInstalledAt,
   readName,
   readRoomPath,
 } from './draft.js'
-import type { DeviceDocument, RoomDocument, Unsaved } from './types.js'
-
-/** What to write, in this order. Same shape as `DeviceCreation`, for the same reason. */
-export interface DeviceUpdate {
-  /** Write first. Absent unless the edit moved the device into a room that does not exist yet. */
-  readonly room?: Unsaved<RoomDocument>
-  readonly device: Unsaved<DeviceDocument>
-}
+import type { DeviceDocument, Unsaved } from './types.js'
 
 /**
  * The document minus the stamp the repository owns.
@@ -47,33 +39,31 @@ function withoutStamp(device: DeviceDocument): Unsaved<DeviceDocument> {
 }
 
 /**
- * Plans the documents for an edited device.
+ * Plans the document for an edited device.
  *
  * Everything not named in {@link DeviceFields} is carried through untouched, and that is the
  * load-bearing half: the credential, `addedAt`, `remarks`, and `disabled`/`disabledAt`.
  * Renaming a disabled device must not quietly put it back into service.
  *
- * Only `uuid` is injected rather than a whole `DraftClock`. An edit has no `addedAt` to stamp,
- * so asking for a wall clock it never reads would misstate what this depends on.
+ * No clock is injected: an edit has no `addedAt` to stamp and no id to mint.
  *
  * @param device the device as read, `_rev` included
  * @param fields the form's contents
- * @param rooms every room already in the project, so a move into an existing room reuses it
- * @param uuid the uuid source, used only when the edit names a room that does not exist yet
- * @returns the device, and the room to write before it when that room is new
+ * @param rooms every room path the project's devices carry, so a move into an existing room
+ *   reuses its spelling (see `matchRoom`)
+ * @returns the device to save
  * @throws {DraftError} for any unusable field, naming the field. Nothing is written; there is
  *   nothing here that could write anything.
  */
 export function planDeviceEdit(
   device: DeviceDocument,
   fields: DeviceFields,
-  rooms: readonly RoomDocument[],
-  uuid: () => string,
-): DeviceUpdate {
+  rooms: readonly string[],
+): Unsaved<DeviceDocument> {
   const name = readName(fields.name)
   const path = readRoomPath(fields.room)
   const installedAt = readInstalledAt(fields.installedAt)
-  const { roomId, room } = chooseRoom(path, rooms, uuid)
+  const room = matchRoom(path, rooms)
 
   // `spot` and `serial` are rebuilt rather than overwritten: clearing one has to *remove* the
   // field, and spreading `{ spot: '' }` over the old document would store an empty spot that
@@ -83,13 +73,13 @@ export function planDeviceEdit(
   const updated: Unsaved<DeviceDocument> = {
     ...carried,
     name,
-    roomId,
+    room,
     ...optionalText('spot', fields.spot),
     ...optionalText('serial', fields.serial),
     installedAt,
   }
 
-  return room === undefined ? { device: updated } : { room, device: updated }
+  return updated
 }
 
 /**
