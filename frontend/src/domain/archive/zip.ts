@@ -18,6 +18,8 @@
  * @module
  */
 
+import { decodeUtf8, encodeUtf8 } from '../text/utf8.js'
+
 /** Why an archive could not be read. A code, so the interface can translate it. */
 export type ZipProblem =
   /** No end-of-central-directory record: not a zip at all, or cut short. */
@@ -147,14 +149,13 @@ export async function writeZip(
     throw new RangeError('A zip must not hold two entries with the same name.')
   }
 
-  const encoder = new TextEncoder()
   const { time, day } = dosDateTime(modified)
   const prepared: Prepared[] = []
   let offset = 0
   for (const entry of entries) {
     const deflated = await codecs.deflate(entry.data)
     const store = deflated.length >= entry.data.length
-    const name = encoder.encode(entry.name)
+    const name = encodeUtf8(entry.name)
     const body = store ? entry.data : deflated
     prepared.push({
       name,
@@ -277,7 +278,6 @@ export async function readZip(
 
   // Two passes: every record is read and every limit checked first, so an archive that is
   // over a limit is refused before a single byte of it is inflated.
-  const decoder = new TextDecoder('utf-8', { fatal: true })
   const planned: {
     readonly name: string
     readonly method: number
@@ -305,7 +305,7 @@ export async function readZip(
 
     let name: string
     try {
-      name = decoder.decode(
+      name = decodeUtf8(
         bytes.subarray(at + CENTRAL_HEADER_SIZE, at + CENTRAL_HEADER_SIZE + nameLength),
       )
     } catch (cause) {

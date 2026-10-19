@@ -1,8 +1,8 @@
 import { msg, str, updateWhenLocaleChanges } from '@lit/localize'
 import { html, LitElement, nothing, type TemplateResult } from 'lit'
-import { ArchiveError } from '../../domain/archive/project-archive.js'
-import { ZipError } from '../../domain/archive/zip.js'
-import { type ImportResult, importProjectFile } from '../archive/project-import.js'
+import type { ArchiveProblem } from '../../domain/archive/project-archive.js'
+import type { ZipProblem } from '../../domain/archive/zip.js'
+import type { ImportResult } from '../archive/project-import.js'
 import { writeCurrentProjectId } from '../current-project.js'
 import { deviceCountText } from '../i18n/counts.js'
 import { beginProjectAction } from '../project-busy.js'
@@ -56,9 +56,11 @@ export class ProjectImportSection extends LitElement {
     this.problem = undefined
     const end = beginProjectAction()
     try {
-      const result = await (this.importFile ?? importProjectFile)(
-        new Uint8Array(await file.arrayBuffer()),
-      )
+      // Loaded when a file is chosen: the zip reader and the archive format stay out of the
+      // bundle every visitor downloads (see `importProblemText` for the other half).
+      const importFile =
+        this.importFile ?? (await import('../archive/project-import.js')).importProjectFile
+      const result = await importFile(new Uint8Array(await file.arrayBuffer()))
       // Chosen before the action ends: the refresh that follows then opens it.
       writeCurrentProjectId(() => localStorage, result.entry.dbName)
       this.result = result
@@ -134,12 +136,29 @@ export class ProjectImportSection extends LitElement {
 }
 
 /**
+ * The `problem` of an error with the given class name, or `undefined`.
+ *
+ * By name rather than `instanceof`: importing `ZipError` and `ArchiveError` here would pull the
+ * zip reader into the entry bundle, which is what loading the import lazily exists to avoid.
+ * Both classes set `name`, and nothing else in the application throws one with these names.
+ */
+function problemOf<P extends string>(error: unknown, name: string): P | undefined {
+  if (!(error instanceof Error) || error.name !== name) return undefined
+  return (error as Error & { problem?: P }).problem
+}
+
+/** The file inside the archive an `ArchiveError` names, if any. */
+const fileOf = (error: unknown): string | undefined =>
+  error instanceof Error ? (error as Error & { file?: string }).file : undefined
+
+/**
  * Why an import failed, in words the reader can act on. Every sentence ends by saying nothing
  * was imported, because the import is all or nothing and that is the question a failure raises.
  */
 export function importProblemText(error: unknown): string {
-  if (error instanceof ZipError) {
-    switch (error.problem) {
+  const zip = problemOf<ZipProblem>(error, 'ZipError')
+  if (zip !== undefined) {
+    switch (zip) {
       case 'notAZip':
         return msg('This file is not a zip file. Nothing was imported.')
       case 'tooLarge':
@@ -150,8 +169,10 @@ export function importProblemText(error: unknown): string {
         return msg('This zip uses a format the import cannot read. Nothing was imported.')
     }
   }
-  if (error instanceof ArchiveError) {
-    switch (error.problem) {
+  const archive = problemOf<ArchiveProblem>(error, 'ArchiveError')
+  if (archive !== undefined) {
+    const file = fileOf(error)
+    switch (archive) {
       case 'notAProject':
         return msg('This is not a Matter Manager project export. Nothing was imported.')
       case 'newerVersion':
@@ -159,9 +180,9 @@ export function importProblemText(error: unknown): string {
           'This export was made by a newer version of Matter Manager. Reload to update, then try again. Nothing was imported.',
         )
       case 'badDevice':
-        return error.file === undefined
+        return file === undefined
           ? msg('A device in this export is not valid. Nothing was imported.')
-          : msg(str`A device in this export is not valid (${error.file}). Nothing was imported.`)
+          : msg(str`A device in this export is not valid (${file}). Nothing was imported.`)
     }
   }
   // Not logged: the file holds every setup code in the project.

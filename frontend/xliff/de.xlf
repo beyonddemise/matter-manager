@@ -1307,7 +1307,7 @@
   <target>Dieser Export stammt von einer neueren Version von Matter Manager. Laden Sie die Seite neu, um zu aktualisieren, und versuchen Sie es noch einmal. Es wurde nichts importiert.</target>
 </trans-unit>
 <trans-unit id="s8435dd2f0ee42d41">
-  <source>A device in this export is not valid (<x id="0" equiv-text="${error.file}"/>). Nothing was imported.</source>
+  <source>A device in this export is not valid (<x id="0" equiv-text="${file}"/>). Nothing was imported.</source>
   <target>Ein Gerät in diesem Export ist ungültig (<x id="0" equiv-text="${error.file ?? ''}"/>). Es wurde nichts importiert.</target>
 </trans-unit>
 <trans-unit id="s91ef076d6e6d98f0">

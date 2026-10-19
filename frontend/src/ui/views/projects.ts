@@ -2,7 +2,6 @@ import { msg, str, updateWhenLocaleChanges } from '@lit/localize'
 import { html, LitElement, nothing, type TemplateResult } from 'lit'
 import type { LocalProjectEntry } from '../../data/index.js'
 import { DEFAULT_PLAN, planSyncs, showsUpgrade } from '../../domain/plan.js'
-import { exportProject } from '../archive/project-export.js'
 import { projects } from '../composition.js'
 import { writeCurrentProjectId } from '../current-project.js'
 import { currentProjectDatabaseName, useProjectDatabase } from '../db/project-database.js'
@@ -361,7 +360,13 @@ export class ProjectsView extends LitElement {
     if (action === 'export') {
       // Reads this device's copy only, so it is not a project action: nothing on the server or
       // in the index changes, and replication need not be held for it.
-      void this.run(() => (this.exportProject ?? exportProject)(row))
+      void this.run(async () => {
+        // Loaded when chosen, like the PDF builders: the zip writer and the archive format are
+        // for a rare action and have no business in the bundle every visitor downloads.
+        const run =
+          this.exportProject ?? (await import('../archive/project-export.js')).exportProject
+        await run(row)
+      })
       return
     }
     const model = this.model()

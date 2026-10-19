@@ -1,4 +1,4 @@
-import { msg, str, updateWhenLocaleChanges } from '@lit/localize'
+import { msg, updateWhenLocaleChanges } from '@lit/localize'
 import { html, LitElement, nothing, type PropertyDeclarations, type TemplateResult } from 'lit'
 import type { ProjectRepositories } from '../../data/index.js'
 import {

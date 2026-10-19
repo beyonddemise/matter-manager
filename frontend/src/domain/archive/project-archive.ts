@@ -26,6 +26,7 @@ import { planNewDevice } from '../documents/new-device.js'
 import type { CatalogSource, DeviceDocument, Unsaved } from '../documents/types.js'
 import { isValidRoomPath } from '../rooms/path.js'
 import type { Remark } from '../sync/merge.js'
+import { decodeUtf8, encodeUtf8 } from '../text/utf8.js'
 import type { ZipEntry, ZipLimits } from './zip.js'
 
 /** What `manifest.json` says the archive is. Anything else is not one of ours. */
@@ -95,10 +96,9 @@ const DEVICES = 'devices/'
 /** Replication state and the repository's stamp: not part of a device, so never exported. */
 const NOT_EXPORTED = new Set(['_rev', '_conflicts', '_attachments', '_deleted', 'updatedAt'])
 
-const encoder = new TextEncoder()
 const file = (name: string, value: unknown): ZipEntry => ({
   name,
-  data: encoder.encode(`${JSON.stringify(value, null, 2)}\n`),
+  data: encodeUtf8(`${JSON.stringify(value, null, 2)}\n`),
 })
 
 /**
@@ -133,12 +133,10 @@ export function projectArchiveEntries(
   ]
 }
 
-const decoder = new TextDecoder('utf-8', { fatal: true })
-
 /** One file parsed as JSON, or `undefined` when it is not JSON at all. */
 function parsed(entry: ZipEntry): unknown {
   try {
-    return JSON.parse(decoder.decode(entry.data)) as unknown
+    return JSON.parse(decodeUtf8(entry.data)) as unknown
   } catch {
     return undefined
   }
