@@ -219,7 +219,7 @@ export class ProjectsController implements ReactiveController {
    * that threw would leave the button spinning.
    */
   async refreshNow(): Promise<void> {
-    await this.refresh(true)
+    await this.refresh(true).catch(() => undefined)
     const projectId = this.openProjectId()
     const sync = this.sync
     if (

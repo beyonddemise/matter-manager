@@ -17,6 +17,7 @@ playwright-report/
 blob-report/
 .playwright/
 __screenshots__
+.vitest/
 
 # Environment / secrets
 .env
