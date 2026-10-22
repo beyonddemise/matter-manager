@@ -1356,4 +1356,47 @@ describe('when the project’s documents change', () => {
       'the page kept the old name',
     )
   })
+
+  it('keeps the controls usable when a change arrives while a disable is saving', async () => {
+    // The re-read must not orphan the write: it used to move the token the write's `finally`
+    // compares, so `busy` was never cleared and Edit, Disable and Delete stayed greyed out.
+    await seed()
+    const element = await page(UUID, slowWrites(DEVICE_ID, 150))
+
+    click(element, '[data-toggle-disabled]')
+    window.dispatchEvent(new CustomEvent(PROJECT_DATA_CHANGED))
+
+    await waitUntil(
+      () => !element.busy && element.device?.disabled === true,
+      'the disable never landed on the page',
+    )
+  })
+
+  it('does not let a re-read from before a save replace what the save wrote', async () => {
+    // The read takes its answer at once and delivers it late, so it holds the device as it was
+    // before the disable that lands in between.
+    await seed()
+    const real = database.repositories
+    let hold = false
+    const element = await page(UUID, {
+      ...real,
+      devices: {
+        ...real.devices,
+        get: async (wanted: string) => {
+          const answer = await real.devices.get(wanted)
+          if (hold) await new Promise((resolve) => setTimeout(resolve, 200))
+          return answer
+        },
+      },
+    })
+    hold = true
+
+    window.dispatchEvent(new CustomEvent(PROJECT_DATA_CHANGED))
+    click(element, '[data-toggle-disabled]')
+    await waitUntil(() => element.device?.disabled === true, 'the disable never landed')
+    await new Promise((resolve) => setTimeout(resolve, 300))
+
+    expect(element.device?.disabled).toBe(true)
+    expect(element.busy).toBe(false)
+  })
 })

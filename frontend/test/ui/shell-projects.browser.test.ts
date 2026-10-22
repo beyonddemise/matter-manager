@@ -898,6 +898,28 @@ describe('refreshing', () => {
     expect(refreshButton(element).loading).toBe(false)
   })
 
+  it('finishes, and still pulls and tells the views, when re-reading the list fails', async () => {
+    // The pull and the re-read do not depend on the list: a fault there must not skip them, nor
+    // escape the click handler as an unhandled rejection.
+    const real = isolatedProjectStore()
+    let broken = false
+    const store: LocalProjectDependencies = {
+      ...real,
+      cache: () => {
+        if (broken) throw new Error('the cache is gone')
+        return real.cache()
+      },
+    }
+    const { element, sync } = await openOnServer({ store })
+    broken = true
+
+    await refresh(element)
+
+    expect(sync.pulls).toEqual(['p1'])
+    expect(announced).toBe(1)
+    expect(refreshButton(element).loading).toBe(false)
+  })
+
   it('shows it is working, and ignores a second press meanwhile', async () => {
     let release: () => void = () => {}
     const { element, sync } = await openOnServer({
