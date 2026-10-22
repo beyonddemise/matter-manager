@@ -1549,3 +1549,44 @@ the `redirect_uri` parameter). The user corrected it from first-hand registratio
 step (extra app registrations, proxies, workarounds), check the provider's current docs or
 changelog — especially for fast-moving platforms and anything security-adjacent. Pre-training
 knowledge of such limits has a shelf life.
+
+---
+
+## L42 — Read the function before describing what it folds
+
+**What happened:** while moving rooms onto devices (#291) I wrote, in ADR 0021, DATA-MODEL and
+to the user, that `roomPathKey` folds "case, accents and spacing". It does not fold accents:
+`foldForComparison` collapses whitespace, upper-cases and composes Unicode, so `Küche` and
+`Kuche` stay two rooms. CodeRabbit caught it from a test that already said so.
+
+**Rule:** before a document or a reply states what a function treats as equal, read the
+function, or find the test that pins it, in the same session. Name the transformations it
+applies rather than a category ("accents") that sounds right.
+
+**Applies to:** normalisation, folding, matching and equality rules, and any "X and Y are the
+same" claim in an ADR.
+
+## L43 — A guard against a race is about the caller's waits, not the function's
+
+**What happened:** `DeviceFormView.write` had a project-generation check between two writes.
+When the room write went away, the check looked dead inside `write` and I removed it. But both
+submit handlers wait for `readRooms()` *before* calling `write`, so a project switch in that
+wait would save a device typed under one project into the next. CodeRabbit found it; a test
+that switches mid-read reproduced it (one save) before the fix.
+
+**Rule:** before removing a staleness guard, list every `await` between the moment the state
+was captured and the write, across the callers, not only inside the function. Capture the
+snapshot before the first wait and pass it in.
+
+**Applies to:** generation counters, abort checks, "is this still the current X" tests.
+
+## L44 — Never resolve an xliff conflict by joining both sides
+
+**What happened:** restacking #292 on #291, I resolved a `de.xlf` conflict by keeping both
+sides. One `</trans-unit>` was dropped, so the "Refresh" translation was nested inside another
+unit, and lit-localize failed with "Expected 0 or 1 `<target>`, got 2". Verify caught it; a
+glance at the diff did not.
+
+**Rule:** for `xliff/*.xlf` take one side, run `npm run i18n:extract`, re-add any missing
+targets, and parse the file (`xml.dom.minidom`) before continuing the rebase. The same applies
+to any generated or structured file.
