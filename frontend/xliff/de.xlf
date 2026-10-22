@@ -538,73 +538,17 @@
   <source>Rooms</source>
   <target>Räume</target>
 </trans-unit>
-<trans-unit id="sf633b74af173a4e9">
-  <source>No rooms yet. A room is created when you type one on a device.</source>
-  <target>Noch keine Räume. Ein Raum entsteht, sobald Sie bei einem Gerät einen eintragen.</target>
-</trans-unit>
 <trans-unit id="s4020ae71422bf3cd">
   <source>Room name</source>
   <target>Raumname</target>
-</trans-unit>
-<trans-unit id="s6a30befa5dad9199">
-  <source>No devices</source>
-  <target>Keine Geräte</target>
-</trans-unit>
-<trans-unit id="s4ea0f21fc2a338a1">
-  <source>Move up</source>
-  <target>Nach oben</target>
-</trans-unit>
-<trans-unit id="sb233557012dcb328">
-  <source>Move down</source>
-  <target>Nach unten</target>
 </trans-unit>
 <trans-unit id="s60320a18282b2b33">
   <source>Rename</source>
   <target>Umbenennen</target>
 </trans-unit>
-<trans-unit id="s4d47128b2285b47a">
-  <source>Delete this room?</source>
-  <target>Diesen Raum löschen?</target>
-</trans-unit>
-<trans-unit id="s6f00bd734aa48490">
-  <source>This room holds no devices.</source>
-  <target>In diesem Raum sind keine Geräte.</target>
-</trans-unit>
-<trans-unit id="s55229fce3a8ea65b">
-  <source>The devices in this room have to go somewhere. Nothing is deleted.</source>
-  <target>Die Geräte in diesem Raum müssen irgendwohin. Es wird nichts gelöscht.</target>
-</trans-unit>
-<trans-unit id="s5294b8ad50e579a1">
-  <source>Move the devices to</source>
-  <target>Geräte verschieben nach</target>
-</trans-unit>
-<trans-unit id="s8a49b21a2c9c0022">
-  <source>Unassigned</source>
-  <target>Ohne Raum</target>
-</trans-unit>
-<trans-unit id="sd6614896b151e698">
-  <source>Delete the room</source>
-  <target>Raum löschen</target>
-</trans-unit>
 <trans-unit id="sea45c19a9a06883e">
   <source>That did not finish. Some changes may have been saved. Check and try again.</source>
   <target>Das wurde nicht abgeschlossen. Einige Änderungen wurden möglicherweise gespeichert. Prüfen Sie das und versuchen Sie es erneut.</target>
-</trans-unit>
-<trans-unit id="sca29d7eb0a6eddce">
-  <source>“<x id="0" equiv-text="${entry.deleted.path}"/>” is back as “<x id="1" equiv-text="${entry.room.path}"/>”, because somebody else changed it while you were offline. Nothing was lost.</source>
-  <target>„<x id="0" equiv-text="${entry.deleted.path}"/>“ ist wieder da, jetzt als „<x id="1" equiv-text="${entry.room.path}"/>“, weil jemand anderes den Raum geändert hat, während Sie offline waren. Es ist nichts verloren gegangen.</target>
-</trans-unit>
-<trans-unit id="s6baf77377c829cd5">
-  <source>“<x id="0" equiv-text="${entry.deleted.path}"/>” is back, because somebody else changed it while you were offline. Nothing was lost.</source>
-  <target>„<x id="0" equiv-text="${entry.deleted.path}"/>“ ist wieder da, weil jemand anderes den Raum geändert hat, während Sie offline waren. Es ist nichts verloren gegangen.</target>
-</trans-unit>
-<trans-unit id="s343c7d58168f07bb">
-  <source>Delete it again</source>
-  <target>Erneut löschen</target>
-</trans-unit>
-<trans-unit id="s3defe022074e3bb5">
-  <source>Keep it</source>
-  <target>Behalten</target>
 </trans-unit>
 <trans-unit id="safe6e8a383023467">
   <source>That file could not be read as an image. Choose a photograph or a screenshot.</source>
@@ -1254,6 +1198,61 @@
 <trans-unit id="s6b427df33932c20d">
   <source>Collaborators lose access. Your copy on this device stays editable, and you can put it back on the server within 90 days. After that, the server deletes it.</source>
   <target>Mitwirkende verlieren den Zugriff. Ihre Kopie auf diesem Gerät bleibt bearbeitbar, und Sie können sie innerhalb von 90 Tagen wieder auf den Server stellen. Danach löscht der Server das Projekt.</target>
+</trans-unit>
+<trans-unit id="sd6d92c9fbb60c94d">
+  <source>No devices in “<x id="0" equiv-text="${roomPathBreadcrumb(room)}"/>”.</source>
+  <target>Keine Geräte in „<x id="0" equiv-text="${roomPathBreadcrumb(room)}"/>“.</target>
+</trans-unit>
+<trans-unit id="s7225937736471faf">
+  <source>A room appears when you add the first device to a new room.</source>
+  <target>Ein Raum entsteht, sobald Sie das erste Gerät in einen neuen Raum eintragen.</target>
+</trans-unit>
+<trans-unit id="sc7b1d12ffb3328be">
+  <source>1 device</source>
+  <target>1 Gerät</target>
+</trans-unit>
+<trans-unit id="s0e0a962e81f739c7">
+  <source>Merge</source>
+  <target>Zusammenführen</target>
+</trans-unit>
+<trans-unit id="s1ff2c360b99eb683">
+  <source>Merge the spellings</source>
+  <target>Schreibweisen zusammenführen</target>
+</trans-unit>
+<trans-unit id="sbad8aa72417adecb">
+  <source>Rename the room</source>
+  <target>Raum umbenennen</target>
+</trans-unit>
+<trans-unit id="s23a287d243fa6683">
+  <source>All devices in this room will use this name.</source>
+  <target>Alle Geräte in diesem Raum erhalten diesen Namen.</target>
+</trans-unit>
+<trans-unit id="seab866d838eb1a81">
+  <source>Every device in this room, and in the rooms inside it, moves to the new name.</source>
+  <target>Jedes Gerät in diesem Raum und in den Räumen darin erhält den neuen Namen.</target>
+</trans-unit>
+<trans-unit id="s105e540d5455e09a">
+  <source>Room: <x id="0" equiv-text="${roomPathBreadcrumb(this.room)}"/></source>
+  <target>Raum: <x id="0" equiv-text="${roomPathBreadcrumb(this.room)}"/></target>
+  <note from="lit-localize">A removable filter above the device list.</note>
+</trans-unit>
+<trans-unit id="s54c7f6fd19978d9e">
+  <source><x id="0" equiv-text="${room.deviceCount}"/> devices</source>
+  <target><x id="0" equiv-text="${room.deviceCount}"/> Geräte</target>
+  <note from="lit-localize">How many devices are in a room.</note>
+</trans-unit>
+<trans-unit id="s71ef3da92599264c">
+  <source>Project <x id="0" equiv-text="${name}"/></source>
+  <target>Projekt <x id="0" equiv-text="${name}"/></target>
+  <note from="lit-localize">Under the Devices and Rooms headings: which project the page shows.</note>
+</trans-unit>
+<trans-unit id="sbc82462e7009c375">
+  <source>Fields marked * are required.</source>
+  <target>Mit * markierte Felder sind Pflichtfelder.</target>
+</trans-unit>
+<trans-unit id="s73f6752e0cda4d16">
+  <source>A room needs a name.</source>
+  <target>Ein Raum braucht einen Namen.</target>
 </trans-unit>
 </body>
 </file>

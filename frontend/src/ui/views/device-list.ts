@@ -12,14 +12,14 @@ import {
   LABEL_STOCKS,
   type LabelStock,
   ROOM_PATH_SEPARATOR,
-  type RoomDocument,
+  roomPathBreadcrumb,
   selectForExport,
   splitRoomPath,
   uuidOf,
 } from '../../domain/index.js'
 import { PROJECT_CHANGED } from '../current-project.js'
 import { projectDatabase, projectIsEditable } from '../db/project-database.js'
-import { getLocale } from '../i18n/localization.js'
+import { displayOrder } from '../i18n/localization.js'
 import {
   inventoryFilename,
   inventoryLabels,
@@ -28,7 +28,9 @@ import {
 } from '../pdf/download.js'
 import { ExportCancelled, type InventoryProgress } from '../pdf/progress.js'
 import { fieldValue } from './device-form.js'
-import { roomBreadcrumb } from './room-breadcrumb.js'
+import { projectLine } from './project-line.js'
+import { roomBreadcrumb, roomSpellings } from './room-breadcrumb.js'
+import { roomFromHash } from './room-filter.js'
 
 /**
  * The two PDF builders, loaded when somebody asks for a PDF.
@@ -72,8 +74,9 @@ export class DeviceListView extends LitElement {
 
   static override properties = {
     repositories: { attribute: false },
+    projectName: { attribute: false },
     devices: { state: true },
-    rooms: { state: true },
+    room: { state: true },
     loaded: { state: true },
     failed: { state: true },
     query: { state: true },
@@ -89,8 +92,16 @@ export class DeviceListView extends LitElement {
 
   /** Bound by a test to a database of its own; resolved to the real one otherwise. */
   declare repositories?: ProjectRepositories
+  /** The open project's name, from the shell; see `projectLine`. */
+  declare projectName: string
   declare devices: readonly DeviceDocument[]
-  declare rooms: readonly RoomDocument[]
+  /**
+   * The room the list is filtered to, from `#/devices?room=…`, or `undefined` for every room.
+   *
+   * Read from the address rather than held as a control's state, so the Rooms page can link to
+   * it and the browser's Back button undoes it.
+   */
+  declare room: string | undefined
   /**
    * Whether the first read has finished.
    *
@@ -147,8 +158,9 @@ export class DeviceListView extends LitElement {
     this.selected = new Set()
     this.labelsOpen = false
     this.labelStock = LABEL_STOCKS[0] as LabelStock
+    this.projectName = ''
     this.devices = []
-    this.rooms = []
+    this.room = roomFromHash(window.location.hash)
     this.loaded = false
     this.failed = false
     this.query = ''
@@ -186,7 +198,6 @@ export class DeviceListView extends LitElement {
     // Cleared, not left showing the old project's devices while the new ones arrive. A list
     // that keeps them is a list showing another building's contents under this building's name.
     this.devices = []
-    this.rooms = []
     void this.load()
   }
 
@@ -202,11 +213,21 @@ export class DeviceListView extends LitElement {
   override connectedCallback(): void {
     super.connectedCallback()
     window.addEventListener(PROJECT_CHANGED, this.onProjectChanged)
+    window.addEventListener('hashchange', this.onHashChange)
   }
 
   override disconnectedCallback(): void {
     window.removeEventListener(PROJECT_CHANGED, this.onProjectChanged)
+    window.removeEventListener('hashchange', this.onHashChange)
     super.disconnectedCallback()
+  }
+
+  /**
+   * Follows the room filter in the address. The shell keeps this element when only the query
+   * changes (`#/devices` to `#/devices?room=…` is the same route), so the view has to listen.
+   */
+  private onHashChange = (): void => {
+    this.room = roomFromHash(window.location.hash)
   }
 
   private async load(): Promise<void> {
@@ -214,16 +235,12 @@ export class DeviceListView extends LitElement {
     const repositories = this.repos()
 
     try {
-      const [devices, rooms] = await Promise.all([
-        repositories.devices.list(),
-        repositories.rooms.list(),
-      ])
+      const devices = await repositories.devices.list()
       // A read started under the previous project can finish after the new one has loaded, and
       // assigning it here would put project A's devices on screen with project B selected.
       if (generation !== this.loadGeneration) return
 
       this.devices = devices
-      this.rooms = rooms
       this.loaded = true
     } catch {
       // Everything the local database can refuse arrives here as one shape: PouchDB flattens
@@ -246,10 +263,11 @@ export class DeviceListView extends LitElement {
    * German rather than after it.
    */
   private groups(): readonly DeviceGroup[] {
-    return browseDevices(this.devices, this.rooms, {
+    return browseDevices(this.devices, {
       query: this.query,
+      ...(this.room === undefined ? {} : { room: this.room }),
       includeDisabled: this.includeDisabled,
-      compare: new Intl.Collator(getLocale()).compare,
+      compare: displayOrder(),
       // The stored name is English; people search for what the interface shows (#248).
       testVendorTerm: msg('Test vendor'),
     })
@@ -272,9 +290,9 @@ export class DeviceListView extends LitElement {
    * See {@link roomBreadcrumb}.
    */
   private groupLabel(group: DeviceGroup) {
-    // An empty path means the room is gone but its devices are not. Naming it rather than
-    // leaving a blank heading is what stops those devices looking like a rendering fault.
-    return group.path === '' ? msg('Without a room') : roomBreadcrumb(group.path)
+    // An empty path means a device with no room (a document from before ADR 0021). Naming it
+    // rather than leaving a blank heading is what stops it looking like a rendering fault.
+    return group.path === '' ? msg('Without a room') : roomSpellings(group.spellings)
   }
 
   /**
@@ -349,12 +367,14 @@ export class DeviceListView extends LitElement {
   /**
    * A stable id for a group's heading, for the section's `aria-labelledby`.
    *
-   * From the room id rather than the path, because a path holds spaces and slashes. Prefixed per
-   * list instance, so two lists on one page (a test, or a future split view) cannot point a
-   * section at the other list's heading — `aria-labelledby` resolves the first match.
+   * From the group's position rather than the path, because a path holds spaces and slashes
+   * and an id may not. Positions are unique within one render, which is all `aria-labelledby`
+   * needs. Prefixed per list instance, so two lists on one page (a test, or a future split view)
+   * cannot point a section at the other list's heading — `aria-labelledby` resolves the first
+   * match.
    */
-  private headingId(group: DeviceGroup): string {
-    return `${this.instanceId}-room-${group.roomId}`
+  private headingId(index: number): string {
+    return `${this.instanceId}-room-${index}`
   }
 
   /** Distinguishes this list's ids from another's. See {@link headingId}. */
@@ -395,22 +415,23 @@ export class DeviceListView extends LitElement {
     `
   }
 
-  private renderGroup(group: DeviceGroup, groups: readonly DeviceGroup[]) {
+  private renderGroup(group: DeviceGroup, index: number, groups: readonly DeviceGroup[]) {
     const count = group.devices.length
+    const headingId = this.headingId(index)
     return html`
       <!-- Named by its heading, so the export control inside is announced in context: every
            sub-room's trigger says "Export…", and the section says which room it belongs to. -->
       <section
         class="wa-stack wa-gap-2xs"
         data-room=${group.path}
-        aria-labelledby=${this.headingId(group)}
+        aria-labelledby=${headingId}
       >
         <div class="wa-cluster wa-gap-s app-room-heading">
-          <h2 id=${this.headingId(group)}>${this.groupLabel(group)}</h2>
+          <h2 id=${headingId}>${this.groupLabel(group)}</h2>
           <wa-badge variant="neutral">${count}</wa-badge>
           <!-- Per room, because "print the labels for the kitchen" is the request people
                actually have, and ticking eleven boxes to make it is not an answer. Absent for
-               devices whose room no longer exists: there is no room there to export. -->
+               devices with no room: there is no room there to export. -->
           ${this.renderRoomExport(group, groups)}
         </div>
         <ul class="wa-stack wa-gap-2xs app-device-list">
@@ -418,6 +439,32 @@ export class DeviceListView extends LitElement {
         </ul>
       </section>
     `
+  }
+
+  /**
+   * The room the list is filtered to, as a tag that removes the filter.
+   *
+   * Removing it goes back to `#/devices` rather than clearing a field, so the address and the
+   * list never disagree and Back returns to the filtered list.
+   */
+  private renderRoomFilter() {
+    if (this.room === undefined) return nothing
+    // Built outside the template: the i18n scan cannot follow a nested template that itself
+    // has a substitution, and would read the rest of the file as unwrapped text.
+    const label = msg(str`Room: ${roomPathBreadcrumb(this.room)}`, {
+      desc: 'A removable filter above the device list.',
+    })
+    return html`<div class="wa-cluster">
+      <wa-tag
+        data-room-filter
+        with-remove
+        @wa-remove=${() => {
+          window.location.hash = '#/devices'
+        }}
+      >
+        ${label}
+      </wa-tag>
+    </div>`
   }
 
   /**
@@ -431,6 +478,18 @@ export class DeviceListView extends LitElement {
    */
   private renderEmpty() {
     if (this.devices.length === 0) return html`<p class="app-empty">${msg('No devices yet.')}</p>`
+
+    // A filter to a room nothing is in any more: a link from before a rename, or typed by hand.
+    // Said before the other two, because neither the search nor the disabled box is the cause.
+    const { room } = this
+    if (
+      room !== undefined &&
+      browseDevices(this.devices, { room, includeDisabled: true }).length === 0
+    ) {
+      return html`<p class="app-empty" data-no-devices-in-room>
+        ${msg(str`No devices in “${roomPathBreadcrumb(room)}”.`)}
+      </p>`
+    }
 
     const query = this.query.trim()
     if (query === '') {
@@ -635,7 +694,10 @@ export class DeviceListView extends LitElement {
     return html`
       <div class="wa-stack wa-gap-l">
         <div class="wa-split">
-          <h1>${msg('Devices')}</h1>
+          <div class="wa-stack wa-gap-3xs">
+            <h1>${msg('Devices')}</h1>
+            ${projectLine(this.projectName)}
+          </div>
           <div class="wa-cluster wa-gap-s">
             ${
               this.selected.size === 0
@@ -738,13 +800,14 @@ export class DeviceListView extends LitElement {
           <wa-checkbox data-include-disabled @change=${this.onToggleDisabled}>
             ${msg('Show disabled devices')}
           </wa-checkbox>
+          ${this.renderRoomFilter()}
         </div>
 
         ${
           this.loaded && groups.length === 0
             ? this.renderEmpty()
             : html`<div class="wa-stack wa-gap-l">
-                ${groups.map((group) => this.renderGroup(group, groups))}
+                ${groups.map((group, index) => this.renderGroup(group, index, groups))}
               </div>`
         }
 

@@ -1,12 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { type ProjectRepositories, projectRepositories } from '../../src/data/index.js'
-import {
-  addRemark,
-  type DeviceDocument,
-  documentId,
-  type RoomDocument,
-  type Unsaved,
-} from '../../src/domain/index.js'
+import { addRemark, type DeviceDocument, documentId, type Unsaved } from '../../src/domain/index.js'
 import {
   fixedClock,
   type Replicas,
@@ -28,25 +22,18 @@ import {
  * their result is written, and that the losing revisions stop existing.
  */
 
-const KITCHEN = documentId('room', '3fa85f64-5717-4562-b3fc-2c963f66afa6')
 const LAMP = documentId('device', '6ba7b810-9dad-11d1-80b4-00c04fd430c8')
 
 const lamp = (): Unsaved<DeviceDocument> => ({
   _id: LAMP,
   type: 'device',
   name: 'Kitchen ceiling light',
-  roomId: KITCHEN,
+  room: 'Ground Floor/Kitchen',
   manualCode: '34970112332',
   installedAt: '2026-08-19',
   addedAt: '2026-08-19T08:00:00.000Z',
   disabled: false,
   remarks: [],
-})
-
-const kitchen = (): Unsaved<RoomDocument> => ({
-  _id: KITCHEN,
-  type: 'room',
-  path: 'Ground Floor/Kitchen',
 })
 
 /** A uuid source that counts, so a remark id in a failure message says where it came from. */
@@ -109,11 +96,10 @@ beforeEach(() => {
   three = replicas()
 })
 
-/** Puts the same device and room on both devices, through the server, before anyone edits. */
+/** Puts the same device on both phones, through the server, before anyone edits. */
 async function shared(): Promise<void> {
   const first = on(three.deviceA, '2026-08-20T08:00:00.000Z')
   await first.devices.save(lamp())
-  await first.rooms.save(kitchen())
   await syncOnce(three.deviceA, three.server)
   await syncOnce(three.deviceB, three.server)
 }
@@ -242,18 +228,22 @@ describe('conflict revisions do not accumulate', () => {
     // so the merged document and the stored one are the same document. Writing it anyway would
     // put a fresh revision on every device that reads a resolved conflict, and replicate it,
     // for no change at all.
+    //
+    // PouchDB's revision ids are hashes of the content, so which branch CouchDB picks depends on
+    // the exact documents. The names are chosen so that it picks A's; the first assertion below
+    // checks that premise, so a fixture change that flips it fails loudly rather than vacuously.
     const a = on(three.deviceA, '2026-08-20T10:00:00.000Z')
     const b = on(three.deviceB, '2026-08-20T09:00:00.000Z')
 
-    await rename(a, 'Ceiling light')
+    await rename(a, 'Ceiling lamp')
     await rename(b, 'Kitchen lamp')
     await reconnect(three)
 
     const before = await stored(three.deviceA, LAMP)
-    expect(before.name).toBe('Ceiling light')
+    expect(before.name).toBe('Ceiling lamp')
     expect(before._conflicts).toHaveLength(1)
 
-    expect((await a.devices.get(LAMP))?.name).toBe('Ceiling light')
+    expect((await a.devices.get(LAMP))?.name).toBe('Ceiling lamp')
 
     const after = await stored(three.deviceA, LAMP)
     expect(after._rev).toBe(before._rev)
@@ -318,29 +308,5 @@ describe('every read resolves, not only the one that fetches by id', () => {
 
     expect(listed?.remarks).toHaveLength(2)
     expect((await stored(three.deviceA, LAMP))._conflicts).toBeUndefined()
-  })
-
-  it('merges a conflicted room, which has its own strategy', async () => {
-    // Rooms are not devices: they merge by `path` rather than by unioning anything, and they
-    // are wired separately. A resolver attached to devices alone would leave two people who
-    // renamed the same room permanently disagreeing about what it is called.
-    const a = on(three.deviceA, '2026-08-20T10:00:00.000Z')
-    const b = on(three.deviceB, '2026-08-20T09:00:00.000Z')
-
-    const mine = await a.rooms.get(KITCHEN)
-    if (mine === undefined) throw new Error('the room should be here')
-    await a.rooms.save({ ...mine, path: 'Ground Floor/Kitchenette' })
-
-    const theirs = await b.rooms.get(KITCHEN)
-    if (theirs === undefined) throw new Error('the room should be here')
-    await b.rooms.save({ ...theirs, path: 'Ground Floor/Kitchen Diner' })
-
-    await reconnect(three)
-    expect((await stored(three.deviceA, KITCHEN))._conflicts).toHaveLength(1)
-
-    // The later write, on both devices, and no conflict left behind.
-    expect((await a.rooms.get(KITCHEN))?.path).toBe('Ground Floor/Kitchenette')
-    expect((await b.rooms.get(KITCHEN))?.path).toBe('Ground Floor/Kitchenette')
-    expect((await stored(three.deviceA, KITCHEN))._conflicts).toBeUndefined()
   })
 })

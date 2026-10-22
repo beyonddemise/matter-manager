@@ -60,8 +60,13 @@ export interface DeviceDiscovery {
 export interface DeviceDocument extends RemarkBearing {
   readonly type: 'device'
   readonly name: string
-  /** A full `room:<uuid>` document id, so it can be passed straight to `get`. */
-  readonly roomId: string
+  /**
+   * The room's path, `"Ground Floor/Kitchen"` (ADR 0006), carried on the device (ADR 0021).
+   *
+   * There is no room document to point at: the rooms a project has are the paths its devices
+   * carry. Two devices in one room may spell it differently; see `rooms/path.ts`.
+   */
+  readonly room: string
   /** Free text the room name cannot carry: "ceiling, north end". */
   readonly spot?: string
 
@@ -136,22 +141,9 @@ export interface DeviceDocument extends RemarkBearing {
   readonly disabledAt?: string
 
   /**
-   * Always present, possibly empty - narrowed from `RemarkBearing`, where it is optional
-   * because the merge must also accept a room. A device with no remarks has `[]`, so no caller
-   * has to decide what a missing array means.
+   * Always present, possibly empty - narrowed from `RemarkBearing`, where it is optional so the
+   * merge accepts any revision it is handed. A device with no remarks has `[]`, so no caller has
+   * to decide what a missing array means.
    */
   readonly remarks: readonly Remark[]
-}
-
-/**
- * A room, identified by a materialised path (ADR 0006).
- *
- * There is no `parentId`. Hierarchy is derived by splitting `path`, which is precisely why
- * there are no reparenting conflicts to resolve under offline sync.
- */
-export interface RoomDocument extends Revision {
-  readonly type: 'room'
-  /** `"Ground Floor/Kitchen"`, separator-delimited per ADR 0006. */
-  readonly path: string
-  readonly sortKey?: number
 }

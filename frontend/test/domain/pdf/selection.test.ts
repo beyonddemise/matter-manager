@@ -1,20 +1,16 @@
 import { describe, expect, it } from 'vitest'
 import { browseDevices, type DeviceGroup } from '../../../src/domain/documents/browse.js'
-import type { DeviceDocument, RoomDocument } from '../../../src/domain/documents/types.js'
+import type { DeviceDocument } from '../../../src/domain/documents/types.js'
 import { countSelected, selectForExport } from '../../../src/domain/pdf/selection.js'
 import { isWithinRoom } from '../../../src/domain/rooms/path.js'
 
-const device = (
-  id: string,
-  roomId: string,
-  extra: Partial<DeviceDocument> = {},
-): DeviceDocument => ({
+const device = (id: string, room: string, extra: Partial<DeviceDocument> = {}): DeviceDocument => ({
   _id: id,
   _rev: '1-a',
   updatedAt: '2026-08-19T08:00:00.000Z',
   type: 'device',
   name: id,
-  roomId,
+  room,
   manualCode: '34970112332',
   installedAt: '2026-08-19',
   addedAt: '2026-08-19T08:00:00.000Z',
@@ -23,18 +19,11 @@ const device = (
   ...extra,
 })
 
-const room = (id: string, path: string): RoomDocument => ({
-  _id: id,
-  _rev: '1-a',
-  updatedAt: '2026-08-19T08:00:00.000Z',
-  type: 'room',
-  path,
-})
-
 const group = (path: string, ...ids: string[]): DeviceGroup => ({
-  roomId: `room:${path}`,
+  key: path.toLowerCase(),
   path,
-  devices: ids.map((id) => device(id, `room:${path}`)),
+  spellings: path === '' ? [] : [path],
+  devices: ids.map((id) => device(id, path)),
 })
 
 const names = (groups: readonly DeviceGroup[]): string[] =>
@@ -134,15 +123,14 @@ describe('selecting what to export', () => {
 
 describe('disabled devices in an export', () => {
   const DEVICES = [
-    device('device:live', 'room:kitchen'),
-    device('device:old', 'room:kitchen', { disabled: true }),
+    device('device:live', 'Ground Floor/Kitchen'),
+    device('device:old', 'Ground Floor/Kitchen', { disabled: true }),
   ]
-  const ROOMS = [room('room:kitchen', 'Ground Floor/Kitchen')]
 
   it('leaves them out, because the browse that produced the groups did', () => {
     // The criterion is met by *not having a second opinion*. A device the user cannot see on
     // screen cannot appear in a PDF they hand to someone else, whatever they select.
-    const groups = browseDevices(DEVICES, ROOMS)
+    const groups = browseDevices(DEVICES)
 
     expect(names(selectForExport(groups, { kind: 'all' }))).toEqual(['device:live'])
     expect(names(selectForExport(groups, { kind: 'room', path: 'Ground Floor' }))).toEqual([
@@ -151,7 +139,7 @@ describe('disabled devices in an export', () => {
   })
 
   it('includes them when the user has explicitly asked to see them', () => {
-    const groups = browseDevices(DEVICES, ROOMS, { includeDisabled: true })
+    const groups = browseDevices(DEVICES, { includeDisabled: true })
 
     expect(names(selectForExport(groups, { kind: 'all' }))).toEqual(['device:live', 'device:old'])
   })
@@ -160,7 +148,7 @@ describe('disabled devices in an export', () => {
     // A disabled device is not in the groups at all, so its id in the selection matches
     // nothing. Worth pinning: the alternative implementation - filtering the raw device list
     // by id - would export it.
-    const groups = browseDevices(DEVICES, ROOMS)
+    const groups = browseDevices(DEVICES)
 
     expect(
       names(selectForExport(groups, { kind: 'devices', ids: new Set(['device:old']) })),
@@ -180,8 +168,10 @@ describe('whether a path is inside a room', () => {
     expect(isWithinRoom(path, root)).toBe(expected)
   })
 
-  it('is case-sensitive, because ADR 0006 makes case distinguish rooms', () => {
-    expect(isWithinRoom('ground floor/Kitchen', 'Ground Floor')).toBe(false)
+  it('ignores case, because two spellings of one room are one room (ADR 0021)', () => {
+    // An export of `Ground Floor` that dropped the devices somebody filed under
+    // `ground floor/Kitchen` would be a PDF missing devices, with nothing to say so.
+    expect(isWithinRoom('ground floor/Kitchen', 'Ground Floor')).toBe(true)
   })
 
   it('ignores whitespace around segments on either side', () => {
@@ -194,18 +184,15 @@ describe('whether a path is inside a room', () => {
  * so exporting `Attic` is the attic and the studio inside it, and never `Attic Bedroom`.
  */
 describe('exporting a room with its sub-rooms (#242)', () => {
-  const rooms = [
-    room('room:pantry', 'Ground Floor/Kitchen/Pantry'),
-    room('room:bedroom', 'Attic Bedroom'),
-    room('room:kitchen', 'Ground Floor/Kitchen'),
-    room('room:studio', 'Attic/Studio'),
-    room('room:ground', 'Ground Floor'),
-    room('room:attic', 'Attic'),
+  const paths = [
+    'Ground Floor/Kitchen/Pantry',
+    'Attic Bedroom',
+    'Ground Floor/Kitchen',
+    'Attic/Studio',
+    'Ground Floor',
+    'Attic',
   ]
-  const groups = browseDevices(
-    rooms.map((entry) => device(`device:${entry.path}`, entry._id)),
-    rooms,
-  )
+  const groups = browseDevices(paths.map((path) => device(`device:${path}`, path)))
   const pathsOf = (path: string) =>
     selectForExport(groups, { kind: 'room', path }).map((entry) => entry.path)
 

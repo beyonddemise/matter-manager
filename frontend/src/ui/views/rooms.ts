@@ -1,34 +1,39 @@
 import { msg, str, updateWhenLocaleChanges } from '@lit/localize'
-import { html, LitElement, type PropertyDeclarations, type TemplateResult } from 'lit'
+import { html, LitElement, nothing, type PropertyDeclarations, type TemplateResult } from 'lit'
 import type { ProjectRepositories } from '../../data/index.js'
 import {
-  devicesInRoom,
-  planRoomDeletion,
-  type ResurrectedRoom,
-  type RoomDestination,
-  type RoomDocument,
+  type DeviceDocument,
+  type Room,
+  type RoomPathProblem,
   renameRoom,
-  reorderRooms,
-  resurrectedRooms,
-  roomsInOrder,
+  roomPathProblem,
+  roomsOf,
 } from '../../domain/index.js'
 import { PROJECT_CHANGED } from '../current-project.js'
-import {
-  currentProjectDatabaseName,
-  projectDatabase,
-  projectIsEditable,
-} from '../db/project-database.js'
-import { forgetDeletion, readDeletedRooms, rememberDeletion } from '../deleted-rooms.js'
+import { projectDatabase, projectIsEditable } from '../db/project-database.js'
+import { displayOrder } from '../i18n/localization.js'
+import { problemMessage } from '../i18n/problems.js'
+import { fieldValue } from './device-form.js'
+import { projectLine } from './project-line.js'
+import { roomSpellings } from './room-breadcrumb.js'
+import { devicesInRoomHref } from './room-filter.js'
+
+/** What the open dialog is doing: renaming a room, or merging its spellings into one. */
+interface Editing {
+  readonly room: Room
+  readonly merge: boolean
+}
 
 /**
- * The rooms of a project: what order they are in, what they are called, and removing one.
+ * The rooms of a project, and renaming one (ADR 0021).
  *
- * The decisions all live in `core/src/rooms/list.ts` — `roomsInOrder`, `renameRoom`,
- * `reorderRooms` and `planRoomDeletion` — as pure functions that plan and do not write. They
- * were written and tested at M5-9 and then imported by nothing at all: #142, which is #120's
- * defect one package over. This is the caller they were waiting for.
+ * A room is not a document: it is the path its devices carry, so this page lists `roomsOf` the
+ * devices and a rename rewrites the devices (`renameRoom`). A room appears when the first device
+ * is filed under it and goes when the last one leaves, so there is nothing to create, order or
+ * delete here.
  *
- * Every write here is the caller's half of one of those plans, in the order the plan says.
+ * A room whose devices spell it differently (`Kitchen`, `kitchen`) shows every spelling and a
+ * Merge button. Merging is a rename to one name, so every spelling ends up the same.
  *
  * @module
  */
@@ -40,44 +45,37 @@ export class RoomsView extends LitElement {
 
   static override properties: PropertyDeclarations = {
     repositories: { attribute: false },
-    rooms: { state: true },
+    projectName: { attribute: false },
     devices: { state: true },
     loaded: { state: true },
     failed: { state: true },
-    renaming: { state: true },
-    returned: { state: true },
-    deleting: { state: true },
+    editing: { state: true },
+    renameProblem: { state: true },
     busy: { state: true },
   }
 
   declare repositories?: ProjectRepositories
-  declare rooms: readonly RoomDocument[]
-  /** Every device, so each room can say how many it holds without a second read per room. */
-  declare devices: readonly Parameters<typeof devicesInRoom>[1][number][]
+  /** The open project's name, from the shell; see `projectLine`. */
+  declare projectName: string
+  /** Every device: the rooms are derived from them. */
+  declare devices: readonly DeviceDocument[]
   declare loaded: boolean
+  /** A read or a rename did not finish. */
   declare failed: boolean
-  /** The room being renamed, or `undefined`. One at a time; two would be two ways to collide. */
-  declare renaming: string | undefined
-  /**
-   * Rooms this device deleted that are present again.
-   *
-   * The deletion was correct and lost anyway: a live leaf beats a deleted one, so somebody
-   * else's rename wins and the room comes back under a name this reader has never seen (#125).
-   */
-  declare returned: readonly ResurrectedRoom[]
-  /** The room being deleted, which is where its devices have to be sent. */
-  declare deleting: string | undefined
+  /** The room in the rename dialog, or `undefined` when it is closed. */
+  declare editing: Editing | undefined
+  /** Why the name last tried in the dialog is not a room path, until it is changed or closed. */
+  declare renameProblem: RoomPathProblem | undefined
   declare busy: boolean
 
   constructor() {
     super()
     updateWhenLocaleChanges(this)
-    this.rooms = []
+    this.projectName = ''
     this.devices = []
     this.loaded = false
     this.failed = false
     this.busy = false
-    this.returned = []
   }
 
   private resolved: ProjectRepositories | undefined
@@ -89,10 +87,8 @@ export class RoomsView extends LitElement {
   /** Re-reads when the reader moves to another project (#55). */
   private onProjectChanged = (): void => {
     this.resolved = undefined
-    this.rooms = []
     this.devices = []
-    this.renaming = undefined
-    this.deleting = undefined
+    this.editing = undefined
     void this.load()
   }
 
@@ -116,24 +112,11 @@ export class RoomsView extends LitElement {
   private async load(): Promise<void> {
     const generation = ++this.loadGeneration
     try {
-      const [rooms, devices] = await Promise.all([
-        this.repos().rooms.list(),
-        this.repos().devices.list(),
-      ])
+      const devices = await this.repos().devices.list()
       if (generation !== this.loadGeneration) return
-
-      this.rooms = rooms
       this.devices = devices
       this.loaded = true
       this.failed = false
-
-      // A comparison against a list already read, rather than a subscription. It costs nothing
-      // extra and gives the same answer whether the room came back a second ago or while the
-      // tab was closed - which a change-feed listener would not.
-      this.returned = resurrectedRooms(
-        readDeletedRooms(() => localStorage, currentProjectDatabaseName()),
-        rooms,
-      )
     } catch {
       // Not logged: a device document carries a setup code. The message says the one thing
       // that is certainly true — the rooms were not read, and nothing has been lost.
@@ -141,15 +124,42 @@ export class RoomsView extends LitElement {
     }
   }
 
-  /** Writes what a plan produced, then re-reads. Every write here goes through this. */
-  private async apply(write: () => Promise<void>): Promise<void> {
+  /** In the interface's locale, so the list sorts as the device list does. */
+  private rooms(): readonly Room[] {
+    return roomsOf(this.devices, displayOrder())
+  }
+
+  /**
+   * Renames a room, or merges its spellings, by rewriting every device in it.
+   *
+   * `renameRoom` takes the whole subtree: renaming `Ground Floor` takes `Ground Floor/Kitchen`
+   * with it. Renaming onto a room that exists files the devices there too, which is a merge and
+   * the intended result.
+   *
+   * The devices are saved one at a time, so a failure can leave some renamed. The page re-reads
+   * before reporting it, and a second attempt plans from what was saved: a device already
+   * renamed is no longer in the old room, so it is not renamed twice.
+   */
+  private async onRename(room: Room, to: string): Promise<void> {
+    const target = to.trim()
+    // Answered in the dialog, which stays open: the footer button saves without the browser's
+    // own validation, so returning silently would be a button that does nothing.
+    const problem = roomPathProblem(target)
+    if (problem !== null) {
+      this.renameProblem = problem
+      return
+    }
+    this.renameProblem = undefined
+    this.editing = undefined
+
+    const planned = renameRoom(this.devices, room.spellings[0], target)
+    if (planned.length === 0) return
+
     this.busy = true
     try {
-      await write()
+      for (const device of planned) await this.repos().devices.save(device)
       await this.load()
     } catch {
-      // A plan can fail after an earlier write succeeded. Re-read before reporting it, so a
-      // retry is planned from what was actually saved rather than from the old snapshot.
       await this.load()
       this.failed = true
     } finally {
@@ -157,97 +167,16 @@ export class RoomsView extends LitElement {
     }
   }
 
-  private ordered(): readonly RoomDocument[] {
-    return roomsInOrder(this.rooms)
-  }
-
-  /**
-   * Moves a room one place up or down.
-   *
-   * Buttons rather than dragging. A drag needs a pointer, and the people using this are
-   * standing in a building holding a phone — and `reorderRooms` returns only the rooms whose
-   * position actually changed, so a nudge writes two documents rather than forty.
-   */
-  private async onMove(roomId: string, by: -1 | 1): Promise<void> {
-    const ids = this.ordered().map((room) => room._id)
-    const at = ids.indexOf(roomId)
-    const to = at + by
-    if (at === -1 || to < 0 || to >= ids.length) return
-
-    const reordered = [...ids]
-    const [moved] = reordered.splice(at, 1)
-    if (moved === undefined) return
-    reordered.splice(to, 0, moved)
-
-    await this.apply(async () => {
-      for (const room of reorderRooms(reordered, this.rooms)) await this.repos().rooms.save(room)
-    })
-  }
-
-  /**
-   * Renames a room, and every room beneath it.
-   *
-   * `renameRoom` moves the whole subtree: renaming `Ground Floor` has to take
-   * `Ground Floor/Kitchen` with it, or the child becomes a room nobody meant to create. It
-   * throws on a collision, which is reported rather than swallowed — the name is the user's to
-   * choose again.
-   */
-  private async onRename(room: RoomDocument, to: string): Promise<void> {
-    this.renaming = undefined
-    if (to.trim() === '' || to === room.path) return
-
-    let planned: readonly Parameters<ProjectRepositories['rooms']['save']>[0][]
-    try {
-      planned = renameRoom(room.path, to, this.rooms)
-    } catch {
-      // A collision with a room that already exists. Nothing is written and the list is
-      // unchanged, so the remedy is to try another name.
-      this.failed = true
-      return
-    }
-
-    await this.apply(async () => {
-      for (const moved of planned) await this.repos().rooms.save(moved)
-    })
-  }
-
-  /**
-   * Removes a room, sending whatever was in it somewhere.
-   *
-   * The destination is required by `planRoomDeletion`'s signature, and that is the mechanism
-   * rather than a check: no value of `RoomDestination` means "never mind", so deleting a room
-   * and silently orphaning its devices is not something this can express.
-   */
-  private async onDelete(roomId: string, destination: RoomDestination): Promise<void> {
-    this.deleting = undefined
-
-    const plan = planRoomDeletion(roomId, this.rooms, this.devices, destination, () =>
-      crypto.randomUUID(),
-    )
-
-    await this.apply(async () => {
-      // In the plan's order, and it is load-bearing: a device pointing at a room that does not
-      // exist yet is the orphan this whole operation exists to avoid.
-      if (plan.create !== undefined) await this.repos().rooms.save(plan.create)
-      for (const device of plan.reassign) await this.repos().devices.save(device)
-      await this.repos().rooms.remove(plan.remove)
-
-      // Remembered only once the removal succeeded. A record of a deletion that did not happen
-      // would report a resurrection for a room that never left (#125).
-      rememberDeletion(() => localStorage, currentProjectDatabaseName(), plan.remove, this.rooms)
-    })
-  }
-
-  private countIn(room: RoomDocument): number {
-    return devicesInRoom(room._id, this.devices).length
-  }
-
   override render(): TemplateResult {
-    const rooms = this.ordered()
+    const rooms = this.rooms()
 
     return html`
       <div class="wa-stack wa-gap-l">
-        <h1>${msg('Rooms')}</h1>
+        <div class="wa-stack wa-gap-3xs">
+          <h1>${msg('Rooms')}</h1>
+          ${projectLine(this.projectName)}
+        </div>
+        <p data-rooms-intro>${msg('A room appears when you add the first device to a new room.')}</p>
 
         ${
           this.failed
@@ -258,114 +187,38 @@ export class RoomsView extends LitElement {
             : ''
         }
 
-        ${this.returned.map((entry) => this.renderReturned(entry))}
-
         ${
-          this.loaded && rooms.length === 0
-            ? html`<p class="app-empty" data-no-rooms>
-                ${msg('No rooms yet. A room is created when you type one on a device.')}
-              </p>`
+          rooms.length === 0
+            ? nothing
             : html`<ul class="wa-stack wa-gap-2xs" data-rooms>
-                ${rooms.map((room, index) => this.renderRoom(room, index, rooms.length))}
+                ${rooms.map((room) => this.renderRoom(room))}
               </ul>`
         }
+
+        ${this.renderDialog()}
       </div>
     `
   }
 
-  /**
-   * A room this reader deleted, which is back.
-   *
-   * It names **both** names. "Kitchen is back as Cocina, because somebody else changed it" is an
-   * explanation; "Cocina is back" is a different puzzle. And it says who caused it, because the
-   * alternative reading — that the deletion did not save — is the one that makes somebody stop
-   * trusting the application.
-   *
-   * Deleting it again is one button, not a hunt through the list for a room under a name they
-   * did not choose.
-   */
-  private renderReturned(entry: ResurrectedRoom): TemplateResult {
-    const renamed = entry.room.path !== entry.deleted.path
+  private renderRoom(room: Room): TemplateResult {
+    const mixed = room.spellings.length > 1
 
     return html`
-      <wa-callout variant="warning" data-room-returned data-returned-id=${entry.deleted.roomId}>
-        <wa-icon slot="icon" name="arrows-rotate"></wa-icon>
-        <div class="wa-stack wa-gap-2xs">
-          <span data-returned-message>
+      <li class="wa-split wa-gap-s" data-room data-room-key=${room.key}>
+        <div class="wa-stack wa-gap-3xs">
+          <!-- The first spelling in the link: the filter matches every spelling (by key), so any
+               one of them lists the same devices. -->
+          <a href=${devicesInRoomHref(room.spellings[0])} data-room-path>
+            ${roomSpellings(room.spellings)}
+          </a>
+          <small class="app-empty" data-room-count>
             ${
-              renamed
-                ? msg(
-                    str`“${entry.deleted.path}” is back as “${entry.room.path}”, because somebody else changed it while you were offline. Nothing was lost.`,
-                  )
-                : msg(
-                    str`“${entry.deleted.path}” is back, because somebody else changed it while you were offline. Nothing was lost.`,
-                  )
+              room.deviceCount === 1
+                ? msg('1 device')
+                : msg(str`${room.deviceCount} devices`, { desc: 'How many devices are in a room.' })
             }
-          </span>
-          ${
-            !projectIsEditable()
-              ? ''
-              : html`
-                  <div class="wa-cluster wa-gap-s">
-                    <wa-button
-                      data-delete-returned
-                      appearance="outlined"
-                      variant="danger"
-                      ?disabled=${this.busy}
-                      @click=${() => {
-                        this.deleting = entry.deleted.roomId
-                      }}
-                    >
-                      ${msg('Delete it again')}
-                    </wa-button>
-                    <wa-button
-                      data-dismiss-returned
-                      appearance="plain"
-                      @click=${() => this.onDismissReturned(entry.deleted.roomId)}
-                    >
-                      ${msg('Keep it')}
-                    </wa-button>
-                  </div>
-                `
-          }
+          </small>
         </div>
-      </wa-callout>
-    `
-  }
-
-  /** The reader has decided to keep the room. The record has done its job. */
-  private onDismissReturned(roomId: string): void {
-    forgetDeletion(() => localStorage, currentProjectDatabaseName(), roomId)
-    this.returned = this.returned.filter((entry) => entry.deleted.roomId !== roomId)
-  }
-
-  private renderRoom(room: RoomDocument, index: number, total: number): TemplateResult {
-    const held = this.countIn(room)
-
-    return html`
-      <li class="wa-split wa-gap-s" data-room data-room-id=${room._id}>
-        ${
-          this.renaming === room._id
-            ? html`
-                <wa-input
-                  data-rename-input
-                  value=${room.path}
-                  label=${msg('Room name')}
-                  @keydown=${(event: KeyboardEvent) => {
-                    if (event.key !== 'Enter') return
-                    void this.onRename(room, (event.target as { value?: string }).value ?? '')
-                  }}
-                ></wa-input>
-              `
-            : html`
-                <div class="wa-stack wa-gap-3xs">
-                  <span data-room-path>${room.path}</span>
-                  <small class="app-empty" data-room-count>
-                    ${held === 0 ? msg('No devices') : String(held)}
-                  </small>
-                </div>
-              `
-        }
 
         ${
           // Absent, not disabled, on a project somebody may only read (#55).
@@ -373,104 +226,106 @@ export class RoomsView extends LitElement {
             ? ''
             : html`
                 <div class="wa-cluster wa-gap-2xs">
-                  <wa-button
-                    data-move-up
-                    appearance="plain"
-                    ?disabled=${index === 0 || this.busy}
-                    @click=${() => void this.onMove(room._id, -1)}
-                  >
-                    <wa-icon name="arrows-rotate" label=${msg('Move up')}></wa-icon>
-                  </wa-button>
-                  <wa-button
-                    data-move-down
-                    appearance="plain"
-                    ?disabled=${index === total - 1 || this.busy}
-                    @click=${() => void this.onMove(room._id, 1)}
-                  >
-                    <wa-icon name="arrows-rotate" label=${msg('Move down')}></wa-icon>
-                  </wa-button>
+                  ${
+                    mixed
+                      ? html`<wa-button
+                          data-merge
+                          size="s"
+                          appearance="outlined"
+                          ?disabled=${this.busy}
+                          @click=${() => {
+                            this.renameProblem = undefined
+                            this.editing = { room, merge: true }
+                          }}
+                        >
+                          ${msg('Merge')}
+                        </wa-button>`
+                      : ''
+                  }
                   <wa-button
                     data-rename
                     appearance="plain"
                     ?disabled=${this.busy}
                     @click=${() => {
-                      this.renaming = room._id
+                      this.renameProblem = undefined
+                      this.editing = { room, merge: false }
                     }}
                   >
                     <wa-icon name="pen" label=${msg('Rename')}></wa-icon>
                   </wa-button>
-                  <wa-button
-                    data-delete-room
-                    appearance="plain"
-                    variant="danger"
-                    ?disabled=${this.busy}
-                    @click=${() => {
-                      this.deleting = room._id
-                    }}
-                  >
-                    <wa-icon name="trash" label=${msg('Delete')}></wa-icon>
-                  </wa-button>
                 </div>
               `
         }
-
-        ${this.deleting === room._id ? this.renderDeletion(room, held) : ''}
       </li>
     `
   }
 
   /**
-   * Where the devices go, asked before the room is removed.
+   * The rename dialog, which is also the merge dialog.
    *
-   * Asked even when the room is empty. `planRoomDeletion` requires a destination whatever the
-   * room holds, on the reasoning that an optional-when-empty parameter is an optional
-   * parameter — and the caller who forgets it is the caller who did not check.
+   * Prefilled with the first spelling either way. For a merge it says what saving does, because
+   * "Rename" on a room that already looks right would otherwise read as a no-op.
    */
-  private renderDeletion(room: RoomDocument, held: number): TemplateResult {
-    const others = this.ordered().filter((candidate) => candidate._id !== room._id)
+  private renderDialog(): TemplateResult | typeof nothing {
+    const editing = this.editing
+    if (editing === undefined) return nothing
+
+    const save = (): void => {
+      const value = fieldValue(this, '[data-rename-input]')
+      void this.onRename(editing.room, value)
+    }
 
     return html`
-      <wa-dialog data-delete-room-dialog open label=${msg('Delete this room?')}>
-        <p>
-          ${
-            held === 0
-              ? msg('This room holds no devices.')
-              : msg('The devices in this room have to go somewhere. Nothing is deleted.')
-          }
-        </p>
-        <wa-select data-destination label=${msg('Move the devices to')} value="unassigned">
-          <wa-option value="unassigned">${msg('Unassigned')}</wa-option>
-          ${others.map(
-            (candidate) => html`<wa-option value=${candidate._id}>${candidate.path}</wa-option>`,
-          )}
-        </wa-select>
-        <wa-button
-          slot="footer"
-          data-cancel-delete-room
-          @click=${() => {
-            this.deleting = undefined
+      <wa-dialog
+        data-rename-dialog
+        open
+        label=${editing.merge ? msg('Merge the spellings') : msg('Rename the room')}
+        @wa-after-hide=${(event: Event) => {
+          // Only the dialog's own close: a select or tooltip inside it bubbles the same event.
+          if (event.target !== event.currentTarget) return
+          this.editing = undefined
+          this.renameProblem = undefined
+        }}
+      >
+        <form
+          class="wa-stack wa-gap-m"
+          @submit=${(event: Event) => {
+            event.preventDefault()
+            save()
           }}
         >
-          ${msg('Cancel')}
-        </wa-button>
-        <wa-button
-          slot="footer"
-          variant="danger"
-          data-confirm-delete-room
-          @click=${() => {
-            const select = this.querySelector('[data-destination]') as { value?: unknown } | null
-            const chosen = typeof select?.value === 'string' ? select.value : 'unassigned'
-            void this.onDelete(
-              room._id,
-              chosen === 'unassigned' ? { kind: 'unassigned' } : { kind: 'room', roomId: chosen },
-            )
-          }}
-        >
-          ${msg('Delete the room')}
+          <wa-input
+            data-rename-input
+            required
+            value=${editing.room.spellings[0]}
+            label=${msg('Room name')}
+            hint=${
+              this.renameProblem !== undefined
+                ? renameProblemText(this.renameProblem)
+                : editing.merge
+                  ? msg('All devices in this room will use this name.')
+                  : msg(
+                      'Every device in this room, and in the rooms inside it, moves to the new name.',
+                    )
+            }
+          ></wa-input>
+        </form>
+        <wa-button slot="footer" data-dialog="close" appearance="plain">${msg('Cancel')}</wa-button>
+        <wa-button slot="footer" data-save-rename variant="brand" @click=${save}>
+          ${editing.merge ? msg('Merge') : msg('Rename')}
         </wa-button>
       </wa-dialog>
     `
   }
+}
+
+/**
+ * Why a new room name cannot be used, in the dialog's words. The doubled-slash case shares the
+ * device form's message; an empty one gets its own, since "a device needs a room" would be the
+ * wrong sentence in a dialog about renaming one.
+ */
+function renameProblemText(problem: RoomPathProblem): string {
+  return problem === 'empty' ? msg('A room needs a name.') : problemMessage('roomPathEmptySegment')
 }
 
 customElements.define('rooms-view', RoomsView)

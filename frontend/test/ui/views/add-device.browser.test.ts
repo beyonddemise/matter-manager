@@ -8,8 +8,9 @@ import '@awesome.me/webawesome-pro/dist/components/option/option.js'
 import { fixture, html, waitUntil } from '@open-wc/testing-helpers'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ProjectRepositories } from '../../../src/data/index.js'
-import type { DeviceDocument, RoomDocument } from '../../../src/domain/index.js'
+import type { DeviceDocument, Unsaved } from '../../../src/domain/index.js'
 import { BACKFILL_WANTED, type CatalogApi, type LookupOutcome } from '../../../src/ui/catalog.js'
+import { PROJECT_CHANGED } from '../../../src/ui/current-project.js'
 import { activateLocale } from '../../../src/ui/i18n/localization.js'
 import { ImageScanError } from '../../../src/ui/scan/image.js'
 import type { ScanSource } from '../../../src/ui/scan/source.js'
@@ -40,20 +41,6 @@ afterEach(async () => {
  * not have to synchronise with a read it cannot see — and the test below that submits with no
  * wait at all is the one pinning that.
  */
-/** The real repositories, with room writes refused and device writes working. */
-function refusingRoomWrites(): ProjectRepositories {
-  const real = database.repositories
-  return {
-    ...real,
-    rooms: {
-      ...real.rooms,
-      save: async () => {
-        throw new Error('storage refused the write')
-      },
-    },
-  }
-}
-
 /** The real repositories, with every device write refused - a full disk, a locked database. */
 function refusingWrites(): ProjectRepositories {
   const real = database.repositories
@@ -203,16 +190,41 @@ async function submit(element: HTMLElement, settled: () => boolean | Promise<boo
 }
 
 const devices = (): Promise<DeviceDocument[]> => database.repositories.devices.list()
-const rooms = (): Promise<RoomDocument[]> => database.repositories.rooms.list()
+/** Each stored device's room, in id order: where the form filed what it saved. */
+const filed = async (): Promise<string[]> =>
+  (await devices()).sort((a, b) => a._id.localeCompare(b._id)).map((device) => device.room)
+
+/**
+ * A device already filed under `room`: how a room exists (ADR 0021). Its id sorts before any
+ * the form generates, so {@link filed} lists it first.
+ */
+async function existing(room: string, id = 'device:0-existing'): Promise<void> {
+  const device: Unsaved<DeviceDocument> = {
+    _id: id,
+    type: 'device',
+    name: 'Already here',
+    room,
+    manualCode: SHORT_CODE,
+    installedAt: '2026-09-02',
+    addedAt: '2026-09-02T09:00:00.000Z',
+    disabled: false,
+    remarks: [],
+  }
+  await database.repositories.devices.save(device)
+}
 
 describe('when the existing rooms cannot be read', () => {
   it('says so, and still lets a device be entered', async () => {
     // Not fatal: a room can be typed. But offering no suggestions in silence invites somebody
     // to type "Kitchen" for a project that already has one, and the duplicate outlives the
     // failure that caused it.
+    // The rooms are read from the devices, so a failing device list is how they fail.
     const failing = {
-      devices: { list: async () => [], get: async () => undefined, save: async () => undefined },
-      rooms: { list: async () => Promise.reject(new Error('indexed_db_went_bad')) },
+      devices: {
+        list: async () => Promise.reject(new Error('indexed_db_went_bad')),
+        get: async () => undefined,
+        save: async () => undefined,
+      },
     } as never
 
     const element = (await fixture(
@@ -273,7 +285,7 @@ describe('filing a device from a pasted payload', () => {
 })
 
 describe('the room', () => {
-  it('creates one inline and points the device at it', async () => {
+  it('files the device under the path typed', async () => {
     const element = await form()
     fill(element, 'credential', PAYLOAD)
     fill(element, 'name', 'Kitchen ceiling light')
@@ -281,9 +293,7 @@ describe('the room', () => {
 
     await submit(element, async () => (await devices()).length === 1)
 
-    const [room] = await rooms()
-    expect(room?.path).toBe('Ground Floor/Kitchen')
-    expect((await devices())[0]?.roomId).toBe(room?._id)
+    expect(await filed()).toEqual(['Ground Floor/Kitchen'])
   })
 
   it('takes the path from the combobox\'s "Create" option', async () => {
@@ -306,15 +316,28 @@ describe('the room', () => {
     fill(element, 'name', 'Bathroom light')
     await submit(element, async () => (await devices()).length === 1)
 
-    expect((await rooms())[0]?.path).toBe('First Floor/Bathroom')
+    expect(await filed()).toEqual(['First Floor/Bathroom'])
+  })
+
+  it('offers the rooms the other devices are in', async () => {
+    await existing('Ground Floor/Kitchen')
+    await existing('ground floor/kitchen', 'device:0-second')
+    await existing('Attic', 'device:0-third')
+
+    const element = await form()
+    await waitUntil(() => element.rooms.length === 2, 'the view never read the existing rooms')
+    await element.updateComplete
+
+    // One option per room, however many ways its devices spell it.
+    const options = [...element.querySelectorAll('[data-field="room"] wa-option')].map((option) =>
+      option.getAttribute('value'),
+    )
+    expect(options).toHaveLength(2)
+    expect(options).toContain('Attic')
   })
 
   it('takes a room picked from the list', async () => {
-    await database.repositories.rooms.save({
-      _id: 'room:kitchen',
-      type: 'room',
-      path: 'Ground Floor/Kitchen',
-    })
+    await existing('Ground Floor/Kitchen')
 
     const element = await form()
     await waitUntil(() => element.rooms.length === 1, 'the view never read the existing room')
@@ -327,56 +350,45 @@ describe('the room', () => {
 
     fill(element, 'credential', PAYLOAD)
     fill(element, 'name', 'Kitchen ceiling light')
-    await submit(element, async () => (await devices()).length === 1)
+    await submit(element, async () => (await devices()).length === 2)
 
-    expect(await rooms()).toHaveLength(1)
-    expect((await devices())[0]?.roomId).toBe('room:kitchen')
+    expect(await filed()).toEqual(['Ground Floor/Kitchen', 'Ground Floor/Kitchen'])
   })
 
-  it('reuses an existing room even when submitted before the first read lands', async () => {
+  it('reuses an existing spelling even when submitted before the first read lands', async () => {
     // The race CodeRabbit found on #74. `firstUpdated` starts the room read asynchronously; a
-    // user who types the name of an existing room and saves before it arrives would, if the
-    // form planned against the rooms it was holding, get a *second* room with the same path -
-    // the exact duplicate this flow exists to prevent, visible only on a slow device where
-    // nobody is watching. Submitting with no wait at all is what pins the re-read.
-    await database.repositories.rooms.save({
-      _id: 'room:kitchen',
-      type: 'room',
-      path: 'Ground Floor/Kitchen',
-    })
+    // user who types an existing room in other capitals and saves before it arrives would, if
+    // the form planned against the rooms it was holding, store a *second* spelling of the room,
+    // visible only on a slow device where nobody is watching. Submitting with no wait at all is
+    // what pins the re-read.
+    await existing('Ground Floor/Kitchen')
 
     const element = await form()
     expect(element.rooms).toHaveLength(0)
 
     fill(element, 'credential', PAYLOAD)
     fill(element, 'name', 'Kitchen ceiling light')
-    typeRoom(element, 'Ground Floor/Kitchen')
-    await submit(element, async () => (await devices()).length === 1)
+    typeRoom(element, 'ground floor/kitchen')
+    await submit(element, async () => (await devices()).length === 2)
 
-    expect(await rooms()).toHaveLength(1)
-    expect((await devices())[0]?.roomId).toBe('room:kitchen')
+    expect(await filed()).toEqual(['Ground Floor/Kitchen', 'Ground Floor/Kitchen'])
   })
 
-  it('reuses an existing room rather than creating a second one', async () => {
-    await database.repositories.rooms.save({
-      _id: 'room:kitchen',
-      type: 'room',
-      path: 'Ground Floor/Kitchen',
-    })
+  it('reuses an existing spelling rather than storing a second one', async () => {
+    await existing('Ground Floor/Kitchen')
 
     const element = await form()
     await waitUntil(() => element.rooms.length === 1, 'the view never read the existing room')
 
     fill(element, 'credential', PAYLOAD)
     fill(element, 'name', 'Kitchen ceiling light')
-    // Typed differently on purpose: the same room to a person reading it, and M1-5's
-    // `roomPathKey` is what has to agree.
+    // Typed differently on purpose: the same room to a person reading it, and `roomPathKey`
+    // is what has to agree.
     typeRoom(element, 'ground floor / KITCHEN')
 
-    await submit(element, async () => (await devices()).length === 1)
+    await submit(element, async () => (await devices()).length === 2)
 
-    expect(await rooms()).toHaveLength(1)
-    expect((await devices())[0]?.roomId).toBe('room:kitchen')
+    expect(await filed()).toEqual(['Ground Floor/Kitchen', 'Ground Floor/Kitchen'])
   })
 
   it('follows a change of mind after a room was already picked', async () => {
@@ -384,16 +396,8 @@ describe('the room', () => {
     // afterwards leaves `value` on the old selection. Reading `value` whenever it is set — as
     // this form used to — files the device in the room the user just changed their mind about,
     // and nothing on screen says so.
-    await database.repositories.rooms.save({
-      _id: 'room:kitchen',
-      type: 'room',
-      path: 'Ground Floor/Kitchen',
-    })
-    await database.repositories.rooms.save({
-      _id: 'room:hall',
-      type: 'room',
-      path: 'Ground Floor/Hall',
-    })
+    await existing('Ground Floor/Kitchen')
+    await existing('Ground Floor/Hall', 'device:0-hall')
 
     const element = await form()
     await waitUntil(() => element.rooms.length === 2, 'the view never read the existing rooms')
@@ -404,9 +408,10 @@ describe('the room', () => {
     await element.updateComplete
     typeRoom(element, 'Ground Floor/Hall')
 
-    await submit(element, async () => (await devices()).length === 1)
+    await submit(element, async () => (await devices()).length === 3)
 
-    expect((await devices())[0]?.roomId).toBe('room:hall')
+    const saved = (await devices()).find((device) => device.name === 'Hall sensor')
+    expect(saved?.room).toBe('Ground Floor/Hall')
   })
 })
 
@@ -421,9 +426,6 @@ describe('refusing a draft', () => {
 
     expect(element.querySelector('[data-error]')?.textContent).toMatch(/MT:/)
     expect(await devices()).toHaveLength(0)
-    // The room too. Writing the room before validating the code would leave a stray room
-    // behind every time someone mistyped a label.
-    expect(await rooms()).toHaveLength(0)
   })
 
   it('puts the message beside the control that caused it', async () => {
@@ -475,6 +477,49 @@ describe('the form itself', () => {
   })
 })
 
+/** The `data-field` of every control marked `required`, sorted. */
+const requiredFields = (element: HTMLElement): (string | null)[] =>
+  [...element.querySelectorAll('[data-field][required]')]
+    .map((control) => control.getAttribute('data-field'))
+    .sort()
+
+describe('the mandatory fields', () => {
+  it('marks the setup code, name, room and installation date, and nothing else', async () => {
+    // `required` is what makes Web Awesome draw the asterisk and set `aria-required`. Spot and
+    // serial are optional, and an asterisk on them would send people hunting for a value.
+    const element = await form()
+    expect(requiredFields(element)).toEqual(['credential', 'installed-at', 'name', 'room'])
+    expect(element.querySelector('[data-field="spot"]')?.hasAttribute('required')).toBe(false)
+    expect(element.querySelector('[data-field="serial"]')?.hasAttribute('required')).toBe(false)
+  })
+
+  it('says once what the asterisk means', async () => {
+    const element = await form()
+    expect(element.querySelector('[data-required-note]')?.textContent?.trim()).toBe(
+      'Fields marked * are required.',
+    )
+  })
+
+  it('says it in German too', async () => {
+    await activateLocale('de')
+    try {
+      const element = await form()
+      expect(element.querySelector('[data-required-note]')?.textContent?.trim()).toBe(
+        'Mit * markierte Felder sind Pflichtfelder.',
+      )
+    } finally {
+      await activateLocale('en')
+    }
+  })
+
+  it("keeps the browser's own validation out of the way", async () => {
+    // `novalidate`: the planner's messages name the problem; the browser's generic bubble would
+    // arrive first and say less.
+    const element = await form()
+    expect(element.querySelector('form')?.hasAttribute('novalidate')).toBe(true)
+  })
+})
+
 describe('a write storage refuses', () => {
   it('stays on the form and says so, rather than navigating as though it saved', async () => {
     // Navigating to a list that does not contain the device is the application saying it
@@ -490,23 +535,6 @@ describe('a write storage refuses', () => {
     expect(await devices()).toHaveLength(0)
     expect(window.location.hash).toBe(before)
     expect(fieldValue(element, 'credential')).toBe(PAYLOAD)
-  })
-})
-
-describe('the order the two documents are written in', () => {
-  it('never leaves a device pointing at a room that was not written', async () => {
-    // PouchDB has no transactions, so one of the two writes can fail on its own. Room first
-    // means the worst case is an empty room, which is harmless and reusable. Device first
-    // means a device whose `roomId` names nothing - and the list would file it under "Without
-    // a room", which is a device that has quietly lost the location someone recorded for it.
-    const element = await form(refusingRoomWrites())
-    fill(element, 'credential', PAYLOAD)
-    fill(element, 'name', 'Kitchen ceiling light')
-    typeRoom(element, 'Ground Floor/Kitchen')
-
-    await submit(element, () => element.querySelector('[data-save-failed]') !== null)
-
-    expect(await devices()).toHaveLength(0)
   })
 })
 
@@ -982,5 +1010,47 @@ describe('asking for backfill after a save', () => {
     } finally {
       done()
     }
+  })
+})
+
+describe('switching project while a save is planned', () => {
+  afterEach(() => {
+    window.location.hash = ''
+  })
+
+  it('writes nothing when the project changes during the room re-read', async () => {
+    // The save waits for the rooms before it plans. A switch in that wait must not let the
+    // device typed under one project be written once the form resolves the next project's
+    // database (#291 review).
+    const real = database.repositories
+    const reread = deferred<DeviceDocument[]>()
+    let lists = 0
+    let saves = 0
+    const repositories: ProjectRepositories = {
+      ...real,
+      devices: {
+        ...real.devices,
+        list: () => (++lists === 1 ? real.devices.list() : reread.promise),
+        save: async (device) => {
+          saves += 1
+          return real.devices.save(device)
+        },
+      },
+    }
+    const element = await form(repositories)
+    typeCode(element, PAYLOAD)
+    fill(element, 'name', 'Lamp')
+    typeRoom(element, 'Kitchen')
+
+    element
+      .querySelector('form')
+      ?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    await waitUntil(() => lists >= 2, 'the save never re-read the rooms')
+    window.dispatchEvent(new CustomEvent(PROJECT_CHANGED))
+    reread.resolve([])
+    await waitUntil(() => !element.saving, 'the save never settled')
+
+    expect(saves).toBe(0)
+    expect(await devices()).toEqual([])
   })
 })

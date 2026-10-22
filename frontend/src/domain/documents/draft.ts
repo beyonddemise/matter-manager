@@ -4,12 +4,12 @@
  * The two flows differ in exactly one input — the setup code, which only a new device carries —
  * and one output, `addedAt`. Everything else is the same decision made twice: the name must say
  * something, the room path must be well formed, the date must be a calendar date that exists,
- * and an existing room is matched rather than duplicated.
+ * and an existing room's spelling is reused rather than a new one introduced.
  *
- * Making it one decision is not tidiness. If the edit flow matched rooms by comparing paths
- * while the add flow matched by {@link roomPathKey}, then moving a device into
- * `ground floor / kitchen` would create a **second** `Ground Floor/Kitchen` — the duplicate
- * M1-5 and M2-5 exist to prevent, walking back in through the door nobody was watching.
+ * Making it one decision is not tidiness. If the edit flow stored whatever was typed while the
+ * add flow reused the existing spelling, moving a device into `ground floor / kitchen` would
+ * put a second spelling of `Ground Floor/Kitchen` on the Rooms page, through the one door nobody
+ * was watching.
  *
  * @module
  */
@@ -17,12 +17,12 @@
 import { PAYLOAD_PROBLEMS } from '../matter/payload.js'
 import {
   normaliseRoomPath,
+  ROOM_PATH_SEPARATOR,
   type RoomPathProblem,
   roomPathKey,
   roomPathProblem,
+  splitRoomPath,
 } from '../rooms/path.js'
-import { documentId } from './ids.js'
-import type { RoomDocument, Unsaved } from './types.js'
 
 /** Which control the user has to go back to. A closed union, so a view cannot miss a case. */
 export type DraftField = 'credential' | 'name' | 'room' | 'installedAt' | 'remark'
@@ -86,7 +86,7 @@ export class DraftError extends Error {
  */
 export interface DeviceFields {
   readonly name: string
-  /** A room path, typed or chosen. Matched against existing rooms by {@link roomPathKey}. */
+  /** A room path, typed or chosen. Matched against existing rooms by {@link matchRoom}. */
   readonly room: string
   /** Free text the room name cannot carry: "ceiling, north end". */
   readonly spot?: string
@@ -176,37 +176,40 @@ export function readInstalledAt(value: string): string {
   return value
 }
 
-/** An existing room reused, or a new one to write before the device that points at it. */
-export interface RoomChoice {
-  /** A full `room:<uuid>` id, ready to store in `DeviceDocument.roomId`. */
-  readonly roomId: string
-  /** Present only when the room does not exist yet. Write it first. */
-  readonly room?: Unsaved<RoomDocument>
-}
-
 /**
- * Finds the room for a path, or plans a new one.
+ * The path to store for a typed room: the existing spelling wherever one matches.
  *
- * By key, not by string: M1-5 already decided that `Ground Floor/Kitchen` and
- * `ground floor / kitchen` are the same room. Comparing paths directly here would be a second
- * answer to a question already answered, and the two would drift apart.
+ * Matched by {@link roomPathKey}, ancestor by ancestor from the deepest. Typing
+ * `ground floor/kitchen` when `Ground Floor/Kitchen` exists stores `Ground Floor/Kitchen`;
+ * typing `ground floor/Pantry` when only `Ground Floor/Kitchen` exists stores
+ * `Ground Floor/Pantry`, so the floor keeps one spelling even though the room is new. Only the
+ * segments nothing matches keep what was typed.
+ *
+ * When the project already has two spellings of a room, the first one in `existing` wins. The
+ * caller passes them in `roomsOf` order, so that is the one the Rooms page lists first.
  *
  * @param path a normalised room path, from {@link readRoomPath}
- * @param rooms every room already in the project, passed in rather than read — this package
- *   does no I/O
- * @param uuid the uuid source, used only when the room is new
+ * @param existing every path the project's devices carry, passed in rather than read — this
+ *   package does no I/O
  */
-export function chooseRoom(
-  path: string,
-  rooms: readonly RoomDocument[],
-  uuid: () => string,
-): RoomChoice {
-  const key = roomPathKey(path)
-  const existing = rooms.find((room) => roomPathKey(room.path) === key)
-  if (existing !== undefined) return { roomId: existing._id }
+export function matchRoom(path: string, existing: readonly string[]): string {
+  // Every ancestor of every existing path, by key, keeping the first spelling seen.
+  const spellings = new Map<string, string>()
+  for (const candidate of existing) {
+    const segments = splitRoomPath(normaliseRoomPath(candidate))
+    for (let depth = 1; depth <= segments.length; depth++) {
+      const prefix = segments.slice(0, depth).join(ROOM_PATH_SEPARATOR)
+      const key = roomPathKey(prefix)
+      if (!spellings.has(key)) spellings.set(key, prefix)
+    }
+  }
 
-  const roomId = documentId('room', uuid())
-  return { roomId, room: { _id: roomId, type: 'room', path } }
+  const typed = splitRoomPath(path)
+  for (let depth = typed.length; depth > 0; depth--) {
+    const known = spellings.get(roomPathKey(typed.slice(0, depth).join(ROOM_PATH_SEPARATOR)))
+    if (known !== undefined) return [known, ...typed.slice(depth)].join(ROOM_PATH_SEPARATOR)
+  }
+  return path
 }
 
 /**

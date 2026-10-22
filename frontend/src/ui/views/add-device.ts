@@ -333,27 +333,29 @@ export class AddDeviceView extends DeviceFormView {
     // Set before the first `await`, not after the planning: two quick clicks would otherwise
     // both get past the guard while the room read below was still in flight.
     this.saving = true
+    // Before the first wait: a project switch during it must not write this device into the
+    // next project (see `projectSnapshot`).
+    const since = this.projectSnapshot()
 
     try {
       // Re-read the rooms rather than planning against `this.rooms`.
       //
-      // `firstUpdated` starts that read asynchronously, so a user who types the name of an
-      // existing room and saves before it lands would be planned against an empty list - and
-      // `planNewDevice`, seeing no match, would create a *second* room with the same path.
-      // That is precisely the duplicate this flow exists to prevent, and it would appear only
-      // on a slow device or a large catalogue, which is where nobody is watching for it.
+      // `firstUpdated` starts that read asynchronously, so a user who types an existing room in
+      // other capitals and saves before it lands would be planned against an empty list - and
+      // `planNewDevice`, seeing no match, would store a *second* spelling of the room. It would
+      // appear only on a slow device or a large catalogue, which is where nobody is watching.
       //
       // Re-reading closes the window completely rather than narrowing it, and it costs one
-      // ranged `_all_docs` on a deliberate action. It also picks up a room another tab created
-      // since this form was opened.
-      const rooms = await this.repos().rooms.list()
+      // ranged `_all_docs` on a deliberate action. It also picks up a room another tab filed a
+      // device under since this form was opened.
+      const rooms = await this.readRooms()
       this.rooms = rooms
 
       let creation: ReturnType<typeof planNewDevice>
       try {
         creation = planNewDevice(
           this.draft(),
-          rooms,
+          this.knownRoomPaths(rooms),
           {
             uuid: () => crypto.randomUUID(),
             now: () => new Date().toISOString(),
@@ -378,8 +380,8 @@ export class AddDeviceView extends DeviceFormView {
 
       // Stay on the form when storage refuses the write: navigating to a list that does not
       // contain the device would be the application saying it saved something it did not.
-      if (!(await this.write(creation))) return
-      this.askForBackfill(creation.device)
+      if (!(await this.write(creation, since))) return
+      this.askForBackfill(creation)
     } finally {
       this.saving = false
     }
@@ -391,12 +393,14 @@ export class AddDeviceView extends DeviceFormView {
     return html`
       <form class="wa-stack wa-gap-l app-form" @submit=${this.onSubmit} novalidate>
         <h1>${msg('Add a device')}</h1>
+        ${this.renderRequiredNote()}
 
         ${this.renderError()}
 
         <div class="wa-stack wa-gap-2xs">
           <wa-input
             data-field="credential"
+            required
             label=${msg('Setup code')}
             hint=${this.messageFor('credential') ?? msg('The MT: code from the QR label, or the numeric pairing code beneath it.')}
             autocomplete="off"

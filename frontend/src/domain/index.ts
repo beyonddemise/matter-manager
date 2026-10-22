@@ -41,7 +41,6 @@ export {
   type DraftProblem,
 } from './documents/draft.js'
 export {
-  type DeviceUpdate,
   planDeviceEdit,
   setDeviceDisabled,
 } from './documents/edit-device.js'
@@ -55,15 +54,11 @@ export {
   idRange,
   uuidOf,
 } from './documents/ids.js'
-// Only the types and the error reach the entry point. `readName`, `chooseRoom` and the rest
+// Only the types and the error reach the entry point. `readName`, `matchRoom` and the rest
 // are how `planNewDevice` and `planDeviceEdit` agree with each other, not an API for callers:
 // a view that validated a name itself would be a second answer to a question `core` already
 // answers, which is the whole failure this module was extracted to prevent.
-export {
-  type DeviceCreation,
-  type DeviceDraft,
-  planNewDevice,
-} from './documents/new-device.js'
+export { type DeviceDraft, planNewDevice } from './documents/new-device.js'
 export {
   isProjectDocument,
   PROJECT_DOCUMENT_ID,
@@ -78,7 +73,6 @@ export type {
   CatalogSource,
   DeviceDiscovery,
   DeviceDocument,
-  RoomDocument,
   Unsaved,
 } from './documents/types.js'
 export { BASE38_ALPHABET, Base38Error, decodeBase38, encodeBase38 } from './matter/base38.js'
@@ -160,18 +154,10 @@ export {
   withinLimit,
 } from './plan.js'
 export type { ProjectRole } from './role.js'
-export {
-  devicesInRoom,
-  planRoomDeletion,
-  type RoomDeletionPlan,
-  type RoomDestination,
-  renameRoom,
-  reorderRooms,
-  roomsInOrder,
-} from './rooms/list.js'
+export { type Room, renameRoom, roomsOf } from './rooms/list.js'
 export {
   compareRoomPaths,
-  isNearDuplicateRoomPath,
+  isSameRoom,
   isValidRoomPath,
   isWithinRoom,
   normaliseRoomPath,
@@ -191,18 +177,8 @@ export {
   latestRevision,
   mergeDevice,
   mergeRemarks,
-  mergeRoom,
   type Remark,
   type RemarkBearing,
   type Revision,
-  type RoomRevision,
-  UNASSIGNED_ROOM_PREFIX,
 } from './sync/merge.js'
-export {
-  DELETION_MEMORY_DAYS,
-  type DeletedRoom,
-  type ResurrectedRoom,
-  resurrectedRooms,
-  worthRemembering,
-} from './sync/resurrection.js'
 export { foldForComparison } from './text/fold.js'

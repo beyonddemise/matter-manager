@@ -15,7 +15,7 @@ const device = (name: string): DeviceDocument => ({
   updatedAt: '2026-08-19T08:00:00.000Z',
   type: 'device',
   name,
-  roomId: 'room:kitchen',
+  room: 'Ground Floor/Kitchen',
   manualCode: '34970112332',
   installedAt: '2026-08-19',
   addedAt: '2026-08-19T08:00:00.000Z',
@@ -24,8 +24,9 @@ const device = (name: string): DeviceDocument => ({
 })
 
 const group = (path: string, ...names: string[]): DeviceGroup => ({
-  roomId: `room:${path}`,
+  key: path.toLowerCase(),
   path,
+  spellings: [path],
   devices: names.map(device),
 })
 

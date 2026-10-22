@@ -62,11 +62,11 @@ afterEach(async () => {
   await destroyProjectStores()
 })
 
-const device = (id: string, name: string, roomId: string, extra = {}) => ({
+const device = (id: string, name: string, room: string, extra = {}) => ({
   _id: id,
   type: 'device' as const,
   name,
-  roomId,
+  room,
   manualCode: '34970112332',
   installedAt: '2026-08-26',
   addedAt: '2026-08-26T09:00:00.000Z',
@@ -76,11 +76,10 @@ const device = (id: string, name: string, roomId: string, extra = {}) => ({
 })
 
 async function seed(): Promise<void> {
-  const { rooms, devices } = database.repositories
-  await rooms.save({ _id: 'room:kitchen', type: 'room', path: 'Ground Floor/Kitchen' })
-  await devices.save(device('device:ceiling', 'Ceiling light', 'room:kitchen'))
-  await devices.save(device('device:extractor', 'Extractor', 'room:kitchen'))
-  await devices.save(device('device:old', 'Old sensor', 'room:kitchen', { disabled: true }))
+  const { devices } = database.repositories
+  await devices.save(device('device:ceiling', 'Ceiling light', 'Ground Floor/Kitchen'))
+  await devices.save(device('device:extractor', 'Extractor', 'Ground Floor/Kitchen'))
+  await devices.save(device('device:old', 'Old sensor', 'Ground Floor/Kitchen', { disabled: true }))
 }
 
 async function list(): Promise<DeviceListView> {

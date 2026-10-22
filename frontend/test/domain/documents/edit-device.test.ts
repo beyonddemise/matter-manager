@@ -1,23 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import type { DraftError } from '../../../src/domain/documents/draft.js'
 import { planDeviceEdit, setDeviceDisabled } from '../../../src/domain/documents/edit-device.js'
-import type { DeviceDocument, RoomDocument } from '../../../src/domain/documents/types.js'
+import type { DeviceDocument } from '../../../src/domain/documents/types.js'
 
-const KITCHEN: RoomDocument = {
-  _id: 'room:kitchen',
-  _rev: '1-a',
-  updatedAt: '2026-08-01T00:00:00.000Z',
-  type: 'room',
-  path: 'Ground Floor/Kitchen',
-}
-
-const HALL: RoomDocument = {
-  _id: 'room:hall',
-  _rev: '1-b',
-  updatedAt: '2026-08-01T00:00:00.000Z',
-  type: 'room',
-  path: 'Ground Floor/Hall',
-}
+/** Room paths the project's devices already carry, as `roomsOf` spells them. */
+const KITCHEN = 'Ground Floor/Kitchen'
+const HALL = 'Ground Floor/Hall'
 
 /**
  * A device filed from the verified reference payload; see `matter/credential.test.ts`.
@@ -31,7 +19,7 @@ const DEVICE: DeviceDocument = {
   updatedAt: '2026-08-20T10:00:00.000Z',
   type: 'device',
   name: 'Ceiling light',
-  roomId: KITCHEN._id,
+  room: KITCHEN,
   spot: 'ceiling, north end',
   manualCode: '34970112332',
   payload: 'MT:Y.K9042C00KA0648G00',
@@ -61,25 +49,16 @@ const FIELDS = {
   installedAt: '2026-08-20',
 }
 
-const uuid =
-  (value = 'new-room-uuid') =>
-  () =>
-    value
-
 describe('planDeviceEdit', () => {
   it('renames a device without touching anything else', () => {
-    const { room, device } = planDeviceEdit(
-      DEVICE,
-      { ...FIELDS, name: '  Kitchen ceiling light  ' },
-      [KITCHEN],
-      uuid(),
-    )
+    const device = planDeviceEdit(DEVICE, { ...FIELDS, name: '  Kitchen ceiling light  ' }, [
+      KITCHEN,
+    ])
 
-    expect(room).toBeUndefined()
     expect(device.name).toBe('Kitchen ceiling light')
     expect(device._id).toBe(DEVICE._id)
     expect(device._rev).toBe(DEVICE._rev)
-    expect(device.roomId).toBe(KITCHEN._id)
+    expect(device.room).toBe(KITCHEN)
     expect(device.addedAt).toBe(DEVICE.addedAt)
     expect(device.remarks).toEqual(DEVICE.remarks)
   })
@@ -87,7 +66,7 @@ describe('planDeviceEdit', () => {
   it('leaves the credential exactly as it was', () => {
     // The reason the setup code is not an editable field at all: these five agree with each
     // other or the QR silently fails to commission. An edit must not be able to separate them.
-    const { device } = planDeviceEdit(DEVICE, { ...FIELDS, name: 'Renamed' }, [KITCHEN], uuid())
+    const device = planDeviceEdit(DEVICE, { ...FIELDS, name: 'Renamed' }, [KITCHEN])
 
     expect(device.manualCode).toBe(DEVICE.manualCode)
     expect(device.payload).toBe(DEVICE.payload)
@@ -99,47 +78,44 @@ describe('planDeviceEdit', () => {
   it('does not carry the repository stamp back in', () => {
     // `updatedAt` is half of the conflict merge's total order (ADR 0010) and the repository
     // owns it. A document written with the stamp it was read at loses every future conflict.
-    const { device } = planDeviceEdit(DEVICE, FIELDS, [KITCHEN], uuid())
+    const device = planDeviceEdit(DEVICE, FIELDS, [KITCHEN])
 
     expect(device).not.toHaveProperty('updatedAt')
   })
 
-  it('moves a device into another existing room without creating one', () => {
-    const { room, device } = planDeviceEdit(
-      DEVICE,
-      { ...FIELDS, room: 'Ground Floor/Hall' },
-      [KITCHEN, HALL],
-      uuid(),
-    )
+  it('moves a device into another existing room', () => {
+    const device = planDeviceEdit(DEVICE, { ...FIELDS, room: 'Ground Floor/Hall' }, [KITCHEN, HALL])
 
-    expect(room).toBeUndefined()
-    expect(device.roomId).toBe(HALL._id)
+    expect(device.room).toBe(HALL)
   })
 
   it('matches the target room by key, not by string', () => {
-    // Otherwise moving a device into `ground floor / hall` would create a *second* room with
-    // the same path — the duplicate M1-5 and M2-5 exist to prevent.
-    const { room, device } = planDeviceEdit(
-      DEVICE,
-      { ...FIELDS, room: 'ground floor / hall' },
-      [KITCHEN, HALL],
-      uuid(),
-    )
+    // Otherwise moving a device into `ground floor / hall` would put a second spelling of the
+    // hall on the Rooms page, through the one door nobody was watching.
+    const device = planDeviceEdit(DEVICE, { ...FIELDS, room: 'ground floor / hall' }, [
+      KITCHEN,
+      HALL,
+    ])
 
-    expect(room).toBeUndefined()
-    expect(device.roomId).toBe(HALL._id)
+    expect(device.room).toBe(HALL)
   })
 
-  it('plans the room first when the device moves somewhere new', () => {
-    const { room, device } = planDeviceEdit(
-      DEVICE,
-      { ...FIELDS, room: 'First Floor / Study' },
-      [KITCHEN, HALL],
-      uuid('study'),
-    )
+  it('reuses the spelling of an existing floor when the device moves somewhere new', () => {
+    const device = planDeviceEdit(DEVICE, { ...FIELDS, room: 'GROUND FLOOR / Study' }, [
+      KITCHEN,
+      HALL,
+    ])
 
-    expect(room).toEqual({ _id: 'room:study', type: 'room', path: 'First Floor/Study' })
-    expect(device.roomId).toBe('room:study')
+    expect(device.room).toBe('Ground Floor/Study')
+  })
+
+  it('stores a new room normalised when nothing matches', () => {
+    const device = planDeviceEdit(DEVICE, { ...FIELDS, room: 'First Floor / Study' }, [
+      KITCHEN,
+      HALL,
+    ])
+
+    expect(device.room).toBe('First Floor/Study')
   })
 
   it('keeps a disabled device disabled', () => {
@@ -151,30 +127,24 @@ describe('planDeviceEdit', () => {
       disabledAt: '2026-08-21T08:00:00.000Z',
     }
 
-    const { device } = planDeviceEdit(disabled, { ...FIELDS, name: 'Renamed' }, [KITCHEN], uuid())
+    const device = planDeviceEdit(disabled, { ...FIELDS, name: 'Renamed' }, [KITCHEN])
 
     expect(device.disabled).toBe(true)
     expect(device.disabledAt).toBe('2026-08-21T08:00:00.000Z')
   })
 
   it('removes spot and serial when they are cleared rather than storing empty ones', () => {
-    const { device } = planDeviceEdit(
-      DEVICE,
-      { ...FIELDS, spot: '   ', serial: '' },
-      [KITCHEN],
-      uuid(),
-    )
+    const device = planDeviceEdit(DEVICE, { ...FIELDS, spot: '   ', serial: '' }, [KITCHEN])
 
     expect(device).not.toHaveProperty('spot')
     expect(device).not.toHaveProperty('serial')
   })
 
   it('trims spot and serial when they are given', () => {
-    const { device } = planDeviceEdit(
+    const device = planDeviceEdit(
       DEVICE,
       { ...FIELDS, spot: '  under the sink  ', serial: '  SN-2  ' },
       [KITCHEN],
-      uuid(),
     )
 
     expect(device.spot).toBe('under the sink')
@@ -182,12 +152,7 @@ describe('planDeviceEdit', () => {
   })
 
   it('changes the installation date', () => {
-    const { device } = planDeviceEdit(
-      DEVICE,
-      { ...FIELDS, installedAt: '2024-02-29' },
-      [KITCHEN],
-      uuid(),
-    )
+    const device = planDeviceEdit(DEVICE, { ...FIELDS, installedAt: '2024-02-29' }, [KITCHEN])
 
     expect(device.installedAt).toBe('2024-02-29')
   })
@@ -199,7 +164,7 @@ describe('planDeviceEdit', () => {
   ])('refuses an unusable %s, naming the field', (field, override) => {
     let thrown: DraftError | undefined
     try {
-      planDeviceEdit(DEVICE, { ...FIELDS, ...override }, [KITCHEN], uuid())
+      planDeviceEdit(DEVICE, { ...FIELDS, ...override }, [KITCHEN])
     } catch (error) {
       thrown = error as DraftError
     }

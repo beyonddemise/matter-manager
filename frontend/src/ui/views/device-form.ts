@@ -8,11 +8,13 @@ import {
   type DraftError,
   type DraftField,
   normaliseRoomPath,
-  type RoomDocument,
+  type Room,
+  roomsOf,
   type Unsaved,
 } from '../../domain/index.js'
 import { PROJECT_CHANGED } from '../current-project.js'
 import { projectDatabase } from '../db/project-database.js'
+import { displayOrder } from '../i18n/localization.js'
 import { shownManufacturer } from '../i18n/manufacturer.js'
 import { problemMessage } from '../i18n/problems.js'
 
@@ -61,14 +63,18 @@ export abstract class DeviceFormView extends LitElement {
   }
 
   /**
-   * Where devices and rooms are read and written.
+   * Where devices are read and written.
    *
-   * Bound by a test to an in-memory pair; left unset in the application, where it resolves to
+   * Bound by a test to an in-memory database; left unset in the application, where it resolves to
    * the real database on first use.
    */
   declare repositories?: ProjectRepositories
-  declare rooms: readonly RoomDocument[]
-  /** A room path the user asked to create, not yet written. See {@link onCreateRoom}. */
+  /** The rooms the project's devices are in, for the combobox and for `matchRoom`. */
+  declare rooms: readonly Room[]
+  /**
+   * One more path to offer than the rooms' first spellings: a room the user typed that no
+   * device is in yet (see {@link onCreateRoom}), or the edited device's own spelling.
+   */
   declare createdRoom: string
   // `| undefined` rather than `?:`: the field is cleared on a successful attempt, and under
   // `exactOptionalPropertyTypes` assigning `undefined` to an optional property is an error.
@@ -80,7 +86,7 @@ export abstract class DeviceFormView extends LitElement {
    * Whether the existing rooms could not be read.
    *
    * Not fatal — a room can be typed — but worth saying, because offering no suggestions
-   * silently invites a duplicate room that outlives the failure that caused it.
+   * silently invites a second spelling of a room that outlives the failure that caused it.
    */
   declare roomsFailed: boolean
 
@@ -104,6 +110,7 @@ export abstract class DeviceFormView extends LitElement {
    * for no reason, and Lit says so in dev mode.
    */
   private resolved: ProjectRepositories | undefined
+  /** Moves on every project switch; see {@link projectSnapshot}. */
   private projectGeneration = 0
   protected repos(): ProjectRepositories {
     this.resolved ??= this.repositories ?? projectDatabase()
@@ -140,14 +147,19 @@ export abstract class DeviceFormView extends LitElement {
     super.disconnectedCallback()
   }
 
+  /** The rooms the devices are in, in the interface's locale order. */
+  protected async readRooms(): Promise<readonly Room[]> {
+    return roomsOf(await this.repos().devices.list(), displayOrder())
+  }
+
   protected async loadRooms(): Promise<void> {
     try {
-      this.rooms = await this.repos().rooms.list()
+      this.rooms = await this.readRooms()
     } catch {
       // The least severe of the three read failures, and still worth saying. The rooms are only
       // suggestions here — the form works without them, because a room can be typed. But
-      // silently offering none invites somebody to type "Kitchen" for a project that already
-      // has a Kitchen, and the duplicate outlives the failure that caused it.
+      // silently offering none invites somebody to type "kitchen" for a project that already
+      // has a Kitchen, and the second spelling outlives the failure that caused it.
       //
       // Not logged: the form holds a setup code.
       this.roomsFailed = true
@@ -155,11 +167,26 @@ export abstract class DeviceFormView extends LitElement {
   }
 
   /**
-   * Writes the planned documents, and says whether it worked.
+   * Every spelling of every room, in `roomsOf` order: what `matchRoom` reuses a spelling from.
+   */
+  protected knownRoomPaths(rooms: readonly Room[] = this.rooms): readonly string[] {
+    return rooms.flatMap((room) => room.spellings)
+  }
+
+  /**
+   * Which project the form is on, as a number that moves with every switch.
    *
-   * The room goes first. PouchDB has no transactions, so a failure between the two writes
-   * leaves either nothing or an empty room — and an empty room is harmless and reusable,
-   * whereas a device pointing at a room that does not exist is a broken record.
+   * A save captures it **before its first wait** (the room re-read) and hands it to
+   * {@link write}. A switch in between moves it, and `write` then refuses: by that point
+   * `repos()` resolves the *next* project's database, and the device was typed under the old
+   * one.
+   */
+  protected projectSnapshot(): number {
+    return this.projectGeneration
+  }
+
+  /**
+   * Writes the planned device, and says whether it worked.
    *
    * A rejected write is reported rather than thrown. Left to propagate out of a submit
    * handler it becomes an unhandled rejection: the button un-busies, nothing appears on
@@ -171,17 +198,15 @@ export abstract class DeviceFormView extends LitElement {
    * into whatever a user pastes into a bug report — is the one leak this application must not
    * have. What the user needs is on screen; what a developer needs is the failing operation,
    * which is this one.
+   *
+   * @param device what to save
+   * @param since the {@link projectSnapshot} taken when the save began; after a switch since
+   *   then nothing is written (the form has already left for the device list)
    */
-  protected async write(plan: {
-    readonly room?: Unsaved<RoomDocument>
-    readonly device: Unsaved<DeviceDocument>
-  }): Promise<boolean> {
-    const generation = this.projectGeneration
+  protected async write(device: Unsaved<DeviceDocument>, since: number): Promise<boolean> {
+    if (since !== this.projectGeneration) return false
     try {
-      const repositories = this.repos()
-      if (plan.room !== undefined) await repositories.rooms.save(plan.room)
-      if (generation !== this.projectGeneration) return false
-      await repositories.devices.save(plan.device)
+      await this.repos().devices.save(device)
       // Not observable today: a successful save always navigates away from the form, so
       // nothing renders this flag afterwards, and a mutation probe reports the line as a
       // survivor. It stays because it makes the flag a true statement about the last attempt
@@ -312,13 +337,15 @@ export abstract class DeviceFormView extends LitElement {
   }
 
   /**
-   * Every known room path, plus one the user just asked to create.
+   * Every known room, plus one the user just asked to create.
    *
    * De-duplicated because `wa-combobox` keys its options by value, and a room the user typed
    * that turns out to already exist would otherwise appear twice.
    */
   private roomPaths(): readonly string[] {
-    const paths = this.rooms.map((room) => room.path)
+    // One option per room, its first spelling: offering `Kitchen` and `kitchen` side by side
+    // would invite picking either, and `matchRoom` files both under the first anyway.
+    const paths = this.rooms.map((room) => room.spellings[0])
     return this.createdRoom === '' || paths.includes(this.createdRoom)
       ? paths
       : [...paths, this.createdRoom]
@@ -363,11 +390,24 @@ export abstract class DeviceFormView extends LitElement {
     return ''
   }
 
+  /**
+   * What the asterisk on a label means, said once above the controls.
+   *
+   * `required` on a control makes Web Awesome append the asterisk and set `aria-required`, so a
+   * screen reader announces it per field; this line is for everyone reading the asterisks.
+   * The forms keep `novalidate`: the planners' own messages name the problem, and the browser's
+   * generic "fill in this field" would arrive first and say less.
+   */
+  protected renderRequiredNote(): TemplateResult {
+    return html`<p class="app-empty" data-required-note>${msg('Fields marked * are required.')}</p>`
+  }
+
   /** The five controls both forms have, in the order both forms show them. */
   protected renderFields(): TemplateResult {
     return html`
       <wa-input
         data-field="name"
+        required
         label=${msg('Name')}
         hint=${this.messageFor('name') ?? msg('What you would call it out loud: "kitchen ceiling light".')}
       ></wa-input>
@@ -375,6 +415,7 @@ export abstract class DeviceFormView extends LitElement {
       <wa-combobox
         data-field="room"
         allow-create
+        required
         label=${msg('Room')}
         hint=${this.messageFor('room') ?? msg('Pick a room, or type a new one to create it. Use "/" for floors: "Ground Floor/Kitchen".')}
         @wa-create=${this.onCreateRoom}
@@ -393,6 +434,7 @@ export abstract class DeviceFormView extends LitElement {
       <wa-input
         data-field="installed-at"
         type="date"
+        required
         label=${msg('Installed')}
         hint=${this.messageFor('installedAt') ?? ''}
       ></wa-input>

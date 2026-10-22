@@ -40,10 +40,10 @@ claim in `dependency-policy.json` a proof rather than a promise.
 
 ## Documents are keyed by type
 
-Ids are `device:<uuid>` and `room:<uuid>`, so each type is a contiguous key range and `list()`
-is a ranged `_all_docs` query with no view to define, index, replicate or find stale. The cost
-is that the only free query is by id prefix, which is why a device's `roomId` is a full
-document id rather than a bare uuid.
+Ids are `device:<uuid>`, so each type is a contiguous key range and `list()` is a ranged
+`_all_docs` query with no view to define, index, replicate or find stale. The cost is that the
+only free query is by id prefix, which is enough: a device carries its room's path (ADR 0021),
+and the room list is derived in memory from the devices.
 
 ## The repository owns `updatedAt`
 

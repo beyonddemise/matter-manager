@@ -104,14 +104,17 @@ export const WEBSITE = 'https://www.matter-manager.io'
 type ViewParams = Readonly<Record<string, string>>
 
 /**
- * What a view may ask of the shell that renders it. Only the projects page asks anything: its
- * inputs (the index, the server list, the session, replication) are the shell's state.
+ * What a view may ask of the shell that renders it: the projects and account pages, whose
+ * inputs (the index, the server list, the session, replication) are the shell's state, and the
+ * open project's name for the pages that show it under their heading.
  */
 export interface ViewHost {
   /** The projects page, wired to the shell's state and replication. */
   renderProjects(): TemplateResult
   /** The account page, given the cached profile and the sign-in-methods api. */
   renderAccount(): TemplateResult
+  /** The open project's name, `''` when it has none yet (the unadopted first-run catalogue). */
+  projectName(): string
 }
 
 export const VIEWS: Readonly<
@@ -120,9 +123,10 @@ export const VIEWS: Readonly<
   projects: (_params, host) => host.renderProjects(),
   'add-device': () => html`<add-device-view></add-device-view>`,
   device: (params) => html`<device-view uuid=${params.id ?? ''}></device-view>`,
-  'device-list': () => html`<device-list-view></device-list-view>`,
+  'device-list': (_params, host) =>
+    html`<device-list-view .projectName=${host.projectName()}></device-list-view>`,
   'edit-device': (params) => html`<edit-device-view uuid=${params.id ?? ''}></edit-device-view>`,
-  rooms: () => html`<rooms-view></rooms-view>`,
+  rooms: (_params, host) => html`<rooms-view .projectName=${host.projectName()}></rooms-view>`,
   account: (_params, host) => host.renderAccount(),
   settings: () => html`<settings-view></settings-view>`,
 }
@@ -708,6 +712,11 @@ export class AppShell extends LitElement implements ViewHost {
       .plan=${this.projects.facts?.plan}
       .session=${this.session}
     ></account-view>`
+  }
+
+  /** The name the status bar announces, which is the open project's. See {@link ViewHost}. */
+  projectName(): string {
+    return this.projects.currentSync()?.name ?? ''
   }
 
   /** The page's `refresh`: the list fetched again, then everything re-read. */

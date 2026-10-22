@@ -6,7 +6,6 @@ import {
   documentId,
   manufacturerName,
   planDeviceEdit,
-  type RoomDocument,
   uuidOf,
 } from '../../domain/index.js'
 import { DeviceFormView } from './device-form.js'
@@ -77,14 +76,14 @@ export class EditDeviceView extends DeviceFormView {
     const id = this.documentId()
     const [device, rooms] = await Promise.all([
       id === undefined ? undefined : this.repos().devices.get(id),
-      this.repos().rooms.list(),
+      this.readRooms(),
     ])
     if (token !== this.request) return
 
     this.device = device
     this.rooms = rooms
     this.loaded = true
-    if (device !== undefined) await this.fill(device, rooms)
+    if (device !== undefined) await this.fill(device)
   }
 
   /**
@@ -94,18 +93,18 @@ export class EditDeviceView extends DeviceFormView {
    * would throw away everything the user had just typed, which is the one thing a validation
    * error must not do.
    */
-  private async fill(device: DeviceDocument, rooms: readonly RoomDocument[]): Promise<void> {
+  private async fill(device: DeviceDocument): Promise<void> {
     await this.updateComplete
     this.setControlValue('[data-field="name"]', device.name)
     this.setControlValue('[data-field="spot"]', device.spot ?? '')
     this.setControlValue('[data-field="serial"]', device.serial ?? '')
     this.setControlValue('[data-field="installed-at"]', device.installedAt)
 
-    // An empty path means the device's room no longer exists — deleted on another replica.
-    // The field is then left blank and the save cannot succeed until a room is chosen, which
-    // is the honest outcome: the reference is already dangling and this is where it gets fixed.
-    const path = rooms.find((room) => room._id === device.roomId)?.path ?? ''
-    await this.selectRoom(path)
+    // The device's own spelling is offered as an option: the combobox lists one spelling per
+    // room, and it refuses a value that matches no option. A device from before ADR 0021 has
+    // no `room`; the field is then blank and the save cannot succeed until one is chosen.
+    this.createdRoom = device.room ?? ''
+    await this.selectRoom(this.createdRoom)
   }
 
   private async onSubmit(event: Event): Promise<void> {
@@ -113,16 +112,18 @@ export class EditDeviceView extends DeviceFormView {
     const device = this.device
     if (this.saving || device === undefined) return
     this.saving = true
+    // Before the first wait, as on the add form: see `projectSnapshot`.
+    const since = this.projectSnapshot()
 
     try {
-      // Re-read for the same reason the add form does: a room another tab created since this
-      // form opened must be matched rather than duplicated.
-      const rooms = await this.repos().rooms.list()
+      // Re-read for the same reason the add form does: a room another tab filed a device under
+      // since this form opened must be matched rather than spelled a second way.
+      const rooms = await this.readRooms()
       this.rooms = rooms
 
       let update: ReturnType<typeof planDeviceEdit>
       try {
-        update = planDeviceEdit(device, this.fields(), rooms, () => crypto.randomUUID())
+        update = planDeviceEdit(device, this.fields(), this.knownRoomPaths(rooms))
       } catch (problem) {
         if (problem instanceof DraftError) {
           this.error = problem
@@ -134,7 +135,9 @@ export class EditDeviceView extends DeviceFormView {
 
       this.error = undefined
 
-      if (!(await this.write(update))) {
+      if (!(await this.write(update, since))) {
+        // Another project is open now: the form has left, and this device is not in it.
+        if (since !== this.projectSnapshot()) return
         // A rejected write here is most often a conflict: another tab or another replica has
         // moved the document on, so the `_rev` in hand is stale and every retry fails exactly
         // the same way. Re-reading makes the next attempt plan against what is actually
@@ -169,6 +172,7 @@ export class EditDeviceView extends DeviceFormView {
     return html`
       <form class="wa-stack wa-gap-l app-form" @submit=${this.onSubmit} novalidate>
         <h1>${msg('Edit device')}</h1>
+        ${this.renderRequiredNote()}
 
         ${this.renderError()}
 

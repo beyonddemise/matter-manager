@@ -30,7 +30,7 @@ const device = (id: string, extra: Partial<DeviceDocument> = {}): Unsaved<Device
   _id: `device:${id}`,
   type: 'device',
   name: `Device ${id}`,
-  roomId: 'room:hall',
+  room: 'Hall',
   manualCode: LONG_CODE,
   payload: PAYLOAD,
   spot: 'door frame',
@@ -103,7 +103,7 @@ describe('catalogue backfill', () => {
     const after = await database.repositories.devices.get('device:a')
     for (const key of [
       'name',
-      'roomId',
+      'room',
       'spot',
       'serial',
       'installedAt',

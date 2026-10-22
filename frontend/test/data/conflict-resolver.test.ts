@@ -6,7 +6,6 @@ import {
   type DeviceDocument,
   documentId,
   mergeDevice,
-  type RoomDocument,
   type Unsaved,
 } from '../../src/domain/index.js'
 import {
@@ -29,14 +28,15 @@ import {
  * returned a conflict would be a fake of the thing under test.
  */
 
-const KITCHEN = documentId('room', '3fa85f64-5717-4562-b3fc-2c963f66afa6')
+/** A room document from before ADR 0021. Nothing writes these any more; old servers hold some. */
+const KITCHEN = 'room:3fa85f64-5717-4562-b3fc-2c963f66afa6'
 const LAMP = documentId('device', '6ba7b810-9dad-11d1-80b4-00c04fd430c8')
 
 const lamp = (): Unsaved<DeviceDocument> => ({
   _id: LAMP,
   type: 'device',
   name: 'Kitchen ceiling light',
-  roomId: KITCHEN,
+  room: 'Ground Floor/Kitchen',
   manualCode: '34970112332',
   installedAt: '2026-08-19',
   addedAt: '2026-08-19T08:00:00.000Z',
@@ -44,7 +44,7 @@ const lamp = (): Unsaved<DeviceDocument> => ({
   remarks: [],
 })
 
-const kitchen = (): Unsaved<RoomDocument> => ({
+const kitchen = () => ({
   _id: KITCHEN,
   type: 'room',
   path: 'Ground Floor/Kitchen',
@@ -139,12 +139,14 @@ const stored = async (
   id: string,
 ): Promise<{
   readonly _rev: string
+  readonly name?: string
   readonly path?: string
   readonly remarks?: readonly { readonly text: string }[]
   readonly _conflicts?: readonly string[]
 }> =>
   (await database.get(id, { conflicts: true })) as unknown as {
     readonly _rev: string
+    readonly name?: string
     readonly path?: string
     readonly remarks?: readonly { readonly text: string }[]
     readonly _conflicts?: readonly string[]
@@ -174,7 +176,6 @@ beforeEach(async () => {
   three = replicas()
   const first = on(three.deviceA, '2026-08-20T08:00:00.000Z')
   await first.devices.save(lamp())
-  await first.rooms.save(kitchen())
   await syncOnce(three.deviceA, three.server)
   await syncOnce(three.deviceB, three.server)
 })
@@ -557,30 +558,50 @@ describe('the change feed', () => {
     }).not.toThrow()
   })
 
-  it('resolves a room, which merges by a different rule than a device', async () => {
-    // Devices and rooms arrive down one channel and the id is what says which is which. A watch
-    // that resolved only devices would leave every room conflict to a read that may not come.
-    const a = on(three.deviceA, '2026-08-20T11:00:00.000Z')
-    const watch = a.watchConflicts()
+  it('leaves alone a conflicted room document from before ADR 0021', async () => {
+    // Rooms became a path on the device, and no repair was made, so a server can still hold
+    // `room:` documents and replicate their conflicts in. Merging one by a guessed rule would
+    // be rewriting, and re-replicating, a document nothing reads any more.
+    await three.deviceA.put(kitchen())
+    await syncOnce(three.deviceA, three.server)
+    await syncOnce(three.deviceB, three.server)
+
+    let writes = 0
+    const database = watching(three.deviceA, {
+      onPut: () => {
+        writes += 1
+      },
+      onBulkDocs: () => {
+        writes += 1
+      },
+    })
+    const offered: string[] = []
+    const watch = on(database, '2026-08-20T11:00:00.000Z').watchConflicts()
+    // A second, bare watch on the same database proves the conflict did reach the feed, so
+    // "nothing happened" below means "ignored" rather than "never seen".
+    const seen = watchConflicts(three.deviceA, {
+      onConflicted: async (document) => {
+        offered.push(document._id)
+      },
+    })
 
     try {
-      const mine = await a.rooms.get(KITCHEN)
-      if (mine === undefined) throw new Error('the room should be here')
-      await a.rooms.save({ ...mine, path: 'Ground Floor/Kitchenette' })
-
-      const b = on(three.deviceB, '2026-08-20T09:00:00.000Z')
-      const theirs = await b.rooms.get(KITCHEN)
-      if (theirs === undefined) throw new Error('the room should be here')
-      await b.rooms.save({ ...theirs, path: 'Ground Floor/Kitchen Diner' })
-
+      const mine = await three.deviceA.get(KITCHEN)
+      await three.deviceA.put({ ...mine, path: 'Ground Floor/Kitchenette' })
+      const theirs = await three.deviceB.get(KITCHEN)
+      await three.deviceB.put({ ...theirs, path: 'Ground Floor/Kitchen Diner' })
       await reconnect(three)
 
       await eventually(async () => {
-        expect((await stored(three.deviceA, KITCHEN))._conflicts).toBeUndefined()
+        expect(offered).toContain(KITCHEN)
       })
-      expect((await stored(three.deviceA, KITCHEN)).path).toBe('Ground Floor/Kitchenette')
+      await new Promise((resume) => setTimeout(resume, 50))
+
+      expect((await stored(three.deviceA, KITCHEN))._conflicts).toHaveLength(1)
+      expect(writes).toBe(0)
     } finally {
       watch.cancel()
+      seen.cancel()
     }
   })
 
@@ -653,7 +674,7 @@ describe('the change feed', () => {
 
 describe('a deletion racing an edit', () => {
   /**
-   * The room is deleted on one device and renamed on the other, with a device still in it.
+   * The device is deleted on one phone and renamed on the other.
    *
    * The deletion is made the **higher generation** deliberately, so that the outcome below
    * cannot be explained by "the other one was newer". It is not: a deleted leaf loses to a live
@@ -663,14 +684,14 @@ describe('a deletion racing an edit', () => {
     const a = on(three.deviceA, '2026-08-20T10:00:00.000Z', '2026-08-20T11:00:00.000Z')
     const b = on(three.deviceB, '2026-08-20T09:00:00.000Z')
 
-    const room = await a.rooms.get(KITCHEN)
-    if (room === undefined) throw new Error('the room should be here')
-    const renamed = await a.rooms.save({ ...room, path: 'Ground Floor/Kitchenette' })
-    await a.rooms.remove(renamed)
+    const device = await a.devices.get(LAMP)
+    if (device === undefined) throw new Error('the device should be here')
+    const renamed = await a.devices.save({ ...device, name: 'Kitchen spotlight' })
+    await a.devices.remove(renamed)
 
-    const theirs = await b.rooms.get(KITCHEN)
-    if (theirs === undefined) throw new Error('the room should be here')
-    await b.rooms.save({ ...theirs, path: 'Ground Floor/Kitchen Diner' })
+    const theirs = await b.devices.get(LAMP)
+    if (theirs === undefined) throw new Error('the device should be here')
+    await b.devices.save({ ...theirs, name: 'Kitchen pendant' })
   }
 
   it('is not reported as a conflict at all, and the edit survives', async () => {
@@ -685,28 +706,24 @@ describe('a deletion racing an edit', () => {
     // which PouchDB does not implement. Only `get(id, { open_revs: 'all' })` can see it, and
     // that is a second read of every document on every list.
     //
-    // So there is nothing here for `resolve` to do, and `mergeRoom`'s resurrection branch
-    // cannot be reached through this mechanism: a deleted revision wins only when *every*
-    // branch is deleted, and then there is no path left to resurrect. See `docs/tasks/todo-53.md`.
-    const winner = await stored(three.deviceA, KITCHEN)
+    // So there is nothing here for `resolve` to do. See `docs/tasks/todo-53.md`.
+    const winner = await stored(three.deviceA, LAMP)
     expect(winner._conflicts).toBeUndefined()
-    expect(winner.path).toBe('Ground Floor/Kitchen Diner')
+    expect(winner.name).toBe('Kitchen pendant')
 
     // Which is the safe direction, and the reason this is documented rather than worked around:
-    // the deletion is discarded, nothing anybody typed is lost, and the device still has a room
-    // to be in. A resolution that let the deletion win would have to resurrect the room anyway.
-    expect((await a.rooms.get(KITCHEN))?.path).toBe('Ground Floor/Kitchen Diner')
-    expect((await a.devices.get(LAMP))?.roomId).toBe(KITCHEN)
+    // the deletion is discarded and nothing anybody typed is lost.
+    expect((await a.devices.get(LAMP))?.name).toBe('Kitchen pendant')
   })
 
-  it('leaves the same room on both devices', async () => {
+  it('leaves the same device on both phones', async () => {
     await deletedOnALiveOnB()
     await reconnect(three)
 
-    // Convergence is the part that still has to hold. Two devices disagreeing about whether a
-    // room exists is the failure this milestone is about, whichever way the disagreement went.
-    expect(await on(three.deviceA, '2026-08-20T12:00:00.000Z').rooms.list()).toEqual(
-      await on(three.deviceB, '2026-08-20T12:00:00.000Z').rooms.list(),
+    // Convergence is the part that still has to hold. Two phones disagreeing about whether a
+    // device exists is the failure this milestone is about, whichever way the disagreement went.
+    expect(await on(three.deviceA, '2026-08-20T12:00:00.000Z').devices.list()).toEqual(
+      await on(three.deviceB, '2026-08-20T12:00:00.000Z').devices.list(),
     )
   })
 })

@@ -46,7 +46,7 @@ const lamp = (extra: Partial<DeviceDocument> = {}): Unsaved<DeviceDocument> => (
   _id: DEVICE_ID,
   type: 'device',
   name: 'Kitchen ceiling light',
-  roomId: 'room:kitchen',
+  room: 'Ground Floor/Kitchen',
   payload: PAYLOAD,
   manualCode: LONG_CODE,
   vendorId: 0xfff1,
@@ -62,11 +62,6 @@ const lamp = (extra: Partial<DeviceDocument> = {}): Unsaved<DeviceDocument> => (
 })
 
 async function seed(device: Unsaved<DeviceDocument> = lamp()): Promise<void> {
-  await database.repositories.rooms.save({
-    _id: 'room:kitchen',
-    type: 'room',
-    path: 'Ground Floor/Kitchen',
-  })
   await database.repositories.devices.save(device)
 }
 
@@ -149,9 +144,8 @@ function refusingWrites(): ProjectRepositories {
 
 /** Seeds a second device so a test can navigate away from the first one. */
 async function seedSecond(): Promise<void> {
-  await database.repositories.rooms.save({ _id: 'room:hall', type: 'room', path: 'Hall' })
   await database.repositories.devices.save(
-    lamp({ _id: `device:${SECOND_UUID}`, name: 'Hall sensor', roomId: 'room:hall' }),
+    lamp({ _id: `device:${SECOND_UUID}`, name: 'Hall sensor', room: 'Hall' }),
   )
 }
 
@@ -200,7 +194,6 @@ describe('when the device cannot be read', () => {
   const failing = () =>
     ({
       devices: { get: async () => Promise.reject(new Error('indexed_db_went_bad')) },
-      rooms: { get: async () => Promise.reject(new Error('indexed_db_went_bad')) },
     }) as never
 
   it('says the device could not be read', async () => {
@@ -362,6 +355,17 @@ describe('the page', () => {
     await expect.element(view.getByRole('definition').filter({ hasText: 'Kitchen' })).toBeVisible()
   })
 
+  it('says "Without a room" for a device that carries none', async () => {
+    // Only a document from before ADR 0021 has no `room`; the page names the gap rather than
+    // leaving the field blank.
+    await seed(lamp({ room: '' }))
+    const element = await page()
+    const room = [...element.querySelectorAll('dl.app-details dt')].find(
+      (term) => term.textContent?.trim() === 'Room',
+    )?.nextElementSibling
+    expect(room?.textContent?.trim()).toBe('Without a room')
+  })
+
   it('shows what the device is and where it is', async () => {
     await seed()
     const element = await page()
@@ -419,7 +423,7 @@ describe('navigating from one device to another', () => {
       _id: `device:${OTHER_UUID}`,
       type: 'device',
       name: 'Hall sensor',
-      roomId: 'room:kitchen',
+      room: 'Ground Floor/Kitchen',
       payload: OTHER_PAYLOAD,
       manualCode: '34970112332',
       installedAt: '2026-08-19',
@@ -608,7 +612,7 @@ describe('deleting a device', () => {
   it('closes an open confirmation when the route moves to another device', async () => {
     await seed()
     await database.repositories.devices.save(
-      lamp({ _id: `device:${SECOND_UUID}`, name: 'Hall sensor', roomId: 'room:hall' }),
+      lamp({ _id: `device:${SECOND_UUID}`, name: 'Hall sensor', room: 'Hall' }),
     )
     const element = await page()
 
@@ -1016,7 +1020,6 @@ describe('what the catalogue knows', () => {
       '6ba7b813-9dad-11d1-80b4-00c04fd430c8',
     ] as const
     await seed(lamp({ ...CATALOGUED, _id: `device:${ids[0]}` }))
-    // `seed` files the room as well, and a room can only be written once without its revision.
     await database.repositories.devices.save(lamp({ vendorName: 'Aqara', _id: `device:${ids[1]}` }))
     await database.repositories.devices.save(lamp({ _id: `device:${ids[2]}` }))
 

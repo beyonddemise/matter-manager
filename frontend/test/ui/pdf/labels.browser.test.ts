@@ -1,11 +1,6 @@
 import { PDFDocument, StandardFonts } from 'pdf-lib'
 import { describe, expect, it } from 'vitest'
-import {
-  AVERY_L7160,
-  browseDevices,
-  type DeviceDocument,
-  type RoomDocument,
-} from '../../../src/domain/index.js'
+import { AVERY_L7160, browseDevices, type DeviceDocument } from '../../../src/domain/index.js'
 import { buildLabelPdf, type LabelOptions, labelColumns } from '../../../src/ui/pdf/labels.js'
 import { extractPlacedText } from './text-extraction.js'
 
@@ -25,21 +20,13 @@ const DETAIL_SIZE = 7
 /** The width an L7160 label's text column has, as `labels.ts` draws it. */
 const TEXT_WIDTH = labelColumns(AVERY_L7160.labelWidth, AVERY_L7160.labelHeight).textWidth
 
-const room = (path: string): RoomDocument => ({
-  _id: 'room:studio',
-  _rev: '1-a',
-  updatedAt: '2026-08-19T08:00:00.000Z',
-  type: 'room',
-  path,
-})
-
 const lamp: DeviceDocument = {
   _id: 'device:lamp',
   _rev: '1-a',
   updatedAt: '2026-08-19T08:00:00.000Z',
   type: 'device',
   name: 'Studio lamp',
-  roomId: 'room:studio',
+  room: 'Attic/Studio',
   payload: PAYLOAD,
   manualCode: '34970112332',
   installedAt: '2026-08-19',
@@ -50,7 +37,7 @@ const lamp: DeviceDocument = {
 
 /** The room lines of a sheet with one label for `lamp` in a room at `path`. */
 async function roomLines(path: string) {
-  const bytes = await buildLabelPdf(browseDevices([lamp], [room(path)]), OPTIONS)
+  const bytes = await buildLabelPdf(browseDevices([{ ...lamp, room: path }]), OPTIONS)
   return (await extractPlacedText(bytes)).filter((line) => line.size === DETAIL_SIZE)
 }
 

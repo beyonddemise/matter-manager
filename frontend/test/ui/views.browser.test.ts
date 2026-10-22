@@ -1,6 +1,7 @@
 import { fixture, html } from '@open-wc/testing-helpers'
+import { render } from 'lit'
 import { expect, it } from 'vitest'
-import { VIEWS } from '../../src/ui/app-shell.js'
+import { VIEWS, type ViewHost } from '../../src/ui/app-shell.js'
 import { ROUTES } from '../../src/ui/router/routes.js'
 import '../../src/ui/views/not-found.js'
 
@@ -29,6 +30,24 @@ it('declares no view the registry never routes to', () => {
   // exactly where one would sit unnoticed.
   const routed = new Set(ROUTES.map((route) => route.view))
   expect(Object.keys(VIEWS).filter((view) => !routed.has(view))).toEqual([])
+})
+
+it.each(['device-list', 'rooms'] as const)("hands the %s view the open project's name", (view) => {
+  // Both pages say "Project <name>" under their heading (ADR 0021), and the name is the
+  // shell's to know. Rendered into a detached container, so the view is never connected and
+  // never opens a database of its own.
+  const host: ViewHost = {
+    renderProjects: () => html``,
+    renderAccount: () => html``,
+    projectName: () => 'Hillside',
+  }
+  const container = document.createElement('div')
+  render(VIEWS[view]?.({}, host), container)
+
+  const element = container.querySelector(`${view}-view`) as
+    | (Element & { projectName?: string })
+    | null
+  expect(element?.projectName).toBe('Hillside')
 })
 
 // The device list has its own file, `views/device-list.browser.test.ts`, since M2-6 gave it

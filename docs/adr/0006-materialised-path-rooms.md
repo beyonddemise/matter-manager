@@ -4,7 +4,8 @@ Date: 2026-08-19
 
 ## Status
 
-Accepted
+Accepted. The storage half (room documents, devices referencing them by id) is superseded by
+[0021](0021-room-is-a-device-property.md); the path grammar stands.
 
 ## Context
 

@@ -1,10 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import {
-  browseDevices,
-  type DeviceDocument,
-  type RoomDocument,
-  TEST_VENDOR_NAME,
-} from '../../../src/domain/index.js'
+import { browseDevices, type DeviceDocument, TEST_VENDOR_NAME } from '../../../src/domain/index.js'
 import { activateLocale } from '../../../src/ui/i18n/localization.js'
 import { inventoryLabels } from '../../../src/ui/pdf/download.js'
 import { buildInventoryPdf, type InventoryLabels } from '../../../src/ui/pdf/inventory.js'
@@ -34,7 +29,7 @@ const device = (name: string, extra: Partial<DeviceDocument> = {}): DeviceDocume
   updatedAt: '2026-08-19T08:00:00.000Z',
   type: 'device',
   name,
-  roomId: 'room:kueche',
+  room: ROOM,
   manualCode: '34970112332',
   installedAt: '2026-08-19',
   addedAt: '2026-08-19T08:00:00.000Z',
@@ -43,19 +38,9 @@ const device = (name: string, extra: Partial<DeviceDocument> = {}): DeviceDocume
   ...extra,
 })
 
-const ROOMS: readonly RoomDocument[] = [
-  {
-    _id: 'room:kueche',
-    _rev: '1-a',
-    updatedAt: '2026-08-19T08:00:00.000Z',
-    type: 'room',
-    path: ROOM,
-  },
-]
-
 /** Builds the document and reads every string back out of it. */
 async function drawn(devices: readonly DeviceDocument[]): Promise<string[]> {
-  const bytes = await buildInventoryPdf(browseDevices(devices, ROOMS), { labels: LABELS })
+  const bytes = await buildInventoryPdf(browseDevices(devices), { labels: LABELS })
   return extractText(bytes)
 }
 
@@ -156,7 +141,7 @@ describe('a character the standard fonts cannot encode', () => {
     // is a megabyte of payload for a feature nobody has asked for yet. The requirement is that
     // one unrepresentable character does not throw away an export of two hundred devices,
     // which is what an unhandled encoding error does.
-    const bytes = await buildInventoryPdf(browseDevices([device(name)], ROOMS), {
+    const bytes = await buildInventoryPdf(browseDevices([device(name)]), {
       labels: LABELS,
     })
 

@@ -6,7 +6,6 @@ import {
   type DeviceDocument,
   entriesOf,
   layoutInventory,
-  type RoomDocument,
   selectForExport,
 } from '../../../src/domain/index.js'
 import {
@@ -40,7 +39,7 @@ const device = (extra: Partial<DeviceDocument> = {}): DeviceDocument => ({
   updatedAt: '2026-08-19T08:00:00.000Z',
   type: 'device',
   name: 'Kitchen ceiling light',
-  roomId: 'room:kitchen',
+  room: 'Ground Floor/Kitchen',
   payload: PAYLOAD,
   manualCode: LONG_CODE,
   vendorId: 0xfff1,
@@ -52,18 +51,8 @@ const device = (extra: Partial<DeviceDocument> = {}): DeviceDocument => ({
   ...extra,
 })
 
-const ROOMS: readonly RoomDocument[] = [
-  {
-    _id: 'room:kitchen',
-    _rev: '1-a',
-    updatedAt: '2026-08-19T08:00:00.000Z',
-    type: 'room',
-    path: 'Ground Floor/Kitchen',
-  },
-]
-
 const groupsFor = (devices: readonly DeviceDocument[], includeDisabled = false) =>
-  browseDevices(devices, ROOMS, { includeDisabled })
+  browseDevices(devices, { includeDisabled })
 
 /** The PDF as text, for the assertions that are about words rather than pixels. */
 function readable(bytes: Uint8Array): string {
@@ -206,20 +195,10 @@ describe('a full catalogue entry fits its height', () => {
   /** Name, product, part number, installed, spot, serial, pairing code. */
   const LINES_PER_ENTRY = 7
 
-  const rooms: RoomDocument[] = [
-    {
-      _id: 'room:guest',
-      _rev: '1-a',
-      updatedAt: '2026-08-19T08:00:00.000Z',
-      type: 'room',
-      path: 'First Floor/Guest Bedroom/Wardrobe Corner by the Window',
-    },
-  ]
-
   const full = (name: string, extra: Partial<DeviceDocument>): DeviceDocument =>
     device({
       name,
-      roomId: 'room:guest',
+      room: 'First Floor/Guest Bedroom/Wardrobe Corner by the Window',
       spot: 'behind the wardrobe in the guest bedroom, top left corner',
       serial: 'SN-0123456789ABCDEF',
       partNumber: 'LCA001 / 9290022166',
@@ -244,7 +223,7 @@ describe('a full catalogue entry fits its height', () => {
   })
 
   it('draws two full entries without a wrapped line, each inside its own box', async () => {
-    const groups = browseDevices(devices, rooms, { includeDisabled: false })
+    const groups = browseDevices(devices, { includeDisabled: false })
     const bytes = await buildInventoryPdf(groups, { labels: LABELS })
     const [page] = layoutInventory(groups, A4)
     const tops = entriesOf(page ?? { number: 1, blocks: [] }).map((entry) => entry.top)
@@ -328,26 +307,14 @@ describe('free text longer than its column', () => {
  * as a file name on paper; `Attic › Studio` reads as a place.
  */
 describe('sub-rooms', () => {
-  const at = (id: string, path: string): RoomDocument => ({
-    _id: id,
-    _rev: '1-a',
-    updatedAt: '2026-08-19T08:00:00.000Z',
-    type: 'room',
-    path,
-  })
-  const rooms = [
-    at('room:bedroom', 'Attic Bedroom'),
-    at('room:studio', 'Attic/Studio'),
-    at('room:attic', 'Attic'),
-  ]
   const devices = [
-    device({ name: 'Bedroom lamp', roomId: 'room:bedroom' }),
-    device({ name: 'Studio lamp', roomId: 'room:studio' }),
-    device({ name: 'Ceiling lamp', roomId: 'room:attic' }),
+    device({ name: 'Bedroom lamp', room: 'Attic Bedroom' }),
+    device({ name: 'Studio lamp', room: 'Attic/Studio' }),
+    device({ name: 'Ceiling lamp', room: 'Attic' }),
   ]
 
   it('heads each room with its breadcrumb, sub-rooms straight after their parent', async () => {
-    const bytes = await buildInventoryPdf(browseDevices(devices, rooms), { labels: LABELS })
+    const bytes = await buildInventoryPdf(browseDevices(devices), { labels: LABELS })
     const lines = await extractText(bytes)
     const headings = lines.filter((line) => line.startsWith('Attic'))
 
@@ -358,19 +325,13 @@ describe('sub-rooms', () => {
   it('heads every sub-room of an exported parent with its breadcrumb, in order', async () => {
     // A room export takes the room with its sub-rooms, here a parent with no devices of its
     // own: the PDF is still one section per room, each with its full breadcrumb.
-    const house = [
-      at('room:pantry', 'Ground Floor/Kitchen/Pantry'),
-      at('room:kitchen', 'Ground Floor/Kitchen'),
-      at('room:groundling', 'Ground Floorboards'),
-      at('room:attic', 'Attic'),
-    ]
     const inside = [
-      device({ name: 'Fridge plug', roomId: 'room:pantry' }),
-      device({ name: 'Oven plug', roomId: 'room:kitchen' }),
-      device({ name: 'Board sensor', roomId: 'room:groundling' }),
-      device({ name: 'Ceiling lamp', roomId: 'room:attic' }),
+      device({ name: 'Fridge plug', room: 'Ground Floor/Kitchen/Pantry' }),
+      device({ name: 'Oven plug', room: 'Ground Floor/Kitchen' }),
+      device({ name: 'Board sensor', room: 'Ground Floorboards' }),
+      device({ name: 'Ceiling lamp', room: 'Attic' }),
     ]
-    const chosen = selectForExport(browseDevices(inside, house), {
+    const chosen = selectForExport(browseDevices(inside), {
       kind: 'room',
       path: 'Ground Floor',
     })
@@ -385,12 +346,10 @@ describe('sub-rooms', () => {
   it('cuts a long breadcrumb heading to the text column, with an ellipsis', async () => {
     // A three-level path of long German names is wider than A4: drawn as it was, the heading
     // ran off the page. It is cut like any other free text, and the rule under it still fits.
-    const long = at(
-      'room:long',
-      'Nebengebäude mit Werkstatt und Garage/Obergeschoss Lagerraum für Gartenmöbel/Hinterer Abstellbereich unter der Dachschräge',
-    )
+    const long =
+      'Nebengebäude mit Werkstatt und Garage/Obergeschoss Lagerraum für Gartenmöbel/Hinterer Abstellbereich unter der Dachschräge'
     const bytes = await buildInventoryPdf(
-      browseDevices([device({ name: 'Shelf light', roomId: 'room:long' })], [long]),
+      browseDevices([device({ name: 'Shelf light', room: long })]),
       { labels: LABELS },
     )
 

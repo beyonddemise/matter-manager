@@ -38,7 +38,7 @@ const device = (id: string) => ({
   _id: id,
   type: 'device' as const,
   name: 'Kitchen lamp',
-  roomId: 'room:kitchen',
+  room: 'Kitchen',
   manualCode: '34970112332',
   installedAt: '2026-08-26',
   addedAt: '2026-08-26T09:00:00.000Z',

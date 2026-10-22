@@ -36,3 +36,15 @@ export function roomBreadcrumb(path: string) {
   const own = segments[segments.length - 1]
   return html`${segments.slice(0, -1).map((parent) => html`<span class="app-room-parent" data-room-parent>${parent}</span><span class="app-room-crumb" aria-hidden="true">›</span><span class="wa-visually-hidden">${SPOKEN_CRUMB_SEPARATOR}</span>`)}<span data-room-own>${own}</span>`
 }
+
+/**
+ * Every spelling of one room, as breadcrumbs separated by commas: `Kitchen, kitchen`.
+ *
+ * Usually one. Several when devices spell the room differently (ADR 0021); none is preferred,
+ * and the Rooms page offers to merge them.
+ *
+ * @param spellings the room's spellings, in the order `roomsOf` and `browseDevices` give them
+ */
+export function roomSpellings(spellings: readonly string[]) {
+  return html`${spellings.map((path, index) => html`${index === 0 ? '' : ', '}${roomBreadcrumb(path)}`)}`
+}

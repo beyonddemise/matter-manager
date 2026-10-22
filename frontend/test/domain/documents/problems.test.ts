@@ -37,7 +37,7 @@ const device = (): DeviceDocument => ({
   _rev: '1-abc',
   type: 'device',
   name: 'Lamp',
-  roomId: 'room:fixed',
+  room: 'Ground Floor/Kitchen',
   manualCode: '34970112332',
   installedAt: '2026-08-30',
   addedAt: '2026-08-30T00:00:00.000Z',

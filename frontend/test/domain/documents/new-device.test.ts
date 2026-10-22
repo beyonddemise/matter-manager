@@ -2,14 +2,13 @@ import { describe, expect, it } from 'vitest'
 import type { CatalogLookup } from '../../../src/domain/catalog/types.js'
 import type { DraftClock, DraftError } from '../../../src/domain/documents/draft.js'
 import { type DeviceDraft, planNewDevice } from '../../../src/domain/documents/new-device.js'
-import type { RoomDocument } from '../../../src/domain/documents/types.js'
 
 /** The verified reference device; see `matter/credential.test.ts`. */
 const PAYLOAD = 'MT:Y.K9042C00KA0648G00'
 const LONG_CODE = '749701123365521327687'
 const SHORT_CODE = '34970112332'
 
-/** Ids in the order they are asked for: the room first when there is one, then the device. */
+/** Ids in the order they are asked for. A new device asks for one, its own. */
 const clock = (...uuids: readonly string[]): DraftClock => {
   let index = 0
   return {
@@ -26,23 +25,18 @@ const draft = (overrides: Partial<DeviceDraft> = {}): DeviceDraft => ({
   ...overrides,
 })
 
-const KITCHEN: RoomDocument = {
-  _id: 'room:kitchen-uuid',
-  _rev: '1-abc',
-  updatedAt: '2026-08-20T10:00:00.000Z',
-  type: 'room',
-  path: 'Ground Floor/Kitchen',
-}
+/** The room paths the project's devices already carry, as `roomsOf` spells them. */
+const KITCHEN = 'Ground Floor/Kitchen'
 
 describe('a device from a payload', () => {
   it('stores everything the payload carried', () => {
-    const { device } = planNewDevice(draft(), [KITCHEN], clock('device-uuid'))
+    const device = planNewDevice(draft(), [KITCHEN], clock('device-uuid'))
 
     expect(device).toEqual({
       _id: 'device:device-uuid',
       type: 'device',
       name: 'Kitchen ceiling light',
-      roomId: KITCHEN._id,
+      room: KITCHEN,
       manualCode: LONG_CODE,
       payload: PAYLOAD,
       vendorId: 0xfff1,
@@ -60,7 +54,7 @@ describe('a device from a payload', () => {
   })
 
   it('keeps optional free text when it says something', () => {
-    const { device } = planNewDevice(
+    const device = planNewDevice(
       draft({ spot: '  ceiling, north end  ', serial: ' SN-000123 ' }),
       [KITCHEN],
       clock('device-uuid'),
@@ -73,7 +67,7 @@ describe('a device from a payload', () => {
   it('omits optional free text that is only whitespace, rather than storing an empty string', () => {
     // An empty string is a value someone typed; an absent field is "not recorded". Storing
     // `spot: ''` would make a later "does this device have a spot?" answer yes.
-    const { device } = planNewDevice(
+    const device = planNewDevice(
       draft({ spot: '   ', serial: '' }),
       [KITCHEN],
       clock('device-uuid'),
@@ -86,11 +80,7 @@ describe('a device from a payload', () => {
 
 describe('a device from a manual pairing code', () => {
   it('records no payload, and no fields the code could not carry', () => {
-    const { device } = planNewDevice(
-      draft({ credential: SHORT_CODE }),
-      [KITCHEN],
-      clock('device-uuid'),
-    )
+    const device = planNewDevice(draft({ credential: SHORT_CODE }), [KITCHEN], clock('device-uuid'))
 
     expect(device.manualCode).toBe(SHORT_CODE)
     expect(device).not.toHaveProperty('payload')
@@ -100,11 +90,7 @@ describe('a device from a manual pairing code', () => {
   })
 
   it('records vendor and product from the 21-digit form, but still no payload', () => {
-    const { device } = planNewDevice(
-      draft({ credential: LONG_CODE }),
-      [KITCHEN],
-      clock('device-uuid'),
-    )
+    const device = planNewDevice(draft({ credential: LONG_CODE }), [KITCHEN], clock('device-uuid'))
 
     expect(device.vendorId).toBe(0xfff1)
     expect(device.productId).toBe(0x8000)
@@ -116,46 +102,50 @@ describe('a device from a manual pairing code', () => {
 })
 
 describe('the room', () => {
-  it('reuses an existing room and plans no new one', () => {
-    const creation = planNewDevice(draft(), [KITCHEN], clock('device-uuid'))
+  it('stores the path on the device, so there is no room document to write', () => {
+    const device = planNewDevice(draft(), [KITCHEN], clock('device-uuid'))
 
-    expect(creation.room).toBeUndefined()
-    expect(creation.device.roomId).toBe(KITCHEN._id)
+    expect(device.room).toBe(KITCHEN)
+    expect(device).not.toHaveProperty('roomId')
   })
 
-  it('matches an existing room the way a person would read it', () => {
-    // M1-5 already decided that case and spacing do not make a second room. Deciding it again
-    // here would be a second answer to a settled question, and the two would drift.
-    const creation = planNewDevice(
+  it('reuses an existing spelling the way a person would read it', () => {
+    // Typing the kitchen in lower case must not put a second spelling of it on the Rooms page.
+    // `matchRoom` decides this; deciding it again here would be a second answer that drifts.
+    const device = planNewDevice(
       draft({ room: '  ground floor /  KITCHEN ' }),
       [KITCHEN],
       clock('device-uuid'),
     )
 
-    expect(creation.room).toBeUndefined()
-    expect(creation.device.roomId).toBe(KITCHEN._id)
+    expect(device.room).toBe(KITCHEN)
   })
 
-  it('plans a new room, normalised, when nothing matches', () => {
-    const creation = planNewDevice(
-      draft({ room: ' First Floor / Bathroom ' }),
+  it('reuses the spelling of an existing floor for a new room on it', () => {
+    const device = planNewDevice(
+      draft({ room: 'ground floor/Pantry' }),
       [KITCHEN],
-      clock('room-uuid', 'device-uuid'),
+      clock('device-uuid'),
     )
 
-    expect(creation.room).toEqual({
-      _id: 'room:room-uuid',
-      type: 'room',
-      path: 'First Floor/Bathroom',
-    })
-    expect(creation.device.roomId).toBe('room:room-uuid')
+    expect(device.room).toBe('Ground Floor/Pantry')
   })
 
-  it('plans a new room when the project has none at all', () => {
-    const creation = planNewDevice(draft(), [], clock('room-uuid', 'device-uuid'))
+  it('stores a new room normalised, when nothing matches', () => {
+    const device = planNewDevice(
+      draft({ room: ' First Floor / Bathroom ' }),
+      [KITCHEN],
+      clock('device-uuid'),
+    )
 
-    expect(creation.room?.path).toBe('Ground Floor/Kitchen')
-    expect(creation.device.roomId).toBe('room:room-uuid')
+    expect(device.room).toBe('First Floor/Bathroom')
+  })
+
+  it('stores the room as typed when the project has none at all', () => {
+    const device = planNewDevice(draft(), [], clock('device-uuid'))
+
+    expect(device.room).toBe('Ground Floor/Kitchen')
+    expect(device._id).toBe('device:device-uuid')
   })
 
   it('refuses a path with a stray separator, naming the room field', () => {
@@ -241,7 +231,7 @@ const TEST_VENDOR: CatalogLookup = {
 
 describe('a device from a manual code', () => {
   it('records no version, flow or discovery, because the code does not carry them', () => {
-    const { device } = planNewDevice(draft({ credential: LONG_CODE }), [KITCHEN], clock('d'))
+    const device = planNewDevice(draft({ credential: LONG_CODE }), [KITCHEN], clock('d'))
     expect(device).not.toHaveProperty('payloadVersion')
     expect(device).not.toHaveProperty('commissioningFlow')
     expect(device).not.toHaveProperty('discovery')
@@ -250,7 +240,7 @@ describe('a device from a manual code', () => {
 
 describe('copying a catalogue answer', () => {
   it('copies the block, checked at the moment the device was added', () => {
-    const { device } = planNewDevice(draft(), [KITCHEN], clock('device-uuid'), TEST_VENDOR)
+    const device = planNewDevice(draft(), [KITCHEN], clock('device-uuid'), TEST_VENDOR)
     expect(device.vendorName).toBe('Test vendor')
     expect(device.catalogSource).toBe('test-vendor')
     expect(device.catalogCheckedAt).toBe('2026-08-26T09:00:00.000Z')
@@ -258,7 +248,7 @@ describe('copying a catalogue answer', () => {
   })
 
   it('writes no catalogue field without an answer', () => {
-    const { device } = planNewDevice(draft(), [KITCHEN], clock('device-uuid'))
+    const device = planNewDevice(draft(), [KITCHEN], clock('device-uuid'))
     expect(device).not.toHaveProperty('catalogCheckedAt')
     expect(device).not.toHaveProperty('vendorName')
   })
@@ -267,7 +257,7 @@ describe('copying a catalogue answer', () => {
     // A lookup that landed for the code the user typed before correcting it. Copying it would
     // name this device after another one, with nothing on screen to say so.
     const other: CatalogLookup = { ...TEST_VENDOR, vendorId: 4447, productId: 8194 }
-    const { device } = planNewDevice(draft(), [KITCHEN], clock('device-uuid'), other)
+    const device = planNewDevice(draft(), [KITCHEN], clock('device-uuid'), other)
     expect(device).not.toHaveProperty('catalogCheckedAt')
   })
 
@@ -278,12 +268,12 @@ describe('copying a catalogue answer', () => {
     // One id of the two matches. Copying it would name this device after a neighbouring
     // product of the same maker, or after another maker's product with the same number.
     const other: CatalogLookup = { ...TEST_VENDOR, ...change }
-    const { device } = planNewDevice(draft(), [KITCHEN], clock('device-uuid'), other)
+    const device = planNewDevice(draft(), [KITCHEN], clock('device-uuid'), other)
     expect(device).not.toHaveProperty('catalogCheckedAt')
   })
 
   it('ignores an answer for a code that carries no ids', () => {
-    const { device } = planNewDevice(
+    const device = planNewDevice(
       draft({ credential: SHORT_CODE }),
       [KITCHEN],
       clock('device-uuid'),

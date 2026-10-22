@@ -11,15 +11,23 @@
  */
 
 import { manufacturerName, TEST_VENDOR_NAME } from '../catalog/copy.js'
-import { compareRoomPaths } from '../rooms/path.js'
+import { compareRoomPaths, isWithinRoom, roomPathKey } from '../rooms/path.js'
 import { foldForComparison } from '../text/fold.js'
-import type { DeviceDocument, RoomDocument } from './types.js'
+import type { DeviceDocument } from './types.js'
 
 /** One room and the devices in it, as the list renders them. */
 export interface DeviceGroup {
-  readonly roomId: string
-  /** The room's path, or `''` when no room with that id exists. See {@link browseDevices}. */
+  /** The room's `roomPathKey`, or `''` for devices with no room. Unique within one browse. */
+  readonly key: string
+  /**
+   * The room's first spelling, or `''` for devices with no room. See {@link browseDevices}.
+   *
+   * What a heading's breadcrumb and an export selection are built from. Any spelling would do
+   * for the selection, since rooms are matched by key.
+   */
   readonly path: string
+  /** Every spelling the devices here carry, in path order; empty for devices with no room. */
+  readonly spellings: readonly string[]
   /** Never empty: a group with nothing in it is not produced. */
   readonly devices: readonly DeviceDocument[]
 }
@@ -30,6 +38,12 @@ export interface BrowseOptions {
   readonly query?: string
   /** Disabled devices are left out unless this is `true`. */
   readonly includeDisabled?: boolean
+  /**
+   * Only the devices in this room and the rooms inside it (`isWithinRoom`, so any spelling).
+   *
+   * The filter the Rooms page links to. Combines with `query`: both must match.
+   */
+  readonly room?: string
   /**
    * How two display strings order.
    *
@@ -98,26 +112,30 @@ function haystack(device: DeviceDocument, path: string, testVendorTerm?: string)
 /**
  * Groups devices by room, optionally searched and filtered.
  *
- * A device whose `roomId` names no existing room is not dropped — it is grouped under `''` and
- * sorted last, so a room deleted on another replica leaves its devices visible rather than
- * invisible. Losing sight of a device is the failure this application exists to prevent.
+ * Grouped by `roomPathKey`, so `Kitchen` and `kitchen` are one group listing both spellings.
+ *
+ * A device with no room (an empty or missing `room`, which only a document from before ADR 0021
+ * can have) is not dropped — it is grouped under `''` and sorted last. Losing sight of a device
+ * is the failure this application exists to prevent.
  *
  * Groups with no devices are not produced. A search for "kitchen" that listed every empty room
  * in the house would bury the two results it found.
  *
  * @param devices every device in the project
- * @param rooms every room, used to resolve paths and to search on them
  * @param options see {@link BrowseOptions}
  * @returns rooms in path order (parents before their sub-rooms; see `compareRoomPaths`), each
  *   with its devices in name order
  */
 export function browseDevices(
   devices: readonly DeviceDocument[],
-  rooms: readonly RoomDocument[],
   options: BrowseOptions = {},
 ): readonly DeviceGroup[] {
   const compare = options.compare ?? foldedOrder
-  const paths = new Map(rooms.map((room) => [room._id, room.path]))
+  // Code point breaks a tie, so the first spelling (the group's `path`) does not depend on the
+  // order the devices came in when the comparator calls two spellings equal; see `roomsOf`.
+  const byPath = (a: string, b: string): number =>
+    compareRoomPaths(a, b, compare) || (a < b ? -1 : a > b ? 1 : 0)
+  const { room } = options
 
   // Every term must match, so "kitchen light" finds the light in the kitchen rather than
   // everything in the kitchen plus every light in the house. Folded once, here, rather than
@@ -128,23 +146,32 @@ export function browseDevices(
 
   const visible = devices.filter((device) => {
     if (device.disabled && options.includeDisabled !== true) return false
+    // `?? ''` throughout: a document from before ADR 0021 has no `room` (no repair is made).
+    const path = device.room ?? ''
+    if (room !== undefined && (path === '' || !isWithinRoom(path, room))) return false
     if (terms.length === 0) return true
-    const text = haystack(device, paths.get(device.roomId) ?? '', options.testVendorTerm)
+    const text = haystack(device, path, options.testVendorTerm)
     return terms.every((term) => text.includes(term))
   })
 
   const grouped = new Map<string, DeviceDocument[]>()
   for (const device of visible) {
-    const group = grouped.get(device.roomId)
-    if (group === undefined) grouped.set(device.roomId, [device])
+    const key = roomPathKey(device.room ?? '')
+    const group = grouped.get(key)
+    if (group === undefined) grouped.set(key, [device])
     else group.push(device)
   }
 
-  const groups = [...grouped].map(([roomId, members]) => ({
-    roomId,
-    path: paths.get(roomId) ?? '',
-    devices: [...members].sort((a, b) => compare(a.name, b.name)),
-  }))
+  const groups = [...grouped].map(([key, members]) => {
+    const spellings =
+      key === '' ? [] : [...new Set(members.map((device) => device.room))].sort(byPath)
+    return {
+      key,
+      path: spellings[0] ?? '',
+      spellings,
+      devices: [...members].sort((a, b) => compare(a.name, b.name)),
+    }
+  })
 
   // Rooms in path order, then the homeless. Sorting `''` in with the rest would put it first,
   // which is the one place a group nobody chose should not be.
@@ -154,6 +181,6 @@ export function browseDevices(
   // no group, and the view's breadcrumb heading is what shows the lineage.
   const named = groups.filter((group) => group.path !== '')
   const unplaced = groups.filter((group) => group.path === '')
-  named.sort((a, b) => compareRoomPaths(a.path, b.path, compare))
+  named.sort((a, b) => byPath(a.path, b.path))
   return [...named, ...unplaced]
 }

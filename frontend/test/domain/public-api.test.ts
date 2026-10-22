@@ -34,9 +34,6 @@ const EXPECTED: ReadonlyArray<
   ['planDeviceEdit', 'function'],
   ['setDeviceDisabled', 'function'],
   ['addRemark', 'function'],
-  ['resurrectedRooms', 'function'],
-  ['worthRemembering', 'function'],
-  ['DELETION_MEMORY_DAYS', 'number'],
   ['remarksNewestFirst', 'function'],
   ['browseDevices', 'function'],
   ['PROJECT_DOCUMENT_ID', 'string'],
@@ -116,20 +113,13 @@ const EXPECTED: ReadonlyArray<
   ['latestRevision', 'function'],
   ['mergeDevice', 'function'],
   ['mergeRemarks', 'function'],
-  ['mergeRoom', 'function'],
   // room paths
   ['ROOM_PATH_SEPARATOR', 'string'],
   ['RoomPathError', 'function'],
-  // Named here rather than with the conflict merge: two features need the same room, and a
-  // second constant with the same value would be two rooms the day somebody changed one.
-  ['UNASSIGNED_ROOM_PREFIX', 'string'],
-  ['isNearDuplicateRoomPath', 'function'],
+  ['isSameRoom', 'function'],
   // the room list
-  ['devicesInRoom', 'function'],
-  ['planRoomDeletion', 'function'],
   ['renameRoom', 'function'],
-  ['reorderRooms', 'function'],
-  ['roomsInOrder', 'function'],
+  ['roomsOf', 'function'],
   ['isValidRoomPath', 'function'],
   ['isWithinRoom', 'function'],
   ['normaliseRoomPath', 'function'],

@@ -33,13 +33,13 @@ afterEach(async () => {
 const device = (
   id: string,
   name: string,
-  roomId: string,
+  room: string,
   extra: Partial<DeviceDocument> = {},
 ): Unsaved<DeviceDocument> => ({
   _id: id,
   type: 'device',
   name,
-  roomId,
+  room,
   manualCode: '34970112332',
   installedAt: '2026-08-26',
   addedAt: '2026-08-26T09:00:00.000Z',
@@ -90,15 +90,13 @@ const shown = (element: DeviceListView) =>
   )
 
 async function seed(): Promise<void> {
-  const { rooms, devices } = database.repositories
-  await rooms.save({ _id: 'room:kitchen', type: 'room', path: 'Ground Floor/Kitchen' })
-  await rooms.save({ _id: 'room:bath', type: 'room', path: 'First Floor/Bathroom' })
+  const { devices } = database.repositories
   await devices.save(
-    device('device:ceiling', 'Ceiling light', 'room:kitchen', { serial: 'SN-000123' }),
+    device('device:ceiling', 'Ceiling light', 'Ground Floor/Kitchen', { serial: 'SN-000123' }),
   )
-  await devices.save(device('device:extractor', 'Extractor', 'room:kitchen'))
-  await devices.save(device('device:mirror', 'Mirror light', 'room:bath'))
-  await devices.save(device('device:old', 'Old sensor', 'room:bath', { disabled: true }))
+  await devices.save(device('device:extractor', 'Extractor', 'Ground Floor/Kitchen'))
+  await devices.save(device('device:mirror', 'Mirror light', 'First Floor/Bathroom'))
+  await devices.save(device('device:old', 'Old sensor', 'First Floor/Bathroom', { disabled: true }))
 }
 
 describe('when the catalogue cannot be read', () => {
@@ -106,7 +104,6 @@ describe('when the catalogue cannot be read', () => {
   const failing = () =>
     ({
       devices: { list: async () => Promise.reject(new Error('indexed_db_went_bad')) },
-      rooms: { list: async () => Promise.reject(new Error('indexed_db_went_bad')) },
     }) as never
 
   it('says so rather than showing an empty catalogue', async () => {
@@ -170,13 +167,12 @@ describe('grouping', () => {
     expect(element.querySelector('[data-room] wa-badge')?.textContent?.trim()).toBe('1')
   })
 
-  it('names the group for devices whose room is gone, rather than leaving it blank', async () => {
-    await database.repositories.devices.save(device('device:orphan', 'Orphan', 'room:gone'))
+  it('names the group for devices with no room, rather than leaving it blank', async () => {
+    // Only a document from before ADR 0021 has no `room`; it renders rather than crashing.
+    await database.repositories.devices.save(device('device:orphan', 'Orphan', ''))
     const element = await list()
 
-    // Never the raw id: `room:gone` on screen is not a room a person recognises.
-    expect(element.textContent).not.toContain('room:gone')
-    expect(element.querySelector('[data-room=""] h2')?.textContent?.trim()).not.toBe('')
+    expect(element.querySelector('[data-room=""] h2')?.textContent?.trim()).toBe('Without a room')
     expect(shown(element)).toEqual(['device:orphan'])
   })
 
@@ -192,17 +188,12 @@ describe('grouping', () => {
  */
 describe('sub-rooms', () => {
   async function seedAttic(): Promise<void> {
-    const { rooms, devices } = database.repositories
-    await rooms.save({ _id: 'room:attic', type: 'room', path: 'Attic' })
-    await rooms.save({ _id: 'room:studio', type: 'room', path: 'Attic/Studio' })
-    await rooms.save({ _id: 'room:bedroom', type: 'room', path: 'Attic Bedroom' })
-    await rooms.save({ _id: 'room:kitchen', type: 'room', path: 'Ground Floor/Kitchen' })
-    await rooms.save({ _id: 'room:pantry', type: 'room', path: 'Ground Floor/Kitchen/Pantry' })
-    await devices.save(device('device:attic', 'Roof sensor', 'room:attic'))
-    await devices.save(device('device:studio', 'Desk lamp', 'room:studio'))
-    await devices.save(device('device:bedroom', 'Bedside lamp', 'room:bedroom'))
-    await devices.save(device('device:kitchen', 'Oven plug', 'room:kitchen'))
-    await devices.save(device('device:pantry', 'Fridge plug', 'room:pantry'))
+    const { devices } = database.repositories
+    await devices.save(device('device:attic', 'Roof sensor', 'Attic'))
+    await devices.save(device('device:studio', 'Desk lamp', 'Attic/Studio'))
+    await devices.save(device('device:bedroom', 'Bedside lamp', 'Attic Bedroom'))
+    await devices.save(device('device:kitchen', 'Oven plug', 'Ground Floor/Kitchen'))
+    await devices.save(device('device:pantry', 'Fridge plug', 'Ground Floor/Kitchen/Pantry'))
   }
 
   /** The heading of the group for `path`. */
@@ -441,11 +432,10 @@ describe('sub-rooms', () => {
 
 describe('search', () => {
   it('finds the test vendor by the name the interface shows, in German', async () => {
-    await database.repositories.rooms.save({ _id: 'room:lab', type: 'room', path: 'Lab' })
     await database.repositories.devices.save(
-      device('device:tv', 'Bench lamp', 'room:lab', { vendorName: TEST_VENDOR_NAME }),
+      device('device:tv', 'Bench lamp', 'Lab', { vendorName: TEST_VENDOR_NAME }),
     )
-    await database.repositories.devices.save(device('device:other', 'Mirror light', 'room:lab'))
+    await database.repositories.devices.save(device('device:other', 'Mirror light', 'Lab'))
     await activateLocale('de')
     try {
       const element = await list()
@@ -520,13 +510,8 @@ describe('disabled devices', () => {
     // unticked: `browseDevices` returns nothing while `devices` is non-empty and the query is
     // blank, so the search sentence would render with an empty pair of quotes in it - blaming
     // the user for a filter they did not notice they had on.
-    await database.repositories.rooms.save({
-      _id: 'room:kitchen',
-      type: 'room',
-      path: 'Ground Floor/Kitchen',
-    })
     await database.repositories.devices.save(
-      device('device:old', 'Old sensor', 'room:kitchen', { disabled: true }),
+      device('device:old', 'Old sensor', 'Ground Floor/Kitchen', { disabled: true }),
     )
 
     const element = await list()
@@ -746,9 +731,9 @@ describe('exporting a selection', () => {
     expect(element.querySelector('[data-export-room="Ground Floor/Kitchen"]')).not.toBeNull()
   })
 
-  it('offers no room export for devices whose room is gone', async () => {
+  it('offers no room export for devices with no room', async () => {
     // There is no room there to export.
-    await database.repositories.devices.save(device('device:orphan', 'Orphan', 'room:deleted'))
+    await database.repositories.devices.save(device('device:orphan', 'Orphan', ''))
     const element = await list()
 
     const buttons = [...element.querySelectorAll('[data-export-room]')].map((node) =>
@@ -904,5 +889,146 @@ describe('printing labels', () => {
     await element.updateComplete
 
     expect(element.labelsOpen).toBe(false)
+  })
+})
+
+describe('the project line', () => {
+  it('names the open project under the heading', async () => {
+    const element = (await fixture(
+      html`<device-list-view
+        .repositories=${database.repositories}
+        .projectName=${'Hillside'}
+      ></device-list-view>`,
+    )) as DeviceListView
+    await waitUntil(() => element.loaded, 'the device list never finished its first read')
+    await element.updateComplete
+
+    expect(element.querySelector('[data-project-name]')?.textContent?.trim()).toBe(
+      'Project Hillside',
+    )
+  })
+
+  it('says nothing for a project with no name yet', async () => {
+    // "Project " with nothing after it reads as a fault.
+    const element = await list()
+    expect(element.querySelector('[data-project-name]')).toBeNull()
+  })
+})
+
+/**
+ * ADR 0021: the Rooms page links to `#/devices?room=…`, and the list shows that room, the rooms
+ * inside it and every spelling of it.
+ */
+describe('filtered to one room', () => {
+  /**
+   * Puts `hash` in the address without a `hashchange`, as arriving by a link does: the view
+   * reads it when it is created.
+   */
+  const at = (hash: string) => history.replaceState(null, '', hash)
+
+  afterEach(() => {
+    at(window.location.pathname + window.location.search)
+  })
+
+  async function seedSpellings(): Promise<void> {
+    const { devices } = database.repositories
+    await devices.save(device('device:kitchen', 'Oven plug', 'Ground Floor/Kitchen'))
+    await devices.save(device('device:other', 'Kettle', 'ground floor/kitchen'))
+    await devices.save(device('device:pantry', 'Fridge plug', 'Ground Floor/Kitchen/Pantry'))
+    await devices.save(device('device:hall', 'Hall light', 'Ground Floor/Hall'))
+    await devices.save(device('device:attic', 'Roof sensor', 'Attic'))
+  }
+
+  it('shows only that room, the rooms inside it and its other spellings', async () => {
+    await seedSpellings()
+    at('#/devices?room=Ground%20Floor%2FKitchen')
+    const element = await list()
+
+    expect(shown(element)).toHaveLength(3)
+    expect(new Set(shown(element))).toEqual(
+      new Set(['device:kitchen', 'device:other', 'device:pantry']),
+    )
+  })
+
+  it('names the room on a tag', async () => {
+    await seedSpellings()
+    at('#/devices?room=Ground%20Floor%2FKitchen')
+    const element = await list()
+
+    expect(element.querySelector('[data-room-filter]')?.textContent?.trim()).toBe(
+      'Room: Ground Floor › Kitchen',
+    )
+  })
+
+  it('shows no tag without a filter', async () => {
+    await seedSpellings()
+    const element = await list()
+
+    expect(element.querySelector('[data-room-filter]')).toBeNull()
+    expect(shown(element)).toHaveLength(5)
+  })
+
+  it('narrows further with a search', async () => {
+    await seedSpellings()
+    at('#/devices?room=Ground%20Floor%2FKitchen')
+    const element = await list()
+
+    await search(element, 'fridge')
+    expect(shown(element)).toEqual(['device:pantry'])
+
+    // A device outside the room stays out, even when the search matches it.
+    await search(element, 'roof')
+    expect(shown(element)).toEqual([])
+  })
+
+  it('goes back to every room when the tag is removed', async () => {
+    await seedSpellings()
+    at('#/devices?room=Attic')
+    const element = await list()
+    expect(shown(element)).toEqual(['device:attic'])
+
+    const tag = element.querySelector('[data-room-filter]') as HTMLElement
+    tag.dispatchEvent(new CustomEvent('wa-remove', { bubbles: true, composed: true }))
+
+    expect(window.location.hash).toBe('#/devices')
+    await waitUntil(() => shown(element).length === 5, 'the filter was never lifted')
+    expect(element.querySelector('[data-room-filter]')).toBeNull()
+  })
+
+  it('follows the address when it changes under an open list', async () => {
+    // The shell keeps this element when only the query changes; the view must listen.
+    await seedSpellings()
+    const element = await list()
+
+    window.location.hash = '#/devices?room=Ground%20Floor%2FHall'
+    await waitUntil(() => shown(element).length === 1, 'the filter was never applied')
+    expect(shown(element)).toEqual(['device:hall'])
+  })
+
+  it('says so when nothing is in that room any more', async () => {
+    // A link from before a rename: the room has gone, and the remedy is the tag beside it.
+    await seedSpellings()
+    at('#/devices?room=Cellar')
+    const element = await list()
+
+    expect(shown(element)).toEqual([])
+    expect(element.querySelector('[data-no-devices-in-room]')?.textContent?.trim()).toBe(
+      'No devices in “Cellar”.',
+    )
+    expect(element.querySelector('[data-room-filter]')).not.toBeNull()
+  })
+
+  it('lists every spelling in the group heading', async () => {
+    await seedSpellings()
+    const element = await list()
+
+    const heading = element
+      .querySelector('[data-room="Ground Floor/Kitchen"], [data-room="ground floor/kitchen"]')
+      ?.querySelector('h2')
+    const owns = [...(heading?.querySelectorAll('[data-room-own]') ?? [])].map(
+      (node) => node.textContent,
+    )
+    expect(owns.sort()).toEqual(['Kitchen', 'kitchen'].sort())
+    expect(heading?.textContent).toContain(', ')
   })
 })

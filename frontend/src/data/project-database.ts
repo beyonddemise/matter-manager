@@ -1,25 +1,14 @@
 /**
  * The repositories of one `project_<uuid>` database, and the conflict policy they run under.
  *
- * Grouped rather than constructed one at a time, because they always come together: a project
- * database holds devices and rooms, and a caller holding one without the other cannot resolve
- * a device's `roomId`.
- *
- * It is also the only place that can wire the merge strategies, and that is not incidental.
- * `mergeRoom` has to know whether any device still points at the room being deleted, which is a
- * question only something holding *both* repositories can answer — so the pairing that exists
- * for convenience is the same pairing the conflict policy needs.
+ * A project database holds devices; their rooms are a property of each device (ADR 0021), so
+ * there is nothing else to pair them with. This is also the one place the merge strategies are
+ * wired, to reads and to the change feed alike, so the two cannot disagree.
  *
  * @module
  */
 
-import {
-  type DeviceDocument,
-  documentTypeOf,
-  mergeDevice,
-  mergeRoom,
-  type RoomDocument,
-} from '../domain/index.js'
+import { type DeviceDocument, documentTypeOf, mergeDevice } from '../domain/index.js'
 import {
   type ConflictWatch,
   conflictResolver,
@@ -30,7 +19,6 @@ import { type Repository, repository } from './repository.js'
 /** Everything M2 reads and writes in a project database. */
 export interface ProjectRepositories {
   readonly devices: Repository<DeviceDocument>
-  readonly rooms: Repository<RoomDocument>
   /**
    * Starts resolving conflicts as replication delivers them.
    *
@@ -65,53 +53,22 @@ export function projectRepositories(
     resolver.resolve(document, mergeDevice),
   )
 
-  /**
-   * `mergeRoom` with the question it cannot answer from the documents alone already answered.
-   *
-   * **Always `false`, and that is a statement about the platform rather than about rooms.**
-   * `mergeRoom` consults it only when the winning revision is a deletion, and no deletion ever
-   * arrives here: a deleted leaf loses to a live one whatever its generation, and a deleted
-   * *losing* branch appears in neither `_conflicts` nor the change feed — CouchDB reports those
-   * in `_deleted_conflicts`, which PouchDB does not implement. When every branch is deleted the
-   * feed carries a bare tombstone with no conflicts on it at all. Both cases are pinned by
-   * tests in `conflict-resolver.test.ts`, because this is exactly the kind of claim that would
-   * otherwise quietly stop being true.
-   *
-   * Answering it honestly would mean listing every device on each room conflict, to decide a
-   * branch that cannot execute. The room deletion story is M5-9, where the choice is made by
-   * the person deleting the room rather than by a merge.
-   */
-  const mergeRoomInPlace = async (
-    winner: RoomDocument,
-    losers: readonly RoomDocument[],
-  ): Promise<RoomDocument> => mergeRoom(winner, losers, { hasLiveDevices: false })
-
-  const rooms = repository<RoomDocument>(database, 'room', now, (document) =>
-    resolver.resolve(document, mergeRoomInPlace),
-  )
-
   return {
     devices,
-    rooms,
 
     watchConflicts(onError?: (error: unknown) => void): ConflictWatch {
       return watchDatabaseConflicts(database, {
         onConflicted: async (document) => {
-          // The change feed reports both types down one channel, so the strategy is chosen by
-          // id — through `core`'s own prefix table rather than a literal here, because a second
-          // copy of "what a device id looks like" is a copy that can drift. A document this
-          // application did not write is left alone rather than merged by a guess.
+          // The change feed reports every document down one channel, so the strategy is chosen
+          // by id — through `core`'s own prefix table rather than a literal here, because a
+          // second copy of "what a device id looks like" is a copy that can drift. A document
+          // this application did not write (or no longer writes, like a `room:` document from
+          // before ADR 0021) is left alone rather than merged by a guess.
           //
-          // The casts are the honest shape of a change feed: it yields documents of no
+          // The cast is the honest shape of a change feed: it yields documents of no
           // particular type, and this is the point at which the id says which one it is.
-          switch (documentTypeOf(document._id)) {
-            case 'device':
-              return resolver.resolve(document as DeviceDocument, mergeDevice)
-            case 'room':
-              return resolver.resolve(document as RoomDocument, mergeRoomInPlace)
-            default:
-              return undefined
-          }
+          if (documentTypeOf(document._id) !== 'device') return undefined
+          return resolver.resolve(document as DeviceDocument, mergeDevice)
         },
         ...(onError === undefined ? {} : { onError }),
       })
