@@ -31,7 +31,7 @@ export class ProjectImportSection extends LitElement {
   }
 
   /** The import, injected by tests; the real one reads the zip and writes the databases. */
-  declare importFile?: (bytes: Uint8Array) => Promise<ImportResult>
+  declare importFile?: (file: Blob) => Promise<ImportResult>
   declare importing: boolean
   /** The last import that worked, until another is started. */
   declare result: ImportResult | undefined
@@ -60,7 +60,8 @@ export class ProjectImportSection extends LitElement {
       // bundle every visitor downloads (see `importProblemText` for the other half).
       const importFile =
         this.importFile ?? (await import('../archive/project-import.js')).importProjectFile
-      const result = await importFile(new Uint8Array(await file.arrayBuffer()))
+      // The file itself, not its bytes: the import checks its size before reading any of it.
+      const result = await importFile(file)
       // Chosen before the action ends: the refresh that follows then opens it.
       writeCurrentProjectId(() => localStorage, result.entry.dbName)
       this.result = result

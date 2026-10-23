@@ -1322,6 +1322,10 @@
   <source>A device in this export is not valid. Nothing was imported.</source>
   <target>Ein Gerät in diesem Export ist ungültig. Es wurde nichts importiert.</target>
 </trans-unit>
+<trans-unit id="sf79de50470de29c9">
+  <source>This project is too large to export as one file. Nothing was downloaded.</source>
+  <target>Dieses Projekt ist zu groß, um es als eine Datei zu exportieren. Es wurde nichts heruntergeladen.</target>
+</trans-unit>
 </body>
 </file>
 </xliff>

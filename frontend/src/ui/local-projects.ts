@@ -261,20 +261,21 @@ export async function importLocalProject(
     // rather than whatever the file said.
     const { devices } = projectRepositories(database, deps.now)
     for (const device of imported.devices) await devices.save(device)
+    const entry: LocalProjectEntry = {
+      dbName,
+      name,
+      ...clientField(imported.project.client),
+      ...accountField(account),
+      createdAt: deps.now(),
+    }
+    // Inside the cleanup too: a database nobody lists is a full backup nobody can open.
+    await deps.cache().addLocalProject(entry)
+    return entry
   } catch (error) {
     await database.destroy().catch(() => undefined)
     deps.forget(dbName)
     throw error
   }
-  const entry: LocalProjectEntry = {
-    dbName,
-    name,
-    ...clientField(imported.project.client),
-    ...accountField(account),
-    createdAt: deps.now(),
-  }
-  await deps.cache().addLocalProject(entry)
-  return entry
 }
 
 /** Looks an entry up, failing loudly: a rename of an unlisted project is a caller bug. */

@@ -11,7 +11,7 @@
 
 import type { LocalProjectEntry } from '../../data/index.js'
 import { ARCHIVE_LIMITS, readProjectArchive } from '../../domain/archive/project-archive.js'
-import { readZip } from '../../domain/archive/zip.js'
+import { readZip, ZipError } from '../../domain/archive/zip.js'
 import {
   importLocalProject,
   type LocalProjectDependencies,
@@ -31,15 +31,20 @@ export interface ImportResult {
 /**
  * Imports one export file.
  *
- * @param bytes the file's contents
+ * @param file the chosen file; its size is checked before it is read, so a huge one is refused
+ *   without being held in memory whole
  * @throws {ZipError} for a file that is not a readable zip within the limits
  * @throws {ArchiveError} for a zip that is not a project export, or holds a broken device
  * @throws whatever storage throws, after removing what was written
  */
 export async function importProjectFile(
-  bytes: Uint8Array,
+  file: Blob,
   deps: LocalProjectDependencies = localProjectDefaults,
 ): Promise<ImportResult> {
+  if (file.size > ARCHIVE_LIMITS.maxBytes) {
+    throw new ZipError('tooLarge', `The file is larger than ${ARCHIVE_LIMITS.maxBytes} bytes.`)
+  }
+  const bytes = new Uint8Array(await file.arrayBuffer())
   const imported = readProjectArchive(await readZip(bytes, streamCodecs, ARCHIVE_LIMITS))
   const entry = await importLocalProject(imported, deps)
   return { entry, devices: imported.devices.length, refiled: imported.refiled }

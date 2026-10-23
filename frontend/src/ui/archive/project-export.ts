@@ -8,8 +8,8 @@
  * @module
  */
 
-import { projectArchiveEntries } from '../../domain/archive/project-archive.js'
-import { writeZip } from '../../domain/archive/zip.js'
+import { ARCHIVE_LIMITS, projectArchiveEntries } from '../../domain/archive/project-archive.js'
+import { writeZip, type ZipEntry, ZipError } from '../../domain/archive/zip.js'
 import { isProjectDocument, PROJECT_DOCUMENT_ID } from '../../domain/documents/project.js'
 import type { DeviceDocument } from '../../domain/index.js'
 import { openProject, rawDatabase } from '../db/project-database.js'
@@ -30,14 +30,47 @@ export interface ExportDependencies {
 /** The real databases and the browser's download. */
 export const exportDefaults: ExportDependencies = {
   devices: (dbName) => openProject(dbName).devices.list(),
-  async projectDocument(dbName) {
-    const stored = await rawDatabase(dbName)
-      .get(PROJECT_DOCUMENT_ID)
-      .catch(() => undefined)
-    return isProjectDocument(stored) ? stored : undefined
-  },
+  projectDocument: (dbName) => projectDocumentIn(rawDatabase(dbName)),
   now: () => new Date(),
   download: (bytes, filename) => offerDownload(bytes, filename, document, 'application/zip'),
+}
+
+/**
+ * The database's `project` document, or `undefined` when it has none.
+ *
+ * Only a 404 means "none". Any other failure is thrown: exporting under the name the page shows
+ * would hide that the database could not be read, and label the backup with a stale name.
+ */
+export async function projectDocumentIn(database: {
+  readonly get: (id: string) => Promise<unknown>
+}): Promise<{ readonly name: string; readonly client?: string } | undefined> {
+  let stored: unknown
+  try {
+    stored = await database.get(PROJECT_DOCUMENT_ID)
+  } catch (error) {
+    if ((error as { status?: unknown } | null)?.status === 404) return undefined
+    throw error
+  }
+  return isProjectDocument(stored) ? stored : undefined
+}
+
+/**
+ * Refuses an archive the import would refuse, so no backup is offered that cannot be restored.
+ *
+ * The same limits {@link ARCHIVE_LIMITS} the reader enforces: files and inflated size before
+ * compressing, the file's size after.
+ *
+ * @throws {ZipError} `tooLarge`
+ */
+function checkLimits(entries: readonly ZipEntry[], zipped?: Uint8Array): void {
+  const inflated = entries.reduce((sum, entry) => sum + entry.data.length, 0)
+  if (
+    entries.length > ARCHIVE_LIMITS.maxEntries ||
+    inflated > ARCHIVE_LIMITS.maxInflatedBytes ||
+    (zipped !== undefined && zipped.length > ARCHIVE_LIMITS.maxBytes)
+  ) {
+    throw new ZipError('tooLarge', 'The project is larger than an import can read.')
+  }
 }
 
 /**
@@ -79,5 +112,8 @@ export async function exportProject(
     devices,
     now.toISOString(),
   )
-  deps.download(await writeZip(entries, streamCodecs, now), exportFilename(project.name, now))
+  checkLimits(entries)
+  const zipped = await writeZip(entries, streamCodecs, now)
+  checkLimits(entries, zipped)
+  deps.download(zipped, exportFilename(project.name, now))
 }

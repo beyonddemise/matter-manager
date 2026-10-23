@@ -34,7 +34,7 @@ const result = (over: Partial<ImportResult> = {}): ImportResult => ({
 
 /** The section, with `importFile` as its import. */
 async function section(
-  importFile: (bytes: Uint8Array) => Promise<ImportResult>,
+  importFile: (file: Blob) => Promise<ImportResult>,
 ): Promise<ProjectImportSection> {
   const element = (await fixture(
     html`<project-import-section .importFile=${importFile}></project-import-section>`,
@@ -103,10 +103,10 @@ describe('the import section', () => {
 })
 
 describe('importing a file', () => {
-  it('hands the file’s bytes to the import', async () => {
+  it('hands the chosen file to the import', async () => {
     const received: Uint8Array[] = []
-    const element = await section(async (bytes) => {
-      received.push(bytes)
+    const element = await section(async (file) => {
+      received.push(new Uint8Array(await file.arrayBuffer()))
       return result()
     })
 

@@ -1,3 +1,4 @@
+import { ZipError } from '../../../src/domain/archive/zip.js'
 import '@awesome.me/webawesome-pro/dist/components/button/button.js'
 import '@awesome.me/webawesome-pro/dist/components/callout/callout.js'
 import '@awesome.me/webawesome-pro/dist/components/card/card.js'
@@ -932,6 +933,20 @@ describe('the actions menu', () => {
     await settled(view)
 
     expect(text(find(view, '[data-error]'))).toContain('That did not work. Please try again.')
+  })
+
+  it('says the project is too large, rather than offering a file the import would refuse', async () => {
+    actionAnswer = async () => {
+      throw new ZipError('tooLarge', 'x')
+    }
+    const view = await member({ local: [entry()] })
+
+    await choose(view, 'project_local_a', 'export')
+    await settled(view)
+
+    expect(text(find(view, '[data-error]'))).toContain(
+      'This project is too large to export as one file. Nothing was downloaded.',
+    )
   })
 
   it('says why a local copy was kept when the upload did not get through', async () => {

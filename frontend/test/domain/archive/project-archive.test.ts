@@ -265,6 +265,21 @@ describe('rebuilding each device rather than trusting it', () => {
     expect(problemOf(archiveOf(broken))).toBe('badDevice')
   })
 
+  it.each(['device:../a', 'device:a/b', 'device:a.b', 'device:a b', 'device:a:b', 'device:ä'])(
+    'refuses a device id with characters an id is not written with (%j)',
+    (id) => {
+      // The id names the file on the next export (`devices/<uuid>.json`): a slash or a dot
+      // there writes an archive the import itself refuses.
+      expect(problemOf(archiveOf({ ...device('a'), _id: id }))).toBe('badDevice')
+    },
+  )
+
+  it('accepts the characters a uuid is written with, and underscores', () => {
+    expect(() =>
+      readProjectArchive(archiveOf(device('6ba7b810-9dad-11d1-80b4-00c04fd430c8_A'))),
+    ).not.toThrow()
+  })
+
   it('refuses an id that is not a device id', () => {
     expect(problemOf(archiveOf({ ...device('a'), _id: 'room:a' }))).toBe('badDevice')
     expect(problemOf(archiveOf({ ...device('a'), _id: 'project' }))).toBe('badDevice')

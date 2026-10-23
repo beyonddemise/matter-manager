@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import { ARCHIVE_LIMITS, readProjectArchive } from '../../../src/domain/archive/project-archive.js'
-import { readZip, type ZipEntry } from '../../../src/domain/archive/zip.js'
+import { readZip, type ZipEntry, ZipError } from '../../../src/domain/archive/zip.js'
 import type { DeviceDocument } from '../../../src/domain/index.js'
 import { streamCodecs } from '../../../src/ui/archive/codec.js'
 import {
   type ExportDependencies,
   exportFilename,
   exportProject,
+  projectDocumentIn,
 } from '../../../src/ui/archive/project-export.js'
 
 /**
@@ -190,5 +191,65 @@ describe('exporting a project', () => {
 
     await expect(exportProject(row, failing)).rejects.toThrow('indexed_db_went_bad')
     expect(downloads).toEqual([])
+  })
+})
+
+describe('an export the import could not read back', () => {
+  it('is refused, and nothing is offered, past the number of files an import reads', async () => {
+    const many = Array.from({ length: ARCHIVE_LIMITS.maxEntries - 1 }, (_, n) => device(`d${n}`))
+    const { deps, downloads } = fakes({ name: 'Hillside' }, many)
+
+    const failure = await exportProject(row, deps).catch((error: unknown) => error)
+
+    expect(failure).toBeInstanceOf(ZipError)
+    expect((failure as ZipError).problem).toBe('tooLarge')
+    expect(downloads).toEqual([])
+  })
+
+  it('is refused past the inflated size an import reads', async () => {
+    // Remarks are free text, so a few large devices reach the limit without many files.
+    const remark = (n: number) => ({
+      id: `r${n}`,
+      text: 'x'.repeat(1024 * 1024),
+      authorSub: 'sub-a',
+      authorName: 'A',
+      createdAt: '2026-10-01T08:00:00.000Z',
+    })
+    const heavy = Array.from({ length: 51 }, (_, n) => device(`h${n}`, { remarks: [remark(n)] }))
+    const { deps, downloads } = fakes({ name: 'Hillside' }, heavy)
+
+    const failure = await exportProject(row, deps).catch((error: unknown) => error)
+
+    expect((failure as ZipError).problem).toBe('tooLarge')
+    expect(downloads).toEqual([])
+  })
+
+  it('is offered at exactly the number of files an import reads', async () => {
+    const most = Array.from({ length: ARCHIVE_LIMITS.maxEntries - 2 }, (_, n) => device(`d${n}`))
+    const { deps, downloads } = fakes({ name: 'Hillside' }, most)
+
+    await exportProject(row, deps)
+
+    expect(readProjectArchive(await offered(downloads)).devices).toHaveLength(most.length)
+  })
+})
+
+describe('reading the project document', () => {
+  const failing = (error: unknown) => ({ get: async () => Promise.reject(error) })
+
+  it('is none when the database has no project document', async () => {
+    expect(await projectDocumentIn(failing({ status: 404, name: 'not_found' }))).toBeUndefined()
+  })
+
+  it('fails, rather than exporting under the page’s name, when the read fails', async () => {
+    const broken = { status: 500, name: 'unknown_error' }
+    await expect(projectDocumentIn(failing(broken))).rejects.toBe(broken)
+  })
+
+  it('is the document when it is one', async () => {
+    const stored = { _id: 'project', type: 'project', name: 'Hillside' }
+    expect(await projectDocumentIn({ get: async () => stored })).toMatchObject({
+      name: 'Hillside',
+    })
   })
 })

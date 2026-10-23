@@ -515,6 +515,12 @@ devices/<uuid>.json    one device document each, without _rev, _conflicts, _atta
   The database and devices are written before the index entry, and a failure destroys the
   database.
 - **A newer `version` is refused by name.** It is not imported partially.
+- **Export refuses what import would.** A project past the same limits (files, inflated size,
+  file size) is not offered as a download, so no backup is written that cannot be restored.
+- **A device id holds only letters, digits, `-` and `_`.** The id names the device's file on
+  the next export, and a slash or a dot there would make that archive unreadable.
+
+## Conflicts
 
 
 CouchDB detects conflicts and picks a deterministic winner. It does not merge. Without an

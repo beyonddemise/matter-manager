@@ -1,6 +1,10 @@
 import PouchDB from 'pouchdb-browser'
 import { afterEach, describe, expect, it } from 'vitest'
-import { ArchiveError, projectArchiveEntries } from '../../../src/domain/archive/project-archive.js'
+import {
+  ARCHIVE_LIMITS,
+  ArchiveError,
+  projectArchiveEntries,
+} from '../../../src/domain/archive/project-archive.js'
 import { writeZip, ZipError } from '../../../src/domain/archive/zip.js'
 import { PROJECT_DOCUMENT_ID } from '../../../src/domain/documents/project.js'
 import type { DeviceDocument } from '../../../src/domain/index.js'
@@ -49,6 +53,10 @@ const zipOf = (name: string, devices: readonly DeviceDocument[], client?: string
     new Date('2026-10-19T15:00:00Z'),
   )
 
+/** Imports bytes the way the picker hands them over: as a file. */
+const importBytes = (bytes: Uint8Array, deps?: Parameters<typeof importProjectFile>[1]) =>
+  importProjectFile(new Blob([bytes as BlobPart]), deps)
+
 /** How many documents a database holds, opened fresh so no memoised handle answers. */
 async function documentCount(name: string): Promise<number> {
   const database = new PouchDB(name)
@@ -65,7 +73,7 @@ afterEach(async () => {
 
 describe('importing a project export', () => {
   it('creates a new local project holding the devices, and lists it', async () => {
-    const result = await importProjectFile(
+    const result = await importBytes(
       await zipOf('Hillside', [device('a'), device('b')], 'Ms Example'),
     )
 
@@ -83,7 +91,7 @@ describe('importing a project export', () => {
   })
 
   it('stamps the devices as written now, not with the stamp in the file', async () => {
-    const result = await importProjectFile(await zipOf('Hillside', [device('a')]))
+    const result = await importBytes(await zipOf('Hillside', [device('a')]))
 
     const [stored] = await openProject(result.entry.dbName).devices.list()
     expect(stored?.updatedAt).not.toBe('2026-10-01T08:00:00.000Z')
@@ -92,15 +100,15 @@ describe('importing a project export', () => {
   it('gives a name that is taken a suffix, so two projects are not called the same', async () => {
     await createLocalProject({ name: 'Hillside' })
 
-    const first = await importProjectFile(await zipOf('Hillside', [device('a')]))
-    const second = await importProjectFile(await zipOf('Hillside', [device('a')]))
+    const first = await importBytes(await zipOf('Hillside', [device('a')]))
+    const second = await importBytes(await zipOf('Hillside', [device('a')]))
 
     expect(first.entry.name).toBe('Hillside (imported)')
     expect(second.entry.name).toBe('Hillside (imported 2)')
   })
 
   it('reports how many devices were filed under Imported', async () => {
-    const result = await importProjectFile(await zipOf('Hillside', [device('a', { room: '' })]))
+    const result = await importBytes(await zipOf('Hillside', [device('a', { room: '' })]))
 
     expect(result.refiled).toBe(1)
   })
@@ -124,7 +132,7 @@ describe('importing a project export', () => {
         },
       },
     )
-    const result = await importProjectFile(bytes)
+    const result = await importBytes(bytes)
 
     expect(result.entry.name).toBe('Round trip (imported)')
     const [copied] = await openProject(result.entry.dbName).devices.list()
@@ -133,8 +141,26 @@ describe('importing a project export', () => {
 })
 
 describe('refusing, and leaving nothing behind', () => {
+  it('refuses a file past the size limit without reading it', async () => {
+    // A picked file can be any size; reading a large one whole just to refuse it would hold all
+    // of it in memory first.
+    let read = false
+    const huge = {
+      size: ARCHIVE_LIMITS.maxBytes + 1,
+      arrayBuffer: async () => {
+        read = true
+        return new ArrayBuffer(0)
+      },
+    } as unknown as Blob
+
+    const failure = await importProjectFile(huge).catch((error: unknown) => error)
+
+    expect((failure as ZipError).problem).toBe('tooLarge')
+    expect(read).toBe(false)
+  })
+
   it('refuses a file that is not a zip, and creates nothing', async () => {
-    const failure = await importProjectFile(new TextEncoder().encode('hello')).catch(
+    const failure = await importBytes(new TextEncoder().encode('hello')).catch(
       (error: unknown) => error,
     )
 
@@ -143,7 +169,7 @@ describe('refusing, and leaving nothing behind', () => {
   })
 
   it('refuses an archive with a bad device before creating anything', async () => {
-    const failure = await importProjectFile(
+    const failure = await importBytes(
       await zipOf('Hillside', [device('a'), device('b', { name: '' })]),
     ).catch((error: unknown) => error)
 
@@ -170,7 +196,7 @@ describe('refusing, and leaving nothing behind', () => {
       },
     }
 
-    const failure = await importProjectFile(
+    const failure = await importBytes(
       await zipOf('Hillside', [device('a'), device('b'), device('c')]),
       failing,
     ).catch((error: unknown) => error)
@@ -178,6 +204,32 @@ describe('refusing, and leaving nothing behind', () => {
     expect(failure).toBeInstanceOf(Error)
     expect(created).not.toBe('')
     expect(await localProfileCache().readLocalProjects()).toEqual([])
+    expect(await documentCount(created)).toBe(0)
+  })
+
+  it('destroys the written database when listing it fails', async () => {
+    let created = ''
+    const cache = localProjectDefaults.cache()
+    const failing = {
+      ...localProjectDefaults,
+      cache: () => ({
+        ...cache,
+        readLocalProjects: () => cache.readLocalProjects(),
+        addLocalProject: async () => Promise.reject(new Error('disk full')),
+      }),
+      database: (dbName: string) => {
+        created = dbName
+        return localProjectDefaults.database(dbName)
+      },
+    }
+
+    const failure = await importBytes(
+      await zipOf('Hillside', [device('a'), device('b')]),
+      failing,
+    ).catch((error: unknown) => error)
+
+    expect(failure).toBeInstanceOf(Error)
+    expect(created).not.toBe('')
     expect(await documentCount(created)).toBe(0)
   })
 })

@@ -331,6 +331,7 @@
 'sf73d7490e3579772': `Mit mir geteilt`,
 'sf78bc12f7d5ef1f9': `Die Warteliste ist nicht erreichbar. Bitte versuchen Sie es erneut.`,
 'sf78c048617264a07': `Diese Seite hat keine Berechtigung, eine Kamera zu verwenden. Erlauben Sie den Kamerazugriff für diese Seite in Ihrem Browser, oder geben Sie den Code ein.`,
+'sf79de50470de29c9': `Dieses Projekt ist zu groß, um es als eine Datei zu exportieren. Es wurde nichts heruntergeladen.`,
 'sf8113792b44d84dc': `Ein Gerät braucht einen Namen; darüber finden Sie es später wieder.`,
 'sf9ec6fbd6124932c': str`Projekte, die Ihr Tarif umfasst: ${0}.`,
 'sfabdf1d04838350b': `Ohne Raum`,

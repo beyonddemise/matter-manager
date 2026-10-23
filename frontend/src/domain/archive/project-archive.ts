@@ -133,6 +133,15 @@ export function projectArchiveEntries(
   ]
 }
 
+/**
+ * The characters a device's uuid may hold: those `crypto.randomUUID` writes, and underscores.
+ *
+ * Why: the uuid names the device's file on the next export (`devices/<uuid>.json`). A slash or
+ * a dot there would write an archive that `readZip` refuses as unsafe, and a colon an id that
+ * `documentId` refuses.
+ */
+const SAFE_UUID = /^[A-Za-z0-9_-]+$/
+
 /** One file parsed as JSON, or `undefined` when it is not JSON at all. */
 function parsed(entry: ZipEntry): unknown {
   try {
@@ -251,7 +260,7 @@ function readDevice(entry: ZipEntry): {
 
   const id = value._id
   const uuid = typeof id === 'string' && documentTypeOf(id) === 'device' ? uuidOf(id) : undefined
-  if (uuid === undefined) return refuse('not a device id.')
+  if (uuid === undefined || !SAFE_UUID.test(uuid)) return refuse('not a device id.')
 
   const addedAt = timestamp(value.addedAt)
   if (addedAt === undefined) return refuse('no valid "added" timestamp.')

@@ -226,6 +226,8 @@ export class ProjectsView extends LitElement {
         error instanceof ProjectActionError
       ) {
         this.error = reasonText(error.reason)
+      } else if (isExportTooLarge(error)) {
+        this.error = msg('This project is too large to export as one file. Nothing was downloaded.')
       } else {
         console.error('A projects page action failed.', error)
         this.error = msg('That did not work. Please try again.')
@@ -944,6 +946,17 @@ export class ProjectsView extends LitElement {
   private containerOf(event: Event, selector: string): Element | null {
     return (event.currentTarget as Element | null)?.closest(selector) ?? null
   }
+}
+
+/**
+ * Whether an export was refused for exceeding what an import can read.
+ *
+ * By name, as `importProblemText` does: importing `ZipError` here would pull the zip code into
+ * the bundle every visitor downloads, and it is loaded only when an export runs.
+ */
+function isExportTooLarge(error: unknown): boolean {
+  const named = error as { name?: unknown; problem?: unknown } | null
+  return named?.name === 'ZipError' && named.problem === 'tooLarge'
 }
 
 /**
