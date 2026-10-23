@@ -8,6 +8,7 @@
  * @module
  */
 
+import { msg } from '@lit/localize'
 import { ARCHIVE_LIMITS, projectArchiveEntries } from '../../domain/archive/project-archive.js'
 import { writeZip, type ZipEntry, ZipError } from '../../domain/archive/zip.js'
 import { isProjectDocument, PROJECT_DOCUMENT_ID } from '../../domain/documents/project.js'
@@ -107,13 +108,18 @@ export async function exportProject(
     name: row.name,
     ...(row.client === undefined ? {} : { client: row.client }),
   }
+  // Never blank: the import refuses an archive that names no project, and the first-run project
+  // has no name until it is given one. The page's own label for it stands in.
+  const name =
+    [project.name, row.name].map((candidate) => candidate.trim()).find((n) => n !== '') ??
+    msg('Unnamed project')
   const entries = projectArchiveEntries(
-    { name: project.name, ...(project.client === undefined ? {} : { client: project.client }) },
+    { name, ...(project.client === undefined ? {} : { client: project.client }) },
     devices,
     now.toISOString(),
   )
   checkLimits(entries)
   const zipped = await writeZip(entries, streamCodecs, now)
   checkLimits(entries, zipped)
-  deps.download(zipped, exportFilename(project.name, now))
+  deps.download(zipped, exportFilename(name, now))
 }

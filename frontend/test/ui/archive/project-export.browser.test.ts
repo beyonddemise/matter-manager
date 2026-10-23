@@ -194,6 +194,27 @@ describe('exporting a project', () => {
   })
 })
 
+describe('a project with no name yet', () => {
+  // The first-run project has none until it is named. The import refuses a nameless archive,
+  // so the export must still write one, or the backup could not be restored.
+  it('takes the row’s name when the project document’s is blank', async () => {
+    const { deps, downloads } = fakes({ name: '  ' })
+
+    await exportProject(row, deps)
+
+    expect(readProjectArchive(await offered(downloads)).project.name).toBe('Shown name')
+  })
+
+  it('is exported as an unnamed project when nothing names it, and imports back', async () => {
+    const { deps, downloads } = fakes({ name: '' })
+
+    await exportProject({ dbName: 'project_local_a', name: '' }, deps)
+
+    expect(downloads[0]?.filename).toBe('Unnamed project 2026-10-19.zip')
+    expect(readProjectArchive(await offered(downloads)).project.name).toBe('Unnamed project')
+  })
+})
+
 describe('an export the import could not read back', () => {
   it('is refused, and nothing is offered, past the number of files an import reads', async () => {
     const many = Array.from({ length: ARCHIVE_LIMITS.maxEntries - 1 }, (_, n) => device(`d${n}`))
