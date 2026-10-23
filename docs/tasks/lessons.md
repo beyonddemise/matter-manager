@@ -1590,3 +1590,12 @@ glance at the diff did not.
 **Rule:** for `xliff/*.xlf` take one side, run `npm run i18n:extract`, re-add any missing
 targets, and parse the file (`xml.dom.minidom`) before continuing the rebase. The same applies
 to any generated or structured file.
+
+## L45: a new section goes before the next heading, never over it
+- PR #293 put the export section in DATA-MODEL by replacing `## Conflicts`, leaving the conflict text under the wrong heading. After inserting a section, diff the headings (`grep -n '^#'`) against main: every old heading must still be there.
+
+## L46: an export must pass the import's own limits
+- A backup the importer refuses is a silent failure that shows up only when it is needed. When a reader has limits (size, entries, names), the writer checks the same limits and refuses up front.
+
+## L47: a fault a test injects must end with the step it targets
+- The #292 Refresh test left the store throwing, so a background `void refresh()` on CI's timing rejected unhandled, and #293's CI failed on a test that passed locally. Inject a one-shot fault and assert the targeted call consumed it (`expect(failures).toBe(0)` right after the press).
