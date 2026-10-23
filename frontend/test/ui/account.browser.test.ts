@@ -293,6 +293,14 @@ describe('the account view', () => {
     expect(el.querySelector('[data-signed-out]')).not.toBeNull()
   })
 
+  it('offers to import a project, signed in or not', async () => {
+    // An import makes a project on this device and needs no account.
+    const signedIn = await account(stubApi())
+    expect(signedIn.querySelector('project-import-section [data-import]')).not.toBeNull()
+    const signedOut = await account(stubApi({ read: async () => ({ kind: 'signed-out' }) }))
+    expect(signedOut.querySelector('project-import-section [data-import]')).not.toBeNull()
+  })
+
   it('shows the signed-out state for a signed-out outcome', async () => {
     const el = await account(stubApi({ read: async () => ({ kind: 'signed-out' }) }))
     expect(el.querySelector('[data-signed-out]')?.textContent).toContain(

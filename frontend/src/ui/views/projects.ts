@@ -146,6 +146,7 @@ export class ProjectsView extends LitElement {
     navigate: { attribute: false },
     refresh: { attribute: false },
     actions: { attribute: false },
+    exportProject: { attribute: false },
     busy: { state: true },
     confirming: { state: true },
     typed: { state: true },
@@ -176,6 +177,8 @@ export class ProjectsView extends LitElement {
   declare refresh?: () => Promise<void>
   /** Promote, download and the removals. Unset in the application, where they are the real ones. */
   declare actions?: ProjectActions
+  /** The export, injected by tests; the real one reads the database and offers a download. */
+  declare exportProject?: (row: Row) => Promise<void>
 
   /** Whether an action is running. Every control that starts one is disabled meanwhile. */
   declare busy: boolean
@@ -223,6 +226,8 @@ export class ProjectsView extends LitElement {
         error instanceof ProjectActionError
       ) {
         this.error = reasonText(error.reason)
+      } else if (isExportTooLarge(error)) {
+        this.error = msg('This project is too large to export as one file. Nothing was downloaded.')
       } else {
         console.error('A projects page action failed.', error)
         this.error = msg('That did not work. Please try again.')
@@ -352,6 +357,18 @@ export class ProjectsView extends LitElement {
     if (needsConfirmation(action)) {
       this.typed = ''
       this.confirming = { action, row }
+      return
+    }
+    if (action === 'export') {
+      // Reads this device's copy only, so it is not a project action: nothing on the server or
+      // in the index changes, and replication need not be held for it.
+      void this.run(async () => {
+        // Loaded when chosen, like the PDF builders: the zip writer and the archive format are
+        // for a rare action and have no business in the bundle every visitor downloads.
+        const run =
+          this.exportProject ?? (await import('../archive/project-export.js')).exportProject
+        await run(row)
+      })
       return
     }
     const model = this.model()
@@ -929,6 +946,17 @@ export class ProjectsView extends LitElement {
   private containerOf(event: Event, selector: string): Element | null {
     return (event.currentTarget as Element | null)?.closest(selector) ?? null
   }
+}
+
+/**
+ * Whether an export was refused for exceeding what an import can read.
+ *
+ * By name, as `importProblemText` does: importing `ZipError` here would pull the zip code into
+ * the bundle every visitor downloads, and it is loaded only when an export runs.
+ */
+function isExportTooLarge(error: unknown): boolean {
+  const named = error as { name?: unknown; problem?: unknown } | null
+  return named?.name === 'ZipError' && named.problem === 'tooLarge'
 }
 
 /**

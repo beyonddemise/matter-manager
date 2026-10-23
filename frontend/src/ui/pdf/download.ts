@@ -55,13 +55,16 @@ export function labelsFilename(now: Date = new Date()): string {
  * Revoked on a later turn of the event loop rather than immediately — revoking in the same
  * task as the click is a race some browsers lose, producing a download that silently does not
  * happen.
+ *
+ * @param type the content type; a PDF unless said otherwise (the project export is a zip)
  */
 export function offerDownload(
   bytes: Uint8Array,
   filename: string,
   root: Document = document,
+  type = 'application/pdf',
 ): void {
-  const url = URL.createObjectURL(new Blob([bytes as BlobPart], { type: 'application/pdf' }))
+  const url = URL.createObjectURL(new Blob([bytes as BlobPart], { type }))
   const link = root.createElement('a')
   link.href = url
   link.download = filename

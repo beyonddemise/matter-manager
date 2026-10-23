@@ -93,6 +93,8 @@ export function actionText(action: MenuAction): string {
       return msg('Remove from server')
     case 'restore':
       return msg('Put back on the server')
+    case 'export':
+      return msg('Export project')
   }
 }
 

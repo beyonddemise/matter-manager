@@ -25,13 +25,14 @@ const MENU_ACTIONS: readonly MenuAction[] = [
   'promote',
   'download',
   'restore',
+  'export',
   'removeLocal',
   'deleteLocal',
   'removeServer',
 ]
 
 /** The actions that ask before they run. */
-export type ConfirmedAction = Exclude<MenuAction, 'promote' | 'download' | 'restore'>
+export type ConfirmedAction = Exclude<MenuAction, 'promote' | 'download' | 'restore' | 'export'>
 
 /** Whether an action asks before it runs. */
 export function needsConfirmation(action: MenuAction): action is ConfirmedAction {
@@ -101,9 +102,15 @@ export function renderActionsMenu(
           >
             ${actionText(action)}
             ${
-              reason === undefined
-                ? nothing
-                : html`<span slot="details" class="app-empty">${menuReasonText(action, reason)}</span>`
+              reason !== undefined
+                ? html`<span slot="details" class="app-empty">${menuReasonText(action, reason)}</span>`
+                : action === 'export'
+                  ? // Said where it is chosen: the file is a backup of every setup code in the
+                    // project, in plain text, and whoever holds it can commission the devices.
+                    html`<span slot="details" class="app-empty" data-export-warning>
+                      ${msg('Contains the setup codes. Keep it safe.')}
+                    </span>`
+                  : nothing
             }
           </wa-dropdown-item>
         `

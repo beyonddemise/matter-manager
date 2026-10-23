@@ -1,4 +1,4 @@
-import { msg, str, updateWhenLocaleChanges } from '@lit/localize'
+import { msg, updateWhenLocaleChanges } from '@lit/localize'
 import { html, LitElement, nothing, type PropertyDeclarations, type TemplateResult } from 'lit'
 import type { ProjectRepositories } from '../../data/index.js'
 import {
@@ -11,6 +11,7 @@ import {
 } from '../../domain/index.js'
 import { PROJECT_CHANGED, PROJECT_DATA_CHANGED } from '../current-project.js'
 import { projectDatabase, projectIsEditable } from '../db/project-database.js'
+import { deviceCountText } from '../i18n/counts.js'
 import { displayOrder } from '../i18n/localization.js'
 import { problemMessage } from '../i18n/problems.js'
 import { fieldValue } from './device-form.js'
@@ -222,11 +223,7 @@ export class RoomsView extends LitElement {
             ${roomSpellings(room.spellings)}
           </a>
           <small class="app-empty" data-room-count>
-            ${
-              room.deviceCount === 1
-                ? msg('1 device')
-                : msg(str`${room.deviceCount} devices`, { desc: 'How many devices are in a room.' })
-            }
+            ${deviceCountText(room.deviceCount)}
           </small>
         </div>
 

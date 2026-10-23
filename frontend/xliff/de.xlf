@@ -1237,9 +1237,9 @@
   <note from="lit-localize">A removable filter above the device list.</note>
 </trans-unit>
 <trans-unit id="s54c7f6fd19978d9e">
-  <source><x id="0" equiv-text="${room.deviceCount}"/> devices</source>
+  <source><x id="0" equiv-text="${count}"/> devices</source>
   <target><x id="0" equiv-text="${room.deviceCount}"/> Geräte</target>
-  <note from="lit-localize">How many devices are in a room.</note>
+  <note from="lit-localize">A count of devices.</note>
 </trans-unit>
 <trans-unit id="s71ef3da92599264c">
   <source>Project <x id="0" equiv-text="${name}"/></source>
@@ -1257,6 +1257,74 @@
 <trans-unit id="s7b7163270e57e8b4">
   <source>Refresh</source>
   <target>Aktualisieren</target>
+</trans-unit>
+<trans-unit id="seb88900efea2154d">
+  <source>Contains the setup codes. Keep it safe.</source>
+  <target>Enthält die Setup-Codes. Sicher aufbewahren.</target>
+</trans-unit>
+<trans-unit id="s9d59297e1857847e">
+  <source>Import a project</source>
+  <target>Projekt importieren</target>
+</trans-unit>
+<trans-unit id="s1cc59240e1adf507">
+  <source>Choose a project export (a .zip file). It becomes a new project on this device.</source>
+  <target>Wählen Sie einen Projektexport (eine .zip-Datei). Er wird zu einem neuen Projekt auf diesem Gerät.</target>
+</trans-unit>
+<trans-unit id="se63d6550bb625dd0">
+  <source>Imported “<x id="0" equiv-text="${result.entry.name}"/>” (<x id="1" equiv-text="${count}"/>). It is now the open project.</source>
+  <target>„<x id="0" equiv-text="${result.entry.name}"/>“ importiert (<x id="1" equiv-text="${count}"/>). Es ist jetzt das geöffnete Projekt.</target>
+</trans-unit>
+<trans-unit id="s4acb4634c6dc5c52">
+  <source>Devices without a room were put in “Imported”: <x id="0" equiv-text="${result.refiled}"/>.</source>
+  <target>Geräte ohne Raum wurden in „Imported“ abgelegt: <x id="0" equiv-text="${result.refiled}"/>.</target>
+</trans-unit>
+<trans-unit id="s8ebeea444a14d65d">
+  <source>Show its devices</source>
+  <target>Geräte anzeigen</target>
+</trans-unit>
+<trans-unit id="s106d19c5d7b74384">
+  <source>This file is not a zip file. Nothing was imported.</source>
+  <target>Diese Datei ist keine ZIP-Datei. Es wurde nichts importiert.</target>
+</trans-unit>
+<trans-unit id="s05efcf8f0cea0ea4">
+  <source>This file is too large to import. Nothing was imported.</source>
+  <target>Diese Datei ist zu groß für den Import. Es wurde nichts importiert.</target>
+</trans-unit>
+<trans-unit id="s8b4517e227a14de4">
+  <source>This file is damaged. Nothing was imported.</source>
+  <target>Diese Datei ist beschädigt. Es wurde nichts importiert.</target>
+</trans-unit>
+<trans-unit id="s4996af027c6c381b">
+  <source>This zip uses a format the import cannot read. Nothing was imported.</source>
+  <target>Diese ZIP-Datei verwendet ein Format, das der Import nicht lesen kann. Es wurde nichts importiert.</target>
+</trans-unit>
+<trans-unit id="s638a932e429dd7a6">
+  <source>This is not a Matter Manager project export. Nothing was imported.</source>
+  <target>Dies ist kein Projektexport von Matter Manager. Es wurde nichts importiert.</target>
+</trans-unit>
+<trans-unit id="sb238a0d60a9b5372">
+  <source>This export was made by a newer version of Matter Manager. Reload to update, then try again. Nothing was imported.</source>
+  <target>Dieser Export stammt von einer neueren Version von Matter Manager. Laden Sie die Seite neu, um zu aktualisieren, und versuchen Sie es noch einmal. Es wurde nichts importiert.</target>
+</trans-unit>
+<trans-unit id="s8435dd2f0ee42d41">
+  <source>A device in this export is not valid (<x id="0" equiv-text="${file}"/>). Nothing was imported.</source>
+  <target>Ein Gerät in diesem Export ist ungültig (<x id="0" equiv-text="${error.file ?? ''}"/>). Es wurde nichts importiert.</target>
+</trans-unit>
+<trans-unit id="s91ef076d6e6d98f0">
+  <source>The project could not be saved on this device. Nothing was imported.</source>
+  <target>Das Projekt konnte auf diesem Gerät nicht gespeichert werden. Es wurde nichts importiert.</target>
+</trans-unit>
+<trans-unit id="sb0ea72eda92f3682">
+  <source>Export project</source>
+  <target>Projekt exportieren</target>
+</trans-unit>
+<trans-unit id="sa2f164977a2f776e">
+  <source>A device in this export is not valid. Nothing was imported.</source>
+  <target>Ein Gerät in diesem Export ist ungültig. Es wurde nichts importiert.</target>
+</trans-unit>
+<trans-unit id="sf79de50470de29c9">
+  <source>This project is too large to export as one file. Nothing was downloaded.</source>
+  <target>Dieses Projekt ist zu groß, um es als eine Datei zu exportieren. Es wurde nichts heruntergeladen.</target>
 </trans-unit>
 </body>
 </file>
