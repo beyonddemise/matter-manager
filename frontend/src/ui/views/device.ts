@@ -14,7 +14,7 @@ import {
   type Unsaved,
   uuidOf,
 } from '../../domain/index.js'
-import { PROJECT_CHANGED } from '../current-project.js'
+import { PROJECT_CHANGED, PROJECT_DATA_CHANGED } from '../current-project.js'
 import { projectDatabase, projectIsEditable } from '../db/project-database.js'
 import { shownManufacturer } from '../i18n/manufacturer.js'
 import { currentAuthor } from '../identity.js'
@@ -224,6 +224,16 @@ export class DeviceView extends LitElement {
   private request = 0
 
   /**
+   * Which read of the *same* route is the newest.
+   *
+   * Apart from {@link request} because the writes compare that one: a re-read on
+   * `PROJECT_DATA_CHANGED` that moved it would drop the result of a write still in flight and
+   * leave `busy` set, so every action on the page stayed disabled. A write that lands moves
+   * this one instead, so a re-read issued before it cannot put the old revision back.
+   */
+  private reads = 0
+
+  /**
    * Re-reads everything when the reader moves to another project (#55).
    *
    * The repositories are resolved once and held, because re-resolving on every render would
@@ -243,31 +253,52 @@ export class DeviceView extends LitElement {
     void this.load()
   }
 
+  /**
+   * Re-reads the same project: replication brought documents down, or Refresh was pressed.
+   * The page is still the same device's, so a write in flight keeps its result; see
+   * {@link reads}.
+   */
+  private onDataChanged = (): void => {
+    void this.load(false)
+  }
+
   override connectedCallback(): void {
     super.connectedCallback()
     window.addEventListener(PROJECT_CHANGED, this.onProjectChanged)
+    window.addEventListener(PROJECT_DATA_CHANGED, this.onDataChanged)
   }
 
   override disconnectedCallback(): void {
     window.removeEventListener(PROJECT_CHANGED, this.onProjectChanged)
+    window.removeEventListener(PROJECT_DATA_CHANGED, this.onDataChanged)
     super.disconnectedCallback()
   }
 
-  private async load(): Promise<void> {
-    const token = ++this.request
+  /**
+   * Reads the route's device.
+   *
+   * @param newRoute whether the route or the project changed, which also invalidates the writes
+   *   still in flight; `false` for a re-read of the same device
+   */
+  private async load(newRoute = true): Promise<void> {
+    const token = newRoute ? ++this.request : this.request
+    const read = ++this.reads
     const id = this.documentId()
+    const current = (): boolean => token === this.request && read === this.reads
 
     try {
       const device = id === undefined ? undefined : await this.repos().devices.get(id)
 
-      if (token !== this.request) return
+      if (!current()) return
 
       this.device = device
       this.loaded = true
+      // A re-read of the same route can follow a failed one; nothing else clears the failure.
+      this.failed = false
     } catch {
       // Guarded by the same token as the success path: a failed read for a device the user has
       // already navigated away from must not put an error on the page they are looking at now.
-      if (token !== this.request) return
+      if (!current()) return
       // Not logged: a device document carries a setup code.
       this.failed = true
     }
@@ -374,6 +405,7 @@ export class DeviceView extends LitElement {
         setDeviceDisabled(current, disabled, () => new Date().toISOString()),
       )
       if (token !== this.request) return
+      this.reads += 1
       this.device = saved
       this.failure = undefined
     } catch {
@@ -624,6 +656,7 @@ export class DeviceView extends LitElement {
         current === device ? updated : remarked(current),
       )
       if (token !== this.request) return
+      this.reads += 1
       this.device = saved
       this.remarkError = undefined
       this.clearComposer()

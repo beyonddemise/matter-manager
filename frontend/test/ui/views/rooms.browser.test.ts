@@ -7,6 +7,7 @@ import { fixture, html, waitUntil } from '@open-wc/testing-helpers'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { ProjectRepositories } from '../../../src/data/index.js'
 import { type DeviceDocument, roomPathKey, type Unsaved } from '../../../src/domain/index.js'
+import { PROJECT_DATA_CHANGED } from '../../../src/ui/current-project.js'
 import { useProjectDatabase } from '../../../src/ui/db/project-database.js'
 import type { RoomsView } from '../../../src/ui/views/rooms.js'
 import '../../../src/ui/views/rooms.js'
@@ -305,5 +306,19 @@ describe('a project somebody may only read', () => {
     expect(element.querySelector('[data-merge]')).toBeNull()
     // The room itself is still listed and still a link.
     expect(element.querySelector('[data-room-path]')).not.toBeNull()
+  })
+})
+
+/** Replication brought documents down, or Refresh was pressed: the rooms are derived again. */
+describe('when the project’s documents change', () => {
+  it('lists a room a newly arrived device is in', async () => {
+    await database.repositories.devices.save(device('device:one', 'Kitchen'))
+    const element = await view()
+    await database.repositories.devices.save(device('device:two', 'Porch'))
+
+    window.dispatchEvent(new CustomEvent(PROJECT_DATA_CHANGED))
+
+    await waitUntil(() => keys(element).includes(key('Porch')), 'the new room never showed')
+    expect(keys(element)).toEqual([key('Kitchen'), key('Porch')])
   })
 })

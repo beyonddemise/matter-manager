@@ -152,6 +152,7 @@
 's7608573759aa7525': `Testhersteller`,
 's7a90628d47e6474f': `Dies ist kein Matter-Einrichtungscode, den diese Version lesen kann.`,
 's7aa73a226fe11914': `Zurück zu den Geräten`,
+'s7b7163270e57e8b4': `Aktualisieren`,
 's7c99f63e17035e53': ` samt Unterräumen`,
 's7cf69b5464066504': `Von diesem Gerät löschen`,
 's7cfe12cd14df9950': `Abmelden`,

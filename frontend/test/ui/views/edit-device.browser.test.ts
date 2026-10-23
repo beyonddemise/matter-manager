@@ -13,7 +13,7 @@ import {
   TEST_VENDOR_NAME,
   type Unsaved,
 } from '../../../src/domain/index.js'
-import { PROJECT_CHANGED } from '../../../src/ui/current-project.js'
+import { PROJECT_CHANGED, PROJECT_DATA_CHANGED } from '../../../src/ui/current-project.js'
 import { activateLocale } from '../../../src/ui/i18n/localization.js'
 import type { EditDeviceView } from '../../../src/ui/views/edit-device.js'
 import '../../../src/ui/views/edit-device.js'
@@ -446,5 +446,27 @@ describe('switching project while a save is planned', () => {
 
     expect(saves).toBe(0)
     expect((await stored()).name).toBe('Kitchen ceiling light')
+  })
+})
+
+/**
+ * Replication brought documents down, or Refresh was pressed. The form deliberately does not
+ * re-read: that would overwrite what somebody is typing.
+ */
+describe('when the project’s documents change', () => {
+  it('keeps what was typed', async () => {
+    await seed()
+    const element = await form()
+    fill(element, 'name', 'Half-typed name')
+    const stored = await database.repositories.devices.get(DEVICE_ID)
+    if (stored === undefined) throw new Error('not seeded')
+    await database.repositories.devices.save({ ...stored, name: 'Renamed elsewhere' })
+
+    window.dispatchEvent(new CustomEvent(PROJECT_DATA_CHANGED))
+    // Long enough for a re-read and a refill to land, had either been started.
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    await element.updateComplete
+
+    expect(shown(element, 'name')).toBe('Half-typed name')
   })
 })

@@ -17,7 +17,7 @@ import {
   splitRoomPath,
   uuidOf,
 } from '../../domain/index.js'
-import { PROJECT_CHANGED } from '../current-project.js'
+import { PROJECT_CHANGED, PROJECT_DATA_CHANGED } from '../current-project.js'
 import { projectDatabase, projectIsEditable } from '../db/project-database.js'
 import { displayOrder } from '../i18n/localization.js'
 import {
@@ -210,14 +210,24 @@ export class DeviceListView extends LitElement {
    */
   private loadGeneration = 0
 
+  /**
+   * Re-reads the same project: replication brought documents down, or Refresh was pressed.
+   * The load generation keeps an older read from landing after this one.
+   */
+  private onDataChanged = (): void => {
+    void this.load()
+  }
+
   override connectedCallback(): void {
     super.connectedCallback()
     window.addEventListener(PROJECT_CHANGED, this.onProjectChanged)
+    window.addEventListener(PROJECT_DATA_CHANGED, this.onDataChanged)
     window.addEventListener('hashchange', this.onHashChange)
   }
 
   override disconnectedCallback(): void {
     window.removeEventListener(PROJECT_CHANGED, this.onProjectChanged)
+    window.removeEventListener(PROJECT_DATA_CHANGED, this.onDataChanged)
     window.removeEventListener('hashchange', this.onHashChange)
     super.disconnectedCallback()
   }

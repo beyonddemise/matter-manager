@@ -209,6 +209,7 @@ export class AppShell extends LitElement implements ViewHost {
     signingOut: { state: true },
     upgrading: { state: true },
     waitlistBusy: { state: true },
+    refreshing: { state: true },
     waitlistProblem: { state: true },
     waitlistLeft: { state: true },
     waitlist: { attribute: false },
@@ -262,6 +263,8 @@ export class AppShell extends LitElement implements ViewHost {
   declare upgrading: boolean
   /** A waitlist change is on its way to the server; every action in the dialog waits. */
   declare waitlistBusy: boolean
+  /** The header's Refresh is running; the button shows it and ignores another press. */
+  declare refreshing: boolean
   /** Why the last waitlist change did not happen, until the dialog closes or another is tried. */
   declare waitlistProblem: WaitlistProblem | undefined
   /** The last change left the waitlist and the dialog stayed open to say so. */
@@ -306,7 +309,10 @@ export class AppShell extends LitElement implements ViewHost {
   /** Injected by tests. Unset in the application, where these reach the real API. */
   declare refresher?: (onOutcome: (outcome: TokenOutcome) => void) => { stop(): void }
   declare listProjects?: () => Promise<readonly Project[]>
-  declare makeSync?: (onState: (id: string, state: SyncState) => void) => SyncManager
+  declare makeSync?: (
+    onState: (id: string, state: SyncState) => void,
+    onIncoming: (id: string) => void,
+  ) => SyncManager
   /**
    * Follows the profile's locale; `onCached` says the fetched profile is now in the cache, so the
    * email and plan are read again.
@@ -411,6 +417,7 @@ export class AppShell extends LitElement implements ViewHost {
     updateWhenLocaleChanges(this)
     this.signingOut = undefined
     this.upgrading = false
+    this.refreshing = false
     this.planMatrix = undefined
     this.signingIn = undefined
     this.signInNotice = ''
@@ -1164,6 +1171,20 @@ export class AppShell extends LitElement implements ViewHost {
     await this.projects.refresh(false)
   }
 
+  /**
+   * Refresh: the project list, a pull of the open project, and the views re-read. See
+   * `ProjectsController.refreshNow`. Never throws: every step there is best effort.
+   */
+  private onRefresh = async (): Promise<void> => {
+    if (this.refreshing) return
+    this.refreshing = true
+    try {
+      await this.projects.refreshNow()
+    } finally {
+      this.refreshing = false
+    }
+  }
+
   private onUpgrade = (): void => {
     this.waitlistProblem = undefined
     this.waitlistLeft = false
@@ -1329,6 +1350,18 @@ export class AppShell extends LitElement implements ViewHost {
             <strong class="wa-desktop-only" aria-hidden="true">${msg('Matter Manager')}</strong>
           </div>
           <div class="wa-cluster wa-gap-xs app-header-actions">
+            <!-- Before Upgrade: fetches the project list, pulls the open project and re-reads
+                 the page. Shown signed out and offline too, where it re-reads what this device
+                 holds. -->
+            <wa-button
+              data-refresh
+              appearance="plain"
+              size="s"
+              ?loading=${this.refreshing}
+              @click=${this.onRefresh}
+            >
+              <wa-icon name="arrows-rotate" label=${msg('Refresh')}></wa-icon>
+            </wa-button>
             ${renderUpgrade(
               {
                 plan: this.projects.facts?.plan ?? DEFAULT_PLAN,

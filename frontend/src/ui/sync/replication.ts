@@ -91,21 +91,29 @@ export interface Syncable {
     on(event: 'error', handler: (error: unknown) => void): unknown
     cancel(): void
   }
-  /** One-shot replication, for {@link pushOnce}. */
+  /** One-shot replication, for {@link pushOnce} and {@link pullOnce}. */
   replicate: {
-    to(
-      remote: unknown,
-      options: { live: false; retry: false; checkpoint: false },
-    ): {
-      on(
-        event: 'complete',
-        handler: (info: { docs_written: number; doc_write_failures?: number }) => void,
-      ): unknown
-      on(event: 'denied', handler: (reason: unknown) => void): unknown
-      on(event: 'error', handler: (error: unknown) => void): unknown
-      cancel(): void
-    }
+    to(remote: unknown, options: OneShotOptions): OneShot
+    from(remote: unknown, options: OneShotOptions): OneShot
   }
+}
+
+/** A one-shot replication's options: never live, never retried, never checkpointed. */
+export interface OneShotOptions {
+  readonly live: false
+  readonly retry: false
+  readonly checkpoint: false
+}
+
+/** A one-shot replication in flight, narrowed to the events this module reads. */
+export interface OneShot {
+  on(
+    event: 'complete',
+    handler: (info: { docs_written: number; doc_write_failures?: number }) => void,
+  ): unknown
+  on(event: 'denied', handler: (reason: unknown) => void): unknown
+  on(event: 'error', handler: (error: unknown) => void): unknown
+  cancel(): void
 }
 
 /** What a sync `change` event says, narrowed to what this module reads. */
@@ -282,6 +290,43 @@ export function pushOnce(
     push.on('error', (error) => {
       done()
       reject(error instanceof Error ? error : new Error('The push failed', { cause: error }))
+    })
+  })
+}
+
+/**
+ * Pulls one project's server changes once and resolves when this copy has them all.
+ *
+ * What the header's Refresh asks for. The live sync already pulls continuously; this is for
+ * when it has quietly stalled (a long-poll the network dropped) and somebody wants to be sure
+ * they are looking at the latest. `checkpoint: false` for the reason {@link pushOnce} gives:
+ * it must not write a checkpoint the live replication of the same pair is also writing.
+ *
+ * Rejects when the server is unreachable or refuses the read; `retry: false` makes that an
+ * error rather than a wait. The optional signal cancels it.
+ */
+export function pullOnce(
+  local: Syncable,
+  remote: unknown,
+  options: { signal?: AbortSignal } = {},
+): Promise<{ pulled: number }> {
+  return new Promise((resolve, reject) => {
+    const pull = local.replicate.from(remote, { live: false, retry: false, checkpoint: false })
+    const onAbort = (): void => {
+      pull.cancel()
+      reject(new Error('The pull was cancelled'))
+    }
+    options.signal?.addEventListener('abort', onAbort, { once: true })
+    const done = (): void => options.signal?.removeEventListener('abort', onAbort)
+    if (options.signal?.aborted) return onAbort()
+
+    pull.on('complete', (info) => {
+      done()
+      resolve({ pulled: info.docs_written })
+    })
+    pull.on('error', (error) => {
+      done()
+      reject(error instanceof Error ? error : new Error('The pull failed', { cause: error }))
     })
   })
 }
