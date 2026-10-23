@@ -207,6 +207,36 @@ describe('when the device cannot be read', () => {
     expect(element.querySelector('[data-read-failed]')).not.toBeNull()
   })
 
+  it('shows the device when a re-read succeeds after a failed read', async () => {
+    // A change arriving later re-reads the same device; a read that works must take the
+    // failure message down, or the page keeps saying it cannot read a device it now holds.
+    await seed()
+    const real = database.repositories
+    let refuse = true
+    const repositories: ProjectRepositories = {
+      ...real,
+      devices: {
+        ...real.devices,
+        get: async (wanted: string) => {
+          if (refuse) throw new Error('indexed_db_went_bad')
+          return real.devices.get(wanted)
+        },
+      },
+    }
+    const view = (await fixture(
+      html`<device-view uuid=${UUID} .repositories=${repositories}></device-view>`,
+    )) as DeviceView
+    await waitUntil(() => view.failed, 'the first read never failed')
+    refuse = false
+
+    window.dispatchEvent(new CustomEvent(PROJECT_DATA_CHANGED))
+
+    await waitUntil(() => !view.failed, 'the failure stayed after a read that worked')
+    await view.updateComplete
+    expect(view.querySelector('[data-read-failed]')).toBeNull()
+    expect(view.textContent).toContain('Kitchen ceiling light')
+  })
+
   it('does not say the device does not exist', async () => {
     // **The message that must not appear.** "There is no device with that address" tells
     // somebody their device is gone. It is not gone — this browser could not open its own

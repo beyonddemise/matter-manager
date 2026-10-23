@@ -293,6 +293,8 @@ export class DeviceView extends LitElement {
 
       this.device = device
       this.loaded = true
+      // A re-read of the same route can follow a failed one; nothing else clears the failure.
+      this.failed = false
     } catch {
       // Guarded by the same token as the success path: a failed read for a device the user has
       // already navigated away from must not put an error on the page they are looking at now.

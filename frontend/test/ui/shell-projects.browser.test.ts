@@ -901,19 +901,28 @@ describe('refreshing', () => {
   it('finishes, and still pulls and tells the views, when re-reading the list fails', async () => {
     // The pull and the re-read do not depend on the list: a fault there must not skip them, nor
     // escape the click handler as an unhandled rejection.
+    //
+    // Exactly one read fails, and it is Refresh's own: the press reaches the cache before its
+    // first await. A store left broken would also fail whichever background refresh ran next,
+    // as an unhandled rejection that names this test (seen on CI).
     const real = isolatedProjectStore()
-    let broken = false
+    let failures = 0
     const store: LocalProjectDependencies = {
       ...real,
       cache: () => {
-        if (broken) throw new Error('the cache is gone')
+        if (failures > 0) {
+          failures -= 1
+          throw new Error('the cache is gone')
+        }
         return real.cache()
       },
     }
     const { element, sync } = await openOnServer({ store })
-    broken = true
+    failures = 1
 
-    await refresh(element)
+    const pressed = refresh(element)
+    expect(failures).toBe(0)
+    await pressed
 
     expect(sync.pulls).toEqual(['p1'])
     expect(announced).toBe(1)
