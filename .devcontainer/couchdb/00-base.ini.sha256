@@ -1,0 +1,6 @@
+# Drift pin for 00-base.ini (#258). The source of truth is the backend repository's
+# matter-manager-backend: infra/couchdb/00-base.ini, which the production image is built from;
+# the file next to this one is a copy. When `scripts/check-couchdb-ini.mjs` fails: diff the two
+# copies, reconcile them (the backend copy wins), then replace the hash below with the one the
+# check prints (or `shasum -a 256 .devcontainer/couchdb/00-base.ini`).
+b58f1392170e2917e9db7970b8a480a72bd6bbf4d07c0e7ab0fc05e69e409abd  .devcontainer/couchdb/00-base.ini
