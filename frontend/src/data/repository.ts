@@ -188,13 +188,28 @@ function revisionReadsLocked(document: object, state: KeyState | undefined): boo
  *
  * Keyed by the handle, so every repository over one database shares it and it lives exactly as
  * long as the handle — `ui/db` memoises one per project, beside its key-state memo. `seen` is set
- * by any read that meets an `enc:` value and by the one-time `scan`. Nothing clears it, and nothing
+ * by any read that meets an `enc:` value and by the `scan`. Nothing clears `seen`, and nothing
  * needs to: it is consulted only while the key state is absent, ciphertext proves a DEK exists
  * somewhere, and once the wraps arrive the key state is defined (unlocked writes encrypt, locked
- * ones refuse) and the flag is never asked again.
+ * ones refuse) and the flag is never asked again. A *finished negative* scan is another matter:
+ * {@link forgetCiphertextScan} drops it when devices replicate in.
  */
 type CiphertextKnowledge = { seen: boolean; scan?: Promise<void> | undefined }
 const ciphertextKnowledge = new WeakMap<PouchDB.Database, CiphertextKnowledge>()
+
+/**
+ * Drops a database's cached "no ciphertext here" scan, so the next keyless write scans again.
+ *
+ * For the inbound replication hook (`ui/db/project-database.ts`), on any batch carrying devices:
+ * a scan that found none says nothing about documents that arrived after it, and refusing the
+ * next write must not depend on some view having read them first. "Seen ciphertext" is kept —
+ * nothing that arrives can make an encrypted project plaintext. A no-op for a handle that has
+ * never scanned.
+ */
+export function forgetCiphertextScan(database: PouchDB.Database): void {
+  const known = ciphertextKnowledge.get(database)
+  if (known !== undefined && !known.seen) known.scan = undefined
+}
 
 function knowledgeOf(database: PouchDB.Database): CiphertextKnowledge {
   let known = ciphertextKnowledge.get(database)
@@ -312,18 +327,22 @@ export function repository<T extends Revision>(
    * The read path usually knows already. For a handle that has not read anything yet — a fresh
    * tab whose first act is a write — the device documents are scanned **once per handle**, and
    * only on a keyless write that carries a secret: in practice a plaintext database, where that is
-   * one `allDocs` per page, not per write. A negative answer is kept too; ciphertext that
-   * replicates in afterwards is caught by the reads its arrival triggers (`PROJECT_DATA_CHANGED`
-   * re-reads every view before the user can act on it).
+   * one `allDocs` per page, not per write. Losing revisions count, as they do for a read, and are
+   * read by `rev` — never resolved, so the scan writes nothing. A negative answer is kept until
+   * inbound replication delivers devices ({@link forgetCiphertextScan}); a positive one for good.
    */
   const holdsCiphertext = async (): Promise<boolean> => {
     const known = knowledgeOf(database)
     if (known.seen) return true
     known.scan ??= database
-      .allDocs({ ...idRange('device'), include_docs: true })
-      .then(({ rows }) => {
-        if (rows.some((row) => row.doc !== undefined && carriesCiphertext(row.doc))) {
-          known.seen = true
+      .allDocs({ ...idRange('device'), include_docs: true, conflicts: true })
+      .then(async ({ rows }) => {
+        for (const row of rows) {
+          if (row.doc === undefined) continue
+          if (await keylessRevisionsCarryCiphertext(row.doc as unknown as Conflicted<T>)) {
+            known.seen = true
+            return
+          }
         }
       })
       .catch((error: unknown) => {

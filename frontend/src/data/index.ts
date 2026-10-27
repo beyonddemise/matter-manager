@@ -42,6 +42,7 @@ export {
 export { type ProjectRepositories, projectRepositories } from './project-database.js'
 export {
   type FieldCipher,
+  forgetCiphertextScan,
   isLockedDocument,
   type KeyState,
   type KeyStateProvider,

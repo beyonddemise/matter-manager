@@ -9,6 +9,7 @@ import '@awesome.me/webawesome-pro/dist/components/textarea/textarea.js'
 import { fixture, html, waitUntil } from '@open-wc/testing-helpers'
 import PouchDB from 'pouchdb-browser'
 import { afterEach, beforeAll, describe, expect, it } from 'vitest'
+import { ProjectLockedError } from '../../../src/data/index.js'
 import { encryptField, generateDek, wrapDek } from '../../../src/domain/crypto/envelope.js'
 import { projectKeyDocumentId } from '../../../src/domain/documents/keys.js'
 import { documentId } from '../../../src/domain/index.js'
@@ -60,6 +61,61 @@ afterEach(async () => {
     forgetProject(name)
     await new PouchDB(name).destroy().catch(() => undefined)
   }
+})
+
+describe('a keyless write after ciphertext devices replicate in', () => {
+  // #336, review of 1e64655: a write's one-time scan that found no ciphertext must not outlive
+  // an inbound batch of devices. The refusal has to hold with no read in between — not rely on
+  // the views happening to re-read first.
+  it('is refused even though the earlier scan found none and nothing has read since', async () => {
+    const dek = await generateDek()
+    const server = new PouchDB(uniqueName('server'))
+    const dbName = uniqueName('project_local')
+    const repositories = openProject(dbName)
+    const device = (uuid: string, name: string) => ({
+      _id: documentId('device', uuid),
+      type: 'device' as const,
+      name,
+      room: 'Hall',
+      manualCode: MANUAL_CODE,
+      installedAt: '2026-08-19',
+      addedAt: NOW,
+      disabled: false,
+      remarks: [],
+    })
+
+    // A plaintext write first: keyless, nothing anywhere encrypted, so the scan answers "none".
+    await repositories.devices.save(device('11111111-1111-4111-8111-111111111111', 'First'))
+
+    // Then an encrypted device arrives through the production inbound hook, and only that hook:
+    // no `onIncoming`, so no view and no repository reads anything.
+    await server.put({
+      ...device(UUID, 'Kitchen ceiling light'),
+      manualCode: await encryptField(dek, DEVICE_ID, 'manualCode', MANUAL_CODE),
+      updatedAt: NOW,
+    })
+    const inbound: string[] = []
+    const manager = syncManager({
+      local: (name) => rawDatabase(name) as never,
+      remote: () => server as never,
+      onInboundDocs: (name, docIds) => {
+        refreshKeyStateOnInboundKeys(name, docIds)
+        inbound.push(...docIds)
+      },
+    })
+    manager.set([{ projectId: 'p-keysafter-write', dbName }])
+    try {
+      await waitUntil(() => inbound.includes(DEVICE_ID), 'the encrypted device never arrived', {
+        timeout: 5000,
+      })
+
+      const later = device('22222222-2222-4222-8222-222222222222', 'Second')
+      await expect(repositories.devices.save(later)).rejects.toThrow(ProjectLockedError)
+      await expect(rawDatabase(dbName).get(later._id)).rejects.toMatchObject({ status: 404 })
+    } finally {
+      manager.stopAll()
+    }
+  })
 })
 
 describe('a project whose devices replicate in before its key documents', () => {

@@ -554,7 +554,11 @@ describe('the encryption seam, keyless over ciphertext', () => {
   // Review of #335: the winner is not the only revision a read can surface. Resolution merges
   // by `updatedAt`, so a ciphertext *losing* revision that is newer would win the merge and pass
   // through the keyless state as a code — and resolving it would write while unable to read it.
-  it('keylessCiphertextInALosingRevisionLocksTheReadAndWritesNothing', async () => {
+  /**
+   * One device with two roots, written as replication writes them: a plaintext winner (the
+   * higher revision id wins) and a newer ciphertext loser, which resolution's merge would pick.
+   */
+  async function seededCiphertextLoser(): Promise<void> {
     const plaintext = { ...lamp(), updatedAt: '2026-08-20T10:00:00.000Z' }
     const cipher = stubCipher()
     const encrypted = {
@@ -564,8 +568,6 @@ describe('the encryption seam, keyless over ciphertext', () => {
       manualCode: await cipher.encrypt(LAMP, 'manualCode', lamp().manualCode),
       updatedAt: '2026-08-20T11:00:00.000Z',
     }
-    // Two roots of one id, written as replication writes them. The higher revision id wins, so
-    // the plaintext one is the winner and the newer ciphertext one the loser.
     await database.bulkDocs(
       [
         { ...plaintext, _rev: '1-ffffffffffffffffffffffffffffffff' },
@@ -573,6 +575,10 @@ describe('the encryption seam, keyless over ciphertext', () => {
       ],
       { new_edits: false },
     )
+  }
+
+  it('keylessCiphertextInALosingRevisionLocksTheReadAndWritesNothing', async () => {
+    await seededCiphertextLoser()
     const stored = (await database.get(LAMP, { conflicts: true })) as unknown as {
       payload: string
       _conflicts?: string[]
@@ -619,6 +625,17 @@ describe('the encryption seam, keyless over ciphertext', () => {
 
       await expect(keyless.devices.save(another())).rejects.toThrow(ProjectLockedError)
       expect(await isStored(OTHER)).toBe(false)
+    })
+
+    it('is refused when the only ciphertext is a losing revision, before any read', async () => {
+      // Review of #335 on 1e64655: a scan of winners alone answers "no ciphertext" here.
+      await seededCiphertextLoser()
+      const { update_seq: before } = await database.info()
+
+      await expect(repositories.devices.save(another())).rejects.toThrow(ProjectLockedError)
+      expect(await isStored(OTHER)).toBe(false)
+      // The scan read the losing revision; it did not resolve or prune it.
+      expect((await database.info()).update_seq).toBe(before)
     })
 
     it('is accepted in a genuinely plaintext database', async () => {

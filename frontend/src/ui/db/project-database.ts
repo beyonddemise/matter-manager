@@ -11,6 +11,7 @@
 
 import PouchDB from 'pouchdb-browser'
 import {
+  forgetCiphertextScan,
   isLocalOnlyDatabase,
   type LocalCache,
   type LocalProjectEntry,
@@ -19,6 +20,7 @@ import {
   projectRepositories,
 } from '../../data/index.js'
 import { PROJECT_KEY_PREFIX } from '../../domain/documents/keys.js'
+import { documentTypeOf } from '../../domain/index.js'
 import { PROJECT_CHANGED } from '../current-project.js'
 import { coordinateWrites } from './db-lock.js'
 import { memoiseKeyState, resolveKeyState, unlockProject } from './keyring.js'
@@ -141,9 +143,17 @@ function openHandle(dbName: string): OpenedProject {
  * Filtered on the inbound ids rather than refreshing on every pull, so the common case (device
  * edits arriving all day) never re-resolves anything. Wired to both inbound paths in
  * `composition.ts`; the next repository operation picks the fresh state up.
+ *
+ * A batch carrying devices also drops the database's cached *negative* ciphertext scan (#336,
+ * `forgetCiphertextScan`): those devices may be ciphertext whose wraps are still to come, and the
+ * next keyless write must find that out itself rather than trust a view to have read them first.
  */
 export function refreshKeyStateOnInboundKeys(dbName: string, docIds: readonly string[]): void {
   if (docIds.some((id) => id.startsWith(PROJECT_KEY_PREFIX))) refreshProjectKeyState(dbName)
+  if (docIds.some((id) => documentTypeOf(id) === 'device')) {
+    const handle = opened.get(dbName)
+    if (handle !== undefined) forgetCiphertextScan(handle.database)
+  }
 }
 
 /**
