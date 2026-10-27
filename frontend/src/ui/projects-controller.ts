@@ -124,6 +124,14 @@ export class ProjectsController implements ReactiveController {
   /** This session's `GET /projects`, if it answered. Dropped whenever the session ends. */
   private fresh: readonly Project[] | undefined
 
+  /**
+   * Copies whose detach failed under the current fresh list ({@link detachOrphans}). Skipped
+   * until that list is replaced or dropped — a detach ends like any action, and the idle refresh
+   * that follows re-reads the index, where a failed orphan still sits: retrying it there would
+   * loop on every idle transition. Cleared beside every assignment of {@link fresh}.
+   */
+  private readonly detachFailed = new Set<string>()
+
   /** The tail of the read queue. */
   private reading: Promise<void> = Promise.resolve()
 
@@ -307,6 +315,7 @@ export class ProjectsController implements ReactiveController {
     this.states.clear()
     this.denied.clear()
     this.fresh = undefined
+    this.detachFailed.clear()
     this.stateChanged()
   }
 
@@ -408,6 +417,8 @@ export class ProjectsController implements ReactiveController {
       if (generation !== this.sessionGeneration) return
       // A failed fetch drops the fresh list: the remembered one stands in, stale (C-R5).
       this.fresh = listed
+      // A new list — or none — is a new verdict on every orphan: failed detaches may try again.
+      this.detachFailed.clear()
     }
     const read = this.reading.then(() => this.read())
     this.reading = read.catch(() => undefined)
@@ -460,12 +471,15 @@ export class ProjectsController implements ReactiveController {
    * emptied nor hand replication a list of its own. When the orphan is the open project, the
    * views move onto the finished copy just before the source is destroyed — same data, and
    * editable again. A detach that fails leaves the orphan as it was, read-only and delete-only,
-   * for the next fresh list to try again.
+   * and is recorded in {@link detachFailed}, so it is tried once per fresh list rather than on
+   * every idle refresh — which a failed detach itself triggers, by ending like any action.
    *
    * @returns whether the index changed — here, or in another tab this one yielded to
    */
   private async detachOrphans(generation: number): Promise<boolean> {
-    const orphans = detachableOrphans(projectsModel(this.input()))
+    const orphans = detachableOrphans(projectsModel(this.input())).filter(
+      (row) => !this.detachFailed.has(row.dbName),
+    )
     if (orphans.length === 0) return false
     const store = this.store()
     let detached = false
@@ -487,6 +501,8 @@ export class ProjectsController implements ReactiveController {
           detached = true
         } catch {
           // Kept as it was: the orphan stays read-only and delete-only, and nothing was lost.
+          // Recorded, not retried, until the next fresh list — see `detachFailed`.
+          this.detachFailed.add(row.dbName)
         } finally {
           if (projectId !== undefined) this.sync?.resume(projectId)
         }

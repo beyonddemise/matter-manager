@@ -761,6 +761,51 @@ describe('a project the server deleted for good (#290)', () => {
     expect(localStorage.getItem(CURRENT_PROJECT_KEY)).toBe(dbName)
   })
 
+  it('retries a failed detach only when the next fresh list arrives', async () => {
+    // A detach ends like any project action, and the idle refresh that follows re-reads the
+    // index — where a *failed* detach still sits as an orphan. Retrying it there would loop on
+    // every idle transition; the promised retry is the next fresh list.
+    const base = isolatedProjectStore()
+    let attempts = 0
+    const store: LocalProjectDependencies = {
+      ...base,
+      database: (dbName) => {
+        const real = base.database(dbName)
+        if (dbName !== 'project_p1') return real
+        const broken = Object.create(real) as PouchDB.Database
+        Object.defineProperty(broken, 'replicate', {
+          value: {
+            to: async () => {
+              attempts += 1
+              throw new Error('the copy keeps failing')
+            },
+          },
+        })
+        return broken
+      },
+    }
+    const { element } = await mount({
+      store,
+      local: [copy],
+      cachedProfile: profile(),
+      list: async () => [],
+    })
+    await waitUntil(() => attempts >= 1, 'the detach was never tried')
+
+    // Idle transitions — an action beginning and ending — refresh the page, but must not retry.
+    for (let i = 0; i < 2; i += 1) {
+      beginProjectAction()()
+      await new Promise((resolve) => setTimeout(resolve, 100))
+    }
+    expect(attempts).toBe(1)
+    // The orphan is still here, untouched.
+    expect(await store.cache().readLocalProjects()).toMatchObject([{ dbName: 'project_p1' }])
+
+    // The header's Refresh fetches the list again: the next fresh list, the promised retry.
+    await projectsView(element)?.refresh?.()
+    await waitUntil(() => attempts === 2, 'never retried on a fresh list')
+  })
+
   it('leaves a collaborator’s copy alone: their access went, not the project', async () => {
     const store = isolatedProjectStore()
     const { element } = await mount({

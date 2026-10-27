@@ -37,8 +37,10 @@
  *   after the archive; afterwards a fresh list no longer names it, and the copy is an orphan. It
  *   is not counted: the service does not count archived projects — so putting it back needs room
  *   under the limit, as creating does.
- * - **A copy a fresh list no longer names** — an orphan — splits by the role the index recorded,
- *   because the server no longer answers for the project. The **owner's** copy is the last place
+ * - **A copy a fresh list no longer names** — an orphan — splits by the role the index entry
+ *   explicitly recorded, because the server no longer answers for the project (the
+ *   owner-by-default reading of a role-less copy counts, but never detaches). The **recorded
+ *   owner's** copy is the last place
  *   data the server deleted still exists, so the shell detaches it ({@link detachableOrphans},
  *   #290): the data moves into a new local-only database and the entry drops its id, making it an
  *   ordinary local project again — editable, renamable, promotable as a *new* server project.
@@ -181,6 +183,13 @@ export interface Row {
    * owner. Absent only while the project exists only on this device.
    */
   readonly role?: Project['role']
+  /**
+   * The role the index entry itself recorded, when it recorded one. {@link role}'s
+   * owner-by-default reading is deliberate for counting — it never over-creates — but anything
+   * that *grants* on ownership, like detaching an orphan (#290), must tell "recorded owner"
+   * from "nobody recorded anything", and asks this instead.
+   */
+  readonly recordedRole?: Project['role']
   /** Whether the server project has been archived. Its local copy, if any, is read-only. */
   readonly archived: boolean
   /** The live replication state, for projects that have a server side. */
@@ -354,6 +363,7 @@ export function projectsModel(input: ProjectsInput): ProjectsModel {
       ...(projectId === undefined ? {} : { projectId }),
       dbName,
       ...(role === undefined ? {} : { role }),
+      ...(entry?.role === undefined ? {} : { recordedRole: entry.role }),
       archived: project?.archived ?? false,
       ...(syncState === undefined ? {} : { syncState }),
       editable: editable(kind, role, owner, syncs),
@@ -471,8 +481,10 @@ export function synchronizedProjects(model: ProjectsModel): SyncableProject[] {
  * else — a remnant's project is archived, a half-done promotion's database is local-only, and
  * with a stale or unheard list the same copy reads `synced` — so **only a fresh list** ever
  * names one here, which is the issue's gate: a stale list may simply predate the project.
- * Owner only (`owned`, judged by the role the index recorded, since the server no longer lists
- * the project): a collaborator's orphan is not theirs to keep, and stays read-only.
+ * Owner only, and only an owner the index entry *recorded* (`recordedRole`, since the server no
+ * longer lists the project): a collaborator's orphan is not theirs to keep, and a copy that
+ * recorded no role is the owner's only for counting — that safe default must not hand out
+ * editability, so such a copy stays a plain orphan, read-only and delete-only.
  */
 export function detachableOrphans(model: ProjectsModel): readonly Row[] {
   return model.owned.filter(
@@ -480,7 +492,8 @@ export function detachableOrphans(model: ProjectsModel): readonly Row[] {
       row.location === 'local' &&
       row.projectId !== undefined &&
       !isLocalOnlyDatabase(row.dbName) &&
-      !row.archived,
+      !row.archived &&
+      row.recordedRole === 'owner',
   )
 }
 
