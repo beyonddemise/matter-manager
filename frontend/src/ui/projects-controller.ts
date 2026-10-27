@@ -31,13 +31,20 @@ import {
 import { currentProjectDatabaseName, useProjectDatabase } from './db/project-database.js'
 import {
   adoptLegacyCatalogue,
+  detachOrphanedProject,
   type LocalProjectDependencies,
   localProjectDefaults,
 } from './local-projects.js'
-import { onProjectActionsIdle, projectActionEpoch, projectActionRunning } from './project-busy.js'
+import {
+  beginProjectAction,
+  onProjectActionsIdle,
+  projectActionEpoch,
+  projectActionRunning,
+} from './project-busy.js'
 import { fetchProjectList, type ProjectFacts, readProjectFacts } from './project-inputs.js'
 import type { Project } from './projects.js'
 import {
+  detachableOrphans,
   type ProjectsInput,
   projectsModel,
   type Row,
@@ -434,7 +441,60 @@ export class ProjectsController implements ReactiveController {
     if (epoch !== projectActionEpoch()) return
     this.facts = facts
     this.stateChanged()
+    // A fresh list may have just proved an owner's copy an orphan; detaching it changes the
+    // index, so these facts are then already out of date and the idle refresh applies their
+    // successor instead.
+    if (await this.detachOrphans(generation)) return
     this.apply()
+  }
+
+  /**
+   * Detaches every owner's copy a fresh list proved an orphan (#290): the server hard-deleted
+   * the project, so this copy is the last place its data exists, and the only fate left for it
+   * is "local". Automatic rather than an action to click, because there is nothing to decide —
+   * the server already decided — and until it runs the owner's own data sits read-only.
+   *
+   * The work (copy before destroy, verified, under the exclusive Web Lock) is
+   * {@link detachOrphanedProject}'s; here it is held like any project action, with the copy's
+   * replication suspended, so a refresh in the middle can neither reopen the database being
+   * emptied nor hand replication a list of its own. When the orphan is the open project, the
+   * views move onto the finished copy just before the source is destroyed — same data, and
+   * editable again. A detach that fails leaves the orphan as it was, read-only and delete-only,
+   * for the next fresh list to try again.
+   *
+   * @returns whether the index changed — here, or in another tab this one yielded to
+   */
+  private async detachOrphans(generation: number): Promise<boolean> {
+    const orphans = detachableOrphans(projectsModel(this.input()))
+    if (orphans.length === 0) return false
+    const store = this.store()
+    let detached = false
+    const end = beginProjectAction()
+    try {
+      for (const row of orphans) {
+        if (generation !== this.sessionGeneration) break
+        const { projectId } = row
+        if (projectId !== undefined) this.sync?.suspend(projectId)
+        try {
+          await detachOrphanedProject(row.dbName, store, {
+            beforeDestroy: (newDbName) => {
+              if (currentProjectDatabaseName() !== row.dbName) return
+              writeCurrentProjectId(() => localStorage, newDbName)
+              useProjectDatabase(newDbName, true)
+            },
+          })
+          // Yielding to another tab's detach changed the index too, as far as this tab knows.
+          detached = true
+        } catch {
+          // Kept as it was: the orphan stays read-only and delete-only, and nothing was lost.
+        } finally {
+          if (projectId !== undefined) this.sync?.resume(projectId)
+        }
+      }
+    } finally {
+      end()
+    }
+    return detached
   }
 
   /**

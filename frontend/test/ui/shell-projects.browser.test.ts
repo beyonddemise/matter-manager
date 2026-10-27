@@ -17,6 +17,7 @@ import { fixture, fixtureCleanup, html, waitUntil } from '@open-wc/testing-helpe
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { page, userEvent } from 'vitest/browser'
 import type { CachedProfile, LocalProjectEntry } from '../../src/data/index.js'
+import { PROJECT_DOCUMENT_ID } from '../../src/domain/documents/project.js'
 import type { Plan } from '../../src/domain/plan.js'
 import type { AppShell } from '../../src/ui/app-shell.js'
 import '../../src/ui/app-shell.js'
@@ -714,6 +715,73 @@ describe('which project is open', () => {
   })
 })
 
+describe('a project the server deleted for good (#290)', () => {
+  it('detaches the owner’s copy into a plain local project, and keeps it open', async () => {
+    localStorage.setItem(CURRENT_PROJECT_KEY, 'p1')
+    const store = isolatedProjectStore()
+    const source = store.database('project_p1')
+    // As replication left the copy: the service's project document, plus this device's edits.
+    await source.put({
+      _id: PROJECT_DOCUMENT_ID,
+      type: 'project',
+      name: 'Beta',
+      serverDb: 'project_p1',
+    })
+    await source.put({ _id: 'device:one', type: 'device', name: 'One' })
+
+    await mount({ store, local: [copy], cachedProfile: profile(), list: async () => [] })
+
+    let detached: LocalProjectEntry | undefined
+    await waitUntil(
+      async () => {
+        detached = (await store.cache().readLocalProjects()).find((candidate) =>
+          candidate.dbName.startsWith('project_local_'),
+        )
+        return detached !== undefined
+      },
+      'the copy was never detached',
+      { timeout: 4000 },
+    )
+    if (detached === undefined) throw new Error('the copy was never detached')
+    expect(detached).toMatchObject({ name: 'Beta' })
+    expect(detached.projectId).toBeUndefined()
+    expect(detached.role).toBeUndefined()
+    // The data moved; the pointer at the server database did not.
+    await expect(store.database(detached.dbName).get('device:one')).resolves.toMatchObject({
+      name: 'One',
+    })
+    const document = await store.database(detached.dbName).get(PROJECT_DOCUMENT_ID)
+    expect('serverDb' in document).toBe(false)
+    const entries = await store.cache().readLocalProjects()
+    expect(entries.some((candidate) => candidate.dbName === 'project_p1')).toBe(false)
+    // The open project follows its data, editable again.
+    const dbName = detached.dbName
+    await waitUntil(() => currentProjectDatabaseName() === dbName, 'not kept open')
+    expect(projectIsEditable()).toBe(true)
+    expect(localStorage.getItem(CURRENT_PROJECT_KEY)).toBe(dbName)
+  })
+
+  it('leaves a collaborator’s copy alone: their access went, not the project', async () => {
+    const store = isolatedProjectStore()
+    const { element } = await mount({
+      store,
+      local: [entry({ dbName: 'project_p1', name: 'Beta', projectId: 'p1', role: 'read' })],
+      cachedProfile: profile(),
+      list: async () => [],
+    })
+
+    await inputSettles(
+      element,
+      (i) => i.server !== undefined && i.serverStale === false,
+      'no fresh list arrived',
+    )
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    expect(await store.cache().readLocalProjects()).toMatchObject([
+      { dbName: 'project_p1', projectId: 'p1', role: 'read' },
+    ])
+  })
+})
+
 describe('the header', () => {
   it('shows the signed-in email top right', async () => {
     const { element } = await mount({ cachedProfile: profile() })
@@ -1320,8 +1388,15 @@ describe('signing out from the menu', () => {
     expect(calls(signOutOf)).toHaveLength(0)
   })
 
-  it('names a copy the server no longer lists', async () => {
-    const { element, sync } = await mount({ ...synced, list: async () => [] })
+  it('names a collaborator’s copy the server no longer lists', async () => {
+    // An owner's such copy does not get here: a fresh list detaches it into a local project
+    // (#290), which the sign-out keeps. A collaborator's cannot be pushed — it is not theirs to
+    // write any more — so it is named without trying.
+    const { element, sync } = await mount({
+      local: [{ ...copy, role: 'write' as const }],
+      cachedProfile: profile(),
+      list: async () => [],
+    })
     await inputSettles(element, (i) => i.server !== undefined, 'no list arrived')
 
     await askAndConfirm(element)

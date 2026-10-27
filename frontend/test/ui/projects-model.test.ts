@@ -3,6 +3,7 @@ import type { LocalProjectEntry } from '../../src/data/index.js'
 import type { Plan } from '../../src/domain/plan.js'
 import type { Project } from '../../src/ui/projects.js'
 import {
+  detachableOrphans,
   type Permission,
   type ProjectsInput,
   projectsModel,
@@ -512,6 +513,72 @@ describe('joining the local index with the server list', () => {
     expect(rows(projectsModel(input())).map((row) => row.key)).toEqual(
       rows(projectsModel(input())).map((row) => row.dbName),
     )
+  })
+})
+
+describe('detaching the copies a fresh list proved orphans (#290)', () => {
+  // The server hard-deleted the project: the owner's copy is the last place its data exists, so
+  // the shell detaches it into a plain local project. The model names the candidates; only an
+  // owner's copy on a server-named database that a fresh list no longer names qualifies.
+  it('names the owner’s orphans, and nothing else, on a fresh list', () => {
+    const model = projectsModel(input({ server: [] }))
+    expect(detachableOrphans(model).map((row) => row.dbName)).toEqual([
+      'project_bravo',
+      'project_delta',
+    ])
+  })
+
+  it('names nothing on a stale list, which may simply predate the project', () => {
+    const model = projectsModel(input({ server: [], serverStale: true }))
+    expect(detachableOrphans(model)).toEqual([])
+    expect(byKey(model, 'project_bravo').location).toBe('synced')
+  })
+
+  it('names nothing when no list was ever heard', () => {
+    const model = projectsModel(input({ server: undefined }))
+    expect(detachableOrphans(model)).toEqual([])
+  })
+
+  it('never names a collaborator’s copy: ownership is the index entry’s recorded role', () => {
+    const model = projectsModel(
+      input({
+        local: [local({ dbName: 'project_india', projectId: 'india', role: 'write' })],
+        server: [],
+      }),
+    )
+    expect(detachableOrphans(model)).toEqual([])
+  })
+
+  it('never names a remnant: its server project still exists, archived', () => {
+    const model = projectsModel(
+      input({
+        local: [local({ dbName: 'project_delta', projectId: 'delta' })],
+        server: [server('delta', { archived: true })],
+      }),
+    )
+    expect(detachableOrphans(model)).toEqual([])
+  })
+
+  it('never names a half-done promotion, whose data has never been anywhere else', () => {
+    const model = projectsModel(
+      input({
+        local: [local({ dbName: 'project_local_hotel', projectId: 'hotel' })],
+        server: [],
+      }),
+    )
+    expect(detachableOrphans(model)).toEqual([])
+  })
+
+  it('a collaborator’s orphan stays read-only, with only delete from this device', () => {
+    const model = projectsModel(input({ server: [] }))
+    const row = byKey(model, 'project_foxtrot')
+    expect(model.shared).toContain(row)
+    expect(row).toMatchObject({ location: 'local', editable: false })
+    expect(row.actions.rename).toEqual(no('read-only'))
+    expect(row.actions.promote).toEqual(na)
+    expect(row.actions.restore).toEqual(na)
+    expect(row.actions.removeLocal).toEqual(na)
+    expect(row.actions.deleteLocal).toEqual({ allowed: true, warn: 'unpushed-may-be-lost' })
   })
 })
 

@@ -14,7 +14,12 @@
  * @module
  */
 
-import { type LocalCache, type LocalProjectEntry, projectRepositories } from '../data/index.js'
+import {
+  isLocalOnlyDatabase,
+  type LocalCache,
+  type LocalProjectEntry,
+  projectRepositories,
+} from '../data/index.js'
 import type { ImportedProject } from '../domain/archive/project-archive.js'
 import {
   isProjectDocument,
@@ -22,6 +27,7 @@ import {
   type ProjectDocument,
 } from '../domain/documents/project.js'
 import { profile } from './composition.js'
+import { withDestroyLock } from './db/db-lock.js'
 import {
   forgetProject,
   localDatabase,
@@ -345,6 +351,123 @@ export async function indexServerProject(
     ...accountField((await deps.account().catch(() => undefined)) ?? existing?.account),
     createdAt: existing?.createdAt ?? deps.now(),
   })
+}
+
+/** How many times a detach repeats its copy because the source changed while it ran. */
+const DETACH_ATTEMPTS = 2
+
+/** What a detach may be told to do between its bookkeeping and the source's destroy. */
+export interface DetachHooks {
+  /**
+   * Runs inside the exclusive lock, once the detached copy is complete and listed and the old
+   * entry removed, immediately before the source database is destroyed — the moment for the
+   * caller to move views off the source and onto the copy. Never called for a detach that is
+   * refused or yields, so the views stay where they are when nothing changed.
+   */
+  readonly beforeDestroy?: (newDbName: string) => void
+}
+
+/**
+ * Detaches an orphaned copy — a server-named database whose project the server hard-deleted —
+ * into an ordinary local-only project (#290): its data is copied into a new
+ * `project_local_<uuid>` database, listed in the index with no `projectId` and no `role`, and
+ * only then is the source destroyed and its entry removed. The copy gets its own `project`
+ * document, written from the entry's name and client, so the `serverDb` pointer the service's
+ * replicated document carried does not survive into a database that has no server side.
+ *
+ * **Which copies qualify is the model's call** (`detachableOrphans` in `projects-model.ts`):
+ * only an owner's copy a *fresh* list no longer names. This function checks only what would be
+ * a caller bug — an entry with no id, or a local-only database.
+ *
+ * **Data safety is `project-actions.ts`'s order.** The copy runs first and is verified: the
+ * source's `update_seq` must be unchanged across it, or the copy is repeated once and then the
+ * detach refused — a database still being written to is kept. The final check, the index
+ * bookkeeping and the destroy run under the database's exclusive Web Lock (`db/db-lock.ts`,
+ * #220), so no tab can write between the check and the destroy. Under the same lock the entry is
+ * read again: a second tab's finished detach (the entry gone, or re-pointed) makes this one
+ * yield — its half copy destroyed, nothing else touched — rather than list the project twice.
+ *
+ * The source's own destroy is the one step whose failure is swallowed: by then the copy is the
+ * listed truth, and surfacing the failure would invite a retry that copies the data *again* into
+ * a second local project. A database that would not go is unlisted, unopened waste, not a loss.
+ *
+ * @returns the detached copy's index entry, or `undefined` when another tab got there first
+ */
+export async function detachOrphanedProject(
+  dbName: string,
+  deps: LocalProjectDependencies = localProjectDefaults,
+  hooks: DetachHooks = {},
+): Promise<LocalProjectEntry | undefined> {
+  const entry = await entryOf(deps.cache(), dbName)
+  if (entry.projectId === undefined || isLocalOnlyDatabase(dbName)) {
+    throw new Error(`${dbName} is not a copy of a server project.`)
+  }
+  const source = deps.database(dbName)
+  const newDbName = `${LOCAL_PROJECT_PREFIX}${deps.uuid()}`
+  const copy = deps.database(newDbName)
+  /** Whether the copy has been listed in the index, after which it is the project itself. */
+  let listed = false
+  const discard = async (): Promise<void> => {
+    await copy.destroy().catch(() => undefined)
+    deps.forget(newDbName)
+  }
+
+  try {
+    for (let attempt = 0; attempt < DETACH_ATTEMPTS; attempt += 1) {
+      const before = (await source.info()).update_seq
+      // Everything but the `project` document, which is the service's and carries `serverDb`;
+      // the copy gets its own below. Copying again copies only what is missing.
+      const copied = await source.replicate.to(copy, {
+        filter: (doc: { _id: string }) => doc._id !== PROJECT_DOCUMENT_ID,
+      })
+      if (copied.doc_write_failures > 0) {
+        throw new Error(`${copied.doc_write_failures} documents could not be copied.`)
+      }
+      await writeProjectDocument(copy, entry.name, entry.client)
+
+      const detached: LocalProjectEntry = {
+        dbName: newDbName,
+        name: entry.name,
+        ...clientField(entry.client),
+        ...accountField(entry.account),
+        // When this device first knew the project, not when it was detached, as indexing keeps it.
+        createdAt: entry.createdAt,
+      }
+      const outcome = await withDestroyLock(
+        dbName,
+        async (): Promise<'done' | 'changed' | 'lost'> => {
+          const current = (await deps.cache().readLocalProjects()).find(
+            (candidate) => candidate.dbName === dbName,
+          )
+          if (current === undefined || current.projectId !== entry.projectId) return 'lost'
+          if ((await source.info()).update_seq !== before) return 'changed'
+          // Bookkeeping before the destroy, unlike `destroyLocalProject`: the data's safety hangs
+          // on the copy being listed, not on the source going, so a failure between the two must
+          // leave the copy listed rather than the orphan — see the destroy note above.
+          await deps.cache().addLocalProject(detached)
+          listed = true
+          await deps.cache().removeLocalProject(dbName)
+          hooks.beforeDestroy?.(newDbName)
+          try {
+            await source.destroy().catch(() => undefined)
+          } finally {
+            deps.forget(dbName)
+          }
+          return 'done'
+        },
+      )
+      if (outcome === 'done') return detached
+      if (outcome === 'lost') {
+        await discard()
+        return undefined
+      }
+    }
+    throw new Error(`${dbName} is still being written to.`)
+  } catch (error) {
+    // A copy that never became the project leaves no trace; one that did is kept, listed.
+    if (!listed) await discard()
+    throw error
+  }
 }
 
 /**
