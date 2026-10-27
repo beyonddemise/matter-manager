@@ -11,9 +11,16 @@
  *
  * The two copies are meant to be replaced by one generated from `openapi.yaml`, which is where a
  * client/server agreement belongs and is the only form of it a non-TypeScript backend can honour.
- * Until then: change one, change the other.
+ * Until then, "change one, change the other" is enforced rather than remembered (#183): the
+ * roles live in the {@link PROJECT_ROLES} tuple, the type is derived from it — so the compiler
+ * guarantees the two cannot disagree — and `test/domain/role-drift.test.ts` compares the tuple
+ * against the contract's `Role` enum, failing the suite the moment either side gains or loses a
+ * role the other lacks.
  *
  * @module
  */
 
-export type ProjectRole = 'owner' | 'manage' | 'write' | 'read'
+/** The roles, in the order the contract's `Role` enum lists them. */
+export const PROJECT_ROLES = ['owner', 'manage', 'write', 'read'] as const
+
+export type ProjectRole = (typeof PROJECT_ROLES)[number]
