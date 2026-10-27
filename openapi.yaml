@@ -366,8 +366,12 @@ paths:
         - the `mm_handoff` cookie set by the sign-in callback (first call after sign-in). It is
           single use; this call mints the refresh token and clears the cookie;
         - a `refreshToken` in the body (every later call). It must still be stored; signing
-          out, or deleting its hash from the user record, revokes it. The same refresh token is
-          returned, not rotated.
+          out, or deleting its hash from the user record, revokes it. Each refresh consumes
+          the presented token and returns a new one (#27), which the client must store in its
+          place. For sixty seconds after the rotation the consumed token is still accepted, so
+          a client whose response was lost in transit can retry; each retry returns a new token
+          and invalidates the one issued by the previous attempt. Presenting a consumed token
+          after that window is treated as theft and revokes every refresh token of the account.
 
         When both are sent, a handoff cookie that verifies wins: it means a sign-in has just
         finished, which is newer than any refresh token the page kept. The page then stores the
@@ -1502,9 +1506,12 @@ components:
           description: |
             Whether the project has been put away (#55).
 
-            **Not a deletion.** An archived project keeps its database, its members and its
-            name, and an owner or manager can bring it back. What changes is what a client
-            does with it: stop replicating it, and stop offering it in the switcher.
+            **Not an immediate deletion.** An archived project keeps its database, its members
+            and its name, and an owner or manager can bring it back. What changes is what a
+            client does with it: stop replicating it, and stop offering it in the switcher.
+            A project left archived for more than 90 days is hard-deleted by a scheduled
+            server job (#26): its database and registry entry are gone for good, and only a
+            copy still replicated to a device survives, as a local project.
 
             Archived projects are still returned by `GET /projects`. Filtering them out here
             would leave a client unable to show what it had put away and therefore unable to

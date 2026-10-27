@@ -1611,3 +1611,15 @@ to any generated or structured file.
   who creates the document, who merely receives it by replication. In an offline-first product,
   assume client-authored until the code proves otherwise, and say the assumption out loud in the
   design so the owner can shoot it early.
+
+## L49: the Nth hole in the same hand-rolled parser means redesign, not patch
+
+- The #183 role-drift check hand-parsed a TypeScript union with regexes. Four successive review
+  rounds each found a legal shape it misread (mixed literal/non-literal union, nested enum,
+  commented-out declaration, multiline union) — every patch was correct and none made the next
+  hole less likely, because the parser was re-implementing a grammar.
+- **Rule:** when review finds a second hole of the same class in a hand-rolled parser, stop
+  patching. Either parse with the real parser, or restructure so no parsing is needed — here, a
+  runtime tuple the compiler itself ties to the type (`PROJECT_ROLES as const` +
+  `(typeof PROJECT_ROLES)[number]`), compared against YAML read by a YAML parser. The redesign
+  deleted 477 lines of parser-and-fixtures and ended the finding class.
