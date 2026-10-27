@@ -36,6 +36,7 @@ import { useBundledIcons } from './icons/library.js'
 useBundledIcons()
 
 import './app-shell.js'
+import { ensureDeviceKey } from './db/device-key.js'
 import { negotiateLocale, readLocalePreference } from './i18n/locale.js'
 import { activateLocale } from './i18n/localization.js'
 import { registerServiceWorker } from './register-sw.js'
@@ -102,6 +103,16 @@ void requestPersistence(
   () => navigator.storage,
   () => localStorage,
 )
+
+// The per-browser device key (#300), minted on the first ever visit and merely re-read on every
+// later one. Here, before any project database is needed, so the kid exists by the time startup
+// registration (F4) and project-key unwrapping (F5) ask for it. Not awaited — the first visit
+// pays a one-off RSA-3072 generation, and nothing on screen depends on it — and a failure is
+// logged rather than rethrown: every consumer calls `ensureDeviceKey()` itself and meets the
+// error where it can be handled, so this early start is an optimisation, not a gate.
+void ensureDeviceKey().catch((error: unknown) => {
+  console.error('The device key could not be prepared at startup.', error)
+})
 
 // Every lazy routed view, warmed now rather than fetched at navigation time (#214). The views
 // are split out of the entry chunk so that first paint parses only what first paint needs
