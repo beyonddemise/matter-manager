@@ -130,6 +130,13 @@ jobs:
       - name: Dependency policy
         run: npm run check:deps
 
+      # The guard scripts are themselves guarded (#187): each one is spawned against fixture
+      # trees and has to produce the right verdict and exit code — including the majorsOf
+      # regression, where `^24.13.4 || ^26.0.0` once read as plain 24 and passed. Node's own
+      # runner, because the root deliberately has no test framework (#164, #181).
+      - name: The guard scripts still catch what they exist to catch
+        run: npm run test:scripts
+
       # Web Awesome Pro's presence, and the translation catalogue's currency. Both are in
       # `npm run verify`; the webawesome one was missing here, so a laptop and CI disagreed
       # about what "green" meant.
