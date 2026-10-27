@@ -1972,8 +1972,10 @@ describe('upgrading', () => {
   })
 
   it('disables signing in while offline too', async () => {
+    // The header offers no Sign in offline (#215's rule), so the session settling is read from
+    // the shell itself; the dialog's own sign-in action stays, disabled, saying why (#224).
     const { element } = await mount({ session: 'signed-out', network: fakeNetwork(false) })
-    await waitUntil(() => element.querySelector('[data-sign-in]') !== null, 'no sign-in')
+    await waitUntil(() => element.session === 'signed-out', 'never signed out')
     const dialog = await openUpgrade(element)
 
     expect(

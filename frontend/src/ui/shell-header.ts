@@ -34,12 +34,17 @@ import {
  * there, so offering "Sign in" would be wrong twice over — about the session and about the
  * network it would need (#215). Sign out stays reachable in the navigation.
  *
+ * Offline, `signed-out` and `expired` show nothing either, for the second of those reasons
+ * alone: signing in cannot succeed without a network, and the control returns the moment one
+ * does. An offline sign-out lands exactly here (#215's rule, kept past launch).
+ *
  * Signing out is not here but in the navigation ({@link renderSignOut}): it is rarely wanted,
  * and the header is for what is true now.
  */
 export function renderAccount(
   session: SessionState | undefined,
   email: string | undefined,
+  online: boolean,
   onSignIn: () => void,
 ): TemplateResult | '' {
   if (session === undefined || session === 'offline-held') return ''
@@ -50,6 +55,7 @@ export function renderAccount(
       ? ''
       : html`<span data-user-email class="app-email wa-desktop-only">${email}</span>`
   }
+  if (!online) return ''
   return html`
     <wa-button data-sign-in appearance="plain" @click=${onSignIn}>
       ${

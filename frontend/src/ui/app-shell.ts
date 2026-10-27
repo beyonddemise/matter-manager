@@ -1396,7 +1396,7 @@ export class AppShell extends LitElement implements ViewHost {
                 label=${this.schemeToggleLabel()}
               ></wa-icon>
             </wa-button>
-            ${renderAccount(this.session, this.projects.facts?.email, this.onSignIn)}
+            ${renderAccount(this.session, this.projects.facts?.email, this.online, this.onSignIn)}
             ${
               // Beside the upgrade dialog's render: presence in the template is the state. Gone
               // once the session is in, whichever path answered it.
