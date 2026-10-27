@@ -130,6 +130,13 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/EscrowKey' }
+        '404':
+          description: |
+            Escrow is not configured on this deployment (no `ESCROW_KEK`): the route group is
+            absent, as every unconfigured feature is. A client reads this as "escrow off".
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
 
   /escrow:
     post:
