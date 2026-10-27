@@ -202,6 +202,38 @@ describe('ending the session on the server', () => {
 
     await expect(endServerSessionVia('https://api.example', offline, noToken)()).rejects.toThrow()
   })
+
+  it('is bounded: a network that hangs instead of failing rejects after the timeout', async () => {
+    // The pending case, not the rejected one: `signOut` already catches a failure, but it
+    // *awaits* this step before removing local data, so an unbounded request would stand
+    // between the user and the wipe — the dead state #215 removes (PR #314 review).
+    const hanging = (() => new Promise<Response>(() => {})) as unknown as typeof fetch
+    const end = endServerSessionVia('https://api.example', hanging, noToken, () => undefined, 50)
+
+    await expect(end()).rejects.toThrow(/timed out/)
+  })
+
+  it('cannot hold up the wipe: a sign-out completes although the server never answers', async () => {
+    const done: string[] = []
+    const hanging = (() => new Promise<Response>(() => {})) as unknown as typeof fetch
+    const dependencies: SessionDependencies = {
+      endServerSession: endServerSessionVia(
+        'https://api.example',
+        hanging,
+        noToken,
+        () => undefined,
+        50,
+      ),
+      removeLocalData: async () => {
+        done.push('local')
+      },
+      forgetTokens: () => {},
+      forgetRefreshToken: async () => {},
+    }
+
+    await expect(signOut(dependencies)).resolves.toEqual(['server'])
+    expect(done).toContain('local')
+  })
 })
 
 describe('what counts as the session ending', () => {

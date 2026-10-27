@@ -135,6 +135,17 @@ export function isSessionEnded(status: number): boolean {
 }
 
 /**
+ * How long the sign-out request may run before it is given up on, in milliseconds.
+ *
+ * Short on purpose. `signOut` awaits this step before removing local data, so a network that
+ * *hangs* instead of failing would stand between the user and the wipe — the dead state #215
+ * removes. The revocation is best-effort anyway (a missed one dies with the next backend
+ * restart), so a few seconds is generous for one POST and brief enough that somebody leaving a
+ * shared machine sees the signed-out state rather than a spinner.
+ */
+export const END_SESSION_TIMEOUT_MS = 5000
+
+/**
  * Builds the "end the server session" step of {@link SessionDependencies}.
  *
  * Kept here, beside the policy it serves, and deliberately free of any PouchDB import — this
@@ -149,27 +160,45 @@ export function isSessionEnded(status: number): boolean {
  * @param store where the refresh token is read from
  * @param bearer the access token to present; injected because `signOut` forgets the in-memory one
  *   before this runs, so the caller has to take it beforehand
+ * @param timeoutMs how long the request may run; a timeout rejects, which is the server-failure
+ *   path `signOut` already handles
  */
 export function endServerSessionVia(
   baseUrl: string,
   fetchImpl: typeof fetch = fetch,
   store: RefreshTokenStore,
   bearer: () => string | undefined = accessToken,
+  timeoutMs: number = END_SESSION_TIMEOUT_MS,
 ): () => Promise<void> {
   const base = baseUrl.replace(/\/+$/, '')
 
   return async () => {
     const refreshToken = await store.read()
     const token = bearer()
-    const response = await fetchImpl(`${base}/auth/signout`, {
-      method: 'POST',
-      credentials: 'include',
-      headers: {
-        'content-type': 'application/json',
-        ...(token === undefined ? {} : { authorization: `Bearer ${token}` }),
-      },
-      body: JSON.stringify(refreshToken === undefined ? {} : { refreshToken }),
+    // Bounded both ways: the signal makes a real fetch give up, and the race covers an
+    // implementation that ignores it. A losing promise's later rejection is already subscribed
+    // by the race, so it never surfaces as unhandled.
+    const timeout = AbortSignal.timeout(timeoutMs)
+    const timedOut = new Promise<never>((_, reject) => {
+      timeout.addEventListener(
+        'abort',
+        () => reject(new Error('The sign-out request timed out.')),
+        { once: true },
+      )
     })
+    const response = await Promise.race([
+      fetchImpl(`${base}/auth/signout`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'content-type': 'application/json',
+          ...(token === undefined ? {} : { authorization: `Bearer ${token}` }),
+        },
+        body: JSON.stringify(refreshToken === undefined ? {} : { refreshToken }),
+        signal: timeout,
+      }),
+      timedOut,
+    ])
 
     // 401 is not a failure. Being told "you were not signed in" is the state this was asking
     // for, and reporting it as a problem would tell the user something went wrong when the only

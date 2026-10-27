@@ -4,11 +4,15 @@ import '@awesome.me/webawesome-pro/dist/components/dialog/dialog.js'
 import '@awesome.me/webawesome-pro/dist/components/input/input.js'
 import '@awesome.me/webawesome-pro/dist/components/otp-input/otp-input.js'
 import { fixture, html, waitUntil } from '@open-wc/testing-helpers'
+import PouchDB from 'pouchdb-browser'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { AuthMethods } from '../../src/ui/auth-methods.js'
+import { endSession } from '../../src/ui/composition.js'
+import { localDatabase, rawDatabase } from '../../src/ui/db/project-database.js'
 import type { EmailSignIn, StartOutcome, VerifyOutcome } from '../../src/ui/email-signin.js'
 import type { PasskeySignIn, PasskeySignInOutcome } from '../../src/ui/passkey-signin.js'
 import type { SessionState } from '../../src/ui/session.js'
+import { pouchRefreshTokenStore } from '../../src/ui/tokens.js'
 import '../../src/ui/app-shell.js'
 import type { LocalProjectEntry } from '../../src/data/index.js'
 import type { LocalProjectDependencies } from '../../src/ui/local-projects.js'
@@ -152,23 +156,42 @@ describe('the sign-in control', () => {
     expect(element.querySelector('[data-sign-in]')).toBeNull()
   })
 
-  it('signs out while offline: the sign-out flow runs and the UI reads signed out', async () => {
-    // #215's second scenario. Telling the server is best-effort — `signOut` swallows a failed
-    // `endServerSession` and wipes anyway (session.test.ts pins that) — so a sign-out whose
-    // server call failed still leaves this browser signed out.
-    const signOutOf = vi.fn(async () => ['server'])
+  it('signs out while offline: the real cleanup wipes the stored token and local data', async () => {
+    // #215's second scenario, through the real `endSession`: only the network is stubbed, and it
+    // fails. Telling the server is best-effort — `signOut` swallows the failure and wipes anyway
+    // — so the stored refresh token and the account's local databases must be gone and the UI
+    // signed out, with the server never reached.
+    const store = pouchRefreshTokenStore(localDatabase())
+    await store.write('r-held')
+    const project = rawDatabase('project_p9')
+    await project.put({ _id: 'device:1', type: 'device', name: 'Lamp' } as never)
+    // The seeds really landed: a wipe of nothing would prove nothing.
+    expect(await store.read()).toBe('r-held')
+    expect((await project.info()).doc_count).toBe(1)
+
+    const offline = (async () => {
+      throw new TypeError('offline')
+    }) as unknown as typeof fetch
     const element = (await fixture(html`
       <app-shell
         .refresher=${refresherUnreachable(true)}
-        .signOutOf=${signOutOf}
+        .signOutOf=${(includeLocal: boolean) => endSession(includeLocal, offline)}
         .connectivity=${{ addEventListener: () => {}, removeEventListener: () => {}, onLine: false }}
         .projectStore=${isolatedProjectStore()}
       ></app-shell>
     `)) as HTMLElement
     await signOut(element)
 
-    expect(signOutOf).toHaveBeenCalledOnce()
     expect(element.querySelector('[data-sign-out]')).toBeNull()
+    // Fresh handles by name: had the destroys not run, these would still see the seeds.
+    const freshLocal = new PouchDB('mm-local')
+    const freshProject = new PouchDB('project_p9')
+    try {
+      await expect(freshLocal.get('_local/refresh-token')).rejects.toMatchObject({ status: 404 })
+      expect((await freshProject.info()).doc_count).toBe(0)
+    } finally {
+      await Promise.all([freshLocal.destroy(), freshProject.destroy()])
+    }
   })
 
   it('shows neither control when offline with nothing stored', async () => {

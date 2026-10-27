@@ -2017,6 +2017,29 @@ describe('upgrading', () => {
     expect(text(dialog.querySelector('[data-needs-connection]'))).toBe('Needs a connection')
   })
 
+  it('keeps speaking to the cached account when the server is unwell while online', async () => {
+    // `/auth/token` answering 502 while the browser reports online lands in `offline-held` too
+    // (#215): the stored session is unconfirmed, not absent. Offering an enabled "Sign in to
+    // join the waitlist" would be wrong about the session, so the dialog speaks to the cached
+    // account and keeps the server-dependent actions unavailable until the session is confirmed
+    // (PR #314 review).
+    const { element } = await mount({
+      session: 'unreachable-held',
+      network: fakeNetwork(true),
+      cachedProfile: profile({ plan: 'free', projectLimit: 1 }),
+    })
+    await waitUntil(() => element.session === 'offline-held', 'the session never held')
+    const dialog = await openUpgrade(element)
+    await waitUntil(() => dialog.querySelector('[data-join]') !== null, 'no joins')
+
+    expect(dialog.querySelector('[data-sign-in-waitlist]')).toBeNull()
+    const buttons = [...dialog.querySelectorAll('[data-join]')] as Array<
+      HTMLElement & { disabled: boolean }
+    >
+    expect(buttons.length).toBeGreaterThan(0)
+    expect(buttons.every((button) => button.disabled)).toBe(true)
+  })
+
   it('offers a known account its joins, disabled, when it opens offline', async () => {
     const { element } = await mount({
       session: 'unreachable',
