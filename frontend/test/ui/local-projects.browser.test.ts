@@ -667,6 +667,78 @@ describe('adopting the legacy catalogue keys and encrypts it (#331)', () => {
   })
 })
 
+// #336: a project repository whose key state resolves to nothing refuses every plaintext secret.
+// The catalogue is the one database that can legitimately be met keyless — before adoption, or
+// indexed before #331 — so its provider keys it at open instead, and no write ever meets it bare.
+describe('the catalogue keys itself when it is opened', () => {
+  const PAYLOAD = 'MT:Y.K9042C00KA0648G00'
+  const keyDocuments = async () =>
+    (await rawDatabase(PROJECT_DATABASE_NAME).allDocs(projectKeyRange())).rows
+  const stored = async (id: string) =>
+    (await rawDatabase(PROJECT_DATABASE_NAME).get(id)) as unknown as {
+      payload?: string
+      manualCode?: string
+      updatedAt?: string
+    }
+
+  it('mints its keys at the first read, before adoption, so the first device saved is encrypted', async () => {
+    expect(await projectDatabase().devices.list()).toEqual([])
+
+    expect((await keyDocuments()).map((row) => row.id)).toEqual([
+      projectKeyDocumentId((await ensureDeviceKey()).kid),
+    ])
+    await projectDatabase().devices.save(device('device:first'))
+    expect((await stored('device:first')).manualCode).toMatch(/^enc:v1:/)
+  })
+
+  it('keys and seals a catalogue indexed before #331 on its next open, then encrypts writes', async () => {
+    // Indexed, so adoption returns early and never keys it; until now it stayed keyless.
+    const legacy = {
+      ...device('device:old'),
+      payload: PAYLOAD,
+      updatedAt: '2026-08-26T09:00:00.000Z',
+    }
+    await rawDatabase(PROJECT_DATABASE_NAME).put(legacy)
+    await localProfileCache().addLocalProject({
+      dbName: PROJECT_DATABASE_NAME,
+      name: 'Home',
+      createdAt: '2026-08-26T09:00:00.000Z',
+    })
+    await adoptLegacyCatalogue('Home')
+
+    expect(await projectDatabase().devices.list()).toMatchObject([
+      { _id: 'device:old', payload: PAYLOAD, manualCode: '34970112332' },
+    ])
+
+    expect(await keyDocuments()).toHaveLength(1)
+    const old = await stored('device:old')
+    expect(old.payload).toMatch(/^enc:v1:/)
+    expect(old.manualCode).toMatch(/^enc:v1:/)
+    expect(old.updatedAt).toBe('2026-08-26T09:00:00.000Z')
+    await projectDatabase().devices.save(device('device:new'))
+    expect((await stored('device:new')).manualCode).toMatch(/^enc:v1:/)
+  })
+
+  it('keys the catalogue on a device that knows server projects, yet adopts nothing', async () => {
+    // Ruling C-R7, redefined: "empty" means no user content, and key documents are not content.
+    // Keying is not skipped here — that would reopen the keyless window — and a catalogue holding
+    // only its keys is harmless.
+    await localProfileCache().writeProjects(
+      [{ projectId: 'p1', dbName: 'project_p1', name: 'Beta', role: 'owner' }],
+      '2026-10-03T08:00:00.000Z',
+    )
+    await projectDatabase().devices.list()
+    expect(await keyDocuments()).toHaveLength(1)
+
+    await adoptLegacyCatalogue('')
+
+    expect(await localProfileCache().readLocalProjects()).toEqual([])
+    await expect(rawDatabase(PROJECT_DATABASE_NAME).get(PROJECT_DOCUMENT_ID)).rejects.toMatchObject(
+      { status: 404 },
+    )
+  })
+})
+
 describe('adopting on a device with nothing to adopt', () => {
   it('adopts the empty catalogue when nothing is indexed, so the device has a project to name', async () => {
     // Ruling C-R7: a brand-new device always has one nameable project. Without it the first

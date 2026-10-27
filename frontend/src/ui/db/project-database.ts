@@ -11,8 +11,8 @@
 
 import PouchDB from 'pouchdb-browser'
 import {
-  forgetCiphertextScan,
   isLocalOnlyDatabase,
+  type KeyState,
   type LocalCache,
   type LocalProjectEntry,
   localCache,
@@ -20,10 +20,18 @@ import {
   projectRepositories,
 } from '../../data/index.js'
 import { PROJECT_KEY_PREFIX } from '../../domain/documents/keys.js'
-import { documentTypeOf } from '../../domain/index.js'
 import { PROJECT_CHANGED } from '../current-project.js'
+import { cachedEscrowKey } from '../escrow-client.js'
 import { coordinateWrites } from './db-lock.js'
-import { memoiseKeyState, resolveKeyState, unlockProject } from './keyring.js'
+import {
+  createProjectKeys,
+  encryptPlaintextDevices,
+  ensureProjectKeys,
+  fieldCipher,
+  memoiseKeyState,
+  resolveKeyState,
+  unlockProject,
+} from './keyring.js'
 
 /**
  * The local catalogue.
@@ -114,8 +122,19 @@ function openHandle(dbName: string): OpenedProject {
   // A resolution that answers *locked* is also where escrow recovery (#304) starts: once per
   // resolution, behind the read that found it, so the read answers at once and the views are
   // told when the key has arrived.
+  //
+  // The catalogue, and only the catalogue, is keyed here when it resolves keyless (#336). Every
+  // other project is born with its keys (creation, import), so a keyless project database is one
+  // whose wraps are still replicating in — minting there would strand the real DEK — and its
+  // repositories refuse secret writes until they land. The catalogue is the one database this
+  // device is always the source of, and the one that can be met bare: on a first launch before
+  // adoption, or indexed before #331 (adoption returns early for those). Keying it at open means
+  // no write ever meets it keyless, so no scan, cache or ordering assumption is needed anywhere.
   const keyState = memoiseKeyState(async () => {
-    const state = await resolveKeyState(database)
+    const state =
+      dbName === PROJECT_DATABASE_NAME
+        ? await keyCatalogue(database)
+        : await resolveKeyState(database)
     if (state?.kind === 'locked') {
       lockedProjects.add(dbName)
       recoverLockedProject(dbName, database)
@@ -135,6 +154,28 @@ function openHandle(dbName: string): OpenedProject {
 }
 
 /**
+ * The real keyring for a project this device creates: a fresh DEK wrapped for this device, plus
+ * the escrow wrap whenever the escrow public key has been cached (decision 1) — `null` is an
+ * ordinary state, not a failure, and promote adds the wrap later (`ensureEscrowWrap`). Answers
+ * the unlocked key state, so the caller's own writes encrypt without re-reading what it wrote.
+ */
+export async function mintProjectKeys(database: PouchDB.Database): Promise<KeyState> {
+  const escrow = await cachedEscrowKey(localProfileCache())
+  return { kind: 'unlocked', cipher: fieldCipher(await createProjectKeys(database, escrow)) }
+}
+
+/**
+ * The catalogue's key state, keyed if it had none, with any plaintext device it still holds
+ * sealed (the #331 rewrite: idempotent, and a no-op once everything is `enc:`). A failure is
+ * raised as itself — the view says storage failed, never "after the next sync".
+ */
+async function keyCatalogue(database: PouchDB.Database): Promise<KeyState> {
+  const state = await ensureProjectKeys(database, mintProjectKeys)
+  if (state.kind === 'unlocked') await encryptPlaintextDevices(database, state)
+  return state
+}
+
+/**
  * Drops a project's memoised key state when an inbound batch delivered wrap documents.
  *
  * Replication is how the `key:*` documents reach a database that resolved its state before they
@@ -143,17 +184,9 @@ function openHandle(dbName: string): OpenedProject {
  * Filtered on the inbound ids rather than refreshing on every pull, so the common case (device
  * edits arriving all day) never re-resolves anything. Wired to both inbound paths in
  * `composition.ts`; the next repository operation picks the fresh state up.
- *
- * A batch carrying devices also drops the database's cached *negative* ciphertext scan (#336,
- * `forgetCiphertextScan`): those devices may be ciphertext whose wraps are still to come, and the
- * next keyless write must find that out itself rather than trust a view to have read them first.
  */
 export function refreshKeyStateOnInboundKeys(dbName: string, docIds: readonly string[]): void {
   if (docIds.some((id) => id.startsWith(PROJECT_KEY_PREFIX))) refreshProjectKeyState(dbName)
-  if (docIds.some((id) => documentTypeOf(id) === 'device')) {
-    const handle = opened.get(dbName)
-    if (handle !== undefined) forgetCiphertextScan(handle.database)
-  }
 }
 
 /**

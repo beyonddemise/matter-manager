@@ -183,43 +183,6 @@ function revisionReadsLocked(document: object, state: KeyState | undefined): boo
   return carriesCiphertext(document)
 }
 
-/**
- * What is known, per open database, about whether it holds ciphertext (#336).
- *
- * Keyed by the handle, so every repository over one database shares it and it lives exactly as
- * long as the handle — `ui/db` memoises one per project, beside its key-state memo. `seen` is set
- * by any read that meets an `enc:` value and by the `scan`. Nothing clears `seen`, and nothing
- * needs to: it is consulted only while the key state is absent, ciphertext proves a DEK exists
- * somewhere, and once the wraps arrive the key state is defined (unlocked writes encrypt, locked
- * ones refuse) and the flag is never asked again. A *finished negative* scan is another matter:
- * {@link forgetCiphertextScan} drops it when devices replicate in.
- */
-type CiphertextKnowledge = { seen: boolean; scan?: Promise<void> | undefined }
-const ciphertextKnowledge = new WeakMap<PouchDB.Database, CiphertextKnowledge>()
-
-/**
- * Drops a database's cached "no ciphertext here" scan, so the next keyless write scans again.
- *
- * For the inbound replication hook (`ui/db/project-database.ts`), on any batch carrying devices:
- * a scan that found none says nothing about documents that arrived after it, and refusing the
- * next write must not depend on some view having read them first. "Seen ciphertext" is kept —
- * nothing that arrives can make an encrypted project plaintext. A no-op for a handle that has
- * never scanned.
- */
-export function forgetCiphertextScan(database: PouchDB.Database): void {
-  const known = ciphertextKnowledge.get(database)
-  if (known !== undefined && !known.seen) known.scan = undefined
-}
-
-function knowledgeOf(database: PouchDB.Database): CiphertextKnowledge {
-  let known = ciphertextKnowledge.get(database)
-  if (known === undefined) {
-    known = { seen: false }
-    ciphertextKnowledge.set(database, known)
-  }
-  return known
-}
-
 /** Whether a document about to be written carries a secret in plaintext. */
 function carriesPlaintextSecret(document: object): boolean {
   return SECRET_FIELDS.some((field) => {
@@ -270,9 +233,12 @@ function isMissing(error: unknown): boolean {
  * @param keyState the project's key state (#302), or a provider for it. **Omitted means
  *   plaintext** — the pre-encryption behaviour, kept for `mm-local`-style databases and unit
  *   tests — except that a document any of whose revisions carries an `enc:`-prefixed secret
- *   still reads locked (#333; see `readsLocked`). Unlocked: `payload` and `manualCode` are
- *   encrypted on the way in and decrypted on the way out. Locked: reads omit the two fields and mark the document ({@link LockedDocument}),
- *   writes throw {@link ProjectLockedError}.
+ *   still reads locked (#333; see `readsLocked`). Given but resolving to `undefined` (a project
+ *   whose wraps have not arrived): reads as in the omitted case, and every write carrying a
+ *   plaintext secret throws {@link ProjectLockedError} (#336). Unlocked: `payload` and
+ *   `manualCode` are encrypted on the way in and decrypted on the way out. Locked: reads omit the
+ *   two fields and mark the document ({@link LockedDocument}), writes throw
+ *   {@link ProjectLockedError}.
  */
 export function repository<T extends Revision>(
   database: PouchDB.Database,
@@ -299,17 +265,6 @@ export function repository<T extends Revision>(
     state: KeyState | undefined,
   ): Promise<boolean> => {
     if (state !== undefined) return revisionReadsLocked(document, state)
-    if (await keylessRevisionsCarryCiphertext(document)) {
-      // What the write guard below consults: this database is an encrypted project whose key
-      // has not arrived, whatever the next document handed to `put` looks like.
-      knowledgeOf(database).seen = true
-      return true
-    }
-    return false
-  }
-
-  /** The keyless half of {@link readsLocked}: the winner, then each losing revision. */
-  const keylessRevisionsCarryCiphertext = async (document: Conflicted<T>): Promise<boolean> => {
     if (carriesCiphertext(document)) return true
     for (const rev of document._conflicts ?? []) {
       try {
@@ -319,39 +274,6 @@ export function repository<T extends Revision>(
       }
     }
     return false
-  }
-
-  /**
-   * Whether this database is known to hold ciphertext, for a keyless write (#336).
-   *
-   * The read path usually knows already. For a handle that has not read anything yet — a fresh
-   * tab whose first act is a write — the device documents are scanned **once per handle**, and
-   * only on a keyless write that carries a secret: in practice a plaintext database, where that is
-   * one `allDocs` per page, not per write. Losing revisions count, as they do for a read, and are
-   * read by `rev` — never resolved, so the scan writes nothing. A negative answer is kept until
-   * inbound replication delivers devices ({@link forgetCiphertextScan}); a positive one for good.
-   */
-  const holdsCiphertext = async (): Promise<boolean> => {
-    const known = knowledgeOf(database)
-    if (known.seen) return true
-    known.scan ??= database
-      .allDocs({ ...idRange('device'), include_docs: true, conflicts: true })
-      .then(async ({ rows }) => {
-        for (const row of rows) {
-          if (row.doc === undefined) continue
-          if (await keylessRevisionsCarryCiphertext(row.doc as unknown as Conflicted<T>)) {
-            known.seen = true
-            return
-          }
-        }
-      })
-      .catch((error: unknown) => {
-        // Forgotten, like a rejected key-state resolution: one IndexedDB hiccup fails one write.
-        known.scan = undefined
-        throw error
-      })
-    await known.scan
-    return known.seen
   }
 
   /**
@@ -386,11 +308,16 @@ export function repository<T extends Revision>(
     // There is no DEK to encrypt with, and the caller's document — read with the ciphertext
     // dropped — would overwrite the stored secret with nothing.
     if (state?.kind === 'locked') throw new ProjectLockedError('saving')
-    // Keyless, but an encrypted project whose wraps have not arrived (#336): a secret written now
-    // would sit in plaintext at rest for good, since nothing re-encrypts it (spec decision 2). So
-    // it is refused as locked, and the F6 gates say "after the next sync". A document carrying no
-    // secret (the project document) has nothing to leak and is written as before.
-    if (state === undefined && carriesPlaintextSecret(document) && (await holdsCiphertext())) {
+    // A project repository whose key state resolves to nothing (#336) refuses every plaintext
+    // secret, unconditionally. Every project is born with its keys — creation, import and the
+    // catalogue's adoption all write `key:*` before the first device — so a project database
+    // without them is one whose wraps have not arrived yet, never a plaintext project, and a
+    // secret written now would stay plaintext at rest for good (nothing re-encrypts; spec
+    // decision 2). Refused as locked, so the F6 gates say "after the next sync". No scan, no cache,
+    // nothing that replication can race. A document carrying no secret has nothing to leak and is
+    // written as before; a repository built with no key state at all (`mm-local`, unit tests) is
+    // the plaintext mode and is not a project.
+    if (state === undefined && keyState !== undefined && carriesPlaintextSecret(document)) {
       throw new ProjectLockedError('saving')
     }
     const stored =

@@ -22,25 +22,24 @@ import {
   projectRepositories,
 } from '../data/index.js'
 import type { ImportedProject } from '../domain/archive/project-archive.js'
-import { isEncryptedField } from '../domain/crypto/envelope.js'
+import { PROJECT_KEY_PREFIX } from '../domain/documents/keys.js'
 import {
   isProjectDocument,
   PROJECT_DOCUMENT_ID,
   type ProjectDocument,
 } from '../domain/documents/project.js'
-import { idRange } from '../domain/index.js'
 import { profile } from './composition.js'
 import { withDestroyLock } from './db/db-lock.js'
-import { createProjectKeys, fieldCipher, resolveKeyState } from './db/keyring.js'
+import { encryptPlaintextDevices, ensureProjectKeys } from './db/keyring.js'
 import {
   forgetProject,
   localDatabase,
   localProfileCache,
+  mintProjectKeys,
   PROJECT_DATABASE_NAME,
   rawDatabase,
   refreshProjectKeyState,
 } from './db/project-database.js'
-import { cachedEscrowKey } from './escrow-client.js'
 import { cachedProfileOf, type Profile } from './profile.js'
 import { type Project, ProjectCreationError } from './projects.js'
 import { pouchRefreshTokenStore } from './tokens.js'
@@ -131,18 +130,6 @@ const accountSources: AccountSources = {
   fetchProfile: () => profile().read(),
   remember: (fresh) =>
     localProfileCache().writeProfile(cachedProfileOf(fresh, new Date().toISOString())),
-}
-
-/**
- * The real keyring: a fresh DEK wrapped for this device, plus the escrow wrap whenever the
- * escrow public key has been cached (decision 1) — `null` is an ordinary state, not a failure,
- * and promote adds the wrap later (`ensureEscrowWrap`). The DEK comes back as the unlocked key
- * state so creation's own writes encrypt without re-reading what was just written.
- */
-async function mintProjectKeys(database: PouchDB.Database): Promise<KeyState> {
-  const escrow = await cachedEscrowKey(localProfileCache())
-  const dek = await createProjectKeys(database, escrow)
-  return { kind: 'unlocked', cipher: fieldCipher(dek) }
 }
 
 /** The real dependencies: the browser's databases and the shared `mm-local` index. */
@@ -538,47 +525,28 @@ export async function destroyLocalProject(
  * the escrow key is cached).
  *
  * Cross-tab safety comes from the wrap's id, not a lock: `key:<own kid>` is the same id in every
- * tab of this browser, so a second tab minting at the same moment loses with a 409 before
- * writing anything else, and its next adoption run resolves the winner's DEK.
+ * tab of this browser, so a second minter — another tab, or the catalogue's own key-state
+ * provider, which keys it at open (#336) — loses with a 409 before writing anything else and
+ * answers the winner's DEK (`ensureProjectKeys`).
  */
 async function catalogueKeyState(
   database: PouchDB.Database,
   deps: LocalProjectDependencies,
-): Promise<KeyState | undefined> {
-  const existing = await resolveKeyState(database)
-  if (existing !== undefined) return existing
-  return (deps.projectKeys ?? mintProjectKeys)(database)
-}
-
-/** Whether a stored document still holds a commissioning code in plaintext. */
-function holdsPlaintextCode(document: unknown): boolean {
-  const { payload, manualCode } = (document ?? {}) as { payload?: unknown; manualCode?: unknown }
-  return [payload, manualCode].some(
-    (value) => typeof value === 'string' && !isEncryptedField(value),
-  )
+): Promise<KeyState> {
+  return ensureProjectKeys(database, deps.projectKeys ?? mintProjectKeys)
 }
 
 /**
- * Re-saves, through the unlocked cipher, every catalogue device still holding a plaintext code.
- *
- * Only those: a device already sealed — by an earlier, interrupted run — is not touched at all,
- * and a half-sealed one is read back through the repository (whose decrypt passes plaintext
- * through) so that each field reaches `encryptField` as plaintext, never as `enc:` input, which
- * it refuses. Saved keeping `updatedAt`: re-encrypting changes nothing the reader entered, and
- * a fresh stamp would outrank a real edit in the merge order (ADR 0010, ruling R26).
+ * Whether the catalogue holds anything the user made: any document but its `key:*` wraps (and
+ * `_design/*`, should one ever exist). Ruling C-R7 judges "empty" by this, not by `doc_count`:
+ * since #336 the catalogue is keyed whenever it is opened, so an unused one holds its keys and
+ * nothing else — harmless, and not a project anybody made.
  */
-async function encryptPlaintextDevices(
-  database: PouchDB.Database,
-  keyState: KeyState,
-  now: () => string,
-): Promise<void> {
-  const { rows } = await database.allDocs({ ...idRange('device'), include_docs: true })
-  const { devices } = projectRepositories(database, now, keyState)
-  for (const row of rows) {
-    if (!holdsPlaintextCode(row.doc)) continue
-    const device = await devices.get(row.id)
-    if (device !== undefined) await devices.saveKeepingUpdatedAt(device)
-  }
+async function holdsUserContent(database: PouchDB.Database): Promise<boolean> {
+  const { rows } = await database.allDocs()
+  return rows.some(
+    (row) => !row.id.startsWith(PROJECT_KEY_PREFIX) && !row.id.startsWith('_design/'),
+  )
 }
 
 /**
@@ -617,7 +585,7 @@ export async function adoptLegacyCatalogue(
   const database = deps.database(PROJECT_DATABASE_NAME)
   // `rawDatabase` creates the store on open, so existence is judged by content. An empty one is
   // adopted only as the device's first project; see above.
-  if ((await database.info()).doc_count === 0) {
+  if (!(await holdsUserContent(database))) {
     const known = indexed.length > 0 || (await cache.readProjects()).length > 0
     if (known) return
   }
@@ -627,7 +595,7 @@ export async function adoptLegacyCatalogue(
   if (existing === undefined) await writeProjectDocument(database, name, undefined)
   // Locked (another device's DEK only) leaves the codes as they are: there is nothing to seal
   // them with, and the repository would refuse the writes anyway.
-  if (keyState?.kind === 'unlocked') await encryptPlaintextDevices(database, keyState, deps.now)
+  if (keyState.kind === 'unlocked') await encryptPlaintextDevices(database, keyState, deps.now)
 
   await cache.addLocalProject({
     dbName: PROJECT_DATABASE_NAME,

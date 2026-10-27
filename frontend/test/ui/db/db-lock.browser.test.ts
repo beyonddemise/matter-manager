@@ -6,6 +6,7 @@ import {
   withDestroyLock,
   withWriteLock,
 } from '../../../src/ui/db/db-lock.js'
+import { createProjectKeys } from '../../../src/ui/db/keyring.js'
 import { forgetProject, openProject } from '../../../src/ui/db/project-database.js'
 
 /**
@@ -185,6 +186,10 @@ describe('writes through a project handle', () => {
     // #220's second promise: a database freshly opened for writing participates. The lock is
     // held as a destroy holds it; a write through a handle opened *while it is held* must wait.
     const name = dbName()
+    // A project is born with its keys; a keyless one refuses secret writes (#336).
+    const seed = new PouchDB(name)
+    await createProjectKeys(seed, null)
+    await seed.close()
     const destroyer = hold(name, 'exclusive')
     await destroyer.acquired
 

@@ -11,7 +11,7 @@ import PouchDB from 'pouchdb-browser'
 import { afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { ProjectLockedError } from '../../../src/data/index.js'
 import { encryptField, generateDek, wrapDek } from '../../../src/domain/crypto/envelope.js'
-import { projectKeyDocumentId } from '../../../src/domain/documents/keys.js'
+import { projectKeyDocumentId, projectKeyRange } from '../../../src/domain/documents/keys.js'
 import { documentId } from '../../../src/domain/index.js'
 import { PROJECT_DATA_CHANGED } from '../../../src/ui/current-project.js'
 import { ensureDeviceKey } from '../../../src/ui/db/device-key.js'
@@ -64,13 +64,13 @@ afterEach(async () => {
 })
 
 describe('a keyless write after ciphertext devices replicate in', () => {
-  // #336, review of 1e64655: a write's one-time scan that found no ciphertext must not outlive
-  // an inbound batch of devices. The refusal has to hold with no read in between — not rely on
-  // the views happening to re-read first.
-  it('is refused even though the earlier scan found none and nothing has read since', async () => {
+  // #336: a keyless project database refuses every plaintext secret, before and after devices
+  // replicate in, with no read in between. Nothing is scanned or cached, so replication has
+  // nothing to race. (A downloading server copy: never keyed at open — only the catalogue is.)
+  it('is refused before and after the encrypted devices arrive, and nothing is minted', async () => {
     const dek = await generateDek()
     const server = new PouchDB(uniqueName('server'))
-    const dbName = uniqueName('project_local')
+    const dbName = uniqueName('project_server_copy')
     const repositories = openProject(dbName)
     const device = (uuid: string, name: string) => ({
       _id: documentId('device', uuid),
@@ -84,8 +84,12 @@ describe('a keyless write after ciphertext devices replicate in', () => {
       remarks: [],
     })
 
-    // A plaintext write first: keyless, nothing anywhere encrypted, so the scan answers "none".
-    await repositories.devices.save(device('11111111-1111-4111-8111-111111111111', 'First'))
+    // Keyless and empty: refused already, though there is no ciphertext anywhere to see.
+    const first = device('11111111-1111-4111-8111-111111111111', 'First')
+    await expect(repositories.devices.save(first)).rejects.toThrow(ProjectLockedError)
+    await expect(rawDatabase(dbName).get(first._id)).rejects.toMatchObject({ status: 404 })
+    // And not keyed: minting here would strand the DEK whose wraps are still on their way.
+    expect((await rawDatabase(dbName).allDocs(projectKeyRange())).rows).toEqual([])
 
     // Then an encrypted device arrives through the production inbound hook, and only that hook:
     // no `onIncoming`, so no view and no repository reads anything.

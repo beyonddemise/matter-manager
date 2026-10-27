@@ -602,16 +602,32 @@ describe('the encryption seam, keyless over ciphertext', () => {
     expect(after._conflicts).toEqual(['1-00000000000000000000000000000000'])
   })
 
-  // #336: reads fail closed, but a device *created* in the same window carries no prefix and
-  // used to go straight through "keyless = plaintext" — one plaintext secret at rest, for good.
-  describe('a new device written while the database is keyless', () => {
+  // #336: reads fail closed, but a device *created* in the same window carries no prefix. A
+  // project repository whose key state resolves to nothing refuses every plaintext secret,
+  // unconditionally — every project is born with its keys, so keyless means "wraps not here
+  // yet", never "plaintext project". The first three cases are the earlier scan-era scenarios,
+  // kept as regressions; they now hold by construction.
+  describe('a new device written while the project is keyless', () => {
     const OTHER = documentId('device', 'aaaaaaaa-0000-0000-0000-000000000000')
     const another = (): Unsaved<DeviceDocument> => ({ ...lamp(), _id: OTHER, name: 'Hall sensor' })
     const isStored = async (id: string): Promise<boolean> =>
       (await database.allDocs({ keys: [id] })).rows.some((row) => 'value' in row)
+    /** A project repository, as `ui/db` builds one: a provider, here answering keyless. */
+    const keylessProject = (): ProjectRepositories =>
+      projectRepositories(database, fixedClock('2026-08-20T10:00:00.000Z'), () => undefined)
+    /** One encrypted device on disk, written by a holder of the key. */
+    const seedCiphertext = async (): Promise<void> => {
+      const writer = projectRepositories(
+        database,
+        fixedClock('2026-08-20T10:00:00.000Z'),
+        unlocked(),
+      )
+      await writer.devices.save(lamp())
+    }
 
     it('is refused as locked once the database has served a ciphertext read', async () => {
-      const keyless = await seededKeyless()
+      await seedCiphertext()
+      const keyless = keylessProject()
       await keyless.devices.list()
 
       await expect(keyless.devices.save(another())).rejects.toThrow(ProjectLockedError)
@@ -619,28 +635,47 @@ describe('the encryption seam, keyless over ciphertext', () => {
     })
 
     it('is refused in a fresh handle that has read nothing yet', async () => {
-      // A new tab whose first act is a write: nothing has been read, so the one-time scan is
-      // what knows the database is an encrypted project.
-      const keyless = await seededKeyless()
+      await seedCiphertext()
 
-      await expect(keyless.devices.save(another())).rejects.toThrow(ProjectLockedError)
+      await expect(keylessProject().devices.save(another())).rejects.toThrow(ProjectLockedError)
       expect(await isStored(OTHER)).toBe(false)
     })
 
     it('is refused when the only ciphertext is a losing revision, before any read', async () => {
-      // Review of #335 on 1e64655: a scan of winners alone answers "no ciphertext" here.
       await seededCiphertextLoser()
       const { update_seq: before } = await database.info()
 
-      await expect(repositories.devices.save(another())).rejects.toThrow(ProjectLockedError)
+      await expect(keylessProject().devices.save(another())).rejects.toThrow(ProjectLockedError)
       expect(await isStored(OTHER)).toBe(false)
-      // The scan read the losing revision; it did not resolve or prune it.
       expect((await database.info()).update_seq).toBe(before)
     })
 
-    it('is accepted in a genuinely plaintext database', async () => {
+    it('is refused even in a project database holding no ciphertext at all', async () => {
+      // The case no scan can decide: the devices may simply not have replicated in yet. There is
+      // nothing to look at, so nothing is looked at — and no replication can race it.
+      await expect(keylessProject().devices.save(another())).rejects.toThrow(ProjectLockedError)
+      await expect(
+        keylessProject().devices.saveKeepingUpdatedAt({
+          ...lamp(),
+          updatedAt: '2026-08-20',
+        } as DeviceDocument),
+      ).rejects.toThrow(ProjectLockedError)
+      expect(await isStored(OTHER)).toBe(false)
+      expect(await isStored(LAMP)).toBe(false)
+    })
+
+    it('still writes a document that carries no secret', async () => {
+      // Nothing to leak: a device without either code (as the planners never produce, but the
+      // seam must not care) goes through, so the rule is about secrets and nothing else.
+      const { payload: _p, manualCode: _m, ...secretless } = another()
+
+      await keylessProject().devices.save(secretless as Unsaved<DeviceDocument>)
+
+      expect(await isStored(OTHER)).toBe(true)
+    })
+
+    it('is accepted by a repository with no key state at all (mm-local, plaintext mode)', async () => {
       await repositories.devices.save(lamp())
-      await repositories.devices.list()
 
       const saved = await repositories.devices.save(another())
 
@@ -648,19 +683,13 @@ describe('the encryption seam, keyless over ciphertext', () => {
     })
 
     it('is encrypted once the wraps arrive', async () => {
-      const writer = projectRepositories(
-        database,
-        fixedClock('2026-08-20T10:00:00.000Z'),
-        unlocked(),
-      )
-      await writer.devices.save(lamp())
+      await seedCiphertext()
       let state: KeyState | undefined
       const repos = projectRepositories(
         database,
         fixedClock('2026-08-20T10:00:00.000Z'),
         () => state,
       )
-      await repos.devices.list()
       await expect(repos.devices.save(another())).rejects.toThrow(ProjectLockedError)
 
       state = unlocked()
