@@ -305,11 +305,19 @@ jobs:
       - name: Dependabot watches everything, and names it correctly
         run: node scripts/check-dependabot.mjs
 
+      # The devcontainer's 00-base.ini is a copy of the backend repository's production source
+      # of truth, and until #258 the agreement was held by comments alone. The pin makes drift
+      # fail: editing the ini without bumping the committed sha256 stops here, before the image
+      # build below bakes the drifted copy in. A checksum rather than a cross-repo fetch,
+      # deliberately — this job runs on fork PRs without credentials, and a fetch would end that.
+      - name: The devcontainer CouchDB ini still matches its pin
+        run: node scripts/check-couchdb-ini.mjs
+
       # The production image and the CouchDB contract checks moved to the backend repository
       # (matter-manager-backend) together with infra/ — its CI builds, boots and verifies
       # them. This repository keeps only the development image, now self-contained in
       # .devcontainer/couchdb with its own copy of 00-base.ini (kept in agreement with the
-      # backend's, which production is built from).
+      # backend's, which production is built from, and pinned by the step above).
       #
       # No registry credentials and no WEBAWESOME_NPM_TOKEN, deliberately: this image needs
       # neither, so the job works on a pull request from a fork. Not cached: it is a base
