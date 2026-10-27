@@ -8,6 +8,7 @@
   "files": {
     "includes": [
       "scripts/**",
+      "test/**",
       "e2e/**",
       "infra/**",
       ".devcontainer/**",
