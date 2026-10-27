@@ -47,6 +47,9 @@ const fail = (sentence) => {
   process.exit(1)
 }
 
+/** `'owner'`, `"owner"` and `owner` are the same YAML scalar; quotes must not read as drift. */
+const unquoted = (value) => value.replace(/^(['"])(.*)\1$/, '$2')
+
 const read = (path, what) => {
   try {
     return readFileSync(path, 'utf8')
@@ -59,10 +62,11 @@ const read = (path, what) => {
  * The `Role` schema's enum values, by line-scan.
  *
  * The schema is found by its own key line — `Role:` with nothing after the colon — which
- * distinguishes it from the file's many `role:` properties and `$ref`s to it. The block is
- * everything more deeply indented than that key, and the enum inside it may be flow style
- * (`enum: [a, b]`, what the file has today) or block style (`- a` items, what a formatter
- * could turn it into).
+ * distinguishes it from the file's many `role:` properties and `$ref`s to it. Only the schema's
+ * **direct children** are read: the first line inside the block fixes their indentation, and an
+ * `enum:` any deeper — inside a description, say — is prose, not the contract. The enum itself
+ * may be flow style (`enum: [a, b]`, what the file has today) or block style (`- a` items, what
+ * a formatter could turn it into).
  */
 function rolesFromSpec(yaml) {
   const lines = yaml.split('\n')
@@ -73,20 +77,25 @@ function rolesFromSpec(yaml) {
     )
 
   const indent = lines[at].search(/\S/)
+  let childIndent = -1
   const values = []
   for (let i = at + 1; i < lines.length; i++) {
     const line = lines[i]
-    if (line.trim() !== '' && line.search(/\S/) <= indent) break // next sibling schema
+    if (line.trim() === '') continue
+    const depth = line.search(/\S/)
+    if (depth <= indent) break // next sibling schema
+    if (childIndent === -1) childIndent = depth // the block's own keys sit at this depth
+    if (depth !== childIndent) continue // nested under a child: description text, not a key
     const flow = line.match(/^\s+enum:\s*\[([^\]]*)\]\s*$/)
     if (flow !== null) {
-      values.push(...flow[1].split(',').map((value) => value.trim()))
+      values.push(...flow[1].split(',').map((value) => unquoted(value.trim())))
       break
     }
     if (/^\s+enum:\s*$/.test(line)) {
       for (let j = i + 1; j < lines.length; j++) {
         const item = lines[j].match(/^\s+-\s+(\S+)\s*$/)
         if (item === null) break
-        values.push(item[1])
+        values.push(unquoted(item[1]))
       }
       break
     }
@@ -98,7 +107,14 @@ function rolesFromSpec(yaml) {
   return roles
 }
 
-/** The `ProjectRole` union's string-literal members. */
+/**
+ * The `ProjectRole` union's members, every one of which must be a single-quoted string literal.
+ *
+ * Validating the whole expression rather than harvesting the literals out of it matters: in
+ * `'owner' | 'manage' | 'write' | 'read' | string` the four literals all agree with the
+ * contract, and the `| string` quietly accepts everything the contract refuses. A member this
+ * cannot read as a literal fails the check; it is never skipped.
+ */
 function rolesFromUnion(source) {
   const declaration = source.match(/export type ProjectRole\s*=([^\n]*(?:\n\s*\|[^\n]*)*)/)
   if (declaration === null)
@@ -106,10 +122,20 @@ function rolesFromUnion(source) {
       `No \`ProjectRole\` declaration in ${unionPath}; the role-drift check cannot see the union.`,
     )
 
-  const roles = [...declaration[1].matchAll(/'([^']+)'/g)].map((match) => match[1])
-  if (roles.length === 0)
-    fail(`\`ProjectRole\` in ${unionPath} has no string-literal members this check can read.`)
-  return roles
+  const members = declaration[1]
+    .split('|')
+    .map((member) => member.trim())
+    .filter((member) => member !== '')
+  if (members.length === 0)
+    fail(`\`ProjectRole\` in ${unionPath} has no members this check can read.`)
+
+  const nonLiteral = members.filter((member) => !/^'[^']+'$/.test(member))
+  if (nonLiteral.length > 0)
+    fail(
+      `\`ProjectRole\` in ${unionPath} is not a union of single-quoted string literals — [${nonLiteral.join(', ')}] would admit values the contract's Role enum refuses.`,
+    )
+
+  return members.map((member) => member.slice(1, -1))
 }
 
 const contract = rolesFromSpec(read(specPath, 'contract'))

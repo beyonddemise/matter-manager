@@ -87,6 +87,17 @@ describe('the role-drift check', () => {
     expect(code).toBe(0)
   })
 
+  it('accepts a contract whose flow enum quotes its values', () => {
+    // `enum: ['owner', 'manage', …]` is the same YAML document as the unquoted spelling; the
+    // quotes must not read as drift.
+    const { code, output } = check({
+      spec: spec("'owner', 'manage', 'write', 'read'"),
+      union: AGREED_UNION,
+    })
+    expect(output).toContain('ok')
+    expect(code).toBe(0)
+  })
+
   it('fails when the contract has a role the union lacks, naming it and both files', () => {
     const { code, output } = check({
       spec: spec('owner, manage, write, read, audit'),
@@ -145,6 +156,32 @@ describe('the role-drift check', () => {
     })
     expect(code).toBe(1)
     expect(output).toContain('ProjectRole')
+  })
+
+  it('refuses a union that mixes the agreed literals with a non-literal member', () => {
+    // The dangerous shape: the four literals are all present and all agree, but `| string`
+    // makes the type accept anything. Extracting only the literals would call this ok.
+    const { code, output } = check({
+      spec: AGREED_SPEC,
+      union: "export type ProjectRole = 'owner' | 'manage' | 'write' | 'read' | string\n",
+    })
+    expect(code).toBe(1)
+    expect(output).toContain('ProjectRole')
+    expect(output).toContain('string')
+  })
+
+  it('does not let an enum nested deeper in the Role schema stand in for its own', () => {
+    // The Role schema's own enum is gone; a line inside its description still spells one out.
+    // Only a direct child of `Role:` is the contract — anything deeper is prose.
+    const { code, output } = check({
+      spec: AGREED_SPEC.replace(
+        '      enum: [owner, manage, write, read]\n      description: |\n        What a participant may do in a project.',
+        '      description: |\n        Historically:\n          enum: [owner, manage, write, read]',
+      ),
+      union: AGREED_UNION,
+    })
+    expect(code).toBe(1)
+    expect(output).toContain('enum')
   })
 
   it('says so when the contract file is missing', () => {
