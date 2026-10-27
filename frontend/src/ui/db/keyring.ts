@@ -294,16 +294,28 @@ function holdsPlaintextCode(document: unknown): boolean {
  * through) so that each field reaches `encryptField` as plaintext, never as `enc:` input, which
  * it refuses. Saved keeping `updatedAt`: re-encrypting changes nothing the reader entered, and
  * a fresh stamp would outrank a real edit in the merge order (ADR 0010, ruling R26).
+ *
+ * **And every conflicted device**, whatever its winner holds (review of #335): a losing revision
+ * may be the plaintext one, and newer, so the merge takes its codes. The read below resolves the
+ * conflict — writing that merge below the seam, then deleting the losers — and the re-save
+ * encrypts the merged result, so the only live leaf left is ciphertext. Left to a later read,
+ * the plaintext merge would stay at rest as the winner.
  */
 export async function encryptPlaintextDevices(
   database: PouchDB.Database,
   keyState: KeyState,
   now?: () => string,
 ): Promise<void> {
-  const { rows } = await database.allDocs({ ...idRange('device'), include_docs: true })
+  const { rows } = await database.allDocs({
+    ...idRange('device'),
+    include_docs: true,
+    conflicts: true,
+  })
   const { devices } = projectRepositories(database, now, keyState)
   for (const row of rows) {
-    if (!holdsPlaintextCode(row.doc)) continue
+    const conflicted = ((row.doc as { _conflicts?: unknown[] } | undefined)?._conflicts ?? [])
+      .length
+    if (conflicted === 0 && !holdsPlaintextCode(row.doc)) continue
     const device = await devices.get(row.id)
     if (device !== undefined) await devices.saveKeepingUpdatedAt(device)
   }

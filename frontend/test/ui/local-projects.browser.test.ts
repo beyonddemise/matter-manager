@@ -719,6 +719,57 @@ describe('the catalogue keys itself when it is opened', () => {
     expect((await stored('device:new')).manualCode).toMatch(/^enc:v1:/)
   })
 
+  it('seals a conflict whose newer losing revision is plaintext, leaving no plaintext leaf', async () => {
+    // Review of #335 on eb7d14c: the sealing pass looked at winners only. A ciphertext winner
+    // with a newer plaintext loser was skipped, and the next unlocked read resolved it — the
+    // merge, written below the seam, landing the loser's plaintext at rest.
+    const database = rawDatabase(PROJECT_DATABASE_NAME)
+    const dek = await createProjectKeys(database, null)
+    const id = 'device:conflicted'
+    await database.bulkDocs(
+      [
+        {
+          ...device(id),
+          payload: await encryptField(dek, id, 'payload', PAYLOAD),
+          manualCode: await encryptField(dek, id, 'manualCode', '34970112332'),
+          updatedAt: '2026-08-26T09:00:00.000Z',
+          _rev: '1-ffffffffffffffffffffffffffffffff',
+        },
+        {
+          ...device(id),
+          name: 'Kitchen spotlight',
+          payload: PAYLOAD,
+          updatedAt: '2026-08-27T09:00:00.000Z',
+          _rev: '1-00000000000000000000000000000000',
+        },
+      ] as never,
+      { new_edits: false },
+    )
+
+    expect(await projectDatabase().devices.list()).toMatchObject([
+      { _id: id, name: 'Kitchen spotlight', payload: PAYLOAD, manualCode: '34970112332' },
+    ])
+
+    const winner = (await database.get(id, { conflicts: true })) as unknown as {
+      payload?: string
+      manualCode?: string
+      _conflicts?: string[]
+    }
+    expect(winner._conflicts).toBeUndefined()
+    expect(winner.payload).toMatch(/^enc:v1:/)
+    expect(winner.manualCode).toMatch(/^enc:v1:/)
+    // Every leaf, the deleted losers included: none may carry a code in plaintext, because a
+    // leaf is what replication sends.
+    const leaves = (await database.get(id, { open_revs: 'all' })) as unknown as {
+      ok?: { _deleted?: boolean; payload?: string; manualCode?: string }
+    }[]
+    for (const leaf of leaves) {
+      if (leaf.ok === undefined || leaf.ok._deleted === true) continue
+      expect(leaf.ok.payload).toMatch(/^enc:v1:/)
+      expect(leaf.ok.manualCode).toMatch(/^enc:v1:/)
+    }
+  })
+
   it('keys the catalogue on a device that knows server projects, yet adopts nothing', async () => {
     // Ruling C-R7, redefined: "empty" means no user content, and key documents are not content.
     // Keying is not skipped here — that would reopen the keyless window — and a catalogue holding
