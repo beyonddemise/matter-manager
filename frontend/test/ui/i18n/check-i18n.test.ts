@@ -105,6 +105,183 @@ describe('the unwrapped-string scan', () => {
   })
 })
 
+// #283: `endOfSubstitution` walked a `${…}` skipping string and template literals but not
+// comments, so an apostrophe inside a comment opened a phantom string. `endOfQuoted` paired
+// it with the next `'` anywhere below, the substitution was declared to end at the next `}`
+// after that, and real code was flattened into the template's "text".
+//
+// The shape mirrors the issue's evidence on #282: the false report named `renderEmptySlot`,
+// a method that pull request never touched. Every string the fixture renders goes through
+// msg(), so the only possible finding is the false one.
+const cardWithComment = (comment: string) => `
+import { msg } from '@lit/localize'
+import { html } from 'lit'
+export class Card {
+  private editing = false
+  protected render() {
+    return html\`
+      <section class="app-form">
+        \${
+          ${comment}
+          this.editing ? msg('Editing') : msg('Reading')
+        }
+      </section>
+    \`
+    // The caller doesn't see this comment.
+  }
+  private renderEmptySlot() {
+    return html\`<p>\${msg('Empty')}</p>\`
+  }
+}
+`
+
+describe('comments inside a substitution (#283)', () => {
+  it('reads an apostrophe in a // comment as prose, not as an opening quote', () => {
+    const { code, output } = scan({
+      'card.ts': cardWithComment("// a form is not a heading's content"),
+    })
+    expect(output).not.toContain('renderEmptySlot')
+    expect(output).toContain('ok')
+    expect(code).toBe(0)
+  })
+
+  it('reads an apostrophe in a /* */ comment the same way', () => {
+    const { code, output } = scan({
+      'card.ts': cardWithComment("/* a form is not a heading's content */"),
+    })
+    expect(output).not.toContain('renderEmptySlot')
+    expect(output).toContain('ok')
+    expect(code).toBe(0)
+  })
+
+  it('still catches genuine unwrapped text after a comment', () => {
+    // Guards the fix against over-consuming: a // skip that ran past its own line, or a
+    // /* */ skip that ran past the terminator, would swallow this text and pass quietly.
+    const view = `
+import { msg } from '@lit/localize'
+import { html } from 'lit'
+export const view = (editing) => html\`
+  <section>
+    \${
+      // a heading's note
+      editing ? msg('Editing') : msg('Reading')
+    }
+    Forgotten text after the comment
+  </section>
+\`
+`
+    const { code, output } = scan({ 'view.ts': view })
+    expect(code).toBe(1)
+    expect(output).toContain('Forgotten')
+  })
+
+  it('reports an unterminated block comment instead of passing silently or hanging', () => {
+    // A /* with no */ runs to the end of the file, so the template can never close. The
+    // sound failure is a loud one: a template the scanner could not parse to its closing
+    // backtick is reported, never silently dropped.
+    const broken = `
+import { msg } from '@lit/localize'
+import { html } from 'lit'
+export const view = () => html\`<p>\${
+  /* an unterminated comment
+  msg('Hello')
+}</p>\`
+`
+    const { code, output } = scan({ 'broken.ts': broken })
+    expect(code).toBe(1)
+    expect(output).toContain('never closes')
+  })
+})
+
+// Found while fixing #283: `endOfTemplate` advanced one character past what
+// `endOfSubstitution` returned, which is already the index past the closing brace. When a
+// substitution sits flush against its template's closing backtick — msg(str`Project ${name}`)
+// does, in views/project-line.ts — the skipped character WAS that backtick, the walk swallowed
+// code up to the next one, and the whole outer template silently vanished from the scan.
+describe('a substitution flush against its closing backtick (#283)', () => {
+  const line = (trailing: string) => `
+import { msg, str } from '@lit/localize'
+import { html } from 'lit'
+export const line = (name) => html\`<p>
+  \${msg(str\`Project \${name}\`, { desc: 'which project the page shows' })}${trailing}
+</p>\`
+`
+
+  it('walks past it without derailing the template', () => {
+    const { code, output } = scan({ 'line.ts': line('') })
+    expect(output).toContain('ok')
+    expect(code).toBe(0)
+  })
+
+  it('still sees unwrapped text after it', () => {
+    // The guard that matters: a walk that overshoots the closing backtick swallows the rest
+    // of the template, and everything in it stops being inspected.
+    const { code, output } = scan({ 'line.ts': line('\n  Trailing unwrapped text') })
+    expect(code).toBe(1)
+    expect(output).toContain('Trailing')
+    expect(output).not.toContain('never closes')
+  })
+})
+
+// Review findings on #316: comment skipping must not read a regex literal as a comment, and
+// `html\`` mentioned inside a comment or a string is prose, not a template start. Both are
+// one root cause - template starts and comments are properties of *code*, so only a walker
+// that knows what is code may recognise them.
+describe('code that merely resembles comments or templates (#316 review)', () => {
+  it('walks a regex containing /* without reading it as a block comment', () => {
+    const view = `
+import { msg } from '@lit/localize'
+import { html } from 'lit'
+export const view = (path) => html\`<p>\${path.replace(/[/*]+/g, '-') || msg('None')}</p>\`
+`
+    const { code, output } = scan({ 'view.ts': view })
+    expect(output).not.toContain('never closes')
+    expect(output).toContain('ok')
+    expect(code).toBe(0)
+  })
+
+  it('still sees unwrapped text after a substitution holding such a regex', () => {
+    // Guards the regex skip against over-consuming: reading /[/*]+/ as a comment swallows
+    // the rest of the file, and this text with it.
+    const view = `
+import { html } from 'lit'
+export const view = (path) => html\`<p>
+  \${path.replace(/[/*]+/g, '-')}
+  Forgotten after the regex
+</p>\`
+`
+    const { code, output } = scan({ 'view.ts': view })
+    expect(code).toBe(1)
+    expect(output).toContain('Forgotten')
+  })
+
+  it('reads an html backtick inside a line comment as prose, not as a template start', () => {
+    // The phantom template opened in the comment used to swallow up to the real template's
+    // opening backtick and report the code between as unwrapped text.
+    const quiet = `
+import { msg } from '@lit/localize'
+import { html } from 'lit'
+// The view is built with html\` templates throughout.
+export const view = () => html\`<p>\${msg('Hello')}</p>\`
+`
+    const { code, output } = scan({ 'view.ts': quiet })
+    expect(output).toContain('ok')
+    expect(code).toBe(0)
+  })
+
+  it('reads an html backtick inside a quoted string the same way', () => {
+    const quiet = `
+import { msg } from '@lit/localize'
+import { html } from 'lit'
+export const hint = 'render with html\` when needed'
+export const view = () => html\`<p>\${msg('Hello')}</p>\`
+`
+    const { code, output } = scan({ 'view.ts': quiet })
+    expect(output).toContain('ok')
+    expect(code).toBe(0)
+  })
+})
+
 describe('the checker itself', () => {
   it('reports every violation it finds, not just the first', () => {
     const twice = `
