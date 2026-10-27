@@ -1599,3 +1599,15 @@ to any generated or structured file.
 
 ## L47: a fault a test injects must end with the step it targets
 - The #292 Refresh test left the store throwing, so a background `void refresh()` on CI's timing rejected unhandled, and #293's CI failed on a test that passed locally. Inject a one-shot fault and assert the targeted call consumed it (`expect(failures).toBe(0)` right after the press).
+
+## L48: provisioning code is not authorship — check who writes content first
+
+- Designing payload encryption, I read "the `Provisioner` writes the `project` doc" and built a
+  design where the server authors project content (server-written key docs, wraps in the
+  registry). Wrong: in this local-first product every project is born in the browser, and
+  `POST /projects` only provisions an empty database for the local project to replicate into.
+  The server creates containers; clients create content.
+- **Rule:** before designing around a write path, establish the direction of first authorship —
+  who creates the document, who merely receives it by replication. In an offline-first product,
+  assume client-authored until the code proves otherwise, and say the assumption out loud in the
+  design so the owner can shoot it early.
