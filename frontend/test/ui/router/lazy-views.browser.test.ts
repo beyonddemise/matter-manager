@@ -20,7 +20,14 @@ import '@awesome.me/webawesome-pro/dist/components/icon/icon.js'
 import '../../../src/ui/app-shell.js'
 import type { Route } from '../../../src/ui/router/match.js'
 import { ROUTES } from '../../../src/ui/router/routes.js'
-import { destroyProjectStores, isolatedProjectStore } from '../support/project-store.js'
+import {
+  destroyProjectStores,
+  isolatedProjectStore,
+  mintDeviceKeyUpFront,
+} from '../support/project-store.js'
+
+// See `mintDeviceKeyUpFront`: the cold device keygen must not land in a `waitUntil` budget.
+mintDeviceKeyUpFront()
 
 const shell = async (routes?: readonly Route[]) =>
   await fixture(

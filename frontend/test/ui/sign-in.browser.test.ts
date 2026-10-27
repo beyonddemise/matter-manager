@@ -23,7 +23,14 @@ import {
   refresherSignedOutThenRefreshed,
   refresherUnreachable,
 } from './refresher-stub.js'
-import { destroyProjectStores, isolatedProjectStore } from './support/project-store.js'
+import {
+  destroyProjectStores,
+  isolatedProjectStore,
+  mintDeviceKeyUpFront,
+} from './support/project-store.js'
+
+// See `mintDeviceKeyUpFront`: the cold device keygen must not land in a `waitUntil` budget.
+mintDeviceKeyUpFront()
 
 /**
  * #120's last acceptance line: signing in and out is reachable from the interface.

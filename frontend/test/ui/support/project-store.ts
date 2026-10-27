@@ -1,5 +1,7 @@
 import PouchDB from 'pouchdb-browser'
+import { beforeAll } from 'vitest'
 import { localCache } from '../../../src/data/index.js'
+import { ensureDeviceKey } from '../../../src/ui/db/device-key.js'
 import type { LocalProjectDependencies } from '../../../src/ui/local-projects.js'
 
 let counter = 0
@@ -39,6 +41,25 @@ export function isolatedProjectStore(): LocalProjectDependencies {
     uuid: () => crypto.randomUUID(),
     now: () => '2026-10-03T08:00:00.000Z',
   }
+}
+
+/**
+ * Mints this browser's device key once, before any test in the calling file mounts the shell.
+ * Call it at the top level of every file that mounts `<app-shell>` with {@link isolatedProjectStore}.
+ *
+ * Why: every shell mount adopts the first-run catalogue, and since #331 adoption keys it — which
+ * on a fresh browser profile first generates the RSA-3072 device key. That keygen is heavy-tailed
+ * (seconds on a contended CI core), runs in the background of whichever test mounted first, and
+ * lands inside some later test's short `waitUntil` budget: #332's shell-projects timeout and the
+ * sign-in "replication never set" one. Keying is not what those files test
+ * (`local-projects.browser.test.ts` does), so the cost is paid up front, with the real key,
+ * rather than faked or hidden behind a longer timeout. Per file, not once per run: test files do
+ * not share an order, and `device-key.browser.test.ts` deletes the key store on purpose.
+ */
+export function mintDeviceKeyUpFront(): void {
+  beforeAll(async () => {
+    await ensureDeviceKey()
+  })
 }
 
 /** Destroys every database the stores above created. For an `afterEach`. */

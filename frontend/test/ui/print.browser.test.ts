@@ -20,7 +20,14 @@ import '../../src/ui/styles/app.css'
 import type { DeviceListView } from '../../src/ui/views/device-list.js'
 import '../../src/ui/views/device-list.js'
 import { browserDatabase, type TestDatabase } from './support/browser-database.js'
-import { destroyProjectStores, isolatedProjectStore } from './support/project-store.js'
+import {
+  destroyProjectStores,
+  isolatedProjectStore,
+  mintDeviceKeyUpFront,
+} from './support/project-store.js'
+
+// See `mintDeviceKeyUpFront`: the cold device keygen must not land in a `waitUntil` budget.
+mintDeviceKeyUpFront()
 
 /**
  * The print stylesheet, with the browser actually in print mode.
