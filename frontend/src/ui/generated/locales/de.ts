@@ -87,6 +87,7 @@
 's39bd1154149065a1': `Dieser Code nennt ein Inbetriebnahmeverfahren, das das Format nicht definiert.`,
 's3aae8e30897caca0': `Code scannen`,
 's3ad60fb9299b0c7f': `Benötigt eine Verbindung`,
+'s3bb10cb52e8e0b41': `Gerätetyp`,
 's3bfa63c1b2dfd186': `Auf diesem Gerät`,
 's3d1899df15537b0a': `Etikettenbogen`,
 's3d664fde80ed00f2': `Es gibt keine Geräte zum Exportieren.`,
@@ -97,6 +98,7 @@
 's40569c278bc6dc5a': str`Neuen Code senden (${0})`,
 's40e889c01e752e7f': `Matter-Manager-Bestandsliste`,
 's40f80d6c547688e1': `Das sieht nicht nach einer E-Mail-Adresse aus.`,
+'s43b7474ca5f057fa': `Der Export konnte nicht erstellt werden. Es wurde nichts gespeichert; bitte erneut versuchen.`,
 's44a7f20904938966': `Kopplungsanleitung des Herstellers`,
 's44ce6914c84b8a16': `Gerät nicht gefunden`,
 's4582cce03681a427': `Das sieht nach einem Matter-Code aus, enthält aber Zeichen, die darin nicht vorkommen können. Vergleichen Sie ihn mit dem Aufdruck.`,
@@ -116,6 +118,7 @@
 's5501d7aeca8e0f44': `Was getan wurde und was die nächste Person wissen muss. Anmerkungen lassen sich später weder ändern noch löschen.`,
 's566d8645a79e1253': `Melden Sie sich an, um zu synchronisieren`,
 's59160968bc6310cb': `Diese Seite konnte nicht geladen werden. Prüfen Sie Ihre Verbindung und laden Sie dann neu.`,
+'s597bb77e9ecf2134': `QR-Payload`,
 's5a16cd0c7f4bfd03': `Name des neuen Projekts`,
 's5aec541cd0a38006': `Die Anmeldung per E-Mail ist noch nicht verfügbar.`,
 's5b53408a9117f6bd': `Name, Raum, Seriennummer oder Produkt`,
@@ -187,7 +190,6 @@
 's8af61807443f32a4': `Aktionen`,
 's8b4517e227a14de4': `Diese Datei ist beschädigt. Es wurde nichts importiert.`,
 's8b491ccba1cefcb0': str`„${0}“ löschen?`,
-'s8b62ca15bbdcc282': `Das PDF konnte nicht erstellt werden. Es wurde nichts gespeichert; bitte erneut versuchen.`,
 's8c0ac95ebdc308b7': `Der Code hat nicht funktioniert. Er ist möglicherweise abgelaufen – fordern Sie einen neuen an.`,
 's8de37cc986e6ce61': `Gespeichert, aber dieses Gerät konnte es nicht ablegen. Laden Sie die Seite neu, um es zu sehen.`,
 's8dffe52a08dc45db': `Der Setup-Code kann nicht geändert werden. Falls er falsch ist, löschen Sie dieses Gerät und legen Sie es neu an.`,
@@ -342,5 +344,6 @@
 'sfb720fc010661f17': `Upgrade`,
 'sfbc4d1db0bbe6a4e': `Nicht enthalten`,
 'sfbd747a1d61ef2ed': `Dieses Projekt ist nicht mehr auf dem Server`,
+'sfd7b1a72cf854ff4': `Excel exportieren`,
     };
   

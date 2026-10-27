@@ -64,6 +64,14 @@ const ALLOWED_IN_JS = new Map([
       'an identifier and has never been fetched by anything.',
   ],
   [
+    'http://schemas.openxmlformats.org',
+    'The XML namespaces of the xlsx workbook the Excel export writes ' +
+      '(src/domain/xlsx/workbook.ts), written into the generated file, never requested. The ' +
+      'same claim as http://www.w3.org above: an XML namespace is an identifier, not an ' +
+      'address, and the writer performs no I/O at all - its only output is the bytes handed ' +
+      'to the download.',
+  ],
+  [
     'https://ka-f.fontawesome.com',
     "Font Awesome's CDN in Web Awesome's default icon library, which " +
       'src/ui/icons/library.ts replaces before anything renders. Proved by ' +

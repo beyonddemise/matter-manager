@@ -62,6 +62,14 @@ const inventoryBuilder = () => import('../pdf/inventory.js')
 const labelBuilder = () => import('../pdf/labels.js')
 
 /**
+ * The Excel builder (#295), loaded the same way and for the same reason: the workbook writer
+ * is only wanted once somebody presses Export, so it travels in a chunk of its own rather than
+ * in the entry bundle. `scripts/check-lazy-xlsx.mjs` keeps this an `import()` the way
+ * `check-lazy-pdf.mjs` does for the two above.
+ */
+const xlsxBuilder = () => import('../xlsx/export.js')
+
+/**
  * The device list: rooms, in order, with what is in them.
  *
  * Every decision about *which* devices and *in what order* is `browseDevices` in `core` — a
@@ -202,9 +210,17 @@ export class DeviceListView extends LitElement {
    */
   private onProjectChanged = (): void => {
     this.resolved = undefined
+    // A running export is abandoned, and that is a security property rather than tidiness:
+    // the document under construction holds the pairing codes of the project it was started
+    // from, and finished after the switch it would be downloaded under the new project's view.
+    this.cancelExport()
     // Cleared, not left showing the old project's devices while the new ones arrive. A list
     // that keeps them is a list showing another building's contents under this building's name.
     this.devices = []
+    // In the new project's terms nothing has been read yet, and the old project's failure is
+    // not this project's failure. Both are re-established by the load below.
+    this.loaded = false
+    this.failed = false
     void this.load()
   }
 
@@ -544,7 +560,10 @@ export class DeviceListView extends LitElement {
    * them. M3-2 turns that into a deliberate choice rather than a consequence.
    */
   private async onExport(selection: ExportSelection = { kind: 'all' }): Promise<void> {
-    if (this.exporting) return
+    // `!this.loaded` besides the buttons' `disabled`, because a programmatic click does not
+    // honour it: before the first read succeeds there is nothing to export, and an empty
+    // inventory handed to a client reads as an empty building.
+    if (this.exporting || !this.loaded) return
     const token = ++this.exportToken
     this.exporting = true
     this.exportFailed = false
@@ -582,6 +601,36 @@ export class DeviceListView extends LitElement {
   }
 
   /**
+   * Exports what is on screen as an Excel workbook (#295).
+   *
+   * The same narrowing as {@link onExport}, so the sheet, the PDF and the screen agree about
+   * what the project contains. It shares `exporting` and the token with the PDF exports —
+   * from the user's side there is one export running or none — but sets no progress: building
+   * rows of text is quick enough that a progress callout would only flicker, so the callout
+   * (gated on `exportProgress`) stays down.
+   */
+  private async onExportXlsx(): Promise<void> {
+    // The same two refusals as onExport, for the same reasons.
+    if (this.exporting || !this.loaded) return
+    const token = ++this.exportToken
+    this.exporting = true
+    this.exportFailed = false
+
+    try {
+      const chosen = selectForExport(this.groups(), { kind: 'all' })
+      const { buildDeviceXlsx, offerXlsxDownload, xlsxFilename } = await xlsxBuilder()
+      const bytes = await buildDeviceXlsx(chosen)
+      if (token !== this.exportToken) return
+      ;(this.download ?? offerXlsxDownload)(bytes, xlsxFilename())
+    } catch {
+      // Not logged, as in onExport: the workbook carries setup passcodes.
+      if (token === this.exportToken) this.exportFailed = true
+    } finally {
+      if (token === this.exportToken) this.exporting = false
+    }
+  }
+
+  /**
    * Exports labels for whatever is selected, or for everything when nothing is.
    *
    * Sharing `exporting`, the progress callout and the cancel button with the inventory export,
@@ -589,7 +638,8 @@ export class DeviceListView extends LitElement {
    * "exporting" states would let both start at once and both write a file.
    */
   private async onExportLabels(): Promise<void> {
-    if (this.exporting) return
+    // The same two refusals as onExport, for the same reasons.
+    if (this.exporting || !this.loaded) return
     const token = ++this.exportToken
     this.exporting = true
     this.exportFailed = false
@@ -733,10 +783,15 @@ export class DeviceListView extends LitElement {
                     )}
                   </wa-button>`
             }
+            <!-- The three export buttons also wait for the first successful read: before it
+                 — still reading, or the read failed — there is nothing to export, and a
+                 disabled button beats a document of nothing but headers. On loaded, not on
+                 failed: a project read once and then failing a refresh still has its data,
+                 and exporting that is reading, which is what read access is for. -->
             <wa-button
               data-labels
               appearance="outlined"
-              ?disabled=${this.exporting}
+              ?disabled=${this.exporting || !this.loaded}
               @click=${() => {
                 this.labelsOpen = true
               }}
@@ -744,9 +799,18 @@ export class DeviceListView extends LitElement {
               <wa-icon slot="start" name="tags"></wa-icon>
               ${msg('Labels')}
             </wa-button>
-            <wa-button data-export appearance="outlined" @click=${() => void this.onExport()} ?disabled=${this.exporting}>
+            <wa-button data-export appearance="outlined" @click=${() => void this.onExport()} ?disabled=${this.exporting || !this.loaded}>
               <wa-icon slot="start" name="file-pdf"></wa-icon>
               ${msg('Export PDF')}
+            </wa-button>
+            <wa-button
+              data-export-xlsx
+              appearance="outlined"
+              ?disabled=${this.exporting || !this.loaded}
+              @click=${() => void this.onExportXlsx()}
+            >
+              <wa-icon slot="start" name="file-excel"></wa-icon>
+              ${msg('Export Excel')}
             </wa-button>
             ${
               // Absent, not disabled. A disabled button says "this is possible and you are
@@ -765,7 +829,10 @@ export class DeviceListView extends LitElement {
         </div>
 
         ${
-          this.exporting
+          // Gated on the progress, not only on `exporting`: the Excel export shares the flag
+          // (one export runs or none) but reports no progress, and only the PDF builders are
+          // slow enough to need saying what they are doing.
+          this.exporting && this.exportProgress !== undefined
             ? html`
                 <wa-callout variant="neutral" data-export-progress>
                   <wa-icon slot="icon" name="file-pdf"></wa-icon>
@@ -798,7 +865,10 @@ export class DeviceListView extends LitElement {
             ? html`
                 <wa-callout variant="danger" data-export-failed>
                   <wa-icon slot="icon" name="triangle-exclamation"></wa-icon>
-                  ${msg('The PDF could not be built. Nothing was saved; try again.')}
+                  ${
+                    // Format-neutral, because the PDF, label and Excel exports all report here.
+                    msg('The export could not be built. Nothing was saved; try again.')
+                  }
                 </wa-callout>
               `
             : ''

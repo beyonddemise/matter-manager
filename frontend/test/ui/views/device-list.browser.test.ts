@@ -14,7 +14,7 @@ import { fixture, html, waitUntil } from '@open-wc/testing-helpers'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { page, userEvent } from 'vitest/browser'
 import { type DeviceDocument, TEST_VENDOR_NAME, type Unsaved } from '../../../src/domain/index.js'
-import { PROJECT_DATA_CHANGED } from '../../../src/ui/current-project.js'
+import { PROJECT_CHANGED, PROJECT_DATA_CHANGED } from '../../../src/ui/current-project.js'
 import { activateLocale } from '../../../src/ui/i18n/localization.js'
 import type { DeviceListView } from '../../../src/ui/views/device-list.js'
 import '../../../src/ui/views/device-list.js'
@@ -647,6 +647,44 @@ describe('exporting the inventory', () => {
     await new Promise((resolve) => setTimeout(resolve, 500))
     await element.updateComplete
     expect(element.querySelector('[data-export-failed]')).toBeNull()
+  })
+
+  it('abandons an export the moment the reader moves to another project', async () => {
+    // The PDF under construction holds the pairing codes of the project it was started from;
+    // finished after a switch, it would be downloaded under the new project's view. The
+    // dispatch lands synchronously after the click, before the builder's first microtask, so
+    // the export is reliably still pending when the project changes.
+    await seed()
+    const { element, saved } = await listWithDownload()
+
+    ;(element.querySelector('[data-export]') as HTMLElement).click()
+    window.dispatchEvent(new CustomEvent(PROJECT_CHANGED))
+
+    await new Promise((resolve) => setTimeout(resolve, 500))
+    expect(saved).toHaveLength(0)
+    expect(element.exporting).toBe(false)
+  })
+
+  it('is not offered before the first read has succeeded', async () => {
+    // Nothing has been read, so there is nothing to export — a PDF of an empty inventory
+    // handed over at this moment reads as an empty building. The handler refuses as well as
+    // the button, because a programmatic click does not honour `disabled`.
+    const pending = { devices: { list: () => new Promise(() => {}) } } as never
+    const element = (await fixture(
+      html`<device-list-view .repositories=${pending}></device-list-view>`,
+    )) as DeviceListView
+    await element.updateComplete
+    const saved: unknown[] = []
+    ;(element as DeviceListView & { download?: unknown }).download = (bytes: Uint8Array) =>
+      saved.push(bytes)
+
+    for (const control of ['[data-export]', '[data-labels]']) {
+      expect(element.querySelector(control)?.hasAttribute('disabled'), control).toBe(true)
+    }
+    ;(element.querySelector('[data-export]') as HTMLElement).click()
+
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    expect(saved).toHaveLength(0)
   })
 
   it('exports an empty project rather than refusing to', async () => {
