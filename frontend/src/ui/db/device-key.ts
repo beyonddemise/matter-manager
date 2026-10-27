@@ -41,11 +41,32 @@ interface StoredDeviceKey extends DeviceKey {
   id: typeof RECORD_ID
 }
 
-/** An IDBRequest, awaited. */
+/** An IDBRequest, awaited. For reads only — a write settled this way is not yet durable. */
 function settled<T>(request: IDBRequest<T>): Promise<T> {
   return new Promise((resolve, reject) => {
     request.onsuccess = () => resolve(request.result)
     request.onerror = () => reject(request.error ?? new Error('The key store request failed.'))
+  })
+}
+
+/**
+ * A write transaction, awaited to its **commit**.
+ *
+ * A request's success event fires before the transaction commits, and the commit can still
+ * abort afterwards (quota, most plausibly). A write awaited on the request would therefore
+ * answer a key that was never persisted — the next launch would mint a different pair, and any
+ * registration made under the first kid would be orphaned on the server. So the settlement here
+ * is the transaction's: `complete` means durable, `abort`/`error` mean the write did not happen.
+ * A failed request (the `add` losing the race below) surfaces as the abort's `error`, so the
+ * caller still sees the `ConstraintError` it arbitrates on.
+ */
+function committed(transaction: IDBTransaction): Promise<void> {
+  return new Promise((resolve, reject) => {
+    transaction.oncomplete = () => resolve()
+    transaction.onabort = () =>
+      reject(transaction.error ?? new Error('The key store transaction was aborted.'))
+    transaction.onerror = () =>
+      reject(transaction.error ?? new Error('The key store transaction failed.'))
   })
 }
 
@@ -122,11 +143,16 @@ export async function ensureDeviceKey(): Promise<DeviceKey> {
 
     const fresh = await generateDeviceKey()
     try {
-      const store = database.transaction(STORE_NAME, 'readwrite').objectStore(STORE_NAME)
-      await settled(store.add(fresh))
+      const transaction = database.transaction(STORE_NAME, 'readwrite')
+      const durable = committed(transaction)
+      transaction.objectStore(STORE_NAME).add(fresh)
+      await durable
     } catch (error) {
-      // Lost the race above: somebody else's pair is in the store, and *that* is the device
-      // key now — this one is discarded unused, which is why losing is harmless.
+      // Two ways here, told apart by what the re-read finds. Lost the race above: somebody
+      // else's pair is in the store, and *that* is the device key now — this one is discarded
+      // unused, which is why losing is harmless. Or the commit aborted (quota): the store is
+      // still empty, and the honest answer is the failure — a key handed out unpersisted would
+      // be a different kid on the next launch, orphaning whatever registered the first one.
       const winner = await readStored(database)
       if (winner !== undefined) return asDeviceKey(winner)
       throw error

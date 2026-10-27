@@ -62,6 +62,31 @@ describe('ensureDeviceKey', () => {
     expect(algorithm.hash.name).toBe('SHA-256')
   })
 
+  it('rejects a key whose write never committed, instead of answering it', async () => {
+    // `add`'s success event fires before the transaction commits, and a commit can still
+    // abort after it (quota, most plausibly). Answering the key at that point would hand the
+    // caller an identity the next launch cannot reproduce — a fresh pair would be minted,
+    // orphaning any registration made under the first kid. The abort is injected where the
+    // browser would raise it: after the request succeeds, before the transaction completes.
+    const originalAdd = IDBObjectStore.prototype.add
+    IDBObjectStore.prototype.add = function (this: IDBObjectStore, ...args) {
+      const request = originalAdd.apply(this, args)
+      request.addEventListener('success', () => this.transaction.abort())
+      return request
+    }
+
+    try {
+      await expect(ensureDeviceKey()).rejects.toThrow()
+    } finally {
+      IDBObjectStore.prototype.add = originalAdd
+    }
+
+    // The rejection told the truth: nothing was persisted, so the next call mints afresh
+    // rather than finding half a write.
+    const key = await ensureDeviceKey()
+    expect(key.kid).toMatch(/^[0-9a-f]{64}$/)
+  })
+
   it('survives sign-out', async () => {
     // The key is a property of the browser profile, not the account: losing it on sign-out
     // would force an escrow round trip and a fresh registration on every sign-in.
