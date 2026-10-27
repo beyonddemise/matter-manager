@@ -78,6 +78,28 @@ export interface CachedPlanMatrix {
 /** The document id the plan matrix is cached under. */
 export const PLAN_MATRIX_ID = 'cache:plans'
 
+/**
+ * The escrow public key as `GET /escrowkey` last answered it (#301), kept so a project born
+ * offline can still be given its escrow wrap from what was heard while online.
+ *
+ * All three fields are the server's verbatim. The kid is the full SHA-256 of the SPKI, and it
+ * travels with the key because a wrap written under a stale kid would be rejected at
+ * provisioning — the reader compares, it does not derive.
+ */
+export interface CachedEscrowKey {
+  /** SHA-256 of the SPKI, 64 lowercase hex chars, as the server derives it. */
+  readonly kid: string
+  /** The wrapping algorithm, `RSA-OAEP-256` today. */
+  readonly alg: string
+  /** The SubjectPublicKeyInfo DER, standard base64. */
+  readonly publicKey: string
+  /** When it was fetched, ISO-8601. For showing how stale a cached answer is. */
+  readonly fetchedAt: string
+}
+
+/** The document id the escrow key is cached under. One escrow key per deployment. */
+export const ESCROW_KEY_ID = 'cache:escrowkey'
+
 /** Whether this device holds a replica of a project, as opposed to being allowed to. */
 export type ProjectLocalState =
   /** The replica is here and the project opens with no connectivity. */
@@ -232,6 +254,10 @@ export interface LocalCache {
   readPlanMatrix(): Promise<CachedPlanMatrix | undefined>
   /** Replaces the cached plan matrix. */
   writePlanMatrix(cached: CachedPlanMatrix): Promise<void>
+  /** The cached escrow key, or `undefined` if `GET /escrowkey` has never answered. */
+  readEscrowKey(): Promise<CachedEscrowKey | undefined>
+  /** Replaces the cached escrow key — a rotation replaces, two keys would be two answers. */
+  writeEscrowKey(cached: CachedEscrowKey): Promise<void>
   /**
    * Every project this browser knows of, in id order.
    *
@@ -458,6 +484,14 @@ export function localCache(database: PouchDB.Database): LocalCache {
 
     async writePlanMatrix(cached: CachedPlanMatrix): Promise<void> {
       await writeSingleton(PLAN_MATRIX_ID, cached)
+    },
+
+    async readEscrowKey(): Promise<CachedEscrowKey | undefined> {
+      return readSingleton<CachedEscrowKey>(ESCROW_KEY_ID)
+    },
+
+    async writeEscrowKey(cached: CachedEscrowKey): Promise<void> {
+      await writeSingleton(ESCROW_KEY_ID, cached)
     },
 
     async readProjects(): Promise<CachedProject[]> {

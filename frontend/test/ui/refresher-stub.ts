@@ -29,6 +29,14 @@ export function refresherReporting(session: SessionState) {
 export const refresherNeverAnswering = (): StubRefresher => ({ stop() {} })
 
 /**
+ * A stand-in for the shell's `escrow` seam (#301), doing nothing.
+ *
+ * Injected wherever a test signs the shell in, so the signed-in transition neither generates a
+ * device key nor asks the test server for an escrow key — a test must depend on neither.
+ */
+export const noEscrow = async (): Promise<void> => {}
+
+/**
  * A refresher factory that reports `signed-out` on its first start and `refreshed` on every
  * later one — the shape of an email sign-in: the device had no session when the shell started,
  * and a restart after the verify finds the stored refresh token valid. `starts` counts the

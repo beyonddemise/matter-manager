@@ -19,6 +19,7 @@ import '../../src/ui/styles/app.css'
 import { NAV_ROUTES } from '../../src/ui/router/routes.js'
 import { applyScheme, SCHEME_STORAGE_KEY } from '../../src/ui/scheme.js'
 import { accessToken, rememberAccessToken } from '../../src/ui/tokens.js'
+import { noEscrow } from './refresher-stub.js'
 import { destroyProjectStores, isolatedProjectStore } from './support/project-store.js'
 
 /** A minimal shape for the reactive-update contract both `app-shell` and `wa-page` share. */
@@ -540,6 +541,7 @@ const driven = async (
         report.current = onOutcome
         return { stop }
       }}
+      .escrow=${noEscrow}
       .connectivity=${connectivity}
       .backfill=${injectBackfill ? backfill : undefined}
       .followLocale=${async () => undefined}

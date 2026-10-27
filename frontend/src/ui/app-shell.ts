@@ -13,6 +13,7 @@ import {
   followProfileLocale,
   passkeyAuth as passkeyAuthClient,
   plans as plansClient,
+  prepareEscrow,
   profile,
   requestTokens,
   signInMethods as signInMethodsClient,
@@ -224,6 +225,7 @@ export class AppShell extends LitElement implements ViewHost {
     signInGitHub: { attribute: false },
     readProfile: { attribute: false },
     refresher: { attribute: false },
+    escrow: { attribute: false },
     sessionEndedNotice: { state: true },
     listProjects: { attribute: false },
     makeSync: { attribute: false },
@@ -309,6 +311,11 @@ export class AppShell extends LitElement implements ViewHost {
 
   /** Injected by tests. Unset in the application, where these reach the real API. */
   declare refresher?: (onOutcome: (outcome: TokenOutcome) => void) => { stop(): void }
+  /**
+   * The encryption startup pair (#301): registers the device key, caches the escrow key.
+   * Injected by tests; `prepareEscrow`, which never throws, otherwise.
+   */
+  declare escrow?: (cache: ReturnType<LocalProjectDependencies['cache']>) => Promise<void>
   declare listProjects?: () => Promise<readonly Project[]>
   declare makeSync?: (
     onState: (id: string, state: SyncState) => void,
@@ -609,6 +616,10 @@ export class AppShell extends LitElement implements ViewHost {
           this.startSyncing()
           // Once after sign-in, on the transition only: `refreshed` repeats before every expiry.
           this.triggerBackfill()
+          // The encryption startup pair (#301): register this browser's device key, cache the
+          // escrow public key. Fire-and-forget like the rest of this transition — it never
+          // throws and never blocks sync; a failure is retried at the next sign-in.
+          void (this.escrow ?? prepareEscrow)((this.projectStore ?? localProjectDefaults).cache())
         }
         return
       }

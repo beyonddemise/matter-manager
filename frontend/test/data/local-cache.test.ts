@@ -152,6 +152,43 @@ describe('caching the plan matrix', () => {
   })
 })
 
+describe('caching the escrow key', () => {
+  const CACHED = {
+    kid: 'a'.repeat(64),
+    alg: 'RSA-OAEP-256',
+    publicKey: 'c3BraS1ieXRlcw==',
+    fetchedAt: '2026-10-27T09:00:00.000Z',
+  }
+
+  it('answers "never fetched" before anything has been', async () => {
+    // "Never fetched" is the ordinary first-visit state, and offline it means a project is
+    // created without an escrow wrap — an answer, not a failure.
+    expect(await localCache(memoryDatabase()).readEscrowKey()).toBeUndefined()
+  })
+
+  it('reads back what was written, values verbatim', async () => {
+    const cache = localCache(memoryDatabase())
+    await cache.writeEscrowKey(CACHED)
+
+    expect(await cache.readEscrowKey()).toMatchObject(CACHED)
+  })
+
+  it('replaces rather than accumulating, beside the profile', async () => {
+    // One escrow key per browser, under its own id: a rotated key must replace the old one, and
+    // replacing it must not touch the profile.
+    const database = memoryDatabase()
+    const cache = localCache(database)
+    await cache.writeProfile(PROFILE)
+
+    await cache.writeEscrowKey(CACHED)
+    await cache.writeEscrowKey({ ...CACHED, kid: 'b'.repeat(64) })
+
+    expect((await cache.readEscrowKey())?.kid).toBe('b'.repeat(64))
+    expect((await cache.readProfile())?.sub).toBe('google|1234')
+    expect((await database.allDocs()).rows).toHaveLength(2)
+  })
+})
+
 describe('signing out', () => {
   it('removes the cache from this browser', async () => {
     // It holds a name and an email address belonging to the person who signed in. Leaving them
@@ -192,6 +229,7 @@ describe('the cache is never replicated', () => {
       'clear',
       'clearProfile',
       'markAccessRemoved',
+      'readEscrowKey',
       'readLocalProjects',
       'readPlanMatrix',
       'readProfile',
@@ -199,6 +237,7 @@ describe('the cache is never replicated', () => {
       'removeLocalProject',
       'setLocalState',
       'updateLocalProject',
+      'writeEscrowKey',
       'writePlanMatrix',
       'writeProfile',
       'writeProjects',
