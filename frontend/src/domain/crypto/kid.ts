@@ -10,13 +10,15 @@
  * re-exposes `deriveKid` as part of its surface; its shared cross-platform vectors pin the
  * agreement with the backend. This module lands first because the device key (#300) needs it.
  *
- * Pure in the sense this layer requires: no I/O, no DOM, no imports. `SubtleCrypto.digest` is
- * deterministic computation available identically in every runtime this code meets (browsers,
- * workers, Node ≥ 20), but `tsconfig.domain.json` strips the DOM lib that would name it, so the
- * one method used is typed structurally below.
+ * Pure in the sense this layer requires: no I/O, no DOM, no imports from outside this directory.
+ * `SubtleCrypto.digest` is deterministic computation available identically in every runtime this
+ * code meets (browsers, workers, Node ≥ 20), but `tsconfig.domain.json` strips the DOM lib that
+ * would name it, so the one method used is typed structurally below.
  *
  * @module
  */
+
+import { decodeBase64 } from './base64.js'
 
 /** The single WebCrypto operation this module performs, named without the DOM lib. */
 interface Sha256 {
@@ -26,36 +28,6 @@ interface Sha256 {
 /** `crypto.subtle`, reached through `globalThis` because the DOM lib is absent here. */
 function subtle(): Sha256 {
   return (globalThis as unknown as { crypto: { subtle: Sha256 } }).crypto.subtle
-}
-
-const BASE64_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
-
-/**
- * Standard base64 (RFC 4648 §4) → bytes.
- *
- * Hand-rolled rather than `atob`, which is a DOM global this layer does not have. Strict about
- * its input: a kid derived from a *mis-decoded* SPKI would be a stable, plausible-looking name
- * for a key nobody holds, so a character outside the alphabet throws instead of being skipped.
- */
-function decodeBase64(value: string): Uint8Array {
-  const unpadded = value.replace(/=+$/, '')
-  const bytes = new Uint8Array(Math.floor((unpadded.length * 6) / 8))
-
-  let buffer = 0
-  let bits = 0
-  let at = 0
-  for (const character of unpadded) {
-    const sextet = BASE64_ALPHABET.indexOf(character)
-    if (sextet === -1) throw new Error('Not base64, so no key identifier can be derived from it.')
-    buffer = (buffer << 6) | sextet
-    bits += 6
-    if (bits >= 8) {
-      bits -= 8
-      bytes[at] = (buffer >> bits) & 0xff
-      at += 1
-    }
-  }
-  return bytes
 }
 
 /** Bytes → lowercase hex, two characters per byte. */
@@ -68,7 +40,7 @@ function toHex(digest: ArrayBuffer): string {
  *
  * @param spkiB64 the SubjectPublicKeyInfo DER, standard base64 — exactly what
  *   `crypto.subtle.exportKey('spki', …)` yields once encoded, and what the API carries
- * @throws {Error} when the input is not base64 — see {@link decodeBase64} for why not lenient
+ * @throws {Error} when the input is not base64 — `base64.ts` explains why not lenient
  */
 export async function deriveKid(spkiB64: string): Promise<string> {
   return toHex(await subtle().digest('SHA-256', decodeBase64(spkiB64)))
