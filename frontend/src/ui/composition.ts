@@ -21,11 +21,12 @@
  */
 
 import PouchDB from 'pouchdb-browser'
-import type { LocalCache } from '../data/index.js'
+import { isLocalOnlyDatabase, type LocalCache } from '../data/index.js'
 import { type AuthMethodsApi, authMethodsApi } from './auth-methods.js'
 import { answeringTestVendors, type CatalogApi, catalogApi } from './catalog.js'
 import { ensureDeviceKey } from './db/device-key.js'
 import {
+  type KeyRecovery,
   localDatabase,
   localProfileCache,
   rawDatabase,
@@ -33,7 +34,13 @@ import {
   removeLocalDatabases,
 } from './db/project-database.js'
 import { type EmailSignIn, emailSignIn } from './email-signin.js'
-import { cachedEscrowKey, escrowApi, prepareEscrowAtStartup } from './escrow-client.js'
+import {
+  cachedEscrowKey,
+  escrowApi,
+  prepareEscrowAtStartup,
+  recoverProjectKey,
+  sharedDeviceKeyRegistration,
+} from './escrow-client.js'
 import { type CredentialsLike, type PasskeySignIn, passkeySignIn } from './passkey-signin.js'
 
 import { type PlansApi, plansApi } from './plans.js'
@@ -48,8 +55,8 @@ import {
 } from './session.js'
 import { type SignInMethodsApi, signInMethodsApi } from './sign-in-methods.js'
 import { type ManagerDependencies, type SyncManager, syncManager } from './sync/manager.js'
-import { remoteProject } from './sync/remote.js'
-import type { SyncState } from './sync/replication.js'
+import { type RemoteDatabase, remoteProject } from './sync/remote.js'
+import { pullOnce, type Syncable, type SyncState } from './sync/replication.js'
 import {
   accessToken,
   forgetTokens,
@@ -317,6 +324,60 @@ export function catalog(fetchImpl: typeof fetch = fetch): CatalogApi {
   return answeringTestVendors(catalogApi(API_BASE, accessToken, fetchImpl))
 }
 
+/** The server's copy of a project, through the same-origin CouchDB proxy, with the bearer token. */
+function serverCopy(dbName: string): RemoteDatabase {
+  return remoteProject(dbName, {
+    couchUrl: COUCH_BASE,
+    origin: window.location.origin,
+    token: accessToken,
+    open: (url, options) => new PouchDB(url, { fetch: options.fetch }),
+  })
+}
+
+/**
+ * Escrow recovery for a project that opens locked (#304), as `project-database.ts` runs it.
+ *
+ * Bound here because this is where the API base, the token and the remote CouchDB meet:
+ * "reachable" is online **and** signed in (`navigator.onLine` is trusted only to say offline,
+ * `connectivity.ts`), and the pull is a one-shot `pullOnce` from the server copy. A local-only
+ * database has no server copy and no escrow to ask, so it answers `false` without a request.
+ */
+export function keyRecovery(fetchImpl: typeof fetch = fetch): KeyRecovery {
+  const api = escrowApi(API_BASE, accessToken, fetchImpl)
+  return (dbName, database) => {
+    if (isLocalOnlyDatabase(dbName)) return Promise.resolve(false)
+    return recoverProjectKey(database, {
+      api,
+      pull: () => pullOnce(database as unknown as Syncable, serverCopy(dbName)),
+      reachable: () => navigator.onLine !== false && accessToken() !== undefined,
+      keyring: { deviceKey: ensureDeviceKey, now: () => new Date().toISOString() },
+      ensureRegistered: deviceKeyRegistration(fetchImpl),
+    })
+  }
+}
+
+/** One shared registration per `fetch`, so the startup pair and recovery reach the same one. */
+const registrations = new WeakMap<typeof fetch, () => Promise<void>>()
+
+/**
+ * The device key registration the startup pair and escrow recovery share (#304 review): on a
+ * brand-new device's first sign-in a locked open must wait on the startup `PUT`, not race it.
+ * Keyed by `fetch` so the application — which passes the global to both — gets one, and a test
+ * handing in its own stub gets its own.
+ */
+function deviceKeyRegistration(fetchImpl: typeof fetch): () => Promise<void> {
+  let registration = registrations.get(fetchImpl)
+  if (registration === undefined) {
+    registration = sharedDeviceKeyRegistration(
+      escrowApi(API_BASE, accessToken, fetchImpl),
+      ensureDeviceKey,
+      accessToken,
+    )
+    registrations.set(fetchImpl, registration)
+  }
+  return registration
+}
+
 /**
  * Replication for whichever projects are handed to it.
  *
@@ -336,13 +397,7 @@ export function projectSync(
     // The memoised handle, not a second `new PouchDB(dbName)`: two handles on one store fire
     // every change feed twice.
     local: (dbName) => rawDatabase(dbName) as unknown as ReturnType<ManagerDependencies['local']>,
-    remote: (dbName) =>
-      remoteProject(dbName, {
-        couchUrl: COUCH_BASE,
-        origin: window.location.origin,
-        token: accessToken,
-        open: (url, options) => new PouchDB(url, { fetch: options.fetch }),
-      }),
+    remote: serverCopy,
     // Before the view notification, on both inbound paths: an inbound `key:*` document means
     // the database's memoised key state (#302) is stale, and the re-read `onIncoming` triggers
     // must already decrypt with the fresh one.
@@ -371,6 +426,7 @@ export function prepareEscrow(
     api: escrowApi(API_BASE, accessToken, fetchImpl),
     cache,
     deviceKey: ensureDeviceKey,
+    register: deviceKeyRegistration(fetchImpl),
   })
 }
 

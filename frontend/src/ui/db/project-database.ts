@@ -21,7 +21,7 @@ import {
 import { PROJECT_KEY_PREFIX } from '../../domain/documents/keys.js'
 import { PROJECT_CHANGED } from '../current-project.js'
 import { coordinateWrites } from './db-lock.js'
-import { memoiseKeyState, resolveKeyState } from './keyring.js'
+import { memoiseKeyState, resolveKeyState, unlockProject } from './keyring.js'
 
 /**
  * The local catalogue.
@@ -108,7 +108,20 @@ function openHandle(dbName: string): OpenedProject {
   // handle. The provider form is the recovery seam: {@link refreshProjectKeyState} drops the
   // memo, and the repositories every view already holds pick up the new state on their next
   // operation.
-  const keyState = memoiseKeyState(() => resolveKeyState(database))
+  //
+  // A resolution that answers *locked* is also where escrow recovery (#304) starts: once per
+  // resolution, behind the read that found it, so the read answers at once and the views are
+  // told when the key has arrived.
+  const keyState = memoiseKeyState(async () => {
+    const state = await resolveKeyState(database)
+    if (state?.kind === 'locked') {
+      lockedProjects.add(dbName)
+      recoverLockedProject(dbName, database)
+    } else {
+      lockedProjects.delete(dbName)
+    }
+    return state
+  })
 
   const handle: OpenedProject = {
     database,
@@ -145,6 +158,74 @@ export function refreshProjectKeyState(dbName: string): void {
 }
 
 /**
+ * How a locked project gets its key: escrow recovery (`recoverProjectKey`, #304), with the
+ * online and signed-in checks and the pull bound in. Answers whether the project now unlocks.
+ */
+export type KeyRecovery = (dbName: string, database: PouchDB.Database) => Promise<boolean>
+
+/** The registered recovery; `undefined` until `main.ts` registers one, and in most tests. */
+let keyRecovery: KeyRecovery | undefined
+/** Databases whose last resolution answered locked — what the next open retries. */
+const lockedProjects = new Set<string>()
+/** Databases with a recovery in flight, so overlapping triggers ask the server once. */
+const recovering = new Set<string>()
+
+/**
+ * Registers how locked projects are recovered.
+ *
+ * A registration rather than an import: the recovery needs the API base, the token and the
+ * remote CouchDB, which `composition.ts` assembles — and that module already imports this one.
+ *
+ * @param recovery the recovery, or `undefined` to turn it off (tests)
+ */
+export function useKeyRecovery(recovery: KeyRecovery | undefined): void {
+  keyRecovery = recovery
+}
+
+/**
+ * Runs the registered recovery for a locked project, unless one is already running.
+ *
+ * Fire-and-forget by design: the read that found the project locked has already answered, and
+ * the locked state is a complete, safe answer on its own. On success the memoised key state is
+ * dropped and, when this is the project on screen, {@link PROJECT_CHANGED} tells every view to
+ * re-read — the same repositories then decrypt, so the recovery is invisible. On a refusal or
+ * a failure nothing happens: the project stays locked until the next open (no retry loop).
+ */
+function recoverLockedProject(dbName: string, database: PouchDB.Database): void {
+  const recover = keyRecovery
+  if (recover === undefined || recovering.has(dbName)) return
+  recovering.add(dbName)
+  void recover(dbName, database)
+    .catch((error: unknown) => {
+      console.warn('The project key could not be recovered; the next open retries.', error)
+      return false
+    })
+    // A recovery that failed may still have delivered the wrap: a one-shot pull whose first
+    // batch carried `key:<kid>` and whose next batch failed rejects, and its ids go with it
+    // (#304 review). So a failure asks the database itself whether the project now unlocks,
+    // rather than trusting the outcome to have seen every batch.
+    .then(async (recovered) => recovered || (await unlocksNow(database)))
+    .then((unlocked) => {
+      // A handle forgotten meanwhile (the copy was removed) has nothing left to refresh.
+      if (!unlocked || opened.get(dbName)?.database !== database) return
+      refreshProjectKeyState(dbName)
+      if (dbName === currentName) window.dispatchEvent(new CustomEvent(PROJECT_CHANGED))
+    })
+    .finally(() => {
+      recovering.delete(dbName)
+    })
+}
+
+/** Whether this device's wrap is in the database and opens; a broken one answers `false`. */
+async function unlocksNow(database: PouchDB.Database): Promise<boolean> {
+  try {
+    return (await unlockProject(database)) !== null
+  } catch {
+    return false
+  }
+}
+
+/**
  * The raw PouchDB for a project database, for what the repositories do not model: replication,
  * and the `project` document (which is not a device or a room).
  *
@@ -164,6 +245,7 @@ export function rawDatabase(dbName: string): PouchDB.Database {
  */
 export function forgetProject(dbName: string): void {
   opened.delete(dbName)
+  lockedProjects.delete(dbName)
 }
 
 /** Which database {@link projectDatabase} will open. Exported so a test can read it back. */
@@ -184,9 +266,13 @@ export function currentProjectDatabaseName(): string {
  */
 export function useProjectDatabase(dbName: string, editable = true): void {
   if (dbName === currentName && editable === currentEditable) return
+  const switched = dbName !== currentName
   currentName = dbName
   currentEditable = editable
   window.dispatchEvent(new CustomEvent(PROJECT_CHANGED))
+  // Opening a project already known to be locked is the next recovery attempt (#304): its key
+  // state is memoised, so no fresh resolution would start one.
+  if (switched && lockedProjects.has(dbName)) recoverLockedProject(dbName, rawDatabase(dbName))
 }
 
 /**
@@ -337,6 +423,7 @@ export async function removeLocalDatabases(
   // a memoised one that outlived its database fails every later read; and if a destroy fails,
   // the handle may point at a database that is now half gone.
   opened.clear()
+  lockedProjects.clear()
   forgetLocalProfileCache()
 
   const outcomes = await Promise.allSettled(names.map((name) => destroy(name)))
