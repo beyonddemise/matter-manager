@@ -22,20 +22,23 @@ import {
   projectRepositories,
 } from '../data/index.js'
 import type { ImportedProject } from '../domain/archive/project-archive.js'
+import { isEncryptedField } from '../domain/crypto/envelope.js'
 import {
   isProjectDocument,
   PROJECT_DOCUMENT_ID,
   type ProjectDocument,
 } from '../domain/documents/project.js'
+import { idRange } from '../domain/index.js'
 import { profile } from './composition.js'
 import { withDestroyLock } from './db/db-lock.js'
-import { createProjectKeys, fieldCipher } from './db/keyring.js'
+import { createProjectKeys, fieldCipher, resolveKeyState } from './db/keyring.js'
 import {
   forgetProject,
   localDatabase,
   localProfileCache,
   PROJECT_DATABASE_NAME,
   rawDatabase,
+  refreshProjectKeyState,
 } from './db/project-database.js'
 import { cachedEscrowKey } from './escrow-client.js'
 import { cachedProfileOf, type Profile } from './profile.js'
@@ -525,13 +528,74 @@ export async function destroyLocalProject(
 }
 
 /**
- * Makes today's single `project_local` catalogue the first local project.
+ * The adopted catalogue's key state: the DEK it already has, else a freshly minted one.
+ *
+ * Why resolve before minting: an adoption interrupted after its key write left `key:<own kid>`
+ * behind, and a second DEK minted over it would strand everything the first one encrypted. So
+ * an own wrap is reused, and a catalogue holding only other devices' wraps resolves *locked* and
+ * is left that way — minting beside a DEK this device cannot open helps nothing. Only a
+ * catalogue with no `key:*` documents at all gets new keys (decision 1: escrow-wrapped too when
+ * the escrow key is cached).
+ *
+ * Cross-tab safety comes from the wrap's id, not a lock: `key:<own kid>` is the same id in every
+ * tab of this browser, so a second tab minting at the same moment loses with a 409 before
+ * writing anything else, and its next adoption run resolves the winner's DEK.
+ */
+async function catalogueKeyState(
+  database: PouchDB.Database,
+  deps: LocalProjectDependencies,
+): Promise<KeyState | undefined> {
+  const existing = await resolveKeyState(database)
+  if (existing !== undefined) return existing
+  return (deps.projectKeys ?? mintProjectKeys)(database)
+}
+
+/** Whether a stored document still holds a commissioning code in plaintext. */
+function holdsPlaintextCode(document: unknown): boolean {
+  const { payload, manualCode } = (document ?? {}) as { payload?: unknown; manualCode?: unknown }
+  return [payload, manualCode].some(
+    (value) => typeof value === 'string' && !isEncryptedField(value),
+  )
+}
+
+/**
+ * Re-saves, through the unlocked cipher, every catalogue device still holding a plaintext code.
+ *
+ * Only those: a device already sealed — by an earlier, interrupted run — is not touched at all,
+ * and a half-sealed one is read back through the repository (whose decrypt passes plaintext
+ * through) so that each field reaches `encryptField` as plaintext, never as `enc:` input, which
+ * it refuses. Saved keeping `updatedAt`: re-encrypting changes nothing the reader entered, and
+ * a fresh stamp would outrank a real edit in the merge order (ADR 0010, ruling R26).
+ */
+async function encryptPlaintextDevices(
+  database: PouchDB.Database,
+  keyState: KeyState,
+  now: () => string,
+): Promise<void> {
+  const { rows } = await database.allDocs({ ...idRange('device'), include_docs: true })
+  const { devices } = projectRepositories(database, now, keyState)
+  for (const row of rows) {
+    if (!holdsPlaintextCode(row.doc)) continue
+    const device = await devices.get(row.id)
+    if (device !== undefined) await devices.saveKeepingUpdatedAt(device)
+  }
+}
+
+/**
+ * Makes today's single `project_local` catalogue the first local project, keyed and encrypted
+ * like every other project (#331).
  *
  * Idempotent: if it is already indexed nothing is written, so a later call with another name
- * never renames it. It writes only the `project` document and the index entry - the catalogue's
- * devices and rooms are not read or changed. A `project` document that is already there (the
- * index was lost, the database survived) is respected over the name offered, because it is what
- * the user last saw.
+ * never renames it. A `project` document that is already there (the index was lost, the
+ * database survived) is respected over the name offered, because it is what the user last saw.
+ *
+ * **Crash-safe order: keys, `project` document, device rewrites, index entry.** The keys come
+ * first so no device is ever rewritten under a key that does not exist; the index entry comes
+ * last because it is what ends adoption — a run that dies anywhere before it is simply run again
+ * by the next read, which reuses the keys it finds ({@link catalogueKeyState}) and rewrites only
+ * the devices still in plaintext ({@link encryptPlaintextDevices}). Once the keys land, this
+ * handle's memoised key state is dropped (`refreshProjectKeyState`): a view that read the
+ * keyless catalogue first memoised "plaintext", and would otherwise pass the new ciphertext on.
  *
  * An empty `project_local` is adopted only on a device that has **never known a project**
  * (ruling C-R7, refined): nothing indexed and no server list remembered. A brand-new device then
@@ -557,8 +621,13 @@ export async function adoptLegacyCatalogue(
     const known = indexed.length > 0 || (await cache.readProjects()).length > 0
     if (known) return
   }
+  const keyState = await catalogueKeyState(database, deps)
+  refreshProjectKeyState(PROJECT_DATABASE_NAME)
   const existing = await readProjectDocument(database)
   if (existing === undefined) await writeProjectDocument(database, name, undefined)
+  // Locked (another device's DEK only) leaves the codes as they are: there is nothing to seal
+  // them with, and the repository would refuse the writes anyway.
+  if (keyState?.kind === 'unlocked') await encryptPlaintextDevices(database, keyState, deps.now)
 
   await cache.addLocalProject({
     dbName: PROJECT_DATABASE_NAME,
