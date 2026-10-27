@@ -78,7 +78,7 @@ plaintext and never see ciphertext.
 |---|---|---|---|
 | KEK | 256-bit secret | `ESCROW_KEK` env var on the API host | operations: env file mode 0600, backed up out of band |
 | Escrow key pair | RSA-3072 | `matter_manager` doc `escrow:keys`, private key sealed | AES-256-GCM under the KEK, AAD `escrow:keys` |
-| Device key pair | RSA-OAEP-3072 / SHA-256, one per browser profile | raw IndexedDB `mm-keys`, private key non-extractable | browser origin isolation; a lost key is recovered through escrow, once the backend with `POST /escrow` is deployed |
+| Device key pair | RSA-OAEP-3072 / SHA-256, one per browser profile | raw IndexedDB `mm-keys`, private key non-extractable | browser origin isolation; a lost key is recovered through escrow for server projects, once the backend with `POST /escrow` is deployed; never for a local-only project |
 | Project DEK | AES-256-GCM | one `key:*` wrap document per recipient, in the project database | RSA-OAEP-256 under each device key and the escrow key |
 | Field ciphertext | AES-256-GCM, fresh 96-bit IV | `payload` / `manualCode` on device documents | the project DEK |
 
@@ -95,9 +95,8 @@ device's wrap.
    too when the escrow public key is already cached.
 2. **No migration.** Pre-release databases are deleted. The `enc:v1:` prefix leaves room for a
    later format, not for a migration. The one database that is adopted rather than created, the
-   first-run catalogue `project_local`, is keyed and its devices encrypted when it is adopted
-   (#331). A catalogue already adopted before that fix is not migrated and stays keyless; see
-   the consequences.
+   first-run catalogue `project_local`, keys itself and seals its devices when it is opened
+   (#331, #336), so a catalogue adopted before that fix is keyed too; see the consequences.
 3. **No DEK rotation when a member is removed.** Removal deletes their `key:<kid>` documents with
    the `_security` rewrite (matter-manager-backend#40, not yet shipped). ADR 0003's position
    stands: replicated data cannot be recalled, and the remedy for a compromised code is a
@@ -138,13 +137,23 @@ The implementation refined the design in these places, and these are the rules n
 - **A field name may not contain `:`.** The AAD is `"<docId>:<fieldName>"`. Document ids
   contain colons (`device:<uuid>`), which is safe only while the field side has none: then the
   last colon splits the two unambiguously. Encrypt and decrypt both refuse such a field name.
-- **A database with no `key:*` documents is plaintext, not locked.** It predates encryption, or
-  its wraps have not replicated in yet. No DEK anywhere could open it, so "locked" would promise
-  a recovery that cannot happen. The key state is resolved again when an inbound batch carries a
-  `key:*` document. **Known gap (#333):** a pull does not order `key:*` before `device:*`, so a
-  download can briefly hold encrypted devices and no wraps. In that window the plaintext state
-  passes `enc:v1:` values through, and catalogue backfill could send one to the lookup and mark
-  the device `unusable`. The fix is to fail closed: such a document reads as locked.
+- **A database with no `key:*` documents is keyless, and fails closed (#333, #336).** Its wraps
+  have not replicated in yet: a pull does not order `key:*` before `device:*`. The key state is
+  resolved again when an inbound batch carries a `key:*` document. Until then:
+  - **reads:** a document whose `payload` or `manualCode` carries `enc:`, in its winning or any
+    losing revision, reads **locked**. That is decided before conflict resolution, so a locked
+    read never writes. Ciphertext never reaches a view or the catalogue lookup;
+  - **writes:** every write carrying a plaintext code is refused, unconditionally; writes without
+    codes pass. There is no scan and no cache, so there is no race between a check and a write;
+  - repositories built with no key state at all (`mm-local`-style databases, unit tests) stay
+    plaintext.
+- **The first-run catalogue keys itself when opened** (`keyCatalogue`, through
+  `ensureProjectKeys`). It reuses its own wrap if there is one and mints otherwise, then seals
+  every device still holding a plaintext code, conflicted revisions included, so no plaintext
+  leaf survives. This is scoped to the catalogue alone: minting into a server copy that is still
+  downloading would strand its real DEK. Two tabs racing to mint resolve on the 409 to the
+  winner's DEK. "Empty catalogue" (ruling C-R7) now means no user content, ignoring `key:*` and
+  `_design/*`, so a device that knows only server projects gets a keyed but unadopted catalogue.
 - **Locked means read-only.** A database with wraps for other recipients only is locked. Reads
   omit `payload` and `manualCode` and mark the document `locked: true`. Every write is refused
   (`ProjectLockedError`). A document **read while locked** is refused on save and remove even
@@ -179,9 +188,9 @@ The implementation refined the design in these places, and these are the rules n
 - A database dump, a backup or a stolen browser profile no longer yields setup codes. The
   concentrated target ADR 0005 named, an installer's instance holding every customer's codes,
   now holds ciphertext.
-- Once the backend with `POST /escrow` is deployed, a new device or a lost key recovers with nothing for the user
-  to do beyond being signed in and online once. Offline work on an unlocked project is
-  unchanged.
+- Once the backend with `POST /escrow` is deployed, a new device or a lost key on a server
+  project recovers with nothing for the user to do beyond being signed in and online once.
+  Offline work on an unlocked project is unchanged.
 - No dependency was added: WebCrypto in the browser, JCA on the server.
 
 **Costs, accepted knowingly.**
@@ -195,24 +204,26 @@ The implementation refined the design in these places, and these are the rules n
   before. In place of the QR and manual code, the device page says they will be available after
   the next sync. Until the backend with `POST /escrow` is deployed, the same holds online: the codes are readable
   only in the browsers that hold a wrap, and losing `mm-keys` there loses them on that browser.
+- **A local-only project cannot be recovered.** `POST /escrow` re-wraps from the server's copy,
+  and a local-only project has none. A `key:escrow` it carries is never sent anywhere before
+  promotion, and one born without it can only get one from this device's key. If the browser
+  loses `mm-keys` before the project is promoted, the codes survive only in a project export
+  the user made.
 - **A writer can deny recovery** through a conflict branch, as described above. A support case
   rather than a breach, and a detectable one.
 - **New places a secret could be logged:** setup codes, DEKs, wraps and the KEK. None may be
   logged at any level.
-- **The first-run catalogue `project_local` was adopted without keys; fixed by #331.** Adoption
-  now writes its keys first and re-encrypts its devices, so it promotes like any other project.
-  Residual gaps:
-  - a catalogue indexed before the fix stays keyless, and so plaintext and unpromotable, since
-    nothing is migrated (decision 2);
-  - revisions written before the rewrite keep their plaintext bodies in IndexedDB until compaction.
-    Replication sends only leaf revisions, so they never reach the server;
-  - another tab that read the catalogue before it was adopted keeps reading it as plaintext until
-    it is reloaded; there is no cross-tab key-state signal yet.
-
-  If keying fails at first run, nothing is indexed and adoption is tried again on the next read
-  of the projects. It never falls back to a plaintext catalogue.
-- **Ciphertext can reach the views before the wraps arrive** (#333, above), until the keyless
-  state fails closed.
+- **The first-run catalogue `project_local` was adopted without keys; fixed by #331 and #336.**
+  It now keys itself and seals its devices when it is opened, a catalogue indexed before the fix
+  included, so it promotes like any other project. Residual gaps:
+  - revisions written before the sealing keep their plaintext bodies in the non-leaf IndexedDB
+    history until compaction. Replication sends only leaf revisions, so they never reach the
+    server;
+  - another tab that read the catalogue before it was keyed keeps its plaintext reading until it
+    is reloaded; there is no cross-tab key-state signal yet;
+  - if keying fails at open (quota, key generation), the catalogue's reads fail too and are
+    retried on the next operation, and its writes report the storage failure. It never falls
+    back to plaintext.
 - 0005's compensating controls (TLS, `_all_dbs` and Fauxton blocked, encrypted volumes and
   backups) stay mandatory: the metadata is still plaintext, and a backup still holds the escrow
   key, sealed.

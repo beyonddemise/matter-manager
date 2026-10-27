@@ -278,9 +278,12 @@ Cleared on sign-out, along with the project replicas.
 single record: `{id: "device", kid, publicKeySpki, privateKey}`, where `privateKey` is a
 non-extractable `CryptoKey`. PouchDB cannot hold one, because it JSON-encodes documents. It
 **survives sign-out**: the key belongs to the browser profile, not to the account. A lost key is
-to be recovered through escrow ([ADR 0022](adr/0022-field-encryption-with-key-escrow.md)) once
-the backend with `POST /escrow` (merged) is deployed with `ESCROW_KEK`; until then, keeping it is the only
-way this browser keeps reading its projects' codes.
+recovered through escrow ([ADR 0022](adr/0022-field-encryption-with-key-escrow.md)) **only for
+projects on the server**, and only once the backend with `POST /escrow` (merged) is deployed with
+`ESCROW_KEK`: the re-wrap needs the server's copy of the project. **A local-only project has no
+recovery.** Its `key:escrow`, if it has one, is never sent anywhere before promotion, and one
+born without it can only be given one by this device's key. If `mm-keys` is lost before the
+project is promoted, its codes survive only in a project export the user made.
 
 ### The local index: `local:project:<dbName>`
 
@@ -358,6 +361,8 @@ destroy fails, both entries carry the project id and the page shows the server-n
 **First run adopts `project_local` only on a device that never knew a project:** nothing indexed
 and no server list ever remembered. Then every device has one project to name ("Name your
 project"). A device that once knew projects and has none left shows the create prompt instead.
+"Empty" means no user content: `key:*` and `_design/*` documents do not count, because the
+catalogue keys itself whenever it is opened, adopted or not.
 
 ## `project_<uuid>` — one per project
 
@@ -510,9 +515,10 @@ replicate in full and are by far the largest driver of sync bandwidth.
 
 **`payload` is a secret.** It contains the setup passcode, and so does `manualCode`. Never log
 either, never send them to a third party, and never include them in a bug report. See
-[SECURITY.md](../SECURITY.md). Both are stored encrypted (below). The one place a decrypted code
-travels other than the device's own screen is `POST /catalog/lookup`: to our own API, in a POST
-body, decoded in memory and never stored. Only the vendor and product IDs reach the DCL
+[SECURITY.md](../SECURITY.md). Both are stored encrypted (below). The only network destination
+of a decrypted code is `POST /catalog/lookup`: to our own API, in a POST body, decoded in memory
+and never stored. Separately, every export the user asks for (the project archive, the labels
+and inventory PDFs, the Excel sheet) holds the codes in plain text; see *Project export* below. Only the vendor and product IDs reach the DCL
 ([ADR 0019](adr/0019-setup-code-to-own-api.md)).
 
 **Remark ids are client-generated UUIDs**, not indices or counts. The conflict merge unions
@@ -538,10 +544,13 @@ by id, and positional identity would make "the same remark twice" indistinguisha
   version throws.
 - **Locked project** (this device has no wrap yet): reads omit both fields and add
   `locked: true`, and every write is refused. A document read while locked is refused on save and
-  remove even after the key arrives, because it no longer carries the codes. A database with no
-  `key:*` documents at all is read as plaintext: one from before encryption, or one whose wraps
-  have not replicated in yet. In the second case its `enc:v1:` values currently pass through
-  undecrypted; #333 makes them read as locked.
+  remove even after the key arrives, because it no longer carries the codes.
+- **Keyless project** (no `key:*` documents yet: its wraps are still replicating in): it fails
+  closed (#333, #336). A document with an `enc:` value in either field, in its winning or any
+  losing revision, reads locked, and every write carrying a plaintext code is refused. Writes
+  without codes pass. The first-run catalogue is never left keyless: it keys itself and seals
+  its devices when it is opened. Only a repository built with no key state at all
+  (`mm-local`-style, unit tests) stores plaintext.
 
 The conflict merge copies both fields as opaque strings and never decrypts them.
 
@@ -605,13 +614,11 @@ reads or writes one.
 - **The ids sort outside `device:`**, so the repositories' ranged reads never see them. They are
   not a `DocumentType`, and an export leaves them out.
 - **What they decide on this device:** a wrap for this device's kid that opens means unlocked.
-  Wraps for other recipients only mean locked. No `key:*` document at all means plaintext. A
+  Wraps for other recipients only mean locked. No `key:*` document at all means keyless, which
+  fails closed (above): the pull does not order wraps before devices, so a download can hold
+  ciphertext before its keys. The `project_local` catalogue keys itself at open instead. A
   malformed wrap reads as missing, so the project is locked and escrow recovery can repair it.
   A well-formed wrap that fails to unwrap is an error, not "locked".
-- **Known gap (#333):** "no `key:*` document means plaintext" also holds while a download has
-  delivered device documents but not yet their wraps. The pull does not order the two, so in
-  that window reads pass `enc:v1:` values through as if they were codes. The fix will read such
-  a document as locked.
 
 ## Project export: a zip of JSON documents
 

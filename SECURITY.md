@@ -20,12 +20,24 @@ data is roughly as sensitive as a set of spare keys.
 
 ## Deliberate trade-off: only the setup codes are encrypted
 
-The two fields that hold a setup code, `payload` and `manualCode`, are encrypted at rest with a
-key per project, in browser IndexedDB and in CouchDB
+In every keyed project (one holding `key:*` documents, which every project created, imported or
+adopted since encryption shipped does), the two fields that hold a setup code, `payload` and
+`manualCode`, are encrypted at rest with a key per project, in browser IndexedDB and in CouchDB
 ([ADR 0022](docs/adr/0022-field-encryption-with-key-escrow.md)). Everything else on a device
 document is stored in plaintext, as it always was
 ([ADR 0005](docs/adr/0005-plaintext-payload-storage.md)), so that lists, search, the catalogue
-lookup and the conflict merge keep working. A dump reveals the inventory, not the codes.
+lookup and the conflict merge keep working. A dump of a keyed project reveals the inventory, not
+the codes.
+
+Every project is keyed. Projects are born with keys, and the first-run catalogue is keyed and
+its devices sealed when it is opened (#331, #336), including one adopted before that fix. A
+project copy whose wraps have not replicated in yet refuses every write that carries a plaintext
+code and reads any ciphertext as locked (#333). One place still holds plaintext codes at rest,
+recorded in ADR 0022:
+
+- **Old revisions in the browser.** When the catalogue's devices are sealed, the revisions
+  written before that keep their plaintext bodies in the IndexedDB history until compaction.
+  They are not leaves, so they are never replicated.
 
 Two exceptions are deliberate:
 
@@ -33,11 +45,13 @@ Two exceptions are deliberate:
   with its key wrapped for the server's escrow key, so the escrow key opens every server
   project's key. That is what lets a new device or a lost browser key be let in without ceremony,
   through the re-wrap endpoint (`POST /escrow`), which is merged on the backend and available
-  once the backend is deployed with `ESCROW_KEK`. A
-  local-only project never reaches the server, so its codes are on no server at all. This is not
-  end-to-end encryption, and the operator is trusted.
-- **A project export is plaintext.** It is the backup of last resort, and it must import
-  without any key. Whoever exports it is responsible for protecting it.
+  once the backend is deployed with `ESCROW_KEK`. A local-only project never reaches the server,
+  so its codes are on no server at all, and for the same reason it has no recovery: if the
+  browser loses its device key before the project is promoted, the codes survive only in an
+  export. This is not end-to-end encryption, and the operator is trusted.
+- **Exports are plaintext.** The project archive is the backup of last resort and must import
+  without any key; the labels and inventory PDFs and the Excel sheet print the codes too.
+  Whoever exports any of them is responsible for protecting it.
 
 The security boundary for everything but the codes is therefore still **database isolation plus
 transport security**. That places real obligations on anyone operating an instance:
