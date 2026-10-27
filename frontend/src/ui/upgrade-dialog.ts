@@ -364,13 +364,15 @@ export function leftWaitlistText(): string {
 
 /**
  * Whether the dialog speaks to an account rather than asking for a sign-in: signed in, or
- * offline before the session is known with an account in the cache. Offline the refresher
- * answers only `unreachable`, which leaves the session unknown for the whole outage; the cache
- * is all there is then, and it is that account's.
+ * offline before the session is confirmed with an account in the cache. Offline the refresher
+ * cannot reach the server, which leaves the session unknown for the whole outage — `undefined`,
+ * or `offline-held` when a refresh token is stored (#215); the cache is all there is then, and
+ * it is that account's.
  */
 function knownAccount(state: WaitlistState): boolean {
   if (state.session === 'signed-in') return true
-  return state.session === undefined && !state.online && state.cachedAccount
+  const unknown = state.session === undefined || state.session === 'offline-held'
+  return unknown && !state.online && state.cachedAccount
 }
 
 function joinLabel(plan: Plan): string {

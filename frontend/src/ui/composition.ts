@@ -109,8 +109,15 @@ export type TokenOutcome =
   | { readonly kind: 'signed-out' }
   /** A stored refresh token was refused: an authentication failure, not a choice. */
   | { readonly kind: 'ended' }
-  /** Network error, timeout, 5xx or an unusable answer. Nothing was discarded. */
-  | { readonly kind: 'unreachable' }
+  /**
+   * Network error, timeout, 5xx or an unusable answer. Nothing was discarded.
+   *
+   * `tokenStored` says whether a refresh token is held on this device. The server being away
+   * answers nothing about the session, but the store is this device's own fact — and it is what
+   * lets the shell still offer Sign out to a stored session offline (#215). Absent when the
+   * exchange failed before the store said anything (the refresher's catch-all).
+   */
+  | { readonly kind: 'unreachable'; readonly tokenStored?: boolean }
 
 /**
  * Gets an access token, and keeps the refresh token that comes with it.
@@ -142,7 +149,12 @@ export async function requestTokens(
   // first check and call the later ones impossible, though it can change across every `await`.
   const aborted = (): boolean => signal?.aborted === true
   const stored = await store.read()
-  if (aborted()) return { kind: 'unreachable' }
+  // Every unreachable answer carries whether a token is stored: see the variant's note (#215).
+  const unreachable = (): TokenOutcome => ({
+    kind: 'unreachable',
+    tokenStored: stored !== undefined,
+  })
+  if (aborted()) return unreachable()
   let response: Response
   try {
     response = await fetchImpl(`${API_BASE}/auth/token`, {
@@ -154,26 +166,26 @@ export async function requestTokens(
       ...(signal === undefined ? {} : { signal }),
     })
   } catch {
-    return { kind: 'unreachable' }
+    return unreachable()
   }
-  if (aborted()) return { kind: 'unreachable' }
+  if (aborted()) return unreachable()
 
   if (isSessionEnded(response.status)) {
     if (stored === undefined) return { kind: 'signed-out' }
     await store.clear()
     return { kind: 'ended' }
   }
-  if (!response.ok) return { kind: 'unreachable' }
+  if (!response.ok) return unreachable()
 
   let body: unknown
   try {
     body = await response.json()
   } catch {
-    return { kind: 'unreachable' }
+    return unreachable()
   }
   // Again after the body: reading it is asynchronous too, and this is the last point before the
   // state changes.
-  if (aborted()) return { kind: 'unreachable' }
+  if (aborted()) return unreachable()
 
   // A 200 whose body is not a token pair is a server fault, not a session, so it is
   // `unreachable` rather than `signed-out`: the server being unwell must not sign anybody out.
@@ -181,7 +193,7 @@ export async function requestTokens(
   // Checked by shape, not merely by parsing. Guarding only against JSON that will not parse lets
   // `{}` through, and `rememberAccessToken({})` then stores an undefined token with an expiry of
   // `NaN`, so `accessToken()` reports none while this function reports success.
-  if (!isTokenResponse(body)) return { kind: 'unreachable' }
+  if (!isTokenResponse(body)) return unreachable()
 
   rememberAccessToken(body)
   if (body.refreshToken !== stored) await store.write(body.refreshToken)

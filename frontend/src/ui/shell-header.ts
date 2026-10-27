@@ -30,6 +30,10 @@ import {
  * - sign in again - but "your session ended" and "you are not signed in" are different facts, and
  * the first one reassures somebody whose data is still on the device that nothing has been lost.
  *
+ * `offline-held` shows nothing, like the moment before the first answer: a session is probably
+ * there, so offering "Sign in" would be wrong twice over — about the session and about the
+ * network it would need (#215). Sign out stays reachable in the navigation.
+ *
  * Signing out is not here but in the navigation ({@link renderSignOut}): it is rarely wanted,
  * and the header is for what is true now.
  */
@@ -38,7 +42,7 @@ export function renderAccount(
   email: string | undefined,
   onSignIn: () => void,
 ): TemplateResult | '' {
-  if (session === undefined) return ''
+  if (session === undefined || session === 'offline-held') return ''
   if (session === 'signed-in') {
     // Desktop only: at phone width the header has room for the menu, the name and two controls,
     // and the account's email is the one thing there that is context rather than a control.
@@ -120,14 +124,16 @@ export function offersUpgrade(state: Pick<WaitlistState, 'plan' | 'request'>): b
 }
 
 /**
- * Signing out, as the navigation's last item while there is a session. It still asks first:
+ * Signing out, as the navigation's last item while there is a session — confirmed
+ * (`signed-in`) or merely held (`offline-held`): a stored refresh token is somebody's session,
+ * and wiping a shared machine must not wait for connectivity (#215). It still asks first:
  * see {@link renderSignOutConfirmation}.
  */
 export function renderSignOut(
   session: SessionState | undefined,
   onAsk: () => void,
 ): TemplateResult | '' {
-  if (session !== 'signed-in') return ''
+  if (session !== 'signed-in' && session !== 'offline-held') return ''
   return html`
     <wa-button
       data-sign-out

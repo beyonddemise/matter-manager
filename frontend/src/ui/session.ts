@@ -30,6 +30,15 @@ export type SessionState =
    * Local data is intact and stays intact. The only thing to do is offer to sign in again.
    */
   | 'expired'
+  /**
+   * A refresh token is stored but the server cannot be reached, so whether the session is still
+   * good is unknown (#215).
+   *
+   * Sign out stays available: wiping a shared machine must not wait for connectivity, and
+   * telling the server is best-effort in {@link signOut} anyway. Sign in is not offered — it
+   * cannot succeed offline, and offering it would be a lie about the network.
+   */
+  | 'offline-held'
 
 /** What signing out has to reach. Injected so a test does not destroy a real browser's storage. */
 export interface SessionDependencies {

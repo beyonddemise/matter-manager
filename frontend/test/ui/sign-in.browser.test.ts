@@ -16,6 +16,7 @@ import {
   refresherNeverAnswering,
   refresherReporting,
   refresherSignedOutThenRefreshed,
+  refresherUnreachable,
 } from './refresher-stub.js'
 import { destroyProjectStores, isolatedProjectStore } from './support/project-store.js'
 
@@ -131,6 +132,58 @@ describe('the sign-in control', () => {
         .projectStore=${isolatedProjectStore()}
       ></app-shell>
     `)) as HTMLElement
+    expect(element.querySelector('[data-sign-in]')).toBeNull()
+    expect(element.querySelector('[data-sign-out]')).toBeNull()
+  })
+
+  it('offers Sign out, not Sign in, when offline at launch with a stored session', async () => {
+    // #215's dead state: the user who most needs Sign out — leaving a shared machine, no
+    // network — was shown neither control. A stored refresh token is this device's own fact,
+    // so Sign out is owed regardless of reachability. Sign in stays hidden: offline it cannot
+    // succeed, and offering it would be a lie about the network.
+    const element = (await fixture(html`
+      <app-shell
+        .refresher=${refresherUnreachable(true)}
+        .connectivity=${{ addEventListener: () => {}, removeEventListener: () => {}, onLine: false }}
+        .projectStore=${isolatedProjectStore()}
+      ></app-shell>
+    `)) as HTMLElement
+    await waitUntil(() => element.querySelector('[data-sign-out]') !== null, 'no sign-out control')
+    expect(element.querySelector('[data-sign-in]')).toBeNull()
+  })
+
+  it('signs out while offline: the sign-out flow runs and the UI reads signed out', async () => {
+    // #215's second scenario. Telling the server is best-effort — `signOut` swallows a failed
+    // `endServerSession` and wipes anyway (session.test.ts pins that) — so a sign-out whose
+    // server call failed still leaves this browser signed out.
+    const signOutOf = vi.fn(async () => ['server'])
+    const element = (await fixture(html`
+      <app-shell
+        .refresher=${refresherUnreachable(true)}
+        .signOutOf=${signOutOf}
+        .connectivity=${{ addEventListener: () => {}, removeEventListener: () => {}, onLine: false }}
+        .projectStore=${isolatedProjectStore()}
+      ></app-shell>
+    `)) as HTMLElement
+    await signOut(element)
+
+    expect(signOutOf).toHaveBeenCalledOnce()
+    expect(element.querySelector('[data-sign-out]')).toBeNull()
+  })
+
+  it('shows neither control when offline with nothing stored', async () => {
+    // #215's third scenario: nothing to sign out of, and signing in cannot succeed offline, so
+    // nothing is the truthful offer.
+    const element = (await fixture(html`
+      <app-shell
+        .refresher=${refresherUnreachable(false)}
+        .connectivity=${{ addEventListener: () => {}, removeEventListener: () => {}, onLine: false }}
+        .projectStore=${isolatedProjectStore()}
+      ></app-shell>
+    `)) as HTMLElement & { updateComplete: Promise<unknown> }
+    // Let the stub's `unreachable` land before asserting what it must not have changed.
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await element.updateComplete
     expect(element.querySelector('[data-sign-in]')).toBeNull()
     expect(element.querySelector('[data-sign-out]')).toBeNull()
   })

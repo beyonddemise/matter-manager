@@ -51,10 +51,13 @@ export function refresherSignedOutThenRefreshed() {
 }
 
 /**
- * A refresher that answers `unreachable` and nothing else: the app opened with no connection,
- * so the session stays unknown for the whole outage.
+ * A refresher factory that answers `unreachable` and nothing else: the app opened with no
+ * connection. `tokenStored` is what the real exchange says about this device's store — `true`
+ * is the #215 case, a stored session whose holder is still owed Sign out.
  */
-export function refresherUnreachable(onOutcome: (o: TokenOutcome) => void): StubRefresher {
-  queueMicrotask(() => onOutcome({ kind: 'unreachable' }))
-  return { stop() {} }
+export function refresherUnreachable(tokenStored = false) {
+  return (onOutcome: (o: TokenOutcome) => void): StubRefresher => {
+    queueMicrotask(() => onOutcome({ kind: 'unreachable', tokenStored }))
+    return { stop() {} }
+  }
 }
