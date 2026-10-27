@@ -136,8 +136,23 @@ function utf8Decode(bytes: Uint8Array): string {
   return new (globals().TextDecoder)('utf-8', { fatal: true }).decode(bytes)
 }
 
-/** The additional authenticated data binding a ciphertext to its document and field. */
+/**
+ * The additional authenticated data binding a ciphertext to its document and field.
+ *
+ * DocIds legitimately contain colons (`device:<id>`), and that is safe *only* while the field
+ * side is colon-free: the last colon then anchors the split, so no two (docId, field) pairs can
+ * join into the same AAD. A colon in the field name would break that — `("device:a", "payload")`
+ * and `("device", "a:payload")` would both read `device:a:payload`, and a ciphertext could be
+ * transplanted between the two bindings. Shared by encrypt and decrypt, so both refuse it.
+ *
+ * @throws {Error} on a field name containing `:`
+ */
 function additionalData(docId: string, field: string): Uint8Array {
+  if (field.includes(':')) {
+    throw new Error(
+      `Refusing the field name '${field}': a colon would make the "<docId>:<fieldName>" AAD ambiguous.`,
+    )
+  }
   return utf8Encode(`${docId}:${field}`)
 }
 
@@ -158,7 +173,9 @@ export async function generateDek(): Promise<CryptoKey> {
  *
  * @throws {Error} when the value already carries the `enc:` prefix — double encryption is a
  *   programming error (a read path that failed to decrypt feeding a write path) and must fail
- *   loudly rather than corrupt the stored value
+ *   loudly rather than corrupt the stored value — and on a field name containing `:`, which
+ *   would make the AAD ambiguous (see {@link additionalData}; docId colons are fine, the field
+ *   side anchors the split)
  */
 export async function encryptField(
   dek: CryptoKey,
@@ -196,9 +213,10 @@ export async function encryptField(
  *   were the code would be silent corruption, and re-encrypting it is what the prefix check in
  *   {@link encryptField} refuses.
  *
- * @throws {Error} on an unknown `enc:` version, and whenever GCM authentication fails — a
- *   tampered ciphertext, the wrong DEK, or a ciphertext transplanted to another document or
- *   field (the AAD makes those the same failure)
+ * @throws {Error} on an unknown `enc:` version, on a field name containing `:` (see
+ *   {@link additionalData}), and whenever GCM authentication fails — a tampered ciphertext, the
+ *   wrong DEK, or a ciphertext transplanted to another document or field (the AAD makes those
+ *   the same failure)
  */
 export async function decryptField(
   dek: CryptoKey,

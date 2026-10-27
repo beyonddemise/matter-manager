@@ -139,6 +139,34 @@ describe('encryptField / decryptField', () => {
     const dek = await generateDek()
     await expect(decryptField(dek, 'device:42', 'payload', 'enc:v2:AAAA')).rejects.toThrow()
   })
+
+  it('refuses a field name containing ":" on encrypt', async () => {
+    // The AAD is "<docId>:<fieldName>". DocIds legitimately contain colons (device:<id>), so
+    // the pair is only unambiguous while the *field* side is colon-free: the last colon then
+    // anchors the split. A colon in the field would let distinct (docId, field) pairs collide
+    // into one AAD, and the transplant protection would silently stop protecting.
+    const dek = await generateDek()
+    await expect(encryptField(dek, 'device:42', 'manual:code', 'value')).rejects.toThrow(
+      /field name/,
+    )
+  })
+
+  it('refuses a field name containing ":" on decrypt', async () => {
+    const dek = await generateDek()
+    const stored = await encryptField(dek, 'device:42', 'payload', 'value')
+    await expect(decryptField(dek, 'device:42', 'manual:code', stored)).rejects.toThrow(
+      /field name/,
+    )
+  })
+
+  it('never accepts the AAD collision a colon-bearing field would create', async () => {
+    // The concrete transplant the check exists for: ("device:a", "payload") and
+    // ("device", "a:payload") both read "device:a:payload" once joined, so without the field
+    // check the second binding would decrypt bytes sealed under the first.
+    const dek = await generateDek()
+    const stored = await encryptField(dek, 'device:a', 'payload', 'bound value')
+    await expect(decryptField(dek, 'device', 'a:payload', stored)).rejects.toThrow()
+  })
 })
 
 describe('wrapDek / unwrapDek', () => {
