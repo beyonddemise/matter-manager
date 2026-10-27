@@ -25,9 +25,11 @@ export {
 } from './conflicts.js'
 export { isConflict } from './errors.js'
 export {
+  type CachedEscrowKey,
   type CachedPlanMatrix,
   type CachedProfile,
   type CachedProject,
+  ESCROW_KEY_ID,
   isLocalOnlyDatabase,
   type LocalCache,
   type LocalProjectEntry,

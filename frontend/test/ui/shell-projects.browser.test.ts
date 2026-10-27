@@ -43,6 +43,7 @@ import type { Profile } from '../../src/ui/profile.js'
 import type { ProjectsView } from '../../src/ui/views/projects.js'
 import type { WaitlistApi, WaitlistOutcome } from '../../src/ui/waitlist.js'
 import {
+  noEscrow,
   refresherNeverAnswering,
   refresherReporting,
   refresherUnreachable,
@@ -229,6 +230,7 @@ async function mount(options: Options = {}) {
             ? refresherUnreachable(options.session === 'unreachable-held')
             : refresherReporting(options.session ?? 'signed-in')
       }
+      .escrow=${noEscrow}
       .connectivity=${options.network ?? fakeNetwork(true)}
       .followLocale=${options.followLocale ?? (async () => undefined)}
       .listProjects=${list}
@@ -422,6 +424,7 @@ describe('a project the server refuses', () => {
     const element = (await fixture(html`
       <app-shell
         .refresher=${refresherReporting('signed-in')}
+        .escrow=${noEscrow}
         .connectivity=${fakeNetwork(true)}
         .followLocale=${async () => undefined}
         .listProjects=${async () => [project()]}
@@ -456,6 +459,7 @@ describe('a project the server refuses', () => {
     const element = (await fixture(html`
       <app-shell
         .refresher=${refresherReporting('signed-in')}
+        .escrow=${noEscrow}
         .connectivity=${fakeNetwork(true)}
         .followLocale=${async () => undefined}
         .listProjects=${async () => [project()]}
@@ -1138,6 +1142,7 @@ describe('the status bar', () => {
     const element = (await fixture(html`
       <app-shell
         .refresher=${refresherReporting(options.session ?? 'signed-in')}
+        .escrow=${noEscrow}
         .connectivity=${options.network ?? fakeNetwork(true)}
         .followLocale=${async () => undefined}
         .listProjects=${async () => [project()]}

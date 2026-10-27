@@ -60,6 +60,12 @@ const noProjects = {
   writePlanMatrix: async (): Promise<never> => {
     throw new Error('the profile tests do not use the plan matrix')
   },
+  readEscrowKey: async (): Promise<never> => {
+    throw new Error('the profile tests do not use the escrow key')
+  },
+  writeEscrowKey: async (): Promise<never> => {
+    throw new Error('the profile tests do not use the escrow key')
+  },
 }
 
 /** A cache backed by a variable, so a test can start it full, empty or broken. */

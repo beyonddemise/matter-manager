@@ -21,8 +21,10 @@
  */
 
 import PouchDB from 'pouchdb-browser'
+import type { LocalCache } from '../data/index.js'
 import { type AuthMethodsApi, authMethodsApi } from './auth-methods.js'
 import { answeringTestVendors, type CatalogApi, catalogApi } from './catalog.js'
+import { ensureDeviceKey } from './db/device-key.js'
 import {
   localDatabase,
   localProfileCache,
@@ -30,6 +32,7 @@ import {
   removeLocalDatabases,
 } from './db/project-database.js'
 import { type EmailSignIn, emailSignIn } from './email-signin.js'
+import { escrowApi, prepareEscrowAtStartup } from './escrow-client.js'
 import { type CredentialsLike, type PasskeySignIn, passkeySignIn } from './passkey-signin.js'
 
 import { type PlansApi, plansApi } from './plans.js'
@@ -340,6 +343,28 @@ export function projectSync(
       }),
     ...(onState === undefined ? {} : { onState }),
     ...(onIncoming === undefined ? {} : { onIncoming }),
+  })
+}
+
+/**
+ * The encryption startup pair (#301): ensure this browser's device key is registered
+ * (`PUT /profile/devicekeys`) and the escrow public key cached in `mm-local` (`GET /escrowkey`).
+ *
+ * Never throws and never blocks anything — see `escrow-client.ts` for the posture. A 404 from
+ * the escrow endpoint is the feature being off server-side, which is the expected state until
+ * the backend rollout.
+ *
+ * @param cache the `mm-local` cache to write the escrow key into; the shell passes its own so
+ *   tests hand it an isolated one
+ */
+export function prepareEscrow(
+  cache: LocalCache = localProfileCache(),
+  fetchImpl: typeof fetch = fetch,
+): Promise<void> {
+  return prepareEscrowAtStartup({
+    api: escrowApi(API_BASE, accessToken, fetchImpl),
+    cache,
+    deviceKey: ensureDeviceKey,
   })
 }
 

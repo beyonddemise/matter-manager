@@ -17,6 +17,7 @@ import '../../src/ui/app-shell.js'
 import type { LocalProjectEntry } from '../../src/data/index.js'
 import type { LocalProjectDependencies } from '../../src/ui/local-projects.js'
 import {
+  noEscrow,
   refresherNeverAnswering,
   refresherReporting,
   refresherSignedOutThenRefreshed,
@@ -109,6 +110,7 @@ const shell = async (session: SessionState, overrides: Record<string, unknown> =
   const element = (await fixture(html`
     <app-shell
       .refresher=${refresherReporting(session)}
+      .escrow=${noEscrow}
       .signIn=${overrides.signIn ?? (() => {})}
       .signOutOf=${overrides.signOutOf ?? (async () => [])}
       .connectivity=${{ addEventListener: () => {}, removeEventListener: () => {}, onLine: true }}
@@ -154,6 +156,7 @@ describe('the sign-in control', () => {
     const element = (await fixture(html`
       <app-shell
         .refresher=${refresherNeverAnswering}
+        .escrow=${noEscrow}
         .connectivity=${{ addEventListener: () => {}, removeEventListener: () => {}, onLine: true }}
         .projectStore=${isolatedProjectStore()}
       ></app-shell>
@@ -170,6 +173,7 @@ describe('the sign-in control', () => {
     const element = (await fixture(html`
       <app-shell
         .refresher=${refresherUnreachable(true)}
+        .escrow=${noEscrow}
         .connectivity=${{ addEventListener: () => {}, removeEventListener: () => {}, onLine: false }}
         .projectStore=${isolatedProjectStore()}
       ></app-shell>
@@ -198,6 +202,7 @@ describe('the sign-in control', () => {
     const element = (await fixture(html`
       <app-shell
         .refresher=${refresherUnreachable(true)}
+        .escrow=${noEscrow}
         .signOutOf=${(includeLocal: boolean) => endSession(includeLocal, offline)}
         .connectivity=${network}
         .projectStore=${isolatedProjectStore()}
@@ -229,6 +234,7 @@ describe('the sign-in control', () => {
     const element = (await fixture(html`
       <app-shell
         .refresher=${refresherUnreachable(false)}
+        .escrow=${noEscrow}
         .connectivity=${{ addEventListener: () => {}, removeEventListener: () => {}, onLine: false }}
         .projectStore=${isolatedProjectStore()}
       ></app-shell>
@@ -274,6 +280,7 @@ describe('what happens once there is a session', () => {
     const element = (await fixture(html`
       <app-shell
         .refresher=${refresherReporting('signed-in')}
+        .escrow=${noEscrow}
         .connectivity=${{ addEventListener: () => {}, removeEventListener: () => {}, onLine: true }}
         .projectStore=${overrides.store ?? isolatedProjectStore()}
         .followLocale=${overrides.followLocale ?? (async () => undefined)}
@@ -334,6 +341,7 @@ describe('what happens once there is a session', () => {
     const element = (await fixture(html`
       <app-shell
         .refresher=${refresherReporting('signed-in')}
+        .escrow=${noEscrow}
         .connectivity=${{ addEventListener: () => {}, removeEventListener: () => {}, onLine: true }}
         .projectStore=${isolatedProjectStore()}
         .followLocale=${async () => undefined}
@@ -373,6 +381,7 @@ describe('what happens once there is a session', () => {
     const element = (await fixture(html`
       <app-shell
         .refresher=${refresherReporting('signed-in')}
+        .escrow=${noEscrow}
         .connectivity=${{ addEventListener: () => {}, removeEventListener: () => {}, onLine: true }}
         .projectStore=${isolatedProjectStore()}
         .followLocale=${async () => undefined}
@@ -418,6 +427,7 @@ describe('a session that ends while startup is still in flight', () => {
     const element = (await fixture(html`
       <app-shell
         .refresher=${refresherReporting('signed-in')}
+        .escrow=${noEscrow}
         .connectivity=${{ addEventListener: () => {}, removeEventListener: () => {}, onLine: true }}
         .projectStore=${isolatedProjectStore()}
         .followLocale=${async () => undefined}
@@ -449,6 +459,7 @@ describe('a session that ends while startup is still in flight', () => {
     const element = (await fixture(html`
       <app-shell
         .refresher=${refresherReporting('signed-in')}
+        .escrow=${noEscrow}
         .connectivity=${{ addEventListener: () => {}, removeEventListener: () => {}, onLine: true }}
         .projectStore=${isolatedProjectStore()}
         .followLocale=${async (onChange: (locale: string) => void) => {
@@ -518,6 +529,7 @@ describe('signing in with an emailed code', () => {
     const element = (await fixture(html`
       <app-shell
         .refresher=${refresher.factory}
+        .escrow=${noEscrow}
         .signIn=${overrides.signIn ?? (() => {})}
         .connectivity=${
           overrides.connectivity ?? {

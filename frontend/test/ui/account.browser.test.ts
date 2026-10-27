@@ -379,6 +379,8 @@ function cacheHolding(cached: CachedPlanMatrix | undefined): LocalCache {
     updateLocalProject: unused,
     removeLocalProject: unused,
     clear: unused,
+    readEscrowKey: unused,
+    writeEscrowKey: unused,
     async readPlanMatrix() {
       return cached
     },
