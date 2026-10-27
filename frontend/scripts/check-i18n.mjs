@@ -59,6 +59,10 @@ const LOOKS_LIKE_A_WORD = /\p{L}{2,}/u
  * Nested templates need no special handling: a template inside a substitution is found by this
  * same scan on its own, because the scan walks every `html` backtick in the file rather than
  * only the outermost ones.
+ *
+ * A template whose closing backtick is never reached — an unterminated comment or string ran
+ * to the end of the file — comes back with `closed: false` so the caller can report it rather
+ * than silently inspect nothing.
  */
 function htmlTemplateSkeletons(source) {
   const skeletons = []
@@ -70,6 +74,7 @@ function htmlTemplateSkeletons(source) {
 
     let cursor = i + 'html`'.length
     let skeleton = ''
+    let closed = false
 
     while (cursor < source.length) {
       const character = source[cursor]
@@ -79,7 +84,7 @@ function htmlTemplateSkeletons(source) {
         continue
       }
       if (character === '`') {
-        skeletons.push({ skeleton, offset: i })
+        closed = true
         break
       }
       if (character === '$' && source[cursor + 1] === '{') {
@@ -90,6 +95,7 @@ function htmlTemplateSkeletons(source) {
       skeleton += character
       cursor++
     }
+    skeletons.push({ skeleton, offset: i, closed })
   }
   return skeletons
 }
@@ -99,7 +105,10 @@ function htmlTemplateSkeletons(source) {
  * closing brace.
  *
  * Tracks nested braces and skips over string and template literals, so a brace inside a quoted
- * value or an inner template does not close the substitution early.
+ * value or an inner template does not close the substitution early. Comments are skipped the
+ * same way — this is the only walker that moves through *code*, so it is the only place
+ * comments can occur: {@link endOfQuoted} and {@link endOfTemplate} walk string content, and a
+ * substitution nested inside an inner template arrives back here (#283).
  */
 function endOfSubstitution(source, start) {
   let depth = 1
@@ -110,6 +119,21 @@ function endOfSubstitution(source, start) {
 
     if (character === '\\') {
       cursor += 2
+      continue
+    }
+    // An apostrophe inside a comment is prose, not an opening quote: without this, `heading's`
+    // in a comment pairs with the next quote anywhere below and the substitution is declared
+    // to end at the first `}` after that, flattening real code into the template's text.
+    if (character === '/' && source[cursor + 1] === '/') {
+      const newline = source.indexOf('\n', cursor + 2)
+      cursor = newline === -1 ? source.length : newline + 1
+      continue
+    }
+    if (character === '/' && source[cursor + 1] === '*') {
+      const end = source.indexOf('*/', cursor + 2)
+      // No `*/` means the file cannot parse at all. Consuming to the end of the file is the
+      // sound failure: the template never closes, which the caller reports loudly.
+      cursor = end === -1 ? source.length : end + 2
       continue
     }
     if (character === '{') depth++
@@ -141,7 +165,9 @@ function endOfTemplate(source, start) {
     if (source[cursor] === '\\') cursor += 2
     else if (source[cursor] === '`') return cursor
     else if (source[cursor] === '$' && source[cursor + 1] === '{') {
-      cursor = endOfSubstitution(source, cursor + 2) + 1
+      // `endOfSubstitution` already returns the index past the closing brace; advancing one
+      // more would skip a character — fatally so when it is this template's closing backtick.
+      cursor = endOfSubstitution(source, cursor + 2)
     } else cursor++
   }
   return cursor
@@ -210,8 +236,17 @@ export function scanForUnwrappedStrings(directory) {
   const problems = []
   for (const file of sourceFiles(directory)) {
     const source = readFileSync(file, 'utf8')
-    for (const { skeleton, offset } of htmlTemplateSkeletons(source)) {
+    for (const { skeleton, offset, closed } of htmlTemplateSkeletons(source)) {
       const line = source.slice(0, offset).split('\n').length
+      // A skeleton the scanner could not parse to its closing backtick proves nothing either
+      // way, so passing it would be silence about a file the scan cannot see. Fail loudly.
+      if (!closed) {
+        problems.push(
+          `${relative(directory, file)}:${line}  parse  html template never closes ` +
+            '(unterminated comment, string or substitution?)',
+        )
+        continue
+      }
       for (const violation of violationsIn(skeleton)) {
         problems.push(`${relative(directory, file)}:${line}  ${violation.kind}  ${violation.text}`)
       }
