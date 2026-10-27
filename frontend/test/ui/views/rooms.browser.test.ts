@@ -266,6 +266,28 @@ describe('a project locked on this device', () => {
   })
 })
 
+describe('a locked-rename refusal, once the key arrives', () => {
+  it('clears when the page re-reads under the key', async () => {
+    const encrypted = await lockedDatabase()
+    try {
+      await encrypted.unlocked.devices.save(device('device:one', 'Kitchen'))
+      const element = await view(encrypted.unlockable)
+      await rename(element, 'kitchen', 'Cocina')
+      await waitUntil(() => element.querySelector('[data-rooms-locked]') !== null, 'no refusal')
+
+      encrypted.unlock()
+      window.dispatchEvent(new CustomEvent(PROJECT_DATA_CHANGED))
+
+      await waitUntil(
+        () => element.querySelector('[data-rooms-locked]') === null,
+        'the stale refusal stayed on screen after the key arrived',
+      )
+    } finally {
+      await encrypted.destroy()
+    }
+  })
+})
+
 describe('merging spellings', () => {
   it('is offered only for a room spelled more than one way', async () => {
     await database.repositories.devices.save(device('device:one', 'Kitchen'))

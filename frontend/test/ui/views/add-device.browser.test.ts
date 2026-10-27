@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ProjectRepositories } from '../../../src/data/index.js'
 import type { DeviceDocument, Unsaved } from '../../../src/domain/index.js'
 import { BACKFILL_WANTED, type CatalogApi, type LookupOutcome } from '../../../src/ui/catalog.js'
-import { PROJECT_CHANGED } from '../../../src/ui/current-project.js'
+import { PROJECT_CHANGED, PROJECT_DATA_CHANGED } from '../../../src/ui/current-project.js'
 import { activateLocale } from '../../../src/ui/i18n/localization.js'
 import { ImageScanError } from '../../../src/ui/scan/image.js'
 import type { ScanSource } from '../../../src/ui/scan/source.js'
@@ -558,6 +558,30 @@ describe('a project locked on this device', () => {
       expect(window.location.hash).toBe(before)
       expect(fieldValue(element, 'credential')).toBe(PAYLOAD)
       expect(await encrypted.unlocked.devices.list()).toHaveLength(0)
+    } finally {
+      await encrypted.destroy()
+    }
+  })
+})
+
+describe('a locked refusal on the add form, once the key arrives', () => {
+  it('clears when the project’s documents change, and the next save files the device', async () => {
+    const encrypted = await lockedDatabase()
+    try {
+      const element = await form(encrypted.unlockable)
+      fill(element, 'credential', PAYLOAD)
+      fill(element, 'name', 'Kitchen ceiling light')
+      typeRoom(element, 'Ground Floor/Kitchen')
+      await submit(element, () => element.querySelector('[data-save-locked]') !== null)
+
+      encrypted.unlock()
+      window.dispatchEvent(new CustomEvent(PROJECT_DATA_CHANGED))
+
+      await waitUntil(
+        () => element.querySelector('[data-save-locked]') === null,
+        'the stale refusal stayed on screen after the key arrived',
+      )
+      expect(fieldValue(element, 'credential')).toBe(PAYLOAD)
     } finally {
       await encrypted.destroy()
     }

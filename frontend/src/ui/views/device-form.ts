@@ -16,7 +16,7 @@ import {
   roomsOf,
   type Unsaved,
 } from '../../domain/index.js'
-import { PROJECT_CHANGED } from '../current-project.js'
+import { PROJECT_CHANGED, PROJECT_DATA_CHANGED } from '../current-project.js'
 import { projectDatabase } from '../db/project-database.js'
 import { displayOrder } from '../i18n/localization.js'
 import { shownManufacturer } from '../i18n/manufacturer.js'
@@ -146,13 +146,34 @@ export abstract class DeviceFormView extends LitElement {
     window.location.hash = '#/devices'
   }
 
+  /** Bound once, so the listener removed is the listener added. */
+  private readonly onDataChanged = (): void => {
+    this.projectDataChanged()
+  }
+
+  /**
+   * Replication brought documents down, or Refresh was pressed. **Not a re-read of the
+   * controls** — that would overwrite what somebody is typing.
+   *
+   * It does end a locked refusal (#303). The sentence promised the save "after the next sync",
+   * and this is that sync: the inbound batch that carries the key also refreshes the key state
+   * before views hear of it (`refreshKeyStateOnInboundKeys`). A project still locked says so
+   * again on the next submit; leaving the sentence up after the key arrived would be a stale
+   * instruction about a save that now works.
+   */
+  protected projectDataChanged(): void {
+    if (this.saveFailed === 'locked') this.saveFailed = false
+  }
+
   override connectedCallback(): void {
     super.connectedCallback()
     window.addEventListener(PROJECT_CHANGED, this.onProjectChanged)
+    window.addEventListener(PROJECT_DATA_CHANGED, this.onDataChanged)
   }
 
   override disconnectedCallback(): void {
     window.removeEventListener(PROJECT_CHANGED, this.onProjectChanged)
+    window.removeEventListener(PROJECT_DATA_CHANGED, this.onDataChanged)
     super.disconnectedCallback()
   }
 

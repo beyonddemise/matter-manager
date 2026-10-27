@@ -487,6 +487,52 @@ describe('a device in a project locked on this device', () => {
   })
 })
 
+describe('a locked refusal on the device page, once the key arrives', () => {
+  it('clears, and the codes appear, when the page re-reads under the key', async () => {
+    const encrypted = await lockedDatabase()
+    try {
+      await encrypted.unlocked.devices.save(lamp())
+      const element = await page(UUID, encrypted.unlockable)
+      click(element, '[data-toggle-disabled]')
+      await waitUntil(() => element.querySelector('[data-action-failed]') !== null, 'no refusal')
+
+      encrypted.unlock()
+      window.dispatchEvent(new CustomEvent(PROJECT_DATA_CHANGED))
+
+      await waitUntil(
+        () => element.querySelector('[data-manual-code]') !== null,
+        'the codes never appeared after the key arrived',
+      )
+      expect(element.querySelector('[data-action-failed]')).toBeNull()
+      expect(element.querySelector('[data-code-pending]')).toBeNull()
+    } finally {
+      await encrypted.destroy()
+    }
+  })
+
+  it('clears a refused remark the same way', async () => {
+    const encrypted = await lockedDatabase()
+    try {
+      await encrypted.unlocked.devices.save(lamp())
+      const element = await page(UUID, encrypted.unlockable)
+      ;(element.querySelector('[data-remark-text]') as HTMLElement & { value: string }).value =
+        'Battery replaced'
+      click(element, '[data-add-remark]')
+      await waitUntil(() => element.querySelector('[data-remark-failed]') !== null, 'no refusal')
+
+      encrypted.unlock()
+      window.dispatchEvent(new CustomEvent(PROJECT_DATA_CHANGED))
+
+      await waitUntil(
+        () => element.querySelector('[data-remark-failed]') === null,
+        'the stale refusal stayed on screen after the key arrived',
+      )
+    } finally {
+      await encrypted.destroy()
+    }
+  })
+})
+
 describe('navigating from one device to another', () => {
   // The shell reuses a single `<device-view>` and updates its `uuid`, rather than building a
   // new element per route. Setting `uuid` on a mounted view is exactly what that navigation

@@ -89,6 +89,29 @@ export class EditDeviceView extends DeviceFormView {
   }
 
   /**
+   * Also replaces a device held from a locked read (#303), without touching the controls.
+   *
+   * That copy can never be saved (`StaleLockedDocumentError`), so once the key may have arrived
+   * the form needs a fresh one for the next submit. Re-read only then: a device read under the
+   * key stays as it is, for the reason the base class gives. Guarded like {@link load}, so a
+   * read outliving its route does not land on the next device.
+   */
+  protected override projectDataChanged(): void {
+    super.projectDataChanged()
+    const held = this.device
+    if (held === undefined || !isLockedDocument(held)) return
+    const token = this.request
+    void this.repos()
+      .devices.get(held._id)
+      .then((fresh) => {
+        if (token === this.request && fresh !== undefined) this.device = fresh
+      })
+      // A failed re-read leaves the locked copy, whose save is refused and says so: no harm,
+      // and nothing to log (the document carries a setup code).
+      .catch(() => undefined)
+  }
+
+  /**
    * Writes the stored values into the controls, once.
    *
    * Only from {@link load}, and deliberately not from `updated`: re-filling after a failed save

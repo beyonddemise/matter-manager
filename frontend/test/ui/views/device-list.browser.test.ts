@@ -612,6 +612,55 @@ describe('exporting a project locked on this device', () => {
   })
 })
 
+describe('a locked-export refusal, once the reason is gone', () => {
+  /** The list over a project that starts locked, after one refused export. */
+  async function refusedOnce() {
+    await Promise.all([
+      customElements.whenDefined('wa-input'),
+      customElements.whenDefined('wa-checkbox'),
+    ])
+    const encrypted = await lockedDatabase()
+    await encrypted.unlocked.devices.save(device('device:a', 'Lamp', 'Kitchen'))
+    const element = (await fixture(
+      html`<device-list-view .repositories=${encrypted.unlockable}></device-list-view>`,
+    )) as DeviceListView
+    await waitUntil(() => element.loaded, 'the device list never finished its first read')
+    ;(element as DeviceListView & { download?: unknown }).download = () => undefined
+    await element.updateComplete
+    ;(element.querySelector('[data-export-xlsx]') as HTMLElement).click()
+    await waitUntil(() => element.querySelector('[data-export-locked]') !== null, 'no refusal')
+    return { element, encrypted }
+  }
+
+  it('clears when the key arrives and the list re-reads', async () => {
+    const { element, encrypted } = await refusedOnce()
+    try {
+      encrypted.unlock()
+      window.dispatchEvent(new CustomEvent(PROJECT_DATA_CHANGED))
+
+      await waitUntil(
+        () => element.querySelector('[data-export-locked]') === null,
+        'the stale refusal stayed on screen after the key arrived',
+      )
+    } finally {
+      await encrypted.destroy()
+    }
+  })
+
+  it('clears when the reader switches project', async () => {
+    const { element, encrypted } = await refusedOnce()
+    try {
+      window.dispatchEvent(new CustomEvent(PROJECT_CHANGED))
+      await waitUntil(() => element.loaded, 'the list never re-read')
+      await element.updateComplete
+
+      expect(element.querySelector('[data-export-locked]')).toBeNull()
+    } finally {
+      await encrypted.destroy()
+    }
+  })
+})
+
 describe('exporting the inventory', () => {
   /** The list, with the download intercepted. */
   async function listWithDownload(): Promise<{

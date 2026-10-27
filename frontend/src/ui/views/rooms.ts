@@ -136,6 +136,11 @@ export class RoomsView extends LitElement {
       this.devices = devices
       this.loaded = true
       this.failed = false
+      // Cleared by every successful read, like `failed`: `onRename` re-reads *before* it sets
+      // the flag, so a fresh refusal still shows, and a read after the key arrived ends a stale
+      // "after the next sync" (#303). A read still locked keeps nothing stale either: the
+      // sentence returns with the next refused rename.
+      this.locked = false
     } catch {
       // Not logged: a device document carries a setup code. The message says the one thing
       // that is certainly true — the rooms were not read, and nothing has been lost.

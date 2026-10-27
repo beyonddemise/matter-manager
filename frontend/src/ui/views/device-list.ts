@@ -226,6 +226,8 @@ export class DeviceListView extends LitElement {
     // not this project's failure. Both are re-established by the load below.
     this.loaded = false
     this.failed = false
+    // The old project's lock is not this project's either; a refusal here re-establishes it.
+    this.exportLocked = false
     void this.load()
   }
 
@@ -280,6 +282,9 @@ export class DeviceListView extends LitElement {
 
       this.devices = devices
       this.loaded = true
+      // A read with nothing locked in it means the key has arrived since the refusal, and a
+      // sentence promising the export "after the next sync" would now be stale (#303).
+      if (!devices.some(isLockedDocument)) this.exportLocked = false
     } catch {
       // Everything the local database can refuse arrives here as one shape: PouchDB flattens
       // every IndexedDB failure into `status: 500, name: 'indexed_db_went_bad'`, and the

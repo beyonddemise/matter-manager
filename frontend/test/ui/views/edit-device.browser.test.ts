@@ -449,6 +449,35 @@ describe('a device read while locked, saved after the key arrived', () => {
   })
 })
 
+describe('a locked refusal on the edit form, once the key arrives', () => {
+  it('clears when the project’s documents change, and the retry saves with the codes', async () => {
+    const encrypted = await lockedDatabase()
+    try {
+      await encrypted.unlocked.devices.save(lamp())
+      const element = await form(UUID, encrypted.unlockable)
+      fill(element, 'name', 'Kitchen spotlight')
+      await submit(element, () => element.querySelector('[data-save-locked]') !== null)
+
+      encrypted.unlock()
+      window.dispatchEvent(new CustomEvent(PROJECT_DATA_CHANGED))
+
+      await waitUntil(
+        () => element.querySelector('[data-save-locked]') === null,
+        'the stale refusal stayed on screen after the key arrived',
+      )
+      // The re-read replaced the locked copy without refilling what was typed.
+      expect(shown(element, 'name')).toBe('Kitchen spotlight')
+      window.location.hash = '#/sentinel'
+      await submit(element, () => window.location.hash === `#/devices/${UUID}`)
+      const saved = await encrypted.unlocked.devices.get(DEVICE_ID)
+      expect(saved?.name).toBe('Kitchen spotlight')
+      expect(saved?.manualCode).toBe(LONG_CODE)
+    } finally {
+      await encrypted.destroy()
+    }
+  })
+})
+
 describe('a write storage refuses', () => {
   it('stays on the form and says so, rather than navigating as though it saved', async () => {
     await seed()

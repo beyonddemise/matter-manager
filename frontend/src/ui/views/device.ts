@@ -317,6 +317,13 @@ export class DeviceView extends LitElement {
       this.loaded = true
       // A re-read of the same route can follow a failed one; nothing else clears the failure.
       this.failed = false
+      // A refusal for the lock is over once a read arrives unlocked (#303): the key is here,
+      // and "after the next sync" would be a stale instruction about a write that now works.
+      if (this.refusedLocked && device !== undefined && !isLockedDocument(device)) {
+        this.refusedLocked = false
+        this.failure = undefined
+        if (this.remarkError === 'storage') this.remarkError = undefined
+      }
     } catch {
       // Guarded by the same token as the success path: a failed read for a device the user has
       // already navigated away from must not put an error on the page they are looking at now.
