@@ -154,8 +154,17 @@ function lockedView<T extends Revision>(document: Conflicted<T>): T {
   return { ...rest, locked: true } as unknown as T
 }
 
+/** Whether either secret field of one revision carries the `enc:` prefix. */
+function carriesCiphertext(revision: object): boolean {
+  return SECRET_FIELDS.some((field) => {
+    const value = (revision as Record<string, unknown>)[field]
+    return typeof value === 'string' && isEncryptedField(value)
+  })
+}
+
 /**
- * Whether a document must be read as locked under the key state in hand.
+ * Whether a document must be read as locked under the key state in hand. The pure half of the
+ * rule — the revision that was read; `repository` adds the losing revisions (see there).
  *
  * Locked state: always. **Keyless state: when a secret field carries the `enc:` prefix** (#333).
  * Keyless normally means a plaintext database from before encryption, but it is also what a
@@ -168,13 +177,10 @@ function lockedView<T extends Revision>(document: Conflicted<T>): T {
  * manual code is digits), so real plaintext databases read exactly as before. Unlocked: never —
  * the cipher decrypts the prefixed values and passes the rest through.
  */
-function readsLocked(document: object, state: KeyState | undefined): boolean {
+function revisionReadsLocked(document: object, state: KeyState | undefined): boolean {
   if (state?.kind === 'locked') return true
   if (state !== undefined) return false
-  return SECRET_FIELDS.some((field) => {
-    const value = (document as Record<string, unknown>)[field]
-    return typeof value === 'string' && isEncryptedField(value)
-  })
+  return carriesCiphertext(document)
 }
 
 /** Reading and writing one document type. */
@@ -218,9 +224,9 @@ function isMissing(error: unknown): boolean {
  *   what it does about conflicts.
  * @param keyState the project's key state (#302), or a provider for it. **Omitted means
  *   plaintext** — the pre-encryption behaviour, kept for `mm-local`-style databases and unit
- *   tests — except that a document whose secrets carry the `enc:` prefix still reads locked
- *   (#333; see `readsLocked`). Unlocked: `payload` and `manualCode` are encrypted on the way in and decrypted on the
- *   way out. Locked: reads omit the two fields and mark the document ({@link LockedDocument}),
+ *   tests — except that a document any of whose revisions carries an `enc:`-prefixed secret
+ *   still reads locked (#333; see `readsLocked`). Unlocked: `payload` and `manualCode` are
+ *   encrypted on the way in and decrypted on the way out. Locked: reads omit the two fields and mark the document ({@link LockedDocument}),
  *   writes throw {@link ProjectLockedError}.
  */
 export function repository<T extends Revision>(
@@ -232,6 +238,32 @@ export function repository<T extends Revision>(
 ): Repository<T> {
   /** The key state right now — asked per operation, which is what lets F7 unlock in place. */
   const currentKeyState = (): Promise<KeyState | undefined> => keyStateOf(keyState)
+
+  /**
+   * {@link revisionReadsLocked}, over every revision the read could surface.
+   *
+   * Keyless, the winner is not enough: resolution merges by `updatedAt`, so a newer losing
+   * revision holding ciphertext would win the merge and reach the caller as a code. So the losing
+   * revisions are read — before resolving, never after, because resolution writes (the merge and
+   * the prune) and a locked read must not write. Only keyless and only when there is a conflict,
+   * so the common read pays nothing. A losing revision already gone is no evidence either way;
+   * resolution meets the same 404 and raises it, as it always has.
+   */
+  const readsLocked = async (
+    document: Conflicted<T>,
+    state: KeyState | undefined,
+  ): Promise<boolean> => {
+    if (revisionReadsLocked(document, state)) return true
+    if (state !== undefined) return false
+    for (const rev of document._conflicts ?? []) {
+      try {
+        if (carriesCiphertext(await database.get(document._id, { rev }))) return true
+      } catch (error) {
+        if (!isMissing(error)) throw error
+      }
+    }
+    return false
+  }
 
   /**
    * The stored document decrypted, or returned as-is on a plaintext repository. Only reached
@@ -299,7 +331,7 @@ export function repository<T extends Revision>(
       // waiting — the next unlocked read merges it exactly as this one would have. That holds for
       // ciphertext met keyless too (see `readsLocked`).
       const state = await currentKeyState()
-      if (readsLocked(document, state)) return lockedView(document)
+      if (await readsLocked(document, state)) return lockedView(document)
 
       // Outside the guard, and that placement is the whole point. Resolving reads each losing
       // revision by `_rev`, and one of those can be gone — compacted away, or removed by
@@ -327,7 +359,7 @@ export function repository<T extends Revision>(
       // since keyless the evidence is in each document's own fields.
       return Promise.all(
         documents.map(async (document) =>
-          readsLocked(document, state)
+          (await readsLocked(document, state))
             ? lockedView(document)
             : decrypted(await resolve(document), state),
         ),

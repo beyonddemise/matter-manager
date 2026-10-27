@@ -551,6 +551,51 @@ describe('the encryption seam, keyless over ciphertext', () => {
     }
   })
 
+  // Review of #335: the winner is not the only revision a read can surface. Resolution merges
+  // by `updatedAt`, so a ciphertext *losing* revision that is newer would win the merge and pass
+  // through the keyless state as a code — and resolving it would write while unable to read it.
+  it('keylessCiphertextInALosingRevisionLocksTheReadAndWritesNothing', async () => {
+    const plaintext = { ...lamp(), updatedAt: '2026-08-20T10:00:00.000Z' }
+    const cipher = stubCipher()
+    const encrypted = {
+      ...lamp(),
+      name: 'Kitchen spotlight',
+      payload: await cipher.encrypt(LAMP, 'payload', lamp().payload ?? ''),
+      manualCode: await cipher.encrypt(LAMP, 'manualCode', lamp().manualCode),
+      updatedAt: '2026-08-20T11:00:00.000Z',
+    }
+    // Two roots of one id, written as replication writes them. The higher revision id wins, so
+    // the plaintext one is the winner and the newer ciphertext one the loser.
+    await database.bulkDocs(
+      [
+        { ...plaintext, _rev: '1-ffffffffffffffffffffffffffffffff' },
+        { ...encrypted, _rev: '1-00000000000000000000000000000000' },
+      ],
+      { new_edits: false },
+    )
+    const stored = (await database.get(LAMP, { conflicts: true })) as unknown as {
+      payload: string
+      _conflicts?: string[]
+    }
+    expect(stored.payload).toBe(lamp().payload)
+    expect(stored._conflicts).toEqual(['1-00000000000000000000000000000000'])
+    const { update_seq: before } = await database.info()
+
+    const read = await repositories.devices.get(LAMP)
+    const [listed] = await repositories.devices.list()
+
+    for (const document of [read, listed]) {
+      expect(document !== undefined && isLockedDocument(document)).toBe(true)
+      expect(JSON.stringify(document)).not.toContain('enc:')
+    }
+    // Locked reads never write: no merge stored, no branch pruned.
+    expect((await database.info()).update_seq).toBe(before)
+    const after = (await database.get(LAMP, { conflicts: true })) as unknown as {
+      _conflicts?: string[]
+    }
+    expect(after._conflicts).toEqual(['1-00000000000000000000000000000000'])
+  })
+
   it('keylessCiphertextUnlocksInPlaceWhenTheKeyArrives', async () => {
     const writer = projectRepositories(database, fixedClock('2026-08-20T10:00:00.000Z'), unlocked())
     await writer.devices.save(lamp())
