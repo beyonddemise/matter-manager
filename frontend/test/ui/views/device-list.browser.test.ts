@@ -20,6 +20,7 @@ import type { DeviceListView } from '../../../src/ui/views/device-list.js'
 import '../../../src/ui/views/device-list.js'
 import { extractText } from '../pdf/text-extraction.js'
 import { browserDatabase, type TestDatabase } from '../support/browser-database.js'
+import { lockedDatabase } from '../support/locked-database.js'
 
 let database: TestDatabase
 
@@ -561,6 +562,53 @@ describe('the view itself', () => {
     const element = await list()
     expect(element.shadowRoot).toBeNull()
     expect(element.querySelector('.wa-stack')).not.toBeNull()
+  })
+})
+
+describe('exporting a project locked on this device', () => {
+  // The same gate as the project archive (#303): a locked read carries no codes, so a PDF or a
+  // sheet built from it would be an inventory with every commissioning secret missing. Each of
+  // the three exports is refused, says why, and offers nothing.
+  it.each([
+    ['the inventory PDF', ['[data-export]']],
+    ['the Excel sheet', ['[data-export-xlsx]']],
+    ['the label sheet', ['[data-labels]', '[data-print-labels]']],
+  ])('refuses %s, says why, and downloads nothing', async (_what, presses) => {
+    await Promise.all([
+      customElements.whenDefined('wa-input'),
+      customElements.whenDefined('wa-checkbox'),
+      customElements.whenDefined('wa-dialog'),
+      customElements.whenDefined('wa-select'),
+    ])
+    const encrypted = await lockedDatabase()
+    try {
+      await encrypted.unlocked.devices.save(device('device:a', 'Lamp', 'Kitchen'))
+      const element = (await fixture(
+        html`<device-list-view .repositories=${encrypted.locked}></device-list-view>`,
+      )) as DeviceListView
+      await waitUntil(() => element.loaded, 'the device list never finished its first read')
+      const saved: unknown[] = []
+      ;(element as DeviceListView & { download?: unknown }).download = (bytes: Uint8Array) =>
+        saved.push(bytes)
+      await element.updateComplete
+
+      for (const press of presses) {
+        ;(element.querySelector(press) as HTMLElement).click()
+        await element.updateComplete
+      }
+      await waitUntil(() => element.querySelector('[data-export-locked]') !== null, 'no message', {
+        timeout: 10000,
+      })
+
+      expect(element.querySelector('[data-export-locked]')?.textContent).toContain(
+        'after the next sync',
+      )
+      expect(element.querySelector('[data-export-failed]')).toBeNull()
+      expect(element.exporting).toBe(false)
+      expect(saved).toHaveLength(0)
+    } finally {
+      await encrypted.destroy()
+    }
   })
 })
 

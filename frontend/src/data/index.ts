@@ -49,4 +49,5 @@ export {
   ProjectLockedError,
   type Repository,
   repository,
+  StaleLockedDocumentError,
 } from './repository.js'

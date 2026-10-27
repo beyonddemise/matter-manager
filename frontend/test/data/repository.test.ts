@@ -441,4 +441,35 @@ describe('the encryption seam, locked', () => {
     // Nothing was written: the stored document still holds its ciphertext, undisturbed.
     expect((await rawDocument(database, LAMP)).payload).toMatch(/^enc:v1:/)
   })
+
+  // Found by F7: a document read while locked outlives the lock. Once the key arrives, the
+  // cipher would encrypt what the stale read holds — which is no secrets at all — and the
+  // device would be stored without its commissioning code. Silent, and unrecoverable.
+  it('staleLockedReadIsRefusedAfterUnlock', async () => {
+    const writer = projectRepositories(database, fixedClock('2026-08-20T10:00:00.000Z'), unlocked())
+    await writer.devices.save(lamp())
+    let state: KeyState = { kind: 'locked' }
+    const repos = projectRepositories(database, fixedClock('2026-08-20T10:00:00.000Z'), () => state)
+    const stale = await repos.devices.get(LAMP)
+    if (stale === undefined) throw new Error('the seeded device is missing')
+    expect(isLockedDocument(stale)).toBe(true)
+
+    state = unlocked()
+
+    // As a view would hand it over: the stale read with an edit spread onto it.
+    const { updatedAt: _stamp, ...unsaved } = stale
+    await expect(repos.devices.save({ ...unsaved, name: 'Renamed' })).rejects.toThrow(
+      ProjectLockedError,
+    )
+    await expect(repos.devices.saveKeepingUpdatedAt(stale)).rejects.toThrow(ProjectLockedError)
+    await expect(repos.devices.remove(stale)).rejects.toThrow(ProjectLockedError)
+    const stored = await rawDocument(database, LAMP)
+    expect(stored.payload).toMatch(/^enc:v1:/)
+    expect(stored.manualCode).toMatch(/^enc:v1:/)
+    expect(stored.name).toBe('Kitchen ceiling light')
+    // A fresh read under the key is the way forward, and it carries the secrets again.
+    const fresh = await repos.devices.get(LAMP)
+    expect(fresh !== undefined && isLockedDocument(fresh)).toBe(false)
+    expect(fresh?.payload).toBe(lamp().payload)
+  })
 })

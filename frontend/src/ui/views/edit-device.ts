@@ -1,5 +1,6 @@
 import { msg } from '@lit/localize'
 import { html, type PropertyValues } from 'lit'
+import { isLockedDocument } from '../../data/index.js'
 import {
   type DeviceDocument,
   DraftError,
@@ -8,6 +9,7 @@ import {
   planDeviceEdit,
   uuidOf,
 } from '../../domain/index.js'
+import { codePendingTitle } from '../i18n/problems.js'
 import { DeviceFormView } from './device-form.js'
 
 /**
@@ -181,7 +183,13 @@ export class EditDeviceView extends DeviceFormView {
              together or the QR stops commissioning. -->
         <div class="wa-stack wa-gap-2xs">
           <small class="app-empty">${msg('Pairing code')}</small>
-          <code class="app-pairing-code" data-manual-code>${device.manualCode}</code>
+          ${
+            // Locked on this device (#303): the read carries no code, and a blank one would read
+            // as a device without one. Said as on the device page, in the caption's quiet style.
+            isLockedDocument(device)
+              ? html`<span data-code-pending>${codePendingTitle()}</span>`
+              : html`<code class="app-pairing-code" data-manual-code>${device.manualCode}</code>`
+          }
           <small class="app-empty">
             ${msg('The setup code cannot be changed. If it is wrong, delete this device and add it again.')}
           </small>

@@ -12,6 +12,7 @@ import { useProjectDatabase } from '../../../src/ui/db/project-database.js'
 import type { RoomsView } from '../../../src/ui/views/rooms.js'
 import '../../../src/ui/views/rooms.js'
 import { browserDatabase, type TestDatabase } from '../support/browser-database.js'
+import { lockedDatabase } from '../support/locked-database.js'
 
 /**
  * The Rooms page (ADR 0021): a room is the path its devices carry, so the page lists what the
@@ -240,6 +241,28 @@ describe('renaming a room', () => {
       'Some changes may have been saved',
     )
     expect(keys(element)).toEqual([key('kitchen')])
+  })
+})
+
+describe('a project locked on this device', () => {
+  it('says a rename is refused until the key arrives, and renames nothing', async () => {
+    const encrypted = await lockedDatabase()
+    try {
+      await encrypted.unlocked.devices.save(device('device:one', 'Kitchen'))
+      const element = await view(encrypted.locked)
+      await rename(element, 'kitchen', 'Cocina')
+
+      await waitUntil(() => element.querySelector('[data-rooms-locked]') !== null, 'no message')
+      expect(element.querySelector('[data-rooms-locked]')?.textContent).toContain(
+        'after the next sync',
+      )
+      // Not the partial-write message: a locked project refuses the first write, so nothing
+      // was saved and "some changes may have been saved" would be untrue.
+      expect(element.querySelector('[data-rooms-failed]')).toBeNull()
+      expect((await encrypted.unlocked.devices.get('device:one'))?.room).toBe('Kitchen')
+    } finally {
+      await encrypted.destroy()
+    }
   })
 })
 

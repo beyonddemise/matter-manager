@@ -19,6 +19,7 @@ import '../../../src/ui/views/add-device.js'
 import '../../../src/ui/views/scan-dialog.js'
 import { browserDatabase, type TestDatabase } from '../support/browser-database.js'
 import { AQARA_LOOKUP, aqaraPayload, deferred, fakeCatalog } from '../support/catalog.js'
+import { lockedDatabase } from '../support/locked-database.js'
 
 /** The verified reference device; see `test/domain/matter/payload.test.ts`. */
 const PAYLOAD = 'MT:Y.K9042C00KA0648G00'
@@ -535,6 +536,31 @@ describe('a write storage refuses', () => {
     expect(await devices()).toHaveLength(0)
     expect(window.location.hash).toBe(before)
     expect(fieldValue(element, 'credential')).toBe(PAYLOAD)
+  })
+})
+
+describe('a project locked on this device', () => {
+  it('says the device cannot be filed until the key arrives, and keeps what was typed', async () => {
+    const encrypted = await lockedDatabase()
+    try {
+      const before = window.location.hash
+      const element = await form(encrypted.locked)
+      fill(element, 'credential', PAYLOAD)
+      fill(element, 'name', 'Kitchen ceiling light')
+      typeRoom(element, 'Ground Floor/Kitchen')
+
+      await submit(element, () => element.querySelector('[data-save-locked]') !== null)
+
+      expect(element.querySelector('[data-save-locked]')?.textContent).toContain(
+        'after the next sync',
+      )
+      expect(element.querySelector('[data-save-failed]')).toBeNull()
+      expect(window.location.hash).toBe(before)
+      expect(fieldValue(element, 'credential')).toBe(PAYLOAD)
+      expect(await encrypted.unlocked.devices.list()).toHaveLength(0)
+    } finally {
+      await encrypted.destroy()
+    }
   })
 })
 

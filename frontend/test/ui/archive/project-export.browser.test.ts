@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { ProjectLockedError } from '../../../src/data/index.js'
 import { ARCHIVE_LIMITS, readProjectArchive } from '../../../src/domain/archive/project-archive.js'
 import { readZip, type ZipEntry, ZipError } from '../../../src/domain/archive/zip.js'
 import type { DeviceDocument } from '../../../src/domain/index.js'
@@ -9,6 +10,7 @@ import {
   exportProject,
   projectDocumentIn,
 } from '../../../src/ui/archive/project-export.js'
+import { lockedDatabase } from '../support/locked-database.js'
 
 /**
  * Exporting one project's copy on this device, with every outward reach faked: the database
@@ -191,6 +193,28 @@ describe('exporting a project', () => {
 
     await expect(exportProject(row, failing)).rejects.toThrow('indexed_db_went_bad')
     expect(downloads).toEqual([])
+  })
+})
+
+describe('a project locked on this device', () => {
+  // Spec, "Locked projects": the archive format is plaintext, and a locked read carries no
+  // codes at all — an archive of it would be a backup with every commissioning secret missing,
+  // which its own import refuses. So the export is refused before anything is built.
+  it('exportRefusesLocked', async () => {
+    const encrypted = await lockedDatabase()
+    try {
+      const { _rev: _r, updatedAt: _u, ...fresh } = device(LAMP)
+      await encrypted.unlocked.devices.save(fresh)
+      const { deps, downloads } = fakes({ name: 'Hillside' })
+      const locked: ExportDependencies = { ...deps, devices: () => encrypted.locked.devices.list() }
+
+      const failure = await exportProject(row, locked).catch((error: unknown) => error)
+
+      expect(failure).toBeInstanceOf(ProjectLockedError)
+      expect(downloads).toEqual([])
+    } finally {
+      await encrypted.destroy()
+    }
   })
 })
 

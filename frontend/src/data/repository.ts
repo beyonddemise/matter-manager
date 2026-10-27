@@ -91,6 +91,25 @@ export class ProjectLockedError extends Error {
   }
 }
 
+/**
+ * A write was refused because the document was read while the project was locked.
+ *
+ * The write half of the locked contract that outlives the lock (#303, found by F7): a locked
+ * read carries no `payload` or `manualCode`, and once the key arrives the cipher would happily
+ * encrypt what is there — nothing — storing the device without its commissioning secrets. So a
+ * {@link LockedDocument} is refused **whatever the current key state**; the remedy is a fresh
+ * read. A subclass rather than a sibling, so every gate that handles {@link ProjectLockedError}
+ * handles this too: from the reader's side it is the same refusal, and the same next sync (whose
+ * inbound change re-reads the view) resolves it.
+ */
+export class StaleLockedDocumentError extends ProjectLockedError {
+  constructor(operation: string) {
+    super(operation)
+    this.name = 'StaleLockedDocumentError'
+    this.message = `This document was read while its project was locked, so ${operation} it is refused; read it again first.`
+  }
+}
+
 /** Normalises the two accepted forms of a key state argument. */
 export async function keyStateOf(
   source: KeyState | KeyStateProvider | undefined,
@@ -210,6 +229,11 @@ export function repository<T extends Revision>(
         }.`,
       )
     }
+    // Before the key state, and regardless of it: a document read while locked has no secrets
+    // to encrypt, and saving it under a key that arrived since would store the device without
+    // them. The marker survives every planner (they all spread the document they are given),
+    // which is what makes this check reachable from the views.
+    if (isLockedDocument(document)) throw new StaleLockedDocumentError('saving')
     const state = await currentKeyState()
     // There is no DEK to encrypt with, and the caller's document — read with the ciphertext
     // dropped — would overwrite the stored secret with nothing.
@@ -292,6 +316,9 @@ export function repository<T extends Revision>(
       // Refused like the saves: not because a tombstone could leak anything, but because a
       // deletion is a write the reader decided on while unable to see what they were deleting.
       if ((await currentKeyState())?.kind === 'locked') throw new ProjectLockedError('deleting')
+      // And a deletion decided on a locked read stays refused after the unlock, for the same
+      // reason: the reader confirmed it without being able to see the code it destroys.
+      if (isLockedDocument(document)) throw new StaleLockedDocumentError('deleting')
       // A tombstone carrying nothing but `_deleted`, which is what `remove` writes. Storing the
       // document's fields on the deleted revision instead would make a deletion orderable
       // against a concurrent edit — but no such comparison is ever made (see `conflicts.ts` on

@@ -10,6 +10,7 @@ import {
 } from '../../src/ui/catalog-backfill.js'
 import { browserDatabase, type TestDatabase } from './support/browser-database.js'
 import { AQARA_LOOKUP, deferred, fakeCatalog } from './support/catalog.js'
+import { lockedDatabase } from './support/locked-database.js'
 
 const PAYLOAD = 'MT:Y.K9042C00KA0648G00'
 const LONG_CODE = '749701123365521327687'
@@ -340,6 +341,34 @@ describe('catalogue backfill', () => {
     expect(calls).toHaveLength(1)
     const all = await real.list()
     expect(all.every((d) => d.catalogCheckedAt === undefined)).toBe(true)
+  })
+
+  // Spec, "Locked projects": backfill sends `payload ?? manualCode` to the lookup API, and an
+  // `unusable` answer is stamped onto the device for good. Run in the window before escrow
+  // delivers the key, that would send nothing readable and brick the device's lookups — so a
+  // locked project is skipped entirely: no request, and no write of any kind.
+  it('backfillSkipsLockedProject', async () => {
+    const encrypted = await lockedDatabase()
+    try {
+      await encrypted.unlocked.devices.save(device('a'))
+      const before = await encrypted.raw.get('device:a')
+      // The worst answer the API has: were the pass to reach a lookup, this is what it would
+      // stamp. `unusable` is what must never land on a device because its key was late.
+      const { backfill, calls } = runner(() => Promise.resolve({ kind: 'unusable' }), {
+        devices: () => encrypted.locked.devices,
+      })
+
+      backfill.trigger()
+      await backfill.idle()
+
+      expect(calls).toHaveLength(0)
+      const after = (await encrypted.raw.get('device:a')) as unknown as DeviceDocument
+      expect(after._rev).toBe(before._rev)
+      expect(after.catalogSource).toBeUndefined()
+      expect(after.catalogCheckedAt).toBeUndefined()
+    } finally {
+      await encrypted.destroy()
+    }
   })
 
   it('runs again once when triggered while running, never twice at once', async () => {

@@ -18,6 +18,7 @@ import { activateLocale } from '../../../src/ui/i18n/localization.js'
 import type { EditDeviceView } from '../../../src/ui/views/edit-device.js'
 import '../../../src/ui/views/edit-device.js'
 import { browserDatabase, type TestDatabase } from '../support/browser-database.js'
+import { lockedDatabase } from '../support/locked-database.js'
 
 /** The verified reference device; see `test/domain/matter/payload.test.ts`. */
 const PAYLOAD = 'MT:Y.K9042C00KA0648G00'
@@ -378,6 +379,73 @@ describe('navigating between devices', () => {
       { timeout: 3000 },
     )
     expect(shown(element, 'room')).toBe('Ground Floor/Hall')
+  })
+})
+
+describe('a device in a project locked on this device', () => {
+  it('shows "Available after next sync" instead of a blank pairing code', async () => {
+    const encrypted = await lockedDatabase()
+    try {
+      await encrypted.unlocked.devices.save(lamp())
+      const element = await form(UUID, encrypted.locked)
+
+      expect(element.querySelector('[data-manual-code]')).toBeNull()
+      expect(element.querySelector('[data-code-pending]')?.textContent).toContain(
+        'Available after next sync',
+      )
+    } finally {
+      await encrypted.destroy()
+    }
+  })
+
+  it('says the edit is refused until the key arrives, and keeps what was typed', async () => {
+    const encrypted = await lockedDatabase()
+    try {
+      await encrypted.unlocked.devices.save(lamp())
+      const element = await form(UUID, encrypted.locked)
+      fill(element, 'name', 'Kitchen spotlight')
+
+      await submit(element, () => element.querySelector('[data-save-locked]') !== null)
+
+      expect(element.querySelector('[data-save-failed]')).toBeNull()
+      expect(shown(element, 'name')).toBe('Kitchen spotlight')
+      expect((await encrypted.unlocked.devices.get(DEVICE_ID))?.name).toBe('Kitchen ceiling light')
+    } finally {
+      await encrypted.destroy()
+    }
+  })
+})
+
+describe('a device read while locked, saved after the key arrived', () => {
+  // The F7 finding: the form holds the locked read, and once the key is in hand the cipher
+  // would encrypt what that read has — no codes. The marker rides through `planDeviceEdit`, so
+  // the repository refuses it; the form says so, and re-reads, so the next attempt works.
+  it('refuses the stale read, keeps the stored codes, and succeeds on the retry', async () => {
+    const encrypted = await lockedDatabase()
+    try {
+      await encrypted.unlocked.devices.save(lamp())
+      const element = await form(UUID, encrypted.unlockable)
+      encrypted.unlock()
+      fill(element, 'name', 'Kitchen spotlight')
+
+      await submit(element, () => element.querySelector('[data-save-locked]') !== null)
+
+      const raw = (await encrypted.raw.get(DEVICE_ID)) as unknown as Record<string, unknown>
+      expect(raw.payload).toMatch(/^enc:v1:/)
+      expect(raw.manualCode).toMatch(/^enc:v1:/)
+      expect(raw).not.toHaveProperty('locked')
+      expect(shown(element, 'name')).toBe('Kitchen spotlight')
+
+      // The failed write re-read the device under the key: the retry saves, codes intact.
+      window.location.hash = '#/sentinel'
+      await submit(element, () => window.location.hash === `#/devices/${UUID}`)
+      const saved = await encrypted.unlocked.devices.get(DEVICE_ID)
+      expect(saved?.name).toBe('Kitchen spotlight')
+      expect(saved?.payload).toBe(PAYLOAD)
+      expect(saved?.manualCode).toBe(LONG_CODE)
+    } finally {
+      await encrypted.destroy()
+    }
   })
 })
 

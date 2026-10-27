@@ -5,7 +5,12 @@ import '@awesome.me/webawesome-pro/dist/components/details/details.js'
 import '@awesome.me/webawesome-pro/dist/components/textarea/textarea.js'
 import { msg, str, updateWhenLocaleChanges } from '@lit/localize'
 import { html, LitElement, type PropertyValues, type TemplateResult } from 'lit'
-import { isConflict, type ProjectRepositories } from '../../data/index.js'
+import {
+  isConflict,
+  isLockedDocument,
+  ProjectLockedError,
+  type ProjectRepositories,
+} from '../../data/index.js'
 import {
   addRemark,
   type DeviceDocument,
@@ -22,6 +27,7 @@ import {
 import { PROJECT_CHANGED, PROJECT_DATA_CHANGED } from '../current-project.js'
 import { projectDatabase, projectIsEditable } from '../db/project-database.js'
 import { shownManufacturer } from '../i18n/manufacturer.js'
+import { codePendingDetail, codePendingTitle, lockedProjectMessage } from '../i18n/problems.js'
 import { currentAuthor } from '../identity.js'
 import { qrSvg } from '../qr/render.js'
 import { fieldValue } from './device-form.js'
@@ -109,6 +115,7 @@ export class DeviceView extends LitElement {
     busy: { state: true },
     failure: { state: true },
     remarkError: { state: true },
+    refusedLocked: { state: true },
   }
 
   /**
@@ -151,6 +158,15 @@ export class DeviceView extends LitElement {
    * again, and both belong beside the composer rather than beside the disable button.
    */
   declare remarkError: 'blank' | 'storage' | undefined
+  /**
+   * Whether the last refused write was refused because the project is locked on this device
+   * (#303), rather than by storage.
+   *
+   * Read only beside {@link failure} or a `'storage'` {@link remarkError}, and set by the same
+   * catch that sets them, so it always describes the refusal on screen. It changes the sentence,
+   * not the place: "try again" is wrong for a write that cannot work until the key arrives.
+   */
+  declare refusedLocked: boolean
 
   constructor() {
     super()
@@ -163,6 +179,7 @@ export class DeviceView extends LitElement {
     this.busy = false
     this.failure = undefined
     this.remarkError = undefined
+    this.refusedLocked = false
   }
 
   /**
@@ -335,6 +352,20 @@ export class DeviceView extends LitElement {
    * device, which is what a manual code is for.
    */
   private renderCode(device: DeviceDocument): TemplateResult {
+    // Locked on this device (#303): the read carries neither code, so one calm statement stands
+    // in for both, in the same neutral callout as the no-QR case below. Not that case's
+    // sentence — this device may well have a QR — and never a blank code that reads like one.
+    if (isLockedDocument(device)) {
+      return html`
+        <wa-callout variant="neutral" data-code-pending>
+          <wa-icon slot="icon" name="circle-info"></wa-icon>
+          <div class="wa-stack wa-gap-3xs">
+            <strong>${codePendingTitle()}</strong>
+            <span>${codePendingDetail()}</span>
+          </div>
+        </wa-callout>
+      `
+    }
     return html`
       <div class="wa-flank wa-gap-l app-code">
         ${
@@ -413,17 +444,23 @@ export class DeviceView extends LitElement {
       this.reads += 1
       this.device = saved
       this.failure = undefined
-    } catch {
+    } catch (error) {
       // Reported rather than rethrown: an unhandled rejection out of a click handler leaves
       // the button un-busied and the screen unchanged, which is indistinguishable from a
       // button that does nothing. Not logged - the document carries the setup passcode.
-      if (token === this.request) this.failure = 'toggle'
+      if (token === this.request) this.refuse('toggle', error)
     } finally {
       // `busy` belongs to whichever route owns the page now. `willUpdate` already cleared it
       // on navigation, and a later device may have set it again for a write of its own -
       // clearing it unconditionally here would unlock that one's guard from under it.
       if (token === this.request) this.busy = false
     }
+  }
+
+  /** Records which action was refused, and whether the project's lock is why (#303). */
+  private refuse(action: 'toggle' | 'delete', error: unknown): void {
+    this.failure = action
+    this.refusedLocked = error instanceof ProjectLockedError
   }
 
   /**
@@ -490,10 +527,10 @@ export class DeviceView extends LitElement {
     const token = this.request
     try {
       await this.removeFresh(device)
-    } catch {
+    } catch (error) {
       // The dialog stays open, now saying why. Closing it would look like the delete had
       // happened, which for the one irreversible action here is the wrong way to be wrong.
-      if (token === this.request) this.failure = 'delete'
+      if (token === this.request) this.refuse('delete', error)
       return
     } finally {
       if (token === this.request) this.busy = false
@@ -522,7 +559,11 @@ export class DeviceView extends LitElement {
             ? html`
                 <wa-callout variant="danger" data-action-failed>
                   <wa-icon slot="icon" name="triangle-exclamation"></wa-icon>
-                  ${msg('Could not save that change. The device is unchanged; try again.')}
+                  ${
+                    this.refusedLocked
+                      ? lockedProjectMessage('change')
+                      : msg('Could not save that change. The device is unchanged; try again.')
+                  }
                 </wa-callout>
               `
             : ''
@@ -591,7 +632,13 @@ export class DeviceView extends LitElement {
               ? html`
                   <wa-callout variant="warning" data-delete-failed>
                     <wa-icon slot="icon" name="circle-exclamation"></wa-icon>
-                    ${msg('Could not delete this device. It is still in the catalogue; try again.')}
+                    ${
+                      this.refusedLocked
+                        ? lockedProjectMessage('change')
+                        : msg(
+                            'Could not delete this device. It is still in the catalogue; try again.',
+                          )
+                    }
                   </wa-callout>
                 `
               : ''
@@ -665,9 +712,12 @@ export class DeviceView extends LitElement {
       this.device = saved
       this.remarkError = undefined
       this.clearComposer()
-    } catch {
+    } catch (error) {
       // Not logged: the document carries the setup passcode.
-      if (token === this.request) this.remarkError = 'storage'
+      if (token === this.request) {
+        this.remarkError = 'storage'
+        this.refusedLocked = error instanceof ProjectLockedError
+      }
     } finally {
       if (token === this.request) this.busy = false
     }
@@ -730,9 +780,11 @@ export class DeviceView extends LitElement {
                     ${
                       this.remarkError === 'blank'
                         ? msg('There is nothing to record yet. Write the remark first.')
-                        : msg(
-                            'Could not save that remark. What you wrote is still here; try again.',
-                          )
+                        : this.refusedLocked
+                          ? lockedProjectMessage('change')
+                          : msg(
+                              'Could not save that remark. What you wrote is still here; try again.',
+                            )
                     }
                   </wa-callout>
                 `

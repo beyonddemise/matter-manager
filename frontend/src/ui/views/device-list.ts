@@ -7,7 +7,7 @@ import '@awesome.me/webawesome-pro/dist/components/option/option.js'
 import '@awesome.me/webawesome-pro/dist/components/select/select.js'
 import { msg, str, updateWhenLocaleChanges } from '@lit/localize'
 import { html, LitElement, nothing } from 'lit'
-import type { ProjectRepositories } from '../../data/index.js'
+import { isLockedDocument, type ProjectRepositories } from '../../data/index.js'
 import {
   browseDevices,
   countSelected,
@@ -27,6 +27,7 @@ import {
 import { PROJECT_CHANGED, PROJECT_DATA_CHANGED } from '../current-project.js'
 import { projectDatabase, projectIsEditable } from '../db/project-database.js'
 import { displayOrder } from '../i18n/localization.js'
+import { lockedProjectMessage } from '../i18n/problems.js'
 import {
   inventoryFilename,
   inventoryLabels,
@@ -99,6 +100,7 @@ export class DeviceListView extends LitElement {
     exporting: { state: true },
     exportProgress: { state: true },
     exportFailed: { state: true },
+    exportLocked: { state: true },
     selected: { state: true },
     labelsOpen: { state: true },
     labelStock: { state: true },
@@ -141,6 +143,8 @@ export class DeviceListView extends LitElement {
   /** How far along, so a long export says what it is doing rather than appearing to hang. */
   declare exportProgress: InventoryProgress | undefined
   declare exportFailed: boolean
+  /** The last export was refused because the project is locked on this device (#303). */
+  declare exportLocked: boolean
   /**
    * Which devices are ticked, by full document id.
    *
@@ -170,6 +174,7 @@ export class DeviceListView extends LitElement {
     this.exporting = false
     this.exportProgress = undefined
     this.exportFailed = false
+    this.exportLocked = false
     this.selected = new Set()
     this.labelsOpen = false
     this.labelStock = LABEL_STOCKS[0] as LabelStock
@@ -545,6 +550,23 @@ export class DeviceListView extends LitElement {
    */
   private exportToken = 0
 
+  /**
+   * Refuses an export of a project locked on this device, and says so (#303).
+   *
+   * The same gate as the project archive (`archive/project-export.ts`), for the same reason: a
+   * locked read carries no codes, so a PDF or a sheet built from it would be an inventory with
+   * every commissioning secret missing — handed to a client, it reads as complete. Checked
+   * over every device read rather than the selection: the key state is per project, and an
+   * empty selection must not let a locked project through.
+   *
+   * @returns true when the export must not run
+   */
+  private refusedAsLocked(): boolean {
+    this.exportLocked = this.devices.some(isLockedDocument)
+    if (this.exportLocked) this.exportFailed = false
+    return this.exportLocked
+  }
+
   /** Stops whatever export is running. */
   private cancelExport(): void {
     this.exportToken += 1
@@ -564,6 +586,7 @@ export class DeviceListView extends LitElement {
     // honour it: before the first read succeeds there is nothing to export, and an empty
     // inventory handed to a client reads as an empty building.
     if (this.exporting || !this.loaded) return
+    if (this.refusedAsLocked()) return
     const token = ++this.exportToken
     this.exporting = true
     this.exportFailed = false
@@ -610,8 +633,9 @@ export class DeviceListView extends LitElement {
    * (gated on `exportProgress`) stays down.
    */
   private async onExportXlsx(): Promise<void> {
-    // The same two refusals as onExport, for the same reasons.
+    // The same three refusals as onExport, for the same reasons.
     if (this.exporting || !this.loaded) return
+    if (this.refusedAsLocked()) return
     const token = ++this.exportToken
     this.exporting = true
     this.exportFailed = false
@@ -638,13 +662,15 @@ export class DeviceListView extends LitElement {
    * "exporting" states would let both start at once and both write a file.
    */
   private async onExportLabels(): Promise<void> {
-    // The same two refusals as onExport, for the same reasons.
+    // The same three refusals as onExport, for the same reasons. The dialog closes first either
+    // way, so the refusal is read on the page rather than hidden behind it.
     if (this.exporting || !this.loaded) return
+    this.labelsOpen = false
+    if (this.refusedAsLocked()) return
     const token = ++this.exportToken
     this.exporting = true
     this.exportFailed = false
     this.exportProgress = { done: 0, total: 0 }
-    this.labelsOpen = false
 
     const start = {
       row: Number(fieldValue(this, '[data-label-row]')) || FIRST_LABEL.row,
@@ -856,6 +882,16 @@ export class DeviceListView extends LitElement {
                 <wa-callout variant="danger" data-read-failed>
                   <wa-icon slot="icon" name="triangle-exclamation"></wa-icon>
                   ${msg('Your devices could not be read from this browser’s storage. Nothing has been lost — reload to try again.')}
+                </wa-callout>
+              `
+            : ''
+        }
+        ${
+          this.exportLocked
+            ? html`
+                <wa-callout variant="warning" data-export-locked>
+                  <wa-icon slot="icon" name="circle-info"></wa-icon>
+                  ${lockedProjectMessage('export')}
                 </wa-callout>
               `
             : ''

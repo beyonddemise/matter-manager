@@ -10,7 +10,7 @@ import '@awesome.me/webawesome-pro/dist/components/input/input.js'
 import '@awesome.me/webawesome-pro/dist/components/tag/tag.js'
 import { fixture, html, waitUntil } from '@open-wc/testing-helpers'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import type { LocalProjectEntry } from '../../../src/data/index.js'
+import { type LocalProjectEntry, ProjectLockedError } from '../../../src/data/index.js'
 import { CURRENT_PROJECT_KEY } from '../../../src/ui/current-project.js'
 import {
   currentProjectDatabaseName,
@@ -1010,6 +1010,21 @@ describe('the actions menu', () => {
     expect(text(find(view, '[data-error]'))).toContain(
       'This project is too large to export as one file. Nothing was downloaded.',
     )
+  })
+
+  it('says a locked project can be exported after the next sync, not that it failed', async () => {
+    // #303: the archive is plaintext and a locked read has no codes, so the export refuses.
+    actionAnswer = async () => {
+      throw new ProjectLockedError('exporting')
+    }
+    const view = await member({ local: [entry()] })
+
+    await choose(view, 'project_local_a', 'export')
+    await settled(view)
+
+    const said = text(find(view, '[data-error]'))
+    expect(said).toContain('it can be exported after the next sync. Nothing was downloaded.')
+    expect(said).not.toContain('try again')
   })
 
   it('says why a local copy was kept when the upload did not get through', async () => {

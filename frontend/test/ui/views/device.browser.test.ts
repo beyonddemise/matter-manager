@@ -26,6 +26,7 @@ import { QUIET_ZONE } from '../../../src/ui/qr/render.js'
 import label from '../qr/fixtures/label-20202021-3840.txt?raw'
 import { rasterize } from '../qr/raster.js'
 import { browserDatabase, type TestDatabase } from '../support/browser-database.js'
+import { lockedDatabase } from '../support/locked-database.js'
 
 /** The verified reference device; see `test/domain/matter/payload.test.ts`. */
 const PAYLOAD = 'MT:Y.K9042C00KA0648G00'
@@ -438,6 +439,51 @@ describe('a device filed from a pairing code', () => {
     const element = await page()
 
     expect(element.querySelector('[data-manual-code]')?.textContent?.trim()).toBe('34970112332')
+  })
+})
+
+describe('a device in a project locked on this device', () => {
+  // Spec, "Locked projects": the key has not arrived yet, so the read carries no codes. The QR
+  // and the pairing code are replaced by one calm statement of when they will be there — not
+  // a blank code, not the "filed from a pairing code" explanation, which would be untrue.
+  it('shows "Available after next sync" in place of the QR and the pairing code', async () => {
+    const encrypted = await lockedDatabase()
+    try {
+      await encrypted.unlocked.devices.save(lamp())
+      const element = await page(UUID, encrypted.locked)
+
+      expect(element.querySelector('h1')?.textContent).toContain('Kitchen ceiling light')
+      const pending = element.querySelectorAll('[data-code-pending]')
+      expect(pending).toHaveLength(1)
+      expect(pending[0]?.textContent).toContain('Available after next sync')
+      expect(element.querySelector('svg.app-qr')).toBeNull()
+      expect(element.querySelector('[data-manual-code]')).toBeNull()
+      expect(element.querySelector('[data-no-payload]')).toBeNull()
+      expect(element.querySelector('[data-enlarge]')).toBeNull()
+      expect(element.querySelector('wa-copy-button')).toBeNull()
+    } finally {
+      await encrypted.destroy()
+    }
+  })
+
+  it('says a refused write is waiting for the key, not that storage failed', async () => {
+    const encrypted = await lockedDatabase()
+    try {
+      await encrypted.unlocked.devices.save(lamp())
+      const element = await page(UUID, encrypted.locked)
+
+      click(element, '[data-toggle-disabled]')
+      await waitUntil(
+        () => element.querySelector('[data-action-failed]') !== null,
+        'the refused write was never reported',
+      )
+
+      const said = element.querySelector('[data-action-failed]')?.textContent ?? ''
+      expect(said).toContain('after the next sync')
+      expect(said).not.toContain('try again')
+    } finally {
+      await encrypted.destroy()
+    }
   })
 })
 
