@@ -363,13 +363,18 @@ export function leftWaitlistText(): string {
 }
 
 /**
- * Whether the dialog speaks to an account rather than asking for a sign-in: signed in, or
- * offline before the session is known with an account in the cache. Offline the refresher
- * answers only `unreachable`, which leaves the session unknown for the whole outage; the cache
- * is all there is then, and it is that account's.
+ * Whether the dialog speaks to an account rather than asking for a sign-in: signed in, or the
+ * session unconfirmed with an account in the cache. The refresher failing to reach the server
+ * leaves the session unknown for the whole outage — `undefined`, or `offline-held` when a
+ * refresh token is stored (#215); the cache is all there is then, and it is that account's.
+ *
+ * `offline-held` counts independently of `state.online`: a `/auth/token` answering 502 while
+ * the browser reports online lands there too, and the stored session is then unconfirmed, not
+ * absent — offering "Sign in" would be wrong about it (PR #314 review).
  */
 function knownAccount(state: WaitlistState): boolean {
   if (state.session === 'signed-in') return true
+  if (state.session === 'offline-held') return state.cachedAccount
   return state.session === undefined && !state.online && state.cachedAccount
 }
 
@@ -405,7 +410,9 @@ function waitingText(request: PlanRequest): string {
  * - **Just left, dialog still open:** "You left the waitlist." in the status region.
  */
 export function renderWaitlist(state: WaitlistState, handlers: WaitlistHandlers): TemplateResult {
-  const disabled = !state.online || state.busy
+  // Offline, mid-change, or the session merely held (#215): a stored token the server has not
+  // confirmed cannot authorize a waitlist change, so the actions wait for the confirmation.
+  const disabled = !state.online || state.busy || state.session === 'offline-held'
   const problem =
     state.problem === undefined
       ? ''

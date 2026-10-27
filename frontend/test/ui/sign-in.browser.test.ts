@@ -4,11 +4,15 @@ import '@awesome.me/webawesome-pro/dist/components/dialog/dialog.js'
 import '@awesome.me/webawesome-pro/dist/components/input/input.js'
 import '@awesome.me/webawesome-pro/dist/components/otp-input/otp-input.js'
 import { fixture, html, waitUntil } from '@open-wc/testing-helpers'
+import PouchDB from 'pouchdb-browser'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { AuthMethods } from '../../src/ui/auth-methods.js'
+import { endSession } from '../../src/ui/composition.js'
+import { localDatabase, rawDatabase } from '../../src/ui/db/project-database.js'
 import type { EmailSignIn, StartOutcome, VerifyOutcome } from '../../src/ui/email-signin.js'
 import type { PasskeySignIn, PasskeySignInOutcome } from '../../src/ui/passkey-signin.js'
 import type { SessionState } from '../../src/ui/session.js'
+import { pouchRefreshTokenStore } from '../../src/ui/tokens.js'
 import '../../src/ui/app-shell.js'
 import type { LocalProjectEntry } from '../../src/data/index.js'
 import type { LocalProjectDependencies } from '../../src/ui/local-projects.js'
@@ -16,6 +20,7 @@ import {
   refresherNeverAnswering,
   refresherReporting,
   refresherSignedOutThenRefreshed,
+  refresherUnreachable,
 } from './refresher-stub.js'
 import { destroyProjectStores, isolatedProjectStore } from './support/project-store.js'
 
@@ -53,7 +58,29 @@ async function signOut(
     box.checked = true
   }
   ;(element.querySelector('[data-confirm-sign-out]') as HTMLElement).click()
-  await waitUntil(() => element.querySelector('[data-sign-in]') !== null, 'still signed in')
+  // Completion is Sign out going away, not Sign in appearing: an offline sign-out ends signed
+  // out with no Sign in to offer, because offline it could not succeed (#215's rule).
+  await waitUntil(() => element.querySelector('[data-sign-out]') === null, 'still signed in')
+}
+
+/** A connectivity source a test can switch, the shape `watchConnectivity` reads. */
+function fakeConnectivity(onLine: boolean) {
+  const listeners = new Map<string, Set<() => void>>()
+  return {
+    onLine,
+    addEventListener(type: string, listener: () => void) {
+      const set = listeners.get(type) ?? new Set()
+      set.add(listener)
+      listeners.set(type, set)
+    },
+    removeEventListener(type: string, listener: () => void) {
+      listeners.get(type)?.delete(listener)
+    },
+    go(online: boolean) {
+      this.onLine = online
+      for (const listener of listeners.get(online ? 'online' : 'offline') ?? []) listener()
+    },
+  }
 }
 
 afterEach(async () => {
@@ -131,6 +158,84 @@ describe('the sign-in control', () => {
         .projectStore=${isolatedProjectStore()}
       ></app-shell>
     `)) as HTMLElement
+    expect(element.querySelector('[data-sign-in]')).toBeNull()
+    expect(element.querySelector('[data-sign-out]')).toBeNull()
+  })
+
+  it('offers Sign out, not Sign in, when offline at launch with a stored session', async () => {
+    // #215's dead state: the user who most needs Sign out — leaving a shared machine, no
+    // network — was shown neither control. A stored refresh token is this device's own fact,
+    // so Sign out is owed regardless of reachability. Sign in stays hidden: offline it cannot
+    // succeed, and offering it would be a lie about the network.
+    const element = (await fixture(html`
+      <app-shell
+        .refresher=${refresherUnreachable(true)}
+        .connectivity=${{ addEventListener: () => {}, removeEventListener: () => {}, onLine: false }}
+        .projectStore=${isolatedProjectStore()}
+      ></app-shell>
+    `)) as HTMLElement
+    await waitUntil(() => element.querySelector('[data-sign-out]') !== null, 'no sign-out control')
+    expect(element.querySelector('[data-sign-in]')).toBeNull()
+  })
+
+  it('signs out while offline: the real cleanup wipes the stored token and local data', async () => {
+    // #215's second scenario, through the real `endSession`: only the network is stubbed, and it
+    // fails. Telling the server is best-effort — `signOut` swallows the failure and wipes anyway
+    // — so the stored refresh token and the account's local databases must be gone and the UI
+    // signed out, with the server never reached.
+    const store = pouchRefreshTokenStore(localDatabase())
+    await store.write('r-held')
+    const project = rawDatabase('project_p9')
+    await project.put({ _id: 'device:1', type: 'device', name: 'Lamp' } as never)
+    // The seeds really landed: a wipe of nothing would prove nothing.
+    expect(await store.read()).toBe('r-held')
+    expect((await project.info()).doc_count).toBe(1)
+
+    const offline = (async () => {
+      throw new TypeError('offline')
+    }) as unknown as typeof fetch
+    const network = fakeConnectivity(false)
+    const element = (await fixture(html`
+      <app-shell
+        .refresher=${refresherUnreachable(true)}
+        .signOutOf=${(includeLocal: boolean) => endSession(includeLocal, offline)}
+        .connectivity=${network}
+        .projectStore=${isolatedProjectStore()}
+      ></app-shell>
+    `)) as HTMLElement & { updateComplete: Promise<unknown> }
+    await signOut(element)
+
+    expect(element.querySelector('[data-sign-out]')).toBeNull()
+    // The rule holds after the sign-out too: still offline, Sign in could not succeed, so it is
+    // not offered (PR #314 review) …
+    expect(element.querySelector('[data-sign-in]')).toBeNull()
+    // Fresh handles by name: had the destroys not run, these would still see the seeds.
+    const freshLocal = new PouchDB('mm-local')
+    const freshProject = new PouchDB('project_p9')
+    try {
+      await expect(freshLocal.get('_local/refresh-token')).rejects.toMatchObject({ status: 404 })
+      expect((await freshProject.info()).doc_count).toBe(0)
+    } finally {
+      await Promise.all([freshLocal.destroy(), freshProject.destroy()])
+    }
+    // … and appears the moment the network does, because signing in can succeed again.
+    network.go(true)
+    await waitUntil(() => element.querySelector('[data-sign-in]') !== null, 'no sign-in control')
+  })
+
+  it('shows neither control when offline with nothing stored', async () => {
+    // #215's third scenario: nothing to sign out of, and signing in cannot succeed offline, so
+    // nothing is the truthful offer.
+    const element = (await fixture(html`
+      <app-shell
+        .refresher=${refresherUnreachable(false)}
+        .connectivity=${{ addEventListener: () => {}, removeEventListener: () => {}, onLine: false }}
+        .projectStore=${isolatedProjectStore()}
+      ></app-shell>
+    `)) as HTMLElement & { updateComplete: Promise<unknown> }
+    // Let the stub's `unreachable` land before asserting what it must not have changed.
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await element.updateComplete
     expect(element.querySelector('[data-sign-in]')).toBeNull()
     expect(element.querySelector('[data-sign-out]')).toBeNull()
   })
@@ -414,11 +519,13 @@ describe('signing in with an emailed code', () => {
       <app-shell
         .refresher=${refresher.factory}
         .signIn=${overrides.signIn ?? (() => {})}
-        .connectivity=${{
-          addEventListener: () => {},
-          removeEventListener: () => {},
-          onLine: overrides.onLine ?? true,
-        }}
+        .connectivity=${
+          overrides.connectivity ?? {
+            addEventListener: () => {},
+            removeEventListener: () => {},
+            onLine: overrides.onLine ?? true,
+          }
+        }
         .projectStore=${isolatedProjectStore()}
         .followLocale=${async () => undefined}
         .listProjects=${async () => []}
@@ -536,12 +643,16 @@ describe('signing in with an emailed code', () => {
     expect(completes).toHaveLength(0)
   })
 
-  it('disables the actions and says a connection is needed while offline', async () => {
+  it('disables the actions and says a connection is needed when the network goes', async () => {
+    // Offline the header offers no Sign in at all (#215's rule), so the dialog's offline state
+    // is reached by losing the network while it is open — and it then says why its actions are
+    // unavailable rather than vanishing mid-interaction.
     const { client } = fakeEmailAuth(
       () => ({ kind: 'challenge', challenge: 'c-1' }),
       () => ({ kind: 'failed' }),
     )
-    const { element } = await emailShell(client, { onLine: false })
+    const network = fakeConnectivity(true)
+    const { element } = await emailShell(client, { connectivity: network })
     await waitUntil(() => element.querySelector('[data-sign-in]') !== null, 'no sign-in control')
     ;(element.querySelector('[data-sign-in]') as HTMLElement).click()
     await waitUntil(
@@ -549,8 +660,9 @@ describe('signing in with an emailed code', () => {
       'no chooser',
     )
     const dialog = element.querySelector('[data-sign-in-dialog]') as HTMLElement
+    network.go(false)
 
-    expect(dialog.querySelector('[data-needs-connection]')).not.toBeNull()
+    await waitUntil(() => dialog.querySelector('[data-needs-connection]') !== null, 'no notice')
     expect(
       (dialog.querySelector('[data-google-sign-in]') as HTMLElement).hasAttribute('disabled'),
     ).toBe(true)

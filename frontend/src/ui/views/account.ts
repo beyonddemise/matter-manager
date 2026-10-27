@@ -110,7 +110,9 @@ export class AccountView extends LitElement {
   protected override willUpdate(changed: PropertyValues<this>): void {
     if (!changed.has('session')) return
     if (this.session === 'signed-in') void this.refresh()
-    else if (this.session !== undefined) this.forget()
+    // `offline-held` is not an end (#215): the session is merely unknown while the server is
+    // away, and forgetting would show "signed out" to somebody who is probably signed in.
+    else if (this.session !== undefined && this.session !== 'offline-held') this.forget()
   }
 
   /**

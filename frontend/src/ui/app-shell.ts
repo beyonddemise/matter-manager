@@ -594,10 +594,11 @@ export class AppShell extends LitElement implements ViewHost {
   /**
    * What the shell does with each answer from the refresher.
    *
-   * `unreachable` changes nothing, deliberately: being offline is ordinary here, and the
-   * refresher is already retrying. Replication starts on the *transition* into `signed-in`,
-   * because `refreshed` arrives again before every expiry and a second manager built each time
-   * would leak the first.
+   * `unreachable` changes an established session nothing, deliberately: being offline is
+   * ordinary here, and the refresher is already retrying. Its one effect is on the *first*
+   * answer, where a stored refresh token reads as `offline-held` (#215) so Sign out stays
+   * reachable. Replication starts on the *transition* into `signed-in`, because `refreshed`
+   * arrives again before every expiry and a second manager built each time would leak the first.
    */
   private onTokenOutcome(outcome: TokenOutcome): void {
     switch (outcome.kind) {
@@ -642,6 +643,12 @@ export class AppShell extends LitElement implements ViewHost {
         void this.projects.refresh(false)
         return
       case 'unreachable':
+        // Only the first answer, and only with a token stored: offline at launch with a stored
+        // session must offer Sign out — the user who most needs it, on a shared machine, is the
+        // one the network has abandoned (#215). Without a token the session stays unknown and
+        // the header offers nothing, because offline a Sign in could not succeed either.
+        if (this.session === undefined && outcome.tokenStored === true)
+          this.session = 'offline-held'
         return
     }
   }
@@ -1514,7 +1521,7 @@ export class AppShell extends LitElement implements ViewHost {
                 label=${this.schemeToggleLabel()}
               ></wa-icon>
             </wa-button>
-            ${renderAccount(this.session, this.projects.facts?.email, this.onSignIn)}
+            ${renderAccount(this.session, this.projects.facts?.email, this.online, this.onSignIn)}
             ${
               // Beside the upgrade dialog's render: presence in the template is the state. Gone
               // once the session is in, whichever path answered it.

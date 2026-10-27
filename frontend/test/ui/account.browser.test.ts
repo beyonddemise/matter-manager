@@ -278,6 +278,19 @@ describe('the account view', () => {
     expect(el.querySelector('[data-provider]')).toBeNull()
   })
 
+  it('keeps its methods while the session is merely held offline', async () => {
+    // `offline-held` is not an end (#215): the session is unknown while the server is away,
+    // and showing "signed out" to somebody who is probably signed in would be wrong.
+    const el = await account(stubApi())
+    el.session = 'signed-in'
+    await el.updateComplete
+    await waitUntil(() => el.querySelector('[data-provider]') !== null)
+    el.session = 'offline-held'
+    await el.updateComplete
+    expect(el.querySelector('[data-provider]')).not.toBeNull()
+    expect(el.querySelector('[data-signed-out]')).toBeNull()
+  })
+
   it('ignores a read that answers after the session ended', async () => {
     let answer: (outcome: MethodsOutcome) => void = () => {}
     const el = await account(stubApi())

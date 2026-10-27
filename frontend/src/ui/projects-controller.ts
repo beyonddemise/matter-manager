@@ -364,7 +364,10 @@ export class ProjectsController implements ReactiveController {
    */
   input(): ProjectsInput {
     const facts = this.facts ?? NO_FACTS
-    const session = this.host.session ?? 'checking'
+    // `offline-held` is the shell's "a token is stored, the server unreachable" (#215): for
+    // this page it is the same unknown as before the first answer, so it reads as `checking`.
+    const believed = this.host.session
+    const session = believed === undefined || believed === 'offline-held' ? 'checking' : believed
     return {
       local: facts.local,
       server: facts.server,

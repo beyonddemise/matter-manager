@@ -83,9 +83,28 @@ describe('requestTokens', () => {
     const offline = vi.fn(async () => {
       throw new TypeError('offline')
     }) as unknown as typeof fetch
-    expect(await requestTokens(store, offline)).toEqual({ kind: 'unreachable' })
-    expect(await requestTokens(store, json(502, {}))).toEqual({ kind: 'unreachable' })
+    expect(await requestTokens(store, offline)).toEqual({ kind: 'unreachable', tokenStored: true })
+    expect(await requestTokens(store, json(502, {}))).toEqual({
+      kind: 'unreachable',
+      tokenStored: true,
+    })
     expect(store.held).toBe('r1')
+  })
+
+  it('says whether a refresh token is stored when unreachable', async () => {
+    // Offline is not an answer about the session, but whether a token is *stored* is this
+    // device's own fact — it is what lets the shell still offer Sign out offline (#215).
+    const offline = vi.fn(async () => {
+      throw new TypeError('offline')
+    }) as unknown as typeof fetch
+    expect(await requestTokens(memoryStore(), offline)).toEqual({
+      kind: 'unreachable',
+      tokenStored: false,
+    })
+    expect(await requestTokens(memoryStore('r1'), offline)).toEqual({
+      kind: 'unreachable',
+      tokenStored: true,
+    })
   })
 
   it.each([
@@ -96,7 +115,10 @@ describe('requestTokens', () => {
   ])('does not believe a 200 carrying %s', async (_name, body) => {
     forgetTokens()
     const store = memoryStore('r1')
-    expect(await requestTokens(store, json(200, body))).toEqual({ kind: 'unreachable' })
+    expect(await requestTokens(store, json(200, body))).toEqual({
+      kind: 'unreachable',
+      tokenStored: true,
+    })
     expect(accessToken()).toBeUndefined()
     expect(store.held).toBe('r1')
   })
@@ -105,7 +127,10 @@ describe('requestTokens', () => {
     const fetchImpl = vi.fn(
       async () => new Response('nope', { status: 200 }),
     ) as unknown as typeof fetch
-    expect(await requestTokens(memoryStore('r1'), fetchImpl)).toEqual({ kind: 'unreachable' })
+    expect(await requestTokens(memoryStore('r1'), fetchImpl)).toEqual({
+      kind: 'unreachable',
+      tokenStored: true,
+    })
   })
 
   it('remembers nothing and writes nothing when stopped while the request is pending', async () => {
@@ -127,7 +152,7 @@ describe('requestTokens', () => {
         headers: { 'content-type': 'application/json' },
       }),
     )
-    expect(await result).toEqual({ kind: 'unreachable' })
+    expect(await result).toEqual({ kind: 'unreachable', tokenStored: true })
     expect(accessToken()).toBeUndefined()
     expect(store.held).toBe('r1')
   })

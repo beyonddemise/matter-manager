@@ -165,8 +165,18 @@ function recordingSync(
 }
 
 interface Options {
-  /** `unreachable`: the refresher answers only that, as it does when the app opens offline. */
-  readonly session?: 'signed-in' | 'signed-out' | 'expired' | 'unanswered' | 'unreachable'
+  /**
+   * `unreachable`: the refresher answers only that, as it does when the app opens offline with
+   * nothing stored. `unreachable-held`: the same outage with a refresh token stored, which the
+   * shell reads as `offline-held` (#215).
+   */
+  readonly session?:
+    | 'signed-in'
+    | 'signed-out'
+    | 'expired'
+    | 'unanswered'
+    | 'unreachable'
+    | 'unreachable-held'
   readonly local?: readonly LocalProjectEntry[]
   readonly cachedProfile?: CachedProfile
   readonly list?: () => Promise<readonly Project[]>
@@ -214,8 +224,8 @@ async function mount(options: Options = {}) {
       .refresher=${
         options.session === 'unanswered'
           ? refresherNeverAnswering
-          : options.session === 'unreachable'
-            ? refresherUnreachable
+          : options.session === 'unreachable' || options.session === 'unreachable-held'
+            ? refresherUnreachable(options.session === 'unreachable-held')
             : refresherReporting(options.session ?? 'signed-in')
       }
       .connectivity=${options.network ?? fakeNetwork(true)}
@@ -1962,8 +1972,10 @@ describe('upgrading', () => {
   })
 
   it('disables signing in while offline too', async () => {
+    // The header offers no Sign in offline (#215's rule), so the session settling is read from
+    // the shell itself; the dialog's own sign-in action stays, disabled, saying why (#224).
     const { element } = await mount({ session: 'signed-out', network: fakeNetwork(false) })
-    await waitUntil(() => element.querySelector('[data-sign-in]') !== null, 'no sign-in')
+    await waitUntil(() => element.session === 'signed-out', 'never signed out')
     const dialog = await openUpgrade(element)
 
     expect(
@@ -1974,10 +1986,11 @@ describe('upgrading', () => {
   })
 
   it('shows a waiting account its request when it opens offline', async () => {
-    // The refresher cannot reach the server, so the session stays unknown for the whole outage;
-    // the cache still knows the account and what it waits for.
+    // The refresher cannot reach the server, so the session is merely held for the whole outage
+    // (`offline-held`, #215: a refresh token is stored); the cache still knows the account and
+    // what it waits for.
     const { element } = await mount({
-      session: 'unreachable',
+      session: 'unreachable-held',
       network: fakeNetwork(false),
       cachedProfile: profile({
         plan: 'free',
@@ -1990,7 +2003,7 @@ describe('upgrading', () => {
     const dialog = await openUpgrade(element)
     await waitUntil(() => dialog.querySelector('[data-waiting]') !== null, 'not waiting')
 
-    expect(element.session).toBeUndefined()
+    expect(element.session).toBe('offline-held')
     expect(text(dialog.querySelector('[data-waiting]'))).toBe(
       'You are on the waitlist for Pro (since Oct 9, 2026).',
     )
@@ -2004,6 +2017,29 @@ describe('upgrading', () => {
     ])
     expect(actions.every((button) => button.disabled)).toBe(true)
     expect(text(dialog.querySelector('[data-needs-connection]'))).toBe('Needs a connection')
+  })
+
+  it('keeps speaking to the cached account when the server is unwell while online', async () => {
+    // `/auth/token` answering 502 while the browser reports online lands in `offline-held` too
+    // (#215): the stored session is unconfirmed, not absent. Offering an enabled "Sign in to
+    // join the waitlist" would be wrong about the session, so the dialog speaks to the cached
+    // account and keeps the server-dependent actions unavailable until the session is confirmed
+    // (PR #314 review).
+    const { element } = await mount({
+      session: 'unreachable-held',
+      network: fakeNetwork(true),
+      cachedProfile: profile({ plan: 'free', projectLimit: 1 }),
+    })
+    await waitUntil(() => element.session === 'offline-held', 'the session never held')
+    const dialog = await openUpgrade(element)
+    await waitUntil(() => dialog.querySelector('[data-join]') !== null, 'no joins')
+
+    expect(dialog.querySelector('[data-sign-in-waitlist]')).toBeNull()
+    const buttons = [...dialog.querySelectorAll('[data-join]')] as Array<
+      HTMLElement & { disabled: boolean }
+    >
+    expect(buttons.length).toBeGreaterThan(0)
+    expect(buttons.every((button) => button.disabled)).toBe(true)
   })
 
   it('offers a known account its joins, disabled, when it opens offline', async () => {
