@@ -56,7 +56,14 @@ read this database, so profiles are served by `GET /profile` and cached client-s
   "planRequested": "pro",       // waitlist (#224): "member" | "pro"; a request, not a plan
   "requestedAt": "2026-10-09T08:00:00.000Z", // set and cleared together with planRequested
   "roles": [],                  // set by hand in Fauxton; only "customerservice" is read
-  "refreshTokens": [{ "hash": "<sha256(jti)>", "exp": 1790000000, "createdAt": 1787400000 }]
+  "refreshTokens": [{ "hash": "<sha256(jti)>", "exp": 1790000000, "createdAt": 1787400000 }],
+  "deviceKeys": [{                 // one per registered browser (ADR 0022); absent means none
+    "kid": "<SHA-256 of the SPKI, 64 lowercase hex>",
+    "publicKey": "<base64 SPKI, RSA ≥ 3072 bits>",
+    "label": "Laptop",              // optional; the browser sends none today
+    "createdAt": "2026-10-28T08:00:00Z",
+    "lastUsedAt": "2026-10-28T09:00:00Z"   // absent until a re-registration or escrow use
+  }]
 }
 ```
 
@@ -67,6 +74,40 @@ A `by_sub` view resolves a record by subject and skips records without one. A
 `by_plan_requested` view lists waiting records by `[planRequested, requestedAt]`, valued by
 address, for operators (the query is in `backend/README.md`); the API never reads it. See
 [SECURITY-MODEL.md](SECURITY-MODEL.md), *User records and tokens*.
+
+**`deviceKeys`** are the public halves of this person's browser device keys, written only by
+`PUT /profile/devicekeys`. The body carries the public key and no kid: the server parses the
+SPKI, refuses an RSA key under 3072 bits, and derives the kid itself, so no one can register
+under another person's kid. Registering a key already present refreshes `lastUsedAt`, and never
+moves it backward. The list is capped at 10, evicting the least recently used, as
+`refreshTokens` is. `POST /escrow` wraps a project key only for a kid on the **caller's own**
+record. Removing a member is to delete the `key:<kid>` documents of the kids listed here
+(matter-manager-backend#40, not yet shipped). That is best effort: a kid already evicted from
+the list can no longer be matched to its wraps, which then stay behind. They open only for a
+device that already held the key.
+
+### `escrow:keys` — the escrow key pair
+
+Also in `matter_manager`, one per deployment, written by the API at its first start with an
+`ESCROW_KEK` ([ADR 0022](adr/0022-field-encryption-with-key-escrow.md)):
+
+```jsonc
+{
+  "_id": "escrow:keys",
+  "type": "escrowKey",
+  "kid": "<SHA-256 of the SPKI, 64 lowercase hex>",
+  "alg": "RSA-OAEP-256",
+  "publicKey": "<base64 SPKI, RSA-3072>",
+  "privateKeyWrapped": { "iv": "<base64, 12 bytes>", "ct": "<base64: PKCS#8, AES-256-GCM under the KEK, AAD \"escrow:keys\">" },
+  "createdAt": "2026-10-28T08:00:00Z"
+}
+```
+
+Every later start reads it and unwraps the private key into memory. **A KEK that cannot unwrap it
+stops the start**; the API never generates a replacement, because a new pair would orphan every
+`key:escrow` wrap in every project. `GET /escrowkey` (public) answers `{kid, alg, publicKey}`
+from it. The KEK rotation command re-seals `privateKeyWrapped` and changes nothing else. The
+runbook is in [SECURITY.md](../SECURITY.md).
 
 ---
 
@@ -226,7 +267,23 @@ request, or the token exchange not yet answered, the `checking` session) the pag
 are taken from it, so an offline member with five server projects still cannot create a sixth,
 but every act that needs the server is refused. The list can be up to a session old.
 
+**`cache:escrowkey`** holds the escrow public key as `GET /escrowkey` last answered it,
+`{kid, alg, publicKey, fetchedAt}`. It is written at each signed-in start and replaced, never
+added to. A project created offline is given its `key:escrow` wrap from this copy; with none
+cached, the wrap waits for the promotion, which fetches the key if it must.
+
 Cleared on sign-out, along with the project replicas.
+
+**The device key is not in `mm-local`.** It lives in `mm-keys`, a raw IndexedDB database with a
+single record: `{id: "device", kid, publicKeySpki, privateKey}`, where `privateKey` is a
+non-extractable `CryptoKey`. PouchDB cannot hold one, because it JSON-encodes documents. It
+**survives sign-out**: the key belongs to the browser profile, not to the account. A lost key is
+recovered through escrow ([ADR 0022](adr/0022-field-encryption-with-key-escrow.md)) **only for
+projects on the server**, and only once the backend with `POST /escrow` (merged) is deployed with
+`ESCROW_KEK`: the re-wrap needs the server's copy of the project. **A local-only project has no
+recovery.** Its `key:escrow`, if it has one, is never sent anywhere before promotion, and one
+born without it can only be given one by this device's key. If `mm-keys` is lost before the
+project is promoted, its codes survive only in a project export the user made.
 
 ### The local index: `local:project:<dbName>`
 
@@ -304,6 +361,8 @@ destroy fails, both entries carry the project id and the page shows the server-n
 **First run adopts `project_local` only on a device that never knew a project:** nothing indexed
 and no server list ever remembered. Then every device has one project to name ("Name your
 project"). A device that once knew projects and has none left shows the create prompt instead.
+"Empty" means no user content: `key:*` and `_design/*` documents do not count, because the
+catalogue keys itself whenever it is opened, adopted or not.
 
 ## `project_<uuid>` — one per project
 
@@ -400,8 +459,8 @@ Databases written before ADR 0021 may still hold `room:<uuid>` documents and dev
   "spot": "ceiling, north end",     // free text the room name cannot capture
 
   // --- from the QR code, decoded locally when the device is added ---
-  "payload": "MT:Y.K9042C00KA0648G00",
-  "manualCode": "34970112332",
+  "payload": "enc:v1:<base64>",      // "MT:Y.K9042C00KA0648G00" as the repository returns it
+  "manualCode": "enc:v1:<base64>",   // "34970112332" as the repository returns it
   "vendorId": 65521,                // 0xFFF1
   "productId": 32768,               // 0x8000
   "discriminator": 3840,
@@ -454,15 +513,46 @@ form.
 `_attachments` carries device photos, downscaled client-side before saving — attachments
 replicate in full and are by far the largest driver of sync bandwidth.
 
-**`payload` is a secret.** It contains the setup passcode. Never log it, never send it to a
-third party, and never include it in a bug report. See [SECURITY.md](../SECURITY.md). The one
-place it travels other than replication is `POST /catalog/lookup`: to our own API, in a POST
-body, decoded in memory and never stored. Only the vendor and product IDs reach the DCL
+**`payload` is a secret.** It contains the setup passcode, and so does `manualCode`. Never log
+either, never send them to a third party, and never include them in a bug report. See
+[SECURITY.md](../SECURITY.md). Both are stored encrypted (below). The only network destination
+of a decrypted code is `POST /catalog/lookup`: to our own API, in a POST body, decoded in memory
+and never stored. Separately, every export the user asks for (the project archive, the labels
+and inventory PDFs, the Excel sheet) holds the codes in plain text; see *Project export* below. Only the vendor and product IDs reach the DCL
 ([ADR 0019](adr/0019-setup-code-to-own-api.md)).
 
 **Remark ids are client-generated UUIDs**, not indices or counts. The conflict merge unions
 by id, and positional identity would make "the same remark twice" indistinguishable from
 "two different remarks".
+
+#### Encrypted fields: `enc:v1:`
+
+`payload` and `manualCode`, and no other field, are stored as
+`enc:v1:<base64(iv ‖ ciphertext ‖ tag)>` ([ADR 0022](adr/0022-field-encryption-with-key-escrow.md)):
+
+- AES-256-GCM under the project's DEK, with a fresh random 12-byte IV per encryption and the
+  16-byte tag appended to the ciphertext, as WebCrypto produces it. Standard base64.
+- **AAD `"<docId>:<fieldName>"`**, for example `device:6ba7…:payload`. It binds the ciphertext
+  to its document and its field, so a value copied to another device or into the other field
+  fails to decrypt. A field name may not contain `:`. The document id may, because the last
+  colon then splits the two unambiguously.
+- The repositories (`data/repository.ts`) encrypt on save and decrypt on read. Views never see
+  ciphertext. Encrypting a value that already starts with `enc:` throws, since double
+  encryption is a programming error.
+- A value without the `enc:` prefix is read as it is. That is room for a later format, not a
+  migration: nothing writes plaintext into an encrypted project. An `enc:` value of an unknown
+  version throws.
+- **Locked project** (this device has no wrap yet): reads omit both fields and add
+  `locked: true`, and every write is refused. A document read while locked is refused on save and
+  remove even after the key arrives, because it no longer carries the codes.
+- **Keyless project** (no `key:*` documents yet: its wraps are still replicating in): it fails
+  closed (#333, #336). A document with an `enc:` value in either field, in its winning or any
+  losing revision, reads locked, and every write carrying a plaintext code is refused. Writes
+  without codes pass. The first-run catalogue is never left keyless: it keys itself and seals
+  its devices when it is opened. Only a repository built with no key state at all
+  (`mm-local`-style, unit tests) stores plaintext.
+
+The conflict merge copies both fields as opaque strings and never decrypts them.
 
 ### `audit:<iso>-<uuid>`
 
@@ -484,6 +574,52 @@ of **both** the existing and the incoming revision, so an entry cannot escape im
 by being rewritten under a different `type`. Because nothing ever rewrites
 them, **audit entries cannot conflict** — a property worth preserving deliberately.
 
+### `key:escrow` and `key:<kid>` — the project key, wrapped
+
+The project's DEK (AES-256), wrapped once per recipient
+([ADR 0022](adr/0022-field-encryption-with-key-escrow.md)). The type is
+`ProjectKeyDocument` (`domain/documents/keys.ts`), and only the keyring (`ui/db/keyring.ts`)
+reads or writes one.
+
+```jsonc
+// _id "key:<kid>"    the DEK wrapped for one device key; kid as on the user record's deviceKeys
+// _id "key:escrow"   the DEK wrapped for the server's escrow key; kid as in escrow:keys
+{
+  "_id": "key:3f9a…",            // 64 lowercase hex after the prefix
+  "type": "projectKey",
+  "kid": "<the recipient's kid>",
+  "alg": "RSA-OAEP-256",          // RSA-OAEP, SHA-256 for both the hash and MGF1
+  "wrapped": "<base64: the raw DEK, RSA-OAEP-encrypted for the recipient's public key>",
+  "createdAt": "2026-10-28T08:00:00.000Z"
+}
+```
+
+- **Project content, written by the browser that creates the project.** It generates the DEK
+  and writes `key:<own kid>` before any device is saved, and `key:escrow` too when the escrow
+  public key is cached. A project born offline gets `key:escrow` when it is promoted, and
+  `POST /projects` test-unwraps that wrap before creating the database. The documents reach the
+  server by ordinary replication, and a promote copies them as they are.
+- **The server writes one in a single case** (merged, available once the backend is deployed):
+  `POST /escrow` re-wraps the DEK for a device of the
+  caller's and writes `key:<that kid>` as admin, with an `audit` entry
+  (`action: "escrow-rewrap"`, `sub`, `kid`, `at`; no key material).
+- **Create-only for writers.** `_design/access` lets a writer create a `key:*` document and
+  lets only the server admin update or delete one, so no member can overwrite another device's
+  wrap. One known gap is accepted: a conflicting revision pushed with `new_edits=false` reaches
+  the validator as a create, and is accepted. It can deny recovery, never corrupt it silently;
+  see ADR 0022.
+- **Add-only, one document per wrap**, so wraps do not conflict in normal operation, and
+  revoking one is a delete. Removing a member is to delete their device wraps
+  (matter-manager-backend#40, not yet shipped).
+- **The ids sort outside `device:`**, so the repositories' ranged reads never see them. They are
+  not a `DocumentType`, and an export leaves them out.
+- **What they decide on this device:** a wrap for this device's kid that opens means unlocked.
+  Wraps for other recipients only mean locked. No `key:*` document at all means keyless, which
+  fails closed (above): the pull does not order wraps before devices, so a download can hold
+  ciphertext before its keys. The `project_local` catalogue keys itself at open instead. A
+  malformed wrap reads as missing, so the project is locked and escrow recovery can repair it.
+  A well-formed wrap that fails to unwrap is an error, not "locked".
+
 ## Project export: a zip of JSON documents
 
 A project's ⋯ menu offers **Export project**: this device's copy as a zip. **Import a project**,
@@ -498,7 +634,12 @@ devices/<uuid>.json    one device document each, without _rev, _conflicts, _atta
 ```
 
 - **The file holds every setup code in plain text.** That is what makes it a backup, and the
-  menu entry says so.
+  menu entry says so. It is the one deliberate exception to encryption at rest (ADR 0022):
+  - the `key:*` documents are not in it, since a wrap means nothing outside its database;
+  - a project locked on this device is not exported at all, because its reads carry no codes.
+    The PDF inventory, the labels PDF and the Excel sheet refuse it the same way.
+  - Import saves through an unlocked repository of a new project with its own DEK, so the codes
+    are encrypted again.
 - **Import rebuilds each device rather than trusting it.**
   - It goes through `planNewDevice`, so the credential fields are derived again from the setup
     code.
@@ -544,8 +685,11 @@ See [ADR 0010](adr/0010-embedded-remarks-conflict-merge.md).
 
 ## Identifiers
 
-- Documents use a `type:` prefix (`device:`, `audit:`) so ranged `_all_docs` queries
+- Documents use a `type:` prefix (`device:`, `audit:`, `key:`) so ranged `_all_docs` queries
   can select a kind without a view.
+- A **kid** is the full SHA-256 of a public key's SPKI DER, 64 lowercase hex characters, for
+  device keys and the escrow key alike. The server derives a device kid at registration; the
+  browser derives the same value for its own key.
 - Database names replace UUID hyphens with underscores: CouchDB database names are
   restricted to `[a-z][a-z0-9_$()+/-]*`, and underscores avoid ambiguity in URLs.
 - `schemaVersion` on `meta:project` drives migrations. Migrations must be able to run against
