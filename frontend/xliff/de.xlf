@@ -1330,6 +1330,14 @@
   <source>This page could not be loaded. Check your connection, then reload.</source>
   <target>Diese Seite konnte nicht geladen werden. Prüfen Sie Ihre Verbindung und laden Sie dann neu.</target>
 </trans-unit>
+<trans-unit id="scd104d19b5a0ef92">
+  <source>Plan</source>
+  <target>Tarif</target>
+</trans-unit>
+<trans-unit id="s52b5e33a74dfa38c">
+  <source>The plans appear here once this device has had a connection.</source>
+  <target>Die Tarife erscheinen hier, sobald dieses Gerät einmal eine Verbindung hatte.</target>
+</trans-unit>
 </body>
 </file>
 </xliff>

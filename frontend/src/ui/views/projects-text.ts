@@ -146,9 +146,10 @@ function allowanceText(limit: number, syncs: boolean): string {
 
 /**
  * The plan's limit today beside the account's higher one. Only the account's can be unlimited:
- * a legacy limit is above the plan's, and nothing is above unlimited.
+ * a legacy limit is above the plan's, and nothing is above unlimited. Exported for the account
+ * page, which says the same divergence beside the plan comparison (#263).
  */
-function legacyText(limit: number, syncs: boolean, planLimit: number): string {
+export function legacyText(limit: number, syncs: boolean, planLimit: number): string {
   if (limit < 0) {
     return msg(str`Projects your plan includes: ${planLimit}. Yours: no limit (legacy plan).`)
   }
