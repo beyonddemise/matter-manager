@@ -85,6 +85,15 @@ export function syncStatusVariant(status: SyncStatus): string {
   return SYNC_LOOK[status].variant
 }
 
+/**
+ * The icon for a sync status, shared by the status bar and the projects page's rows: at phone
+ * width the rows' tags show only the icon (#281), so it has to be the one the status bar draws
+ * for the same state, or the page and the footer would tell the same story in two pictures.
+ */
+export function syncStatusIcon(status: SyncStatus): string {
+  return SYNC_LOOK[status].icon
+}
+
 /** The words for the network state. */
 function networkText(online: boolean): string {
   return online ? msg('Online') : msg('Offline')

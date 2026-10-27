@@ -335,18 +335,19 @@ a.app-device:hover {
 
 /* The member plan's slots: one bordered row per project the plan allows, filled or not, so
    "how many more can I have" is answered by looking. A row is a `wa-flank:end`: the name and its
-   tags take the room, Open and the menu keep their size at the end. */
+   tags take the room, Open and the menu keep their size at the end. Every slot is **one line**,
+   phone width included (#281): the counting-by-looking premise holds only while filled and empty
+   slots are the same shape, and one-line rows put the whole allowance on a phone screen at once.
+   The list is a size container so a row that gets too narrow for worded tags can shed the words
+   (the @container rule below). */
 .app-project-slots {
   margin: 0;
   padding: 0;
   list-style: none;
+  container-type: inline-size;
 }
 
 .app-project-slot {
-  /* The flank's documented threshold: the content keeps at least 70% of the row, so once the
-     row is narrower than about 400px (a phone) Open and the menu move to a line of their own
-     rather than squeezing the name into a column beside them. */
-  --content-percentage: 70%;
   padding: var(--wa-space-s) var(--wa-space-m);
   border: var(--wa-border-width-s) solid var(--wa-color-surface-border);
   border-radius: var(--wa-border-radius-m);
@@ -359,8 +360,22 @@ a.app-device:hover {
   background-color: transparent;
 }
 
+/* A filled row's content keeps to its line: whatever has a size keeps it (the tags, the pen),
+   and the texts give way — the name truncates (below), and so does the note, which appears only
+   in the room Open vacates when opening is refused. `min-width: 0` down the chain is what lets
+   a flex child shrink below its text at all. */
+.app-row-content {
+  flex-wrap: nowrap;
+  min-width: 0;
+}
+
+.app-row-content > wa-tag {
+  flex-shrink: 0;
+}
+
 /* The name reads first: a step heavier than the tags and notes beside it. Its pen stays beside
-   it, and a long name wraps inside itself rather than pushing the pen onto a line of its own. */
+   it; in a slot row a long name truncates with an ellipsis rather than growing the line, and
+   its `title` (projects.ts) keeps the whole recoverable. */
 .app-project-name {
   flex-wrap: nowrap;
   min-width: 0;
@@ -371,9 +386,25 @@ a.app-device:hover {
   overflow-wrap: anywhere;
 }
 
-/* At phone width the name and its pen take a line of their own, the tags the next. */
-wa-page[view="mobile"] .app-project-slot .app-project-name {
-  flex-basis: 100%;
+/* A row's note (why it cannot be opened) is secondary text. Before the slot rule below, because
+   specificity must only climb (noDescendingSpecificity). */
+[data-note] {
+  font-size: var(--wa-font-size-s);
+}
+
+.app-project-slot [data-name],
+.app-project-slot [data-note] {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* The name reveal's tooltip caps its body at 30ch but does not break an unbroken word, and the
+   row's own clipping cannot reach into the shadow DOM — a 200-character serial pasted as a name
+   would run the bubble off a phone screen. `body` is the tooltip's documented content part. */
+[data-name-tip]::part(body) {
+  overflow-wrap: anywhere;
 }
 
 /* Open and the menu never wrap apart: the menu belongs to the row's Open. */
@@ -381,9 +412,23 @@ wa-page[view="mobile"] .app-project-slot .app-project-name {
   flex-wrap: nowrap;
 }
 
-/* A row's note (why it cannot be opened) is secondary text. */
-[data-note] {
-  font-size: var(--wa-font-size-s);
+/* Where a row is too narrow for worded tags — a 360px phone leaves the name about 12px beside
+   them (#281) — the words are clipped out of the line and each tag's icon and colour carry the
+   state: one icon per state, the status bar's own vocabulary for sync. The words stay in the
+   markup, so assistive technology keeps their accessible names. A container query rather than
+   `wa-page[view="mobile"]`, because the row's own width decides (the view renders outside a
+   page in tests, and inside one the main column is what varies); a size query cannot read a
+   custom property, so the threshold is the one written-out width here: past it, the widest
+   German tag pair fits beside a still-readable name. */
+@container (max-width: 35rem) {
+  .app-project-slot .app-tag-words {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
 }
 
 /* The upgrade dialog (#224). Wide enough for four columns on a desktop; Web Awesome keeps a

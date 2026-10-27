@@ -1,6 +1,7 @@
-// Rendered by this view and by nothing in the shell, so imported here (#214): it travels in
+// Rendered by this view and by nothing in the shell, so imported here (#214): they travel in
 // this view's lazy chunk rather than in the entry chunk every visitor parses before first paint.
 import '@awesome.me/webawesome-pro/dist/components/scroller/scroller.js'
+import '@awesome.me/webawesome-pro/dist/components/tooltip/tooltip.js'
 import { msg, str, updateWhenLocaleChanges } from '@lit/localize'
 import { html, LitElement, nothing, type TemplateResult } from 'lit'
 import type { LocalProjectEntry } from '../../data/index.js'
@@ -34,12 +35,13 @@ import {
   updateProject,
 } from '../projects.js'
 import {
+  type Location,
   type ProjectsInput,
   type ProjectsModel,
   projectsModel,
   type Row,
 } from '../projects-model.js'
-import { syncStatusOf, syncStatusText, syncStatusVariant } from '../shell-status.js'
+import { syncStatusIcon, syncStatusOf, syncStatusText, syncStatusVariant } from '../shell-status.js'
 import {
   type Confirmation,
   needsConfirmation,
@@ -92,6 +94,18 @@ const PERMANENT_REFUSALS: ReadonlySet<string | undefined> = new Set([
   'read-only',
   'not-applicable',
 ])
+
+/**
+ * The icon in each location's tag. At phone width the tag's words are clipped away and the icon
+ * carries the state alone (`app.css`, #281), so the three must read apart: the laptop for a copy
+ * only here (the status bar's own icon for that), the cloud for a project only on the server,
+ * the rotating arrows for one replicating in both places.
+ */
+const LOCATION_ICONS: Readonly<Record<Location, string>> = {
+  local: 'laptop',
+  server: 'cloud',
+  synced: 'arrows-rotate',
+}
 
 /** The local-only project operations the page performs. Injectable so a test owns no database. */
 export interface LocalProjects {
@@ -654,14 +668,20 @@ export class ProjectsView extends LitElement {
     `
   }
 
+  /**
+   * An empty slot: the create affordance, one per project the plan still has room for. A slot
+   * must be the very shape of a filled row — the layout answers "how many more can I have" by
+   * looking, which works only while filled and empty read as the same unit (#281). So the
+   * label is for assistive technology only (the placeholder says the same thing), and the
+   * field and its button are `size="s"` like a filled row's controls: one line, same height.
+   */
   private renderEmptySlot(model: ProjectsModel): TemplateResult {
     return html`
       <li data-slot-empty class="wa-flank:end wa-gap-s app-project-slot">
-        <!-- The label is for assistive technology only: the placeholder says the same thing,
-             and a visible one would make an empty slot twice as tall as a filled one. -->
         <wa-input
           data-field="name"
           class="wa-visually-hidden-label"
+          size="s"
           maxlength=${TEXT_MAX_LENGTH}
           label=${msg('New project')}
           placeholder=${msg('New project name')}
@@ -670,6 +690,7 @@ export class ProjectsView extends LitElement {
         <wa-button
           data-create
           appearance="filled-outlined"
+          size="s"
           ?disabled=${!model.canCreate.allowed || this.busy}
           @click=${(event: Event) => this.create(this.containerOf(event, '[data-slot-empty]'))}
         >
@@ -682,8 +703,8 @@ export class ProjectsView extends LitElement {
   private renderListRow(row: Row): TemplateResult {
     return html`
       <li data-row=${row.key} class="wa-flank:end wa-gap-s app-project-slot">
-        <div class="wa-cluster wa-gap-xs">
-          <div class="wa-cluster wa-gap-2xs app-project-name">${this.renderName(row, false)}</div>
+        <div class="wa-cluster wa-gap-xs app-row-content">
+          <div class="wa-cluster wa-gap-2xs app-project-name">${this.renderName(row, false, true)}</div>
           ${this.renderLocation(row)} ${this.renderSync(row)} ${this.renderRowNote(row)}
         </div>
         <div class="wa-cluster wa-gap-2xs app-row-actions">
@@ -841,8 +862,16 @@ export class ProjectsView extends LitElement {
   /**
    * A row's name and its pen, or the form that edits them. The pro layout edits the client too;
    * the others have no client column to show it in.
+   *
+   * @param truncates whether this place truncates a long name with an ellipsis (the member
+   *   rows, `app.css` #281). The name must then stay recoverable where it is shown, and for
+   *   everyone — a `title` only a hovering pointer ever sees is not that (#318 review): the
+   *   span takes focus (a tap gives it on a phone, Tab on a keyboard) and a tooltip holds the
+   *   whole name. The hardest case needs exactly this reveal: a server-only copy while offline
+   *   has no Open and a disabled pen, so the name itself is the one thing left to ask. The
+   *   table and the cards never truncate, so there the span stays plain.
    */
-  private renderName(row: Row, withClient: boolean): TemplateResult {
+  private renderName(row: Row, withClient: boolean, truncates = false): TemplateResult {
     if (this.editing === row.key) {
       return html`
         <div data-rename-form class="wa-cluster wa-gap-xs">
@@ -879,7 +908,31 @@ export class ProjectsView extends LitElement {
       `
     }
     const rename = row.actions.rename
-    const name = html`<span data-name>${row.name === '' ? msg('Unnamed project') : row.name}</span>`
+    const shown = row.name === '' ? msg('Unnamed project') : row.name
+    // `click` besides the default hover/focus triggers, because on some phones a tap does not
+    // move focus to a plain focusable span, and the tap is the reveal this exists for. The span
+    // is a button to the keyboard too (role, Enter and Space): Escape closes the tooltip while
+    // focus stays on the name, and without an activation contract nothing could reopen it short
+    // of leaving and coming back (#318 review). Space is cancelled so the page does not scroll.
+    const name = truncates
+      ? html`<span
+            data-name
+            id=${`app-name-${row.key}`}
+            tabindex="0"
+            role="button"
+            @keydown=${(event: KeyboardEvent) => {
+              if (event.key !== 'Enter' && event.key !== ' ') return
+              event.preventDefault()
+              const tip = (event.currentTarget as Element).parentElement?.querySelector(
+                '[data-name-tip]',
+              ) as (HTMLElement & { open: boolean }) | null
+              if (tip != null) tip.open = !tip.open
+            }}
+          >${shown}</span>
+          <wa-tooltip data-name-tip for=${`app-name-${row.key}`} trigger="hover focus click">
+            ${shown}
+          </wa-tooltip>`
+      : html`<span data-name>${shown}</span>`
     // No pen at all where renaming will never be possible here — a role that does not allow it,
     // a copy the server no longer takes, a promotion under way: an editing control that can only
     // ever be refused is noise. Disabled, with its reason, where it will come back (offline,
@@ -926,9 +979,16 @@ export class ProjectsView extends LitElement {
     return note === '' ? nothing : html`<span class="app-empty" data-note>${note}</span>`
   }
 
+  /**
+   * Where a row's copy lives: an icon and the words, both in the tag. On a row too narrow for
+   * the words they are clipped away (`app.css`) and the icon and colour carry the state for
+   * sighted readers, while assistive technology keeps reading the words — the existing
+   * {@link locationText} units, not new ones.
+   */
   private renderLocation(row: Row): TemplateResult {
     return html`<wa-tag data-location size="s" variant=${row.location === 'synced' ? 'success' : 'neutral'}>
-      ${locationText(row.location)}
+      <wa-icon name=${LOCATION_ICONS[row.location]}></wa-icon>
+      <span class="app-tag-words">${locationText(row.location)}</span>
     </wa-tag>`
   }
 
@@ -941,7 +1001,8 @@ export class ProjectsView extends LitElement {
     if (row.location !== 'synced') return nothing
     const status = syncStatusOf(row, this.input.session === 'signed-in')
     return html`<wa-tag data-sync size="s" variant=${syncStatusVariant(status)}>
-      ${syncStatusText(status)}
+      <wa-icon name=${syncStatusIcon(status)}></wa-icon>
+      <span class="app-tag-words">${syncStatusText(status)}</span>
     </wa-tag>`
   }
 
