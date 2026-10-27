@@ -119,22 +119,43 @@ function rolesFromSpec(yaml) {
  * is not a declaration — a stale copy in a comment must never validate the file while the live
  * declaration below it drifts. Two live declarations would make "the union" ambiguous, so that
  * is refused too rather than silently reading the first.
+ *
+ * The expression is accumulated across continuation lines, because TypeScript legitimately
+ * breaks a union: a line ending on `|` (or on the `=` itself) is unfinished and the next line
+ * continues it, and a next line starting with `|` is the formatter's leading-pipe style. An
+ * expression that still ends on `|` once the lines run out is malformed, and refused rather
+ * than read as the members gathered so far — four agreeing literals with a fifth hiding past
+ * an unread line break is exactly the drift this check exists to catch.
  */
 function rolesFromUnion(source) {
-  const declarations = [
-    ...source.matchAll(/^export type ProjectRole\s*=([^\n]*(?:\n\s*\|[^\n]*)*)/gm),
-  ]
-  if (declarations.length === 0)
+  const anchor = /^export type ProjectRole\s*=/
+  const lines = source.split('\n')
+  const starts = lines.flatMap((line, i) => (anchor.test(line) ? [i] : []))
+  if (starts.length === 0)
     fail(
       `No \`ProjectRole\` declaration in ${unionPath}; the role-drift check cannot see the union.`,
     )
-  if (declarations.length > 1)
+  if (starts.length > 1)
     fail(
       `More than one \`ProjectRole\` declaration in ${unionPath}; the role-drift check cannot tell which is live.`,
     )
-  const declaration = declarations[0]
 
-  const members = declaration[1]
+  const code = (line) => line.replace(/\/\/.*$/, '').trim() // the line minus any trailing comment
+  let expression = code(lines[starts[0]].replace(anchor, ''))
+  for (let i = starts[0] + 1; i < lines.length; i++) {
+    const next = code(lines[i])
+    const unfinished = expression === '' || expression.endsWith('|')
+    if (unfinished && next === '') break // dangling: refused below
+    if (!unfinished && !next.startsWith('|')) break // the expression is complete
+    expression = `${expression} ${next}`.trim()
+  }
+  expression = expression.replace(/;$/, '').trim()
+  if (expression === '' || expression.endsWith('|'))
+    fail(
+      `The \`ProjectRole\` declaration in ${unionPath} is left dangling on \`|\`; the role-drift check cannot read it.`,
+    )
+
+  const members = expression
     .split('|')
     .map((member) => member.trim())
     .filter((member) => member !== '')

@@ -211,6 +211,44 @@ describe('the role-drift check', () => {
     expect(output).toContain('comment')
   })
 
+  it('fails a multiline union whose extra member hides on the next line', () => {
+    // The finding: a trailing `|` continues the type onto the next line, so a match that stops
+    // at end-of-line sees four agreeing literals and never the fifth.
+    const { code, output } = check({
+      spec: AGREED_SPEC,
+      union: "export type ProjectRole = 'owner' | 'manage' | 'write' | 'read' |\n  'audit'\n",
+    })
+    expect(code).toBe(1)
+    expect(output).toContain('audit')
+  })
+
+  it('accepts a multiline union, in trailing-pipe and leading-pipe style', () => {
+    // Both legitimate spellings of the same type, the second being what a formatter writes
+    // once the union grows.
+    const trailing = check({
+      spec: AGREED_SPEC,
+      union: "export type ProjectRole =\n  'owner' |\n  'manage' |\n  'write' |\n  'read'\n",
+    })
+    expect(trailing.output).toContain('ok')
+    expect(trailing.code).toBe(0)
+
+    const leading = check({
+      spec: AGREED_SPEC,
+      union: "export type ProjectRole =\n  | 'owner'\n  | 'manage'\n  | 'write'\n  | 'read'\n",
+    })
+    expect(leading.output).toContain('ok')
+    expect(leading.code).toBe(0)
+  })
+
+  it('refuses a declaration left dangling on a pipe, rather than reading it as drift', () => {
+    const { code, output } = check({
+      spec: AGREED_SPEC,
+      union: "export type ProjectRole = 'owner' | 'manage' |\n",
+    })
+    expect(code).toBe(1)
+    expect(output).toContain('dangling')
+  })
+
   it('refuses a module where ProjectRole survives only in a comment', () => {
     const { code, output } = check({
       spec: AGREED_SPEC,
