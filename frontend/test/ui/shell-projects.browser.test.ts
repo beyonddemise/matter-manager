@@ -14,7 +14,7 @@ import '@awesome.me/webawesome-pro/dist/components/icon/icon.js'
 import '@awesome.me/webawesome-pro/dist/components/input/input.js'
 import '@awesome.me/webawesome-pro/dist/components/tag/tag.js'
 import { fixture, fixtureCleanup, html, waitUntil } from '@open-wc/testing-helpers'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { page, userEvent } from 'vitest/browser'
 import type { CachedProfile, LocalProjectEntry } from '../../src/data/index.js'
 import { PROJECT_DOCUMENT_ID } from '../../src/domain/documents/project.js'
@@ -26,6 +26,7 @@ import {
   PROJECT_DATA_CHANGED,
   writeCurrentProjectId,
 } from '../../src/ui/current-project.js'
+import { ensureDeviceKey } from '../../src/ui/db/device-key.js'
 import {
   currentProjectDatabaseName,
   projectIsEditable,
@@ -278,6 +279,16 @@ async function inputSettles(
 
 const text = (element: Element | null): string =>
   element?.textContent?.replace(/\s+/g, ' ').trim() ?? ''
+
+// The device key, minted once before any shell mounts. Every mount adopts the first-run
+// catalogue, and since #331 adoption keys it — which on a fresh browser profile first generates
+// this browser's RSA-3072 device key. That keygen is heavy-tailed (seconds on a contended CI core)
+// and would land inside whichever test's `waitUntil` budget happens to run first. Keying is not
+// what this file tests (`local-projects.browser.test.ts` does), so the cost is paid up front,
+// with the real key, rather than faked or hidden behind a longer timeout.
+beforeAll(async () => {
+  await ensureDeviceKey()
+})
 
 beforeEach(() => {
   window.location.hash = '#/'
