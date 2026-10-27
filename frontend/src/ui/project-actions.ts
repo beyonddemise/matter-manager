@@ -30,10 +30,15 @@
  * the project was born offline — and sends its `{kid, wrapped}` for the server to validate.
  * The DEK is reused (spec decision 8): ciphertext and the `key:*` documents replicate as-is.
  *
+ * **Creating a project as synchronized is creating it here, then promoting it (#326).** Every
+ * project is born locally (spec decision 9): the local creation mints the DEK and this device's
+ * wrap, and the promotion is the one route to the server, so it is the one place an escrow wrap
+ * is ensured and sent. There is no second, direct `POST /projects` path to keep in step.
+ *
  * @module
  */
 
-import { isLocalOnlyDatabase } from '../data/index.js'
+import { isLocalOnlyDatabase, type LocalProjectEntry } from '../data/index.js'
 import { PROJECT_DOCUMENT_ID } from '../domain/documents/project.js'
 import type { CurrentTarget } from './current-project.js'
 import { withDestroyLock } from './db/db-lock.js'
@@ -41,6 +46,7 @@ import { ensureEscrowWrap } from './db/keyring.js'
 import { PROJECT_DATABASE_NAME } from './db/project-database.js'
 import type { EscrowKeyInfo } from './escrow-client.js'
 import {
+  createLocalProject,
   destroyLocalProject,
   indexServerProject,
   type LocalProjectDependencies,
@@ -49,14 +55,18 @@ import { beginProjectAction } from './project-busy.js'
 import {
   createProject,
   type EscrowWrap,
+  type NewProject,
   type Project,
   ProjectCreationError,
   type ProjectsApi,
   updateProject,
 } from './projects.js'
 import {
+  type CreateRefusal,
   type Permission,
+  type ProjectsInput,
   type ProjectsModel,
+  projectsModel,
   type Refusal,
   type Row,
   synchronizedProjects,
@@ -69,8 +79,10 @@ import type { SyncableProject, SyncManager } from './sync/manager.js'
  * - `unpushed`: the push that must precede removing a local copy did not get everything to the
  *   server, so the copy was kept.
  * - `name-mismatch`: a delete was asked for without typing the project's exact name.
+ *
+ * Creating a project refuses with the model's own {@link CreateRefusal}s too.
  */
-export type ActionRefusal = Refusal | 'unpushed' | 'name-mismatch'
+export type ActionRefusal = Refusal | CreateRefusal | 'unpushed' | 'name-mismatch'
 
 /** An action refused, and nothing was destroyed. The view turns the reason into a sentence. */
 export class ProjectActionError extends Error {
@@ -80,6 +92,24 @@ export class ProjectActionError extends Error {
   constructor(reason: ActionRefusal, options?: { cause?: unknown }) {
     super(`A project action was refused: ${reason}.`, options)
     this.reason = reason
+  }
+}
+
+/**
+ * A project was created on this device, and putting it on the server then failed (#326).
+ *
+ * Not a refusal: the reader asked for a project and has one. It stays a local-only project —
+ * listed, encrypted, offered to synchronize again — and only the server half is missing. The
+ * view says both: that it exists here, and why the server half did not happen ({@link cause}).
+ */
+export class CreatedLocallyError extends Error {
+  override readonly name = 'CreatedLocallyError'
+  /** The project that was created, as the index lists it. */
+  readonly entry: LocalProjectEntry
+
+  constructor(entry: LocalProjectEntry, cause: unknown) {
+    super('A project was created on this device but could not be put on the server.', { cause })
+    this.entry = entry
   }
 }
 
@@ -120,6 +150,17 @@ export interface ProjectActionDependencies {
 
 /** The actions, each given the model the page rendered and the row it was chosen on. */
 export interface ProjectActions {
+  /**
+   * Creates a project where the model sends it to the server: on this device first, then
+   * promoted (#326). Given the inputs rather than a model, because the promotion needs the row
+   * of a project that did not exist when the page rendered.
+   *
+   * @throws {ProjectActionError} the model's refusal, `not-applicable` when the model would
+   *   create locally, before anything is created
+   * @throws {ProjectCreationError} `offline` before anything is created
+   * @throws {CreatedLocallyError} when the project was created here and the promotion failed
+   */
+  createSynced(input: ProjectsInput, request: NewProject): Promise<void>
   /** Puts a local-only project on the server, or finishes a promotion that stopped half way. */
   promote(model: ProjectsModel, row: Row): Promise<void>
   /** Starts keeping a local copy of a server-only project. */
@@ -135,7 +176,7 @@ export interface ProjectActions {
 }
 
 /** Refuses with the model's reason when it does not allow the action. */
-function ensure(permission: Permission): void {
+function ensure(permission: Permission<ActionRefusal>): void {
   if (!permission.allowed) throw new ProjectActionError(permission.reason ?? 'not-applicable')
 }
 
@@ -343,73 +384,115 @@ export function projectActions(deps: ProjectActionDependencies): ProjectActions 
     await deps.refresh()
   }
 
-  return {
-    promote: (model, row) =>
-      held(async () => {
-        ensure(row.actions.promote)
-        const project = await target(row)
-        const source = local.database(row.dbName)
-        const survivor = local.database(project.dbName)
+  /** See {@link ProjectActions.promote}. */
+  const promote = (model: ProjectsModel, row: Row): Promise<void> =>
+    held(async () => {
+      ensure(row.actions.promote)
+      const project = await target(row)
+      const source = local.database(row.dbName)
+      const survivor = local.database(project.dbName)
 
-        // Started first, because `pushNow` only pushes projects it has been given.
-        sync.set(
-          replicated(model, { add: { projectId: project.projectId, dbName: project.dbName } }),
-        )
-        // Before the copy, so that every write this tab makes from now on lands in the survivor.
-        const back = leave(
+      // Started first, because `pushNow` only pushes projects it has been given.
+      sync.set(replicated(model, { add: { projectId: project.projectId, dbName: project.dbName } }))
+      // Before the copy, so that every write this tab makes from now on lands in the survivor.
+      const back = leave(
+        row.dbName,
+        () => ({
+          dbName: project.dbName,
+          id: project.projectId,
+          editable: true,
+        }),
+        row,
+      )
+      // Whether the destroy itself was reached: its failure must not move the views back to a
+      // half-removed database, nor copy into one, so the catch below leaves it alone.
+      let destroying = false
+      try {
+        await settled(
+          source,
           row.dbName,
-          () => ({
-            dbName: project.dbName,
-            id: project.projectId,
-            editable: true,
-          }),
-          row,
+          // Into the server-named database (ruling C-R1), so live sync pairs it with its
+          // server namesake. Without the `project` document: on a server database the service
+          // owns it, and it arrives by replication. Copying again copies only what is missing.
+          async () => {
+            const copied = await source.replicate.to(survivor, {
+              filter: (doc: { _id: string }) => doc._id !== PROJECT_DOCUMENT_ID,
+            })
+            if (copied.doc_write_failures > 0) {
+              throw new Error(`${copied.doc_write_failures} documents could not be copied.`)
+            }
+            await push(project.projectId)
+          },
+          async () => {
+            // The server has everything the old database ever held. Only now is it
+            // expendable. Listed after the check, not inside the transfer: a transfer that is
+            // then refused must leave no entry for a copy that is not finished. It writes
+            // `mm-local`, not the source, so it cannot disturb the check it follows.
+            await indexServerProject(project, local)
+            destroying = true
+            await destroyLocalProject(row.dbName, local)
+          },
         )
-        // Whether the destroy itself was reached: its failure must not move the views back to a
-        // half-removed database, nor copy into one, so the catch below leaves it alone.
-        let destroying = false
-        try {
-          await settled(
-            source,
-            row.dbName,
-            // Into the server-named database (ruling C-R1), so live sync pairs it with its
-            // server namesake. Without the `project` document: on a server database the service
-            // owns it, and it arrives by replication. Copying again copies only what is missing.
-            async () => {
-              const copied = await source.replicate.to(survivor, {
-                filter: (doc: { _id: string }) => doc._id !== PROJECT_DOCUMENT_ID,
-              })
-              if (copied.doc_write_failures > 0) {
-                throw new Error(`${copied.doc_write_failures} documents could not be copied.`)
-              }
-              await push(project.projectId)
-            },
-            async () => {
-              // The server has everything the old database ever held. Only now is it
-              // expendable. Listed after the check, not inside the transfer: a transfer that is
-              // then refused must leave no entry for a copy that is not finished. It writes
-              // `mm-local`, not the source, so it cannot disturb the check it follows.
-              await indexServerProject(project, local)
-              destroying = true
-              await destroyLocalProject(row.dbName, local)
-            },
-          )
-        } catch (error) {
-          if (!destroying) {
-            // Ruling C-R11. The views have been writing into the survivor since `leave`, and a
-            // refusal leaves it unlisted: copied back before the views return, so nothing this
-            // tab wrote during the transfer is stranded where no entry names it. Without the
-            // `project` document, which the source keeps as its own. A copy that fails here does
-            // not hide the refusal: the survivor still holds those writes, and a retry copies
-            // into it again.
-            await survivor.replicate
-              .to(source, { filter: (doc: { _id: string }) => doc._id !== PROJECT_DOCUMENT_ID })
-              .catch(() => undefined)
-            back()
-          }
-          throw error
+      } catch (error) {
+        if (!destroying) {
+          // Ruling C-R11. The views have been writing into the survivor since `leave`, and a
+          // refusal leaves it unlisted: copied back before the views return, so nothing this
+          // tab wrote during the transfer is stranded where no entry names it. Without the
+          // `project` document, which the source keeps as its own. A copy that fails here does
+          // not hide the refusal: the survivor still holds those writes, and a retry copies
+          // into it again.
+          await survivor.replicate
+            .to(source, { filter: (doc: { _id: string }) => doc._id !== PROJECT_DOCUMENT_ID })
+            .catch(() => undefined)
+          back()
         }
-      }),
+        throw error
+      }
+    })
+
+  /**
+   * See {@link ProjectActions.createSynced}.
+   *
+   * **Why the order.** The model's permission and the connection are asked before anything is
+   * written, so a refusal leaves nothing behind, as the direct `POST /projects` did. Once the
+   * local project exists it is the reader's: a promotion that fails afterwards — the escrow
+   * feature off, the server unreachable, a push cut short — keeps it, local-only and offered to
+   * synchronize again, and says so ({@link CreatedLocallyError}). Rolling it back would
+   * destroy a project the reader asked for, to undo a failure that was only the server's half.
+   *
+   * **Why the limit holds.** The model counts a local-only project and its synchronized
+   * successor as one owned project, and `POST /projects` counts only the server's, so the
+   * promotion neither double-counts nor slips past it: creating needs a free slot, and the
+   * promotion's own limit check then sees exactly the count the creation made.
+   */
+  const createSynced = async (input: ProjectsInput, request: NewProject): Promise<void> => {
+    const model = projectsModel(input)
+    ensure(model.canCreate)
+    if (model.createTarget !== 'synced') throw new ProjectActionError('not-applicable')
+    if (!deps.online()) throw new ProjectCreationError('offline')
+
+    const entry = await createLocalProject(request, local)
+    try {
+      // The model with the new project in it: the page's, plus what was just indexed, so the
+      // promotion is permitted (or refused) by the same rules as one chosen from the menu.
+      const after = projectsModel({ ...input, local: [...input.local, entry] })
+      const row = after.owned.find((candidate) => candidate.dbName === entry.dbName)
+      if (row === undefined) throw new Error(`No row for the new project ${entry.dbName}.`)
+      await promote(after, row)
+    } catch (error) {
+      // A failed promotion does not refresh (`held` refreshes on success only), and the page
+      // must list the project that now exists. A refresh that fails too is logged, not thrown:
+      // the reader needs to hear about the creation, not about the re-read.
+      await deps.refresh().catch((refreshError: unknown) => {
+        console.error('The projects page could not be re-read.', refreshError)
+      })
+      throw new CreatedLocallyError(entry, error)
+    }
+  }
+
+  return {
+    createSynced,
+    promote,
 
     download: (model, row) =>
       held(async () => {

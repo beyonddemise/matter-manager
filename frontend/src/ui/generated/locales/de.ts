@@ -113,6 +113,7 @@
 's52b43872b9427298': `Dieses Projekt ist nicht mehr auf dem Server. Noch nicht hochgeladene Änderungen gehen verloren.`,
 's52b5e33a74dfa38c': `Die Tarife erscheinen hier, sobald dieses Gerät einmal eine Verbindung hatte.`,
 's52b617fa7f717923': str`Projekte, die Ihr Tarif umfasst: ${0}. Ihre: unbegrenzt (Bestandstarif).`,
+'s534f2939b9173c58': str`Nur auf diesem Gerät angelegt. ${0}`,
 's54c7f6fd19978d9e': str`${0} Geräte`,
 's54e0bdd4092ccf52': `Gerät speichern`,
 's5501d7aeca8e0f44': `Was getan wurde und was die nächste Person wissen muss. Anmerkungen lassen sich später weder ändern noch löschen.`,

@@ -66,6 +66,15 @@ export function reasonText(reason: Reason): string {
 }
 
 /**
+ * A project created on this device whose way to the server was refused (#326): it exists, here
+ * only, and `reason` says why the server did not take it. It can be synchronized later from its
+ * menu, which the page shows beside it.
+ */
+export function keptLocalText(reason: string): string {
+  return msg(str`Created on this device only. ${reason}`)
+}
+
+/**
  * Why a menu action is refused, beside it. The reason's own sentence, except where the action
  * changes what the reader can do about it: removing from the server is the owner's alone (ruling
  * C-R13), so "the owner or a manager" — right for renaming — would send a manager to try.
