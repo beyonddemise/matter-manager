@@ -1,6 +1,15 @@
 import PouchDB from 'pouchdb-browser'
 import { afterEach, describe, expect, it } from 'vitest'
+import { encodeBase64 } from '../../src/domain/crypto/base64.js'
+import { decryptField, deriveKid, encryptField } from '../../src/domain/crypto/envelope.js'
+import {
+  ESCROW_KEY_DOCUMENT_ID,
+  projectKeyDocumentId,
+  projectKeyRange,
+} from '../../src/domain/documents/keys.js'
 import { PROJECT_DOCUMENT_ID } from '../../src/domain/documents/project.js'
+import { ensureDeviceKey } from '../../src/ui/db/device-key.js'
+import { createProjectKeys, unlockProject } from '../../src/ui/db/keyring.js'
 import {
   localDatabase,
   localProfileCache,
@@ -9,6 +18,7 @@ import {
   rawDatabase,
   removeLocalDatabases,
 } from '../../src/ui/db/project-database.js'
+import type { EscrowKeyInfo } from '../../src/ui/escrow-client.js'
 import {
   type AccountSources,
   adoptLegacyCatalogue,
@@ -454,7 +464,7 @@ describe('resolving the account to stamp', () => {
 })
 
 describe('adopting the legacy catalogue', () => {
-  it('names it and indexes it without touching its devices', async () => {
+  it('names it and indexes it, keeping its devices', async () => {
     await projectDatabase().devices.save(device('device:lamp'))
 
     await adoptLegacyCatalogue('My home')
@@ -462,7 +472,9 @@ describe('adopting the legacy catalogue', () => {
     expect(await localProfileCache().readLocalProjects()).toMatchObject([
       { dbName: PROJECT_DATABASE_NAME, name: 'My home' },
     ])
-    expect(await projectDatabase().devices.list()).toHaveLength(1)
+    expect(await projectDatabase().devices.list()).toMatchObject([
+      { _id: 'device:lamp', name: 'Kitchen lamp', manualCode: '34970112332' },
+    ])
     expect(await rawDatabase(PROJECT_DATABASE_NAME).get(PROJECT_DOCUMENT_ID)).toMatchObject({
       name: 'My home',
     })
@@ -477,6 +489,181 @@ describe('adopting the legacy catalogue', () => {
     expect(await rawDatabase(PROJECT_DATABASE_NAME).get(PROJECT_DOCUMENT_ID)).toMatchObject({
       name: 'First',
     })
+  })
+})
+
+describe('adopting the legacy catalogue keys and encrypts it (#331)', () => {
+  const PAYLOAD = 'MT:Y.K9042C00KA0648G00'
+
+  /** A catalogue device as a pre-encryption build stored it: both codes in plaintext. */
+  const legacy = (id: string) => ({
+    ...device(id),
+    payload: PAYLOAD,
+    updatedAt: '2026-08-26T09:00:00.000Z',
+  })
+
+  /** The stored (raw, undecrypted) form of a catalogue document. */
+  const stored = async (id: string) =>
+    (await rawDatabase(PROJECT_DATABASE_NAME).get(id)) as unknown as {
+      _rev: string
+      payload?: string
+      manualCode?: string
+      updatedAt?: string
+    }
+
+  /** Every `key:*` document in the catalogue. */
+  const keyDocuments = async () =>
+    (await rawDatabase(PROJECT_DATABASE_NAME).allDocs({ ...projectKeyRange(), include_docs: true }))
+      .rows
+
+  /** This device's DEK for the catalogue, failing loudly when there is none. */
+  const catalogueDek = async () => {
+    const dek = await unlockProject(rawDatabase(PROJECT_DATABASE_NAME))
+    if (dek === null) throw new Error('the catalogue has no key for this device')
+    return dek
+  }
+
+  /** Caches an escrow public key in `mm-local`, as escrow startup would. */
+  async function cacheEscrowKey(): Promise<EscrowKeyInfo> {
+    const pair = await crypto.subtle.generateKey(
+      {
+        name: 'RSA-OAEP',
+        modulusLength: 2048,
+        publicExponent: new Uint8Array([0x01, 0x00, 0x01]),
+        hash: 'SHA-256',
+      },
+      false,
+      ['wrapKey', 'unwrapKey'],
+    )
+    const publicKey = encodeBase64(
+      new Uint8Array(await crypto.subtle.exportKey('spki', pair.publicKey)),
+    )
+    const info = { kid: await deriveKid(publicKey), alg: 'RSA-OAEP-256', publicKey }
+    await localProfileCache().writeEscrowKey({ ...info, fetchedAt: '2026-10-28T08:00:00.000Z' })
+    return info
+  }
+
+  it('mints key:<own kid> and, with the escrow key cached, key:escrow', async () => {
+    const escrow = await cacheEscrowKey()
+    await rawDatabase(PROJECT_DATABASE_NAME).put(legacy('device:lamp'))
+
+    await adoptLegacyCatalogue('Home')
+
+    const ids = (await keyDocuments()).map((row) => row.id).sort()
+    expect(ids).toEqual(
+      [ESCROW_KEY_DOCUMENT_ID, projectKeyDocumentId((await ensureDeviceKey()).kid)].sort(),
+    )
+    expect(await rawDatabase(PROJECT_DATABASE_NAME).get(ESCROW_KEY_DOCUMENT_ID)).toMatchObject({
+      kid: escrow.kid,
+    })
+  })
+
+  it('mints only key:<own kid> when no escrow key is cached', async () => {
+    await rawDatabase(PROJECT_DATABASE_NAME).put(legacy('device:lamp'))
+
+    await adoptLegacyCatalogue('Home')
+
+    expect((await keyDocuments()).map((row) => row.id)).toEqual([
+      projectKeyDocumentId((await ensureDeviceKey()).kid),
+    ])
+  })
+
+  it('keys an empty first-run catalogue too, so the first device saved is encrypted', async () => {
+    await adoptLegacyCatalogue('')
+
+    expect(await keyDocuments()).toHaveLength(1)
+    await projectDatabase().devices.save(device('device:new'))
+    expect((await stored('device:new')).manualCode).toMatch(/^enc:v1:/)
+  })
+
+  it('stores every adopted device enc:v1:, keeping its updatedAt, and reads it back plaintext', async () => {
+    await rawDatabase(PROJECT_DATABASE_NAME).bulkDocs([legacy('device:a'), legacy('device:b')])
+    // A view read the catalogue before adoption, memoising its keyless, plaintext state.
+    expect(await projectDatabase().devices.list()).toHaveLength(2)
+
+    await adoptLegacyCatalogue('Home')
+
+    const dek = await catalogueDek()
+    for (const id of ['device:a', 'device:b']) {
+      const raw = await stored(id)
+      expect(raw.payload).toMatch(/^enc:v1:/)
+      expect(raw.manualCode).toMatch(/^enc:v1:/)
+      expect(await decryptField(dek, id, 'payload', raw.payload ?? '')).toBe(PAYLOAD)
+      // Re-encrypting changes no user-entered field, so it must not outrank a real edit.
+      expect(raw.updatedAt).toBe('2026-08-26T09:00:00.000Z')
+    }
+    // The memo was dropped: the same repositories now decrypt rather than pass ciphertext on.
+    expect(await projectDatabase().devices.list()).toMatchObject([
+      { _id: 'device:a', payload: PAYLOAD, manualCode: '34970112332' },
+      { _id: 'device:b', payload: PAYLOAD, manualCode: '34970112332' },
+    ])
+  })
+
+  it('finishes an adoption interrupted after the key write with the same DEK, minting no other', async () => {
+    const database = rawDatabase(PROJECT_DATABASE_NAME)
+    await database.bulkDocs([legacy('device:a'), legacy('device:b')])
+    // The first run writes the keys and then dies at its first device rewrite.
+    const dying = Object.create(database) as PouchDB.Database
+    dying.put = (async (doc: { _id: string }) => {
+      if (doc._id.startsWith('device:')) throw new Error('the tab was closed')
+      return database.put(doc as never)
+    }) as never
+    await expect(
+      adoptLegacyCatalogue('Home', { ...localProjectDefaults, database: () => dying }),
+    ).rejects.toThrow('the tab was closed')
+    // Nothing listed, so the next run adopts again; the keys are already there.
+    expect(await localProfileCache().readLocalProjects()).toEqual([])
+    const [wrap] = await keyDocuments()
+    if (wrap?.doc === undefined) throw new Error('the interrupted run wrote no key')
+    const dek = await catalogueDek()
+
+    await adoptLegacyCatalogue('Home')
+
+    // The same wrap, untouched: no second DEK was minted over it.
+    const after = await keyDocuments()
+    expect(after).toHaveLength(1)
+    expect(after[0]?.doc).toEqual(wrap.doc)
+    // And that one DEK opens everything the second run encrypted.
+    for (const id of ['device:a', 'device:b']) {
+      const raw = await stored(id)
+      expect(await decryptField(dek, id, 'manualCode', raw.manualCode ?? '')).toBe('34970112332')
+      expect(await decryptField(dek, id, 'payload', raw.payload ?? '')).toBe(PAYLOAD)
+    }
+    expect(await localProfileCache().readLocalProjects()).toMatchObject([
+      { dbName: PROJECT_DATABASE_NAME, name: 'Home' },
+    ])
+  })
+
+  it('leaves already-encrypted devices as stored and never re-encrypts a sealed field', async () => {
+    const database = rawDatabase(PROJECT_DATABASE_NAME)
+    // An interrupted run got as far as the keys and one device.
+    const dek = await createProjectKeys(database, null)
+    const sealed = {
+      ...legacy('device:sealed'),
+      payload: await encryptField(dek, 'device:sealed', 'payload', PAYLOAD),
+      manualCode: await encryptField(dek, 'device:sealed', 'manualCode', '34970112332'),
+    }
+    // Half sealed: `encryptField` throws on `enc:` input, so re-sealing this payload would fail
+    // the whole adoption — succeeding proves only the plaintext field went through it.
+    const half = {
+      ...legacy('device:half'),
+      payload: await encryptField(dek, 'device:half', 'payload', PAYLOAD),
+    }
+    await database.bulkDocs([sealed, half, legacy('device:plain')])
+    const sealedBefore = await stored('device:sealed')
+
+    await adoptLegacyCatalogue('Home')
+
+    // Not rewritten at all: same revision, same (randomised-IV) ciphertext.
+    expect(await stored('device:sealed')).toEqual(sealedBefore)
+    // Read back through the cipher and sealed again from plaintext: one layer, not two.
+    const halfAfter = await stored('device:half')
+    expect(await decryptField(dek, 'device:half', 'payload', halfAfter.payload ?? '')).toBe(PAYLOAD)
+    expect(halfAfter.manualCode).toMatch(/^enc:v1:/)
+    expect(await decryptField(dek, 'device:half', 'manualCode', halfAfter.manualCode ?? '')).toBe(
+      '34970112332',
+    )
+    expect((await stored('device:plain')).payload).toMatch(/^enc:v1:/)
   })
 })
 

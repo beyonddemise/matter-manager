@@ -31,6 +31,7 @@ import {
 import { PROJECT_DATABASE_NAME } from '../../src/ui/db/project-database.js'
 import type { EscrowKeyInfo } from '../../src/ui/escrow-client.js'
 import {
+  adoptLegacyCatalogue,
   createLocalProject,
   detachOrphanedProject,
   indexServerProject,
@@ -678,6 +679,41 @@ describe('going to the server carries a validated escrow wrap (#305)', () => {
     if (escrow === undefined) throw new Error('no escrow wrap on the survivor')
     const escrowDek = await unwrapDek(escrow.wrapped, escrowPair.privateKey)
     expect(await decryptField(escrowDek, 'device:secret', 'payload', stored.payload)).toBe(code)
+  })
+
+  it('promotes the adopted first-run catalogue, its wraps and ciphertext arriving on the server (#331)', async () => {
+    // Born offline, no escrow key cached: the wrap is added at promote, from the adopted DEK.
+    const w = world({ cachedEscrow: null })
+    const code = 'MT:Y.K9042C00KA0648G00'
+    // As a pre-encryption build left it: a plaintext device in the keyless catalogue.
+    await w.database(PROJECT_DATABASE_NAME).put({
+      _id: 'device:legacy',
+      type: 'device',
+      name: 'legacy',
+      payload: code,
+    })
+    await adoptLegacyCatalogue('Home', w.deps.local)
+    const { model, row } = await w.view(PROJECT_DATABASE_NAME)
+
+    await w.actions.promote(model, row)
+
+    const [project] = w.server as [Project]
+    const survivor = w.database(project.dbName)
+    const escrow = await escrowWrapOf(survivor)
+    if (escrow === undefined) throw new Error('no escrow wrap on the survivor')
+    expect(w.created).toEqual([
+      { name: 'Home', escrowWrap: { kid: escrow.kid, wrapped: escrow.wrapped } },
+    ])
+    const ids = (await survivor.allDocs()).rows.map((doc) => doc.id)
+    expect(ids).toContain(projectKeyDocumentId((await ensureDeviceKey()).kid))
+    const stored = (await survivor.get('device:legacy')) as unknown as { payload: string }
+    expect(stored.payload).toMatch(/^enc:v1:/)
+    // Both this device and escrow open it.
+    const deviceDek = await unlockProject(survivor)
+    if (deviceDek === null) throw new Error('the survivor is locked')
+    expect(await decryptField(deviceDek, 'device:legacy', 'payload', stored.payload)).toBe(code)
+    const escrowDek = await unwrapDek(escrow.wrapped, escrowPair.privateKey)
+    expect(await decryptField(escrowDek, 'device:legacy', 'payload', stored.payload)).toBe(code)
   })
 
   it('escrowDisabledFailsProvisioning: no escrow key anywhere refuses before anything is sent', async () => {

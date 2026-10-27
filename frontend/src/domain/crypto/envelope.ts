@@ -119,6 +119,16 @@ const ENCRYPTED_PREFIX = 'enc:'
 /** The one format this module writes and reads: `enc:v1:<base64(iv ‖ ciphertext‖tag)>`. */
 const FORMAT_PREFIX = 'enc:v1:'
 
+/**
+ * Whether a stored field value is (or claims to be) ciphertext — the prefix test
+ * {@link encryptField} refuses on and {@link decryptField} passes through without. Exposed for
+ * the one caller that must tell the two apart before writing: re-encrypting an adopted
+ * pre-encryption catalogue (#331), which rewrites only the devices still holding plaintext.
+ */
+export function isEncryptedField(value: string): boolean {
+  return value.startsWith(ENCRYPTED_PREFIX)
+}
+
 /** 96-bit IV — GCM's native nonce size, fresh and random per encryption. */
 const IV_BYTES = 12
 
@@ -183,7 +193,7 @@ export async function encryptField(
   field: string,
   value: string,
 ): Promise<string> {
-  if (value.startsWith(ENCRYPTED_PREFIX)) {
+  if (isEncryptedField(value)) {
     throw new Error(
       `Refusing to encrypt ${docId}.${field}: the value is already in the '${ENCRYPTED_PREFIX}' format, and double encryption is a programming error.`,
     )
@@ -224,7 +234,7 @@ export async function decryptField(
   field: string,
   stored: string,
 ): Promise<string> {
-  if (!stored.startsWith(ENCRYPTED_PREFIX)) return stored
+  if (!isEncryptedField(stored)) return stored
   if (!stored.startsWith(FORMAT_PREFIX)) {
     throw new Error(`Cannot decrypt ${docId}.${field}: unknown encrypted-field format version.`)
   }
