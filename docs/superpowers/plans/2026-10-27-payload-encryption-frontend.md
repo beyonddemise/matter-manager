@@ -51,7 +51,7 @@
 - `encryptField(dek: CryptoKey, docId: string, field: string, value: string): Promise<string>` → `enc:v1:…`; **throws** on input already prefixed `enc:`.
 - `decryptField(dek: CryptoKey, docId: string, field: string, stored: string): Promise<string>` — passes through values without the `enc:` prefix.
 - `wrapDek(dek: CryptoKey, recipientSpkiB64: string): Promise<string>` / `unwrapDek(wrappedB64: string, privateKey: CryptoKey): Promise<CryptoKey>` — RSA-OAEP SHA-256.
-- `deriveKid(spkiB64: string): Promise<string>` — first 48 bits of SHA-256(SPKI), 12 lowercase hex chars (matches the backend's `Envelope.kid`).
+- `deriveKid(spkiB64: string): Promise<string>` — SHA-256 of the SPKI, full 64 lowercase hex chars (must match the backend's `Envelope.kid`; the shared vectors pin it).
 
 - [ ] **Step 1: Write failing tests**: `fieldRoundTrips`, `wrongAadFailsToDecrypt` (same dek, different docId → rejects), `plaintextPassesThrough`, `doubleEncryptThrows`, `wrapRoundTrips`, `kidMatchesVector`, and the vector assertions (encrypt/decrypt and wrap/unwrap against `vectors.json`). Vectors per lesson L1: corroborated by the backend JCA implementation before any test asserts them — generate here, hand the file to backend Task 1, and treat agreement of the two implementations as the anchor.
 - [ ] **Step 2: Run** `npx vitest run src/domain/crypto/envelope.test.ts` — FAIL. Implement. Run — PASS.
@@ -81,7 +81,7 @@
 **Interfaces:**
 - Consumes: `ensureDeviceKey()` (Task 3); the bearer-fetch style of `ui/projects.ts`.
 - Produces:
-  - `registerDeviceKey(): Promise<void>` — `PUT /profile/devicekeys {kid, publicKey}`; errors are logged-silent (retried next startup), never block sync.
+  - `registerDeviceKey(): Promise<void>` — `PUT /profile/devicekeys {publicKey}` (the server derives the kid itself; the client's `deriveKid` must agree, which the shared vectors pin); errors are logged-silent (retried next startup), never block sync.
   - `fetchEscrowKey(): Promise<EscrowKeyInfo | null>` — `GET /escrowkey`; 404 (feature off) → `null`.
   - `cachedEscrowKey(): Promise<EscrowKeyInfo | null>` from `mm-local`; `type EscrowKeyInfo = { kid: string; alg: string; publicKey: string }`.
 
@@ -135,9 +135,9 @@
 
 **Interfaces:**
 - Consumes: `unlockProject` (Task 5), `cachedEscrowKey`/bearer fetch (Task 4), `pullOnce` (`ui/sync/replication.ts`).
-- Produces: `recoverProjectKey(db, projectDoc): Promise<boolean>` — `POST /escrow {document: projectDoc, deviceKeyId: kid}`; 204 → `pullOnce` → `unlockProject` again → true; 4xx → false (stay locked, no retry loop; next project open retries). Wired so an `openProject` that finds the project locked and the app online + signed-in triggers recovery once, then re-resolves the key state and fires the existing `PROJECT_CHANGED`-style refresh so open views re-render unlocked.
+- Produces: `recoverProjectKey(db): Promise<boolean>` — **pull first** (`pullOnce`), retry `unlockProject` (the wrap may already exist — then no request at all); still locked → read the freshly pulled `project` doc and `POST /escrow {document, deviceKeyId: kid}`; 204 → `pullOnce` → `unlockProject` → true; **409 `document-mismatch` → re-pull and retry exactly once**; any other 4xx → false (stay locked; next project open retries). Wired so an `openProject` that finds the project locked and the app online + signed-in triggers recovery once, then re-resolves the key state and fires the existing `PROJECT_CHANGED`-style refresh so open views re-render unlocked.
 
-- [ ] **Step 1: Write failing tests**: `recoversTransparently` (stubbed 204 + wrap doc appears on pull → resolves true, project unlocked), `staysLockedOn4xx` (403/409 → false, exactly one request — no loop), `offlineDoesNotCall` (no fetch when offline).
+- [ ] **Step 1: Write failing tests**: `pullsBeforePosting` (the posted `document` is the post-pull revision), `unlocksWithoutPostWhenWrapArrivesOnPull` (no POST request made), `recoversTransparently` (stubbed 204 + wrap doc appears on pull → resolves true, project unlocked), `retriesOnceOnDocumentMismatch` (first POST 409, second with re-pulled doc 204 → true; exactly two requests), `staysLockedOn4xx` (403 → false, exactly one request — no loop), `offlineDoesNotCall` (no fetch when offline).
 - [ ] **Step 2: Run — FAIL. Implement. Run — PASS. Commit** `feat(escrow): transparent key recovery on locked open`
 
 ### Task 8: Going to the server — provisioning wrap and promote

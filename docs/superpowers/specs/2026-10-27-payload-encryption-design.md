@@ -7,7 +7,10 @@ Status: draft, awaiting approval
 
 Encrypt the two commissioning secrets on a device document — `payload` and
 `manualCode` — everywhere they rest: browser IndexedDB, CouchDB, and every backup
-of either. Decryption keys are delivered per device via envelope encryption, and
+of either. The one deliberate exception is the user-initiated JSON export, which
+stays plaintext by requirement (it is the recovery of last resort and must import
+without keys); once exported, the archive's protection is the user's
+responsibility. Decryption keys are delivered per device via envelope encryption, and
 a server-held escrow key makes onboarding a new device, or recovering from a lost
 key, transparent to the user. The UI layer is unaffected; encryption and
 decryption happen in the data layer.
@@ -33,7 +36,9 @@ codes transit the server in memory for the catalogue lookup.
 **Still exposed, knowingly:** device metadata (`vendorId`, `productId`,
 `discriminator`, names, rooms) stays plaintext so lists, search, catalogue
 lookup and sync-time merging keep working. A dump reveals the inventory, not the
-commissioning secrets — exactly ADR 0005 option 1's shape.
+commissioning secrets — exactly ADR 0005 option 1's shape. A user-initiated
+export archive intentionally contains the plaintext codes (see Intent); it is
+produced only from an unlocked project at the user's explicit request.
 
 ## Goals
 
@@ -162,7 +167,7 @@ writer can *silently* corrupt (loud, detectable denial is accepted — decision
   {
     "_id": "escrow:keys",
     "type": "escrowKey",
-    "kid": "e<first 48 bits of SPKI SHA-256, hex>",   // same derivation style as JWT kids
+    "kid": "<SHA-256 of the SPKI, full 64 lowercase hex chars>",
     "alg": "RSA-OAEP-256",
     "publicKey": "<base64 SPKI>",
     "privateKeyWrapped": { "iv": "<b64>", "ct": "<b64, AES-256-GCM under KEK>" },
@@ -188,11 +193,22 @@ operationIds equal to the Java method names (`OpenApiDriftTest`), added to
    when the escrow feature is enabled.
 1. **`GET /escrowkey`** — public, no auth. Returns `{kid, alg, publicKey}`.
    Clients cache it in `mm-local` for offline project creation.
-2. **`PUT /profile/devicekeys`** — authenticated. Body `{kid, publicKey,
-   label?}`. Appends to the user record's `deviceKeys` array (shape mirrors
-   `passkeys` / `PasskeyCredential`), capped at 10 entries evicting the least
-   recently used — the same hygiene as `refreshTokens`. Idempotent for a kid
-   already present (refreshes `lastUsedAt`).
+2. **`PUT /profile/devicekeys`** — authenticated. Body `{publicKey, label?}` —
+   **no client-supplied kid**. The server parses the SPKI, requires an RSA key
+   of at least 3072 bits, and derives the kid itself; a key that fails to parse
+   or is too small is rejected with a problem. Appends to the user record's
+   `deviceKeys` array (shape mirrors `passkeys` / `PasskeyCredential`), capped
+   at 10 entries evicting the least recently used — the same hygiene as
+   `refreshTokens`. Idempotent for a key already present (refreshes
+   `lastUsedAt`).
+
+   **Kids are the full SHA-256 of the SPKI (64 lowercase hex chars), for both
+   device keys and the escrow key.** Server-side derivation plus the full hash
+   binds a kid cryptographically to its key: a member can neither *claim*
+   another member's kid (the server computes it) nor *grind* a key pair whose
+   kid collides with a victim's (which a 48-bit truncation would have left
+   feasible), so no registration can ever cause an escrow re-wrap to overwrite
+   another device's `key:<kid>` doc.
 3. **`POST /escrow`** — authenticated, rate-limited per subject (new
    `Limits.escrow`). Body `{document: <the client's copy of the project doc>,
    deviceKeyId}`. Flow:
@@ -279,8 +295,9 @@ database).
 - On startup (`ui/main.ts` vicinity, before DBs are needed): ensure a
   non-extractable RSA-OAEP-3072/SHA-256 key pair exists in a small dedicated
   IndexedDB store (`mm-keys`, raw IndexedDB — PouchDB cannot hold a `CryptoKey`;
-  structured clone in IDB can). kid = SPKI-SHA-256-prefix, computed once and
-  stored beside the pair.
+  structured clone in IDB can). kid = SHA-256 of the SPKI, full 64 lowercase
+  hex chars, computed once and stored beside the pair (must equal the server's
+  derivation — the shared test vectors pin the agreement).
 - `mm-keys` **survives sign-out** [builder's call, recorded]: the key is a
   property of the browser profile, not the account; losing it is always
   recoverable via escrow, but keeping it avoids an escrow round trip and a new
@@ -309,10 +326,14 @@ database).
   the device private key, import as a non-extractable AES-GCM `CryptoKey`, hold
   in memory keyed by database name (the same memoisation style as
   `project-database.ts` handles).
-- **Missing wrap** (new device, lost `mm-keys`): if signed in and online, call
-  `POST /escrow` with the just-pulled `project` doc and own kid, then pull and
-  unlock — invisible to the user. Until the DEK is available the project is
-  **locked**, a typed state with a strict contract (below).
+- **Missing wrap** (new device, lost `mm-keys`): if signed in and online,
+  **pull first** (`pullOnce`), retry the unlock (the wrap may already exist),
+  and only then call `POST /escrow` with the freshly pulled `project` doc and
+  own kid; on 204, pull again and unlock — invisible to the user. A `409
+  document-mismatch` (the doc moved between pull and post) is retried **once**
+  with a re-pulled document; any other 4xx leaves the project locked until the
+  next open. Until the DEK is available the project is **locked**, a typed
+  state with a strict contract (below).
 
 ### Locked projects: the data-layer contract
 

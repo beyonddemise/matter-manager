@@ -42,7 +42,7 @@
   - `byte[] wrapDek(byte[] dek, PublicKey recipient)` — RSA-OAEP, SHA-256 for hash **and** MGF1 via explicit `OAEPParameterSpec` (the JDK default MGF1 digest is the known interop trap).
   - `byte[] unwrapDek(byte[] wrapped, PrivateKey key)`
   - `byte[] gcmSeal(byte[] plain, SecretKey key, byte[] iv, byte[] aad)` → ciphertext including tag; `byte[] gcmOpen(byte[] sealed, SecretKey key, byte[] iv, byte[] aad)`
-  - `String kid(byte[] spki)` — first 48 bits of SHA-256(SPKI) in lowercase hex (12 chars), same derivation style as `auth/Keys.java`.
+  - `String kid(byte[] spki)` — SHA-256 of the SPKI, **full 64 lowercase hex chars** (not truncated: `key:<kid>` doc ids are adversary-relevant, and a 48-bit truncation would make grinding a colliding key pair feasible).
 
 - [ ] **Step 1: Write the failing vector tests** in `EnvelopeTest`: `wrapVectorRoundTrips` (unwrap the vector's `wrapped` with the vector RSA private key → equals vector `dek`), `gcmVectorOpens` (open vector ciphertext with vector key/iv/aad → vector plaintext), `gcmRejectsWrongAad` (expect `AEADBadTagException`), `kidMatchesVector`. Per lesson L1, the vectors file must already exist and be corroborated by the frontend's WebCrypto implementation — two independent implementations agreeing is the anchor. If the frontend task hasn't produced it yet, generate it with a throwaway Node WebCrypto script and verify here.
 - [ ] **Step 2: Run** `mvn -q test -Dtest=EnvelopeTest` — expect FAIL (class missing).
@@ -107,10 +107,10 @@
 - Test: extend the existing user-record and profile resource test classes
 
 **Interfaces:**
-- Produces: `registerDeviceKey` (operationId), `PUT /profile/devicekeys`, `@Authenticated`, body `{kid, publicKey, label?}` → 204. `UserRecord.withDeviceKey(DeviceKey)`: appends; same kid refreshes `lastUsedAt` idempotently; list capped at **10**, evicting least-recently-used. Task 7 reads `deviceKeys` to resolve the caller's public key; Task 8 reads it to find kids to clean up.
+- Produces: `registerDeviceKey` (operationId), `PUT /profile/devicekeys`, `@Authenticated`, body `{publicKey, label?}` → 204 — **no client-supplied kid**. The service parses the SPKI, requires RSA ≥ 3072 bits (problem `invalid-device-key` otherwise), and derives the kid itself via `Envelope.kid` (Task 1). Server-side derivation of the full-hash kid is what stops a member claiming — or grinding a key pair to collide with — another device's kid and getting its `key:<kid>` doc overwritten by a later re-wrap. `UserRecord.withDeviceKey(DeviceKey)`: appends; the same key (same derived kid) refreshes `lastUsedAt` idempotently; list capped at **10**, evicting least-recently-used. Task 7 reads `deviceKeys` to resolve the caller's public key; Task 8 reads it to find kids to clean up.
 
 - [ ] **Step 1: Write failing record tests**: `addsDeviceKey`, `sameKidRefreshesNotDuplicates`, `capsAtTenEvictingLru` (add 11, assert the stalest kid gone — mirror the `refreshTokens`/`passkeys` test style).
-- [ ] **Step 2: Contract + failing resource test**: `registerDeviceKeyStoresOnRecord` (PUT → 204, record contains kid), validated by `ContractValidationFilter`.
+- [ ] **Step 2: Contract + failing resource tests**: `registerDeviceKeyStoresOnRecord` (PUT → 204, record contains the **server-derived** kid equal to `Envelope.kid` of the sent SPKI), `registerDeviceKeyRejectsMalformedKey` (unparseable SPKI → problem), `registerDeviceKeyRejectsSmallKey` (RSA-2048 → problem), validated by `ContractValidationFilter`.
 - [ ] **Step 3: Implement; run the three test classes + drift/fixture tests** — PASS.
 - [ ] **Step 4: Commit** `feat(escrow): per-device public keys on the user record`
 
