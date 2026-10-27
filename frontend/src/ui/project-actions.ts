@@ -9,8 +9,10 @@
  * "destroyed": the views move off a database *before* it is copied or pushed, so this tab's
  * writes land in the survivor; and the database's `update_seq` must be the same after the
  * transfer as before it, or the transfer is repeated once and then refused (`settled`), so a
- * write that lands while the transfer runs is never destroyed unsent. Tabs are not coordinated:
- * another tab writing in the last round trip before the destroy is the one residual risk (#220).
+ * write that lands while the transfer runs is never destroyed unsent. Tabs are coordinated by a
+ * Web Lock per database (`db/db-lock.ts`, #220): every write anywhere holds it shared, and the
+ * final check with its destroy holds it exclusive, so no tab can write in between. Where the
+ * browser has no Web Locks the check alone still bounds the risk to the last round trip.
  *
  * Pure orchestration over injected dependencies: the server, replication, the local index and
  * databases, which project is open, and the page's refresh. The browser tests run it on real
@@ -29,6 +31,7 @@
 import { isLocalOnlyDatabase } from '../data/index.js'
 import { PROJECT_DOCUMENT_ID } from '../domain/documents/project.js'
 import type { CurrentTarget } from './current-project.js'
+import { withDestroyLock } from './db/db-lock.js'
 import { PROJECT_DATABASE_NAME } from './db/project-database.js'
 import {
   destroyLocalProject,
@@ -158,7 +161,8 @@ const TRANSFER_ATTEMPTS = 2
 
 /**
  * Runs `transfer` — the copy and push that prove a database's contents are safely elsewhere —
- * and resolves only if the database did not change while it ran.
+ * and runs `finish` (the destroy, and whatever bookkeeping must precede it) only if the database
+ * did not change while the transfer ran.
  *
  * **Why.** A copy or a push proves what was there when it *started*. Anything written after
  * that (another tab, a conflict resolver, a write that raced the switch away) would go with the
@@ -166,17 +170,29 @@ const TRANSFER_ATTEMPTS = 2
  * proves the transfer saw everything. A change is given one more transfer; a database still
  * being written to after that is refused, and refusing keeps it.
  *
- * The check runs just before the destroy its caller makes next. Between the two there is only
- * bookkeeping that never writes the source — promoting lists the survivor in `mm-local` — so
- * nothing of this page's can write into it there. Another tab still can: nothing coordinates
- * tabs, so a write it lands in that window (a few IndexedDB round trips) is lost with the
- * destroy. A known limit (ruling C-R8), tracked as #220 (Web Locks around these actions).
+ * The final check and `finish` run under the database's exclusive Web Lock (#220): every write,
+ * in any tab, holds the same lock shared (`db/db-lock.ts`), so nothing can land between the
+ * check and the destroy. A write that arrives in that window waits past the destroy and fails
+ * where its tab can see it, instead of landing in a database the check just declared fully
+ * transferred. The transfer itself runs outside the lock, deliberately — a write during a push
+ * should land and be caught by the re-check, not stall behind a two-minute hold. Without Web
+ * Locks (ruling C-R8) the check alone bounds the risk to the last round trip, as before.
  */
-async function settled(source: PouchDB.Database, transfer: () => Promise<void>): Promise<void> {
+async function settled(
+  source: PouchDB.Database,
+  dbName: string,
+  transfer: () => Promise<void>,
+  finish: () => Promise<void>,
+): Promise<void> {
   for (let attempt = 0; attempt < TRANSFER_ATTEMPTS; attempt += 1) {
     const before = (await source.info()).update_seq
     await transfer()
-    if ((await source.info()).update_seq === before) return
+    const finished = await withDestroyLock(dbName, async () => {
+      if ((await source.info()).update_seq !== before) return false
+      await finish()
+      return true
+    })
+    if (finished) return
   }
   throw new ProjectActionError('unpushed')
 }
@@ -277,36 +293,50 @@ export function projectActions(deps: ProjectActionDependencies): ProjectActions 
           }),
           row,
         )
+        // Whether the destroy itself was reached: its failure must not move the views back to a
+        // half-removed database, nor copy into one, so the catch below leaves it alone.
+        let destroying = false
         try {
-          // Into the server-named database (ruling C-R1), so live sync pairs it with its server
-          // namesake. Without the `project` document: on a server database the service owns it,
-          // and it arrives by replication. Copying again copies only what is missing.
-          await settled(source, async () => {
-            const copied = await source.replicate.to(survivor, {
-              filter: (doc: { _id: string }) => doc._id !== PROJECT_DOCUMENT_ID,
-            })
-            if (copied.doc_write_failures > 0) {
-              throw new Error(`${copied.doc_write_failures} documents could not be copied.`)
-            }
-            await push(project.projectId)
-          })
-          // The server has everything the old database ever held. Only now is it expendable.
-          // Listed after the check, not inside the transfer: a transfer that is then refused must
-          // leave no entry for a copy that is not finished. It writes `mm-local`, not the source.
-          await indexServerProject(project, local)
+          await settled(
+            source,
+            row.dbName,
+            // Into the server-named database (ruling C-R1), so live sync pairs it with its
+            // server namesake. Without the `project` document: on a server database the service
+            // owns it, and it arrives by replication. Copying again copies only what is missing.
+            async () => {
+              const copied = await source.replicate.to(survivor, {
+                filter: (doc: { _id: string }) => doc._id !== PROJECT_DOCUMENT_ID,
+              })
+              if (copied.doc_write_failures > 0) {
+                throw new Error(`${copied.doc_write_failures} documents could not be copied.`)
+              }
+              await push(project.projectId)
+            },
+            async () => {
+              // The server has everything the old database ever held. Only now is it
+              // expendable. Listed after the check, not inside the transfer: a transfer that is
+              // then refused must leave no entry for a copy that is not finished. It writes
+              // `mm-local`, not the source, so it cannot disturb the check it follows.
+              await indexServerProject(project, local)
+              destroying = true
+              await destroyLocalProject(row.dbName, local)
+            },
+          )
         } catch (error) {
-          // Ruling C-R11. The views have been writing into the survivor since `leave`, and a
-          // refusal leaves it unlisted: copied back before the views return, so nothing this tab
-          // wrote during the transfer is stranded where no entry names it. Without the `project`
-          // document, which the source keeps as its own. A copy that fails here does not hide
-          // the refusal: the survivor still holds those writes, and a retry copies into it again.
-          await survivor.replicate
-            .to(source, { filter: (doc: { _id: string }) => doc._id !== PROJECT_DOCUMENT_ID })
-            .catch(() => undefined)
-          back()
+          if (!destroying) {
+            // Ruling C-R11. The views have been writing into the survivor since `leave`, and a
+            // refusal leaves it unlisted: copied back before the views return, so nothing this
+            // tab wrote during the transfer is stranded where no entry names it. Without the
+            // `project` document, which the source keeps as its own. A copy that fails here does
+            // not hide the refusal: the survivor still holds those writes, and a retry copies
+            // into it again.
+            await survivor.replicate
+              .to(source, { filter: (doc: { _id: string }) => doc._id !== PROJECT_DOCUMENT_ID })
+              .catch(() => undefined)
+            back()
+          }
           throw error
         }
-        await destroyLocalProject(row.dbName, local)
       }),
 
     download: (model, row) =>
@@ -335,13 +365,22 @@ export function projectActions(deps: ProjectActionDependencies): ProjectActions 
         try {
           // Off it before the push, so this tab writes nothing into it that the push could miss.
           const back = leave(row.dbName, () => elsewhere(model, row.dbName), row)
+          // As in promote: a destroy that failed must not send the views back into the remains.
+          let destroying = false
           try {
-            await settled(local.database(row.dbName), () => push(projectId))
+            await settled(
+              local.database(row.dbName),
+              row.dbName,
+              () => push(projectId),
+              async () => {
+                destroying = true
+                await destroyLocalProject(row.dbName, local)
+              },
+            )
           } catch (error) {
-            back()
+            if (!destroying) back()
             throw error
           }
-          await destroyLocalProject(row.dbName, local)
           // Dropped before the hold is lifted, so lifting it does not start it again.
           sync.set(replicated(model, { drop: projectId }))
         } finally {
@@ -361,7 +400,9 @@ export function projectActions(deps: ProjectActionDependencies): ProjectActions 
         if (replicating !== undefined) sync.suspend(replicating)
         try {
           leave(row.dbName, () => elsewhere(model, row.dbName), row)
-          await destroyLocalProject(row.dbName, local)
+          // Exclusive, like the verified destroys: a write another tab has in flight lands
+          // first, and one that arrives during the destroy fails visibly there (#220).
+          await withDestroyLock(row.dbName, () => destroyLocalProject(row.dbName, local))
           if (replicating !== undefined) sync.set(replicated(model, { drop: replicating }))
         } finally {
           if (replicating !== undefined) sync.resume(replicating)

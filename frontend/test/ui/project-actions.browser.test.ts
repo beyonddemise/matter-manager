@@ -2,6 +2,7 @@ import PouchDB from 'pouchdb-browser'
 import { afterEach, describe, expect, it } from 'vitest'
 import { type LocalCache, type LocalProjectEntry, localCache } from '../../src/data/index.js'
 import { PROJECT_DOCUMENT_ID } from '../../src/domain/documents/project.js'
+import { coordinateWrites } from '../../src/ui/db/db-lock.js'
 import { PROJECT_DATABASE_NAME } from '../../src/ui/db/project-database.js'
 import {
   createLocalProject,
@@ -88,6 +89,7 @@ function world(options: { fault?: FaultAt } = {}) {
       handle.destroy = (async () => {
         log.push(`destroy ${dbName}`)
         if (fails('destroy')) throw new Error('the database would not go')
+        await state.beforeDestroy?.()
         return destroy()
       }) as never
       handles.set(dbName, handle)
@@ -133,6 +135,11 @@ function world(options: { fault?: FaultAt } = {}) {
      * background writer, which the push started too early to see.
      */
     duringPush: undefined as ((attempt: number) => Promise<void>) | undefined,
+    /**
+     * Runs after the action's final `update_seq` check, just before the destroy: the #220
+     * window, in which another tab's write must not be able to land.
+     */
+    beforeDestroy: undefined as (() => Promise<void>) | undefined,
     refreshed: 0,
     onRefresh: undefined as (() => void) | undefined,
   }
@@ -768,5 +775,81 @@ describe('putting a removed project back on the server', () => {
 
     expect(await refusal(w.actions.restore(model, row))).toBe('offline')
     expect(w.updated).toEqual([])
+  })
+})
+
+describe('coordination across tabs (#220)', () => {
+  /**
+   * A second tab's handle on the same store, writing the way the application writes: through
+   * the shared write lock `openHandle` puts on every project database. Web Locks are origin
+   * wide, so another holder in this page contends exactly as another tab would.
+   */
+  const secondTab = (dbName: string): PouchDB.Database => {
+    touched.add(dbName)
+    return coordinateWrites(dbName, new PouchDB(dbName))
+  }
+
+  it('removing the local copy: a second tab cannot write between the final check and the destroy', async () => {
+    const w = world()
+    const bravo = await w.syncedProject()
+    const tabB = secondTab(bravo.dbName)
+    await tabB.info() // the connection is open, as a tab with the project open holds one
+
+    let outcome: Promise<'landed' | 'refused'> | undefined
+    let docsAtDestroy = -1
+    w.state.beforeDestroy = async () => {
+      w.state.beforeDestroy = undefined
+      // The final update_seq check has passed. The other tab writes now — the #220 window.
+      outcome = tabB.put(device('device:late')).then(
+        () => 'landed' as const,
+        () => 'refused' as const,
+      )
+      // Plenty of macrotasks: uncoordinated, the write lands here and is then destroyed with
+      // the database; coordinated, it must still be waiting when the destroy proceeds.
+      // Counted through the world's live handle: a fresh handle would share (and then close)
+      // PouchDB's one cached connection per name, under the destroy being tested.
+      for (let i = 0; i < 20; i += 1) await new Promise((resolve) => setTimeout(resolve, 5))
+      docsAtDestroy = await w.count(bravo.dbName)
+    }
+    const { model, row } = await w.view(bravo.dbName)
+
+    await w.actions.removeLocalCopy(model, row)
+
+    // Nothing landed between the check and the destroy: what was verified is what was destroyed.
+    expect(docsAtDestroy).toBe(1)
+    // And the write was not lost silently: held off past the destroy, it was refused where the
+    // other tab can see it, not swallowed with the database.
+    expect(await outcome).toBe('refused')
+    await tabB.close().catch(() => undefined)
+  })
+
+  it('promoting: a second tab cannot write between the final check and the destroy', async () => {
+    const w = world()
+    const alpha = await w.localProject()
+    const tabB = secondTab(alpha.dbName)
+    await tabB.info()
+
+    let outcome: Promise<'landed' | 'refused'> | undefined
+    let docsAtDestroy = -1
+    w.state.beforeDestroy = async () => {
+      w.state.beforeDestroy = undefined
+      outcome = tabB.put(device('device:late')).then(
+        () => 'landed' as const,
+        () => 'refused' as const,
+      )
+      for (let i = 0; i < 20; i += 1) await new Promise((resolve) => setTimeout(resolve, 5))
+      docsAtDestroy = await w.count(alpha.dbName)
+    }
+    const { model, row } = await w.view(alpha.dbName)
+
+    await w.actions.promote(model, row)
+
+    // The project document and two devices the check verified, and not one document more.
+    expect(docsAtDestroy).toBe(3)
+    expect(await outcome).toBe('refused')
+    // The verified copy is untouched by any of it.
+    const [project] = w.server as [Project]
+    expect((await w.database(project.dbName).allDocs()).rows).toHaveLength(2)
+    await tabB.close().catch(() => undefined)
   })
 })

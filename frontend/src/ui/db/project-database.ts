@@ -19,6 +19,7 @@ import {
   projectRepositories,
 } from '../../data/index.js'
 import { PROJECT_CHANGED } from '../current-project.js'
+import { coordinateWrites } from './db-lock.js'
 
 /**
  * The local catalogue.
@@ -79,12 +80,20 @@ export function openProject(dbName: string): ProjectRepositories {
   return openHandle(dbName).repositories
 }
 
-/** The memoised handle for a database, opening it on first use. */
+/**
+ * The memoised handle for a database, opening it on first use.
+ *
+ * Opened straight into the cross-tab write coordination of #220 (`db-lock.ts`): every write
+ * through the handle — the repositories built below included, and replication pulling into it —
+ * holds the database's shared Web Lock, so a destroy in another tab cannot race a fresh open;
+ * the first write simply waits until the destroy is over, and then fails where its caller sees
+ * it rather than landing in a database that was verified as fully transferred.
+ */
 function openHandle(dbName: string): OpenedProject {
   const existing = opened.get(dbName)
   if (existing !== undefined) return existing
 
-  const database = new PouchDB(dbName)
+  const database = coordinateWrites(dbName, new PouchDB(dbName))
   const handle = { database, repositories: projectRepositories(database) }
   opened.set(dbName, handle)
   return handle
