@@ -400,6 +400,13 @@ a.app-device:hover {
   text-overflow: ellipsis;
 }
 
+/* The name reveal's tooltip caps its body at 30ch but does not break an unbroken word, and the
+   row's own clipping cannot reach into the shadow DOM — a 200-character serial pasted as a name
+   would run the bubble off a phone screen. `body` is the tooltip's documented content part. */
+[data-name-tip]::part(body) {
+  overflow-wrap: anywhere;
+}
+
 /* Open and the menu never wrap apart: the menu belongs to the row's Open. */
 .app-row-actions {
   flex-wrap: nowrap;

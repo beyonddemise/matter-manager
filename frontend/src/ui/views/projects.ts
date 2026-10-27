@@ -910,9 +910,25 @@ export class ProjectsView extends LitElement {
     const rename = row.actions.rename
     const shown = row.name === '' ? msg('Unnamed project') : row.name
     // `click` besides the default hover/focus triggers, because on some phones a tap does not
-    // move focus to a plain focusable span, and the tap is the reveal this exists for.
+    // move focus to a plain focusable span, and the tap is the reveal this exists for. The span
+    // is a button to the keyboard too (role, Enter and Space): Escape closes the tooltip while
+    // focus stays on the name, and without an activation contract nothing could reopen it short
+    // of leaving and coming back (#318 review). Space is cancelled so the page does not scroll.
     const name = truncates
-      ? html`<span data-name id=${`app-name-${row.key}`} tabindex="0">${shown}</span>
+      ? html`<span
+            data-name
+            id=${`app-name-${row.key}`}
+            tabindex="0"
+            role="button"
+            @keydown=${(event: KeyboardEvent) => {
+              if (event.key !== 'Enter' && event.key !== ' ') return
+              event.preventDefault()
+              const tip = (event.currentTarget as Element).parentElement?.querySelector(
+                '[data-name-tip]',
+              ) as (HTMLElement & { open: boolean }) | null
+              if (tip != null) tip.open = !tip.open
+            }}
+          >${shown}</span>
           <wa-tooltip data-name-tip for=${`app-name-${row.key}`} trigger="hover focus click">
             ${shown}
           </wa-tooltip>`

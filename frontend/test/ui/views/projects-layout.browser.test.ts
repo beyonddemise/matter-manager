@@ -230,6 +230,55 @@ describe('a member row at 360px (#281)', () => {
     expect(onOneLine(find(view, '[data-row="project_local_a"] [data-name]'), words)).toBe(true)
   })
 
+  it('reopens the name reveal with Enter or Space after Escape closed it', async () => {
+    // Escape closes the tooltip but leaves focus on the name; without an activation contract a
+    // keyboard reader would then be stuck (#318 review): hover cannot help, and a plain span
+    // swallows Enter and Space.
+    const name = 'Hillside Residence Renovation with an Uncommonly Elaborate Project Name'
+    const view = await pageAt(
+      WIDTH,
+      memberInput({ local: [entry({ name })], server: [], syncStates: () => undefined }),
+    )
+
+    const row = find(view, '[data-row="project_local_a"]')
+    const span = find(row, '[data-name]')
+    const tip = find<HTMLElement & { open: boolean }>(row, '[data-name-tip]')
+    expect(span.getAttribute('role')).toBe('button')
+    span.focus()
+    await waitUntil(() => tip.open, 'focusing the name never opened its tooltip')
+    const key = (k: string) =>
+      span.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, composed: true }))
+    key('Escape')
+    await waitUntil(() => !tip.open, 'Escape never closed the tooltip')
+    expect(document.activeElement).toBe(span)
+    key('Enter')
+    await waitUntil(() => tip.open, 'Enter never reopened the tooltip')
+    key('Escape')
+    await waitUntil(() => !tip.open, 'the second Escape never closed the tooltip')
+    key(' ')
+    await waitUntil(() => tip.open, 'Space never reopened the tooltip')
+  })
+
+  it('wraps an unbroken name inside the tooltip instead of running off screen', async () => {
+    // Web Awesome caps the tooltip body at 30ch but does not break an unbroken word, and the
+    // row's own clipping cannot reach into the shadow DOM (#318 review).
+    const name = 'N'.repeat(200)
+    const view = await pageAt(
+      WIDTH,
+      memberInput({ local: [entry({ name })], server: [], syncStates: () => undefined }),
+    )
+
+    const row = find(view, '[data-row="project_local_a"]')
+    const tip = find<HTMLElement & { open: boolean }>(row, '[data-name-tip]')
+    find(row, '[data-name]').focus()
+    await waitUntil(() => tip.open, 'focusing the name never opened its tooltip')
+    const body = tip.shadowRoot?.querySelector('[part~="body"]')
+    if (body === null || body === undefined) throw new Error('the tooltip has no body part')
+    expect(getComputedStyle(body).overflowWrap).toBe('anywhere')
+    await waitUntil(() => rect(body).width > 0, 'the tooltip body never took shape')
+    expect(rect(body).width).toBeLessThanOrEqual(document.documentElement.clientWidth)
+  })
+
   it('keeps rename on the row and Open at least 24px square (WCAG 2.2 AA)', async () => {
     const view = await pageAt(WIDTH, memberInput())
 
