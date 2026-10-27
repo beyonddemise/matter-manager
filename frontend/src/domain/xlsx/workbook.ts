@@ -33,13 +33,14 @@ export interface Worksheet {
 }
 
 /**
- * Characters XML 1.0 cannot carry at all, raw or as references: C0 controls bar tab, LF, CR.
+ * Characters XML 1.0 cannot carry at all, raw or as references: the C0 controls bar tab, LF
+ * and CR, plus the two non-characters U+FFFE and U+FFFF, which the Char production excludes.
  *
  * Escaping cannot save these — `&#0;` is as ill-formed as a raw NUL — and one such character
  * would make a spreadsheet application refuse the whole file, so they are dropped.
  */
 // biome-ignore lint/suspicious/noControlCharactersInRegex: matching them is this line's job
-const UNREPRESENTABLE = /[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g
+const UNREPRESENTABLE = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]/g
 
 /** Text made safe for XML content and attribute values alike. */
 function escaped(value: string): string {

@@ -210,9 +210,17 @@ export class DeviceListView extends LitElement {
    */
   private onProjectChanged = (): void => {
     this.resolved = undefined
+    // A running export is abandoned, and that is a security property rather than tidiness:
+    // the document under construction holds the pairing codes of the project it was started
+    // from, and finished after the switch it would be downloaded under the new project's view.
+    this.cancelExport()
     // Cleared, not left showing the old project's devices while the new ones arrive. A list
     // that keeps them is a list showing another building's contents under this building's name.
     this.devices = []
+    // In the new project's terms nothing has been read yet, and the old project's failure is
+    // not this project's failure. Both are re-established by the load below.
+    this.loaded = false
+    this.failed = false
     void this.load()
   }
 
@@ -552,7 +560,10 @@ export class DeviceListView extends LitElement {
    * them. M3-2 turns that into a deliberate choice rather than a consequence.
    */
   private async onExport(selection: ExportSelection = { kind: 'all' }): Promise<void> {
-    if (this.exporting) return
+    // `!this.loaded` besides the buttons' `disabled`, because a programmatic click does not
+    // honour it: before the first read succeeds there is nothing to export, and an empty
+    // inventory handed to a client reads as an empty building.
+    if (this.exporting || !this.loaded) return
     const token = ++this.exportToken
     this.exporting = true
     this.exportFailed = false
@@ -599,7 +610,8 @@ export class DeviceListView extends LitElement {
    * (gated on `exportProgress`) stays down.
    */
   private async onExportXlsx(): Promise<void> {
-    if (this.exporting) return
+    // The same two refusals as onExport, for the same reasons.
+    if (this.exporting || !this.loaded) return
     const token = ++this.exportToken
     this.exporting = true
     this.exportFailed = false
@@ -626,7 +638,8 @@ export class DeviceListView extends LitElement {
    * "exporting" states would let both start at once and both write a file.
    */
   private async onExportLabels(): Promise<void> {
-    if (this.exporting) return
+    // The same two refusals as onExport, for the same reasons.
+    if (this.exporting || !this.loaded) return
     const token = ++this.exportToken
     this.exporting = true
     this.exportFailed = false
@@ -770,10 +783,15 @@ export class DeviceListView extends LitElement {
                     )}
                   </wa-button>`
             }
+            <!-- The three export buttons also wait for the first successful read: before it
+                 — still reading, or the read failed — there is nothing to export, and a
+                 disabled button beats a document of nothing but headers. On loaded, not on
+                 failed: a project read once and then failing a refresh still has its data,
+                 and exporting that is reading, which is what read access is for. -->
             <wa-button
               data-labels
               appearance="outlined"
-              ?disabled=${this.exporting}
+              ?disabled=${this.exporting || !this.loaded}
               @click=${() => {
                 this.labelsOpen = true
               }}
@@ -781,14 +799,14 @@ export class DeviceListView extends LitElement {
               <wa-icon slot="start" name="tags"></wa-icon>
               ${msg('Labels')}
             </wa-button>
-            <wa-button data-export appearance="outlined" @click=${() => void this.onExport()} ?disabled=${this.exporting}>
+            <wa-button data-export appearance="outlined" @click=${() => void this.onExport()} ?disabled=${this.exporting || !this.loaded}>
               <wa-icon slot="start" name="file-pdf"></wa-icon>
               ${msg('Export PDF')}
             </wa-button>
             <wa-button
               data-export-xlsx
               appearance="outlined"
-              ?disabled=${this.exporting}
+              ?disabled=${this.exporting || !this.loaded}
               @click=${() => void this.onExportXlsx()}
             >
               <wa-icon slot="start" name="file-excel"></wa-icon>

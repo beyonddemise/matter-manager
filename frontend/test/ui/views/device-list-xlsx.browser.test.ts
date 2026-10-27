@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { readZip, type ZipLimits } from '../../../src/domain/archive/zip.js'
 import type { DeviceDocument, Unsaved } from '../../../src/domain/index.js'
 import { streamCodecs } from '../../../src/ui/archive/codec.js'
+import { PROJECT_CHANGED } from '../../../src/ui/current-project.js'
 import { activateLocale } from '../../../src/ui/i18n/localization.js'
 import type { DeviceListView } from '../../../src/ui/views/device-list.js'
 import '../../../src/ui/views/device-list.js'
@@ -166,6 +167,46 @@ describe('exporting the inventory to Excel', () => {
     const sheet = await sheetOf(saved[0]?.bytes ?? new Uint8Array())
     expect(texts(sheet)).toContain('Mirror light')
     expect(texts(sheet)).not.toContain('Ceiling light')
+  })
+
+  it('abandons an export the moment the reader moves to another project', async () => {
+    // Security, not tidiness: the workbook under construction holds the pairing codes of the
+    // project it was started from. Finished after the switch, it would be downloaded under
+    // the new project's view. The dispatch lands synchronously after the click, before the
+    // builder's first microtask, so the export is reliably still pending.
+    await seed()
+    const { element, saved } = await listWithDownload()
+
+    ;(element.querySelector('[data-export-xlsx]') as HTMLElement).click()
+    window.dispatchEvent(new CustomEvent(PROJECT_CHANGED))
+
+    // The switch also means the new project has not been read yet.
+    expect(element.loaded).toBe(false)
+
+    await new Promise((resolve) => setTimeout(resolve, 500))
+    expect(saved).toHaveLength(0)
+    expect(element.exporting).toBe(false)
+  })
+
+  it('is not offered before the first read has succeeded', async () => {
+    // Before the read there is nothing to export, and a header-only workbook handed to a
+    // client reads as an empty building. The handler refuses as well as the button, because
+    // a programmatic click does not honour `disabled`.
+    const pending = { devices: { list: () => new Promise(() => {}) } } as never
+    const element = (await fixture(
+      html`<device-list-view .repositories=${pending}></device-list-view>`,
+    )) as DeviceListView
+    await element.updateComplete
+    const saved: unknown[] = []
+    ;(element as DeviceListView & { download?: unknown }).download = (bytes: Uint8Array) =>
+      saved.push(bytes)
+
+    const button = element.querySelector('[data-export-xlsx]') as HTMLElement
+    expect(button.hasAttribute('disabled')).toBe(true)
+    button.click()
+
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    expect(saved).toHaveLength(0)
   })
 
   it('writes German headers under the German locale', async () => {

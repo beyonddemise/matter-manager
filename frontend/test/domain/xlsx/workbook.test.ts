@@ -122,6 +122,16 @@ describe('the workbook container', () => {
     expect(sheet).toContain('<t xml:space="preserve">abc\td</t>')
   })
 
+  it('drops U+FFFE and U+FFFF, which XML 1.0 also excludes', async () => {
+    // The other two non-characters escaping cannot save: outside the C0 range, so a control
+    // character class alone does not catch them, and one would have a reader refuse the file.
+    const sheet = (await unzipped({ name: 'Devices', rows: [['a\uFFFEb\uFFFFc']] })).get(
+      'xl/worksheets/sheet1.xml',
+    )
+
+    expect(sheet).toContain('<t>abc</t>')
+  })
+
   it('preserves leading and trailing whitespace in a cell', async () => {
     const sheet = (await unzipped({ name: 'Devices', rows: [[' spaced ']] })).get(
       'xl/worksheets/sheet1.xml',
