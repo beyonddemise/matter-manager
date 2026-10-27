@@ -2,6 +2,7 @@ import { ZipError } from '../../../src/domain/archive/zip.js'
 import '@awesome.me/webawesome-pro/dist/components/button/button.js'
 import '@awesome.me/webawesome-pro/dist/components/callout/callout.js'
 import '@awesome.me/webawesome-pro/dist/components/card/card.js'
+import '@awesome.me/webawesome-pro/dist/components/checkbox/checkbox.js'
 import '@awesome.me/webawesome-pro/dist/components/dialog/dialog.js'
 import '@awesome.me/webawesome-pro/dist/components/dropdown/dropdown.js'
 import '@awesome.me/webawesome-pro/dist/components/dropdown-item/dropdown-item.js'
@@ -206,8 +207,10 @@ async function page(input: Partial<ProjectsInput> = {}): Promise<ProjectsView> {
       }}
       .navigate=${(hash: string) => recorded.navigated.push(hash)}
       .actions=${actions}
-      .exportProject=${async (row: Row) => {
-        recorded.acted.push(['export', row.dbName])
+      .exportProject=${async (row: Row, password?: string) => {
+        recorded.acted.push(
+          password === undefined ? ['export', row.dbName] : ['export', row.dbName, password],
+        )
         await actionAnswer()
       }}
       .refresh=${async () => {
@@ -961,15 +964,69 @@ describe('the actions menu', () => {
     expect(item(view, 'project_p1', 'export').disabled).toBe(false)
   })
 
-  it('exports the row it was chosen on, without asking first', async () => {
+  /**
+   * Chooses Export on a row and answers its dialog: plainly, or with `password` typed twice.
+   * Resolves once the dialog has handed over; the export may still be running.
+   */
+  async function exportVia(view: ProjectsView, key: string, password?: string): Promise<void> {
+    await choose(view, key, 'export')
+    const exportDialog = find(view, 'project-export-dialog') as HTMLElement & {
+      updateComplete: Promise<boolean>
+    }
+    if (password !== undefined) {
+      const box = find<HTMLElement & { checked: boolean }>(exportDialog, '[data-field="protect"]')
+      box.checked = true
+      box.dispatchEvent(new Event('change', { bubbles: true }))
+      await exportDialog.updateComplete
+      for (const field of ['password', 'confirm-password']) {
+        type(exportDialog, `[data-field="${field}"]`, password)
+        find(exportDialog, `[data-field="${field}"]`).dispatchEvent(
+          new Event('input', { bubbles: true }),
+        )
+      }
+      await exportDialog.updateComplete
+    }
+    find(exportDialog, '[data-confirm-export]').click()
+    await view.updateComplete
+  }
+
+  it('asks how to export the row it was chosen on, then exports it plain', async () => {
     const view = await member({ local: [entry(), synced], server: [project()] })
 
     await choose(view, 'project_p1', 'export')
     expect(view.querySelector('[data-confirm-dialog][open]')).toBeNull()
+    expect(view.querySelector('[data-export-dialog][open]')).not.toBeNull()
+    expect(text(find(view, '[data-export-dialog]'))).toContain('“Beta”')
+    expect(recorded.acted).toEqual([])
+
+    find(view, '[data-confirm-export]').click()
     await settled(view)
 
     expect(recorded.acted).toEqual([['export', 'project_p1']])
+    expect(view.querySelector('[data-export-dialog][open]')).toBeNull()
     expect(view.querySelector('[data-error]')).toBeNull()
+  })
+
+  it('hands the password to the export when one is chosen (#307)', async () => {
+    const view = await member({ local: [entry()] })
+
+    await exportVia(view, 'project_local_a', 'a long enough password')
+    await settled(view)
+
+    expect(recorded.acted).toEqual([['export', 'project_local_a', 'a long enough password']])
+    expect(view.exporting).toBeUndefined()
+  })
+
+  it('exports nothing when the dialog is cancelled', async () => {
+    const view = await member({ local: [entry()] })
+
+    await choose(view, 'project_local_a', 'export')
+    find(view, '[data-cancel-export]').click()
+    await view.updateComplete
+
+    expect(view.exporting).toBeUndefined()
+    expect(view.busy).toBe(false)
+    expect(recorded.acted).toEqual([])
   })
 
   it('holds the page busy while exporting', async () => {
@@ -980,7 +1037,7 @@ describe('the actions menu', () => {
       })
     const view = await member({ local: [entry()] })
 
-    await choose(view, 'project_local_a', 'export')
+    await exportVia(view, 'project_local_a')
     expect(view.busy).toBe(true)
     finish()
     await settled(view)
@@ -992,7 +1049,7 @@ describe('the actions menu', () => {
     }
     const view = await member({ local: [entry()] })
 
-    await choose(view, 'project_local_a', 'export')
+    await exportVia(view, 'project_local_a')
     await settled(view)
 
     expect(text(find(view, '[data-error]'))).toContain('That did not work. Please try again.')
@@ -1004,7 +1061,7 @@ describe('the actions menu', () => {
     }
     const view = await member({ local: [entry()] })
 
-    await choose(view, 'project_local_a', 'export')
+    await exportVia(view, 'project_local_a')
     await settled(view)
 
     expect(text(find(view, '[data-error]'))).toContain(
@@ -1019,7 +1076,7 @@ describe('the actions menu', () => {
     }
     const view = await member({ local: [entry()] })
 
-    await choose(view, 'project_local_a', 'export')
+    await exportVia(view, 'project_local_a')
     await settled(view)
 
     const said = text(find(view, '[data-error]'))

@@ -1,7 +1,9 @@
 import '@awesome.me/webawesome-pro/dist/components/button/button.js'
 import '@awesome.me/webawesome-pro/dist/components/callout/callout.js'
 import '@awesome.me/webawesome-pro/dist/components/card/card.js'
+import '@awesome.me/webawesome-pro/dist/components/dialog/dialog.js'
 import '@awesome.me/webawesome-pro/dist/components/icon/icon.js'
+import '@awesome.me/webawesome-pro/dist/components/input/input.js'
 import { fixture, html, waitUntil } from '@open-wc/testing-helpers'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { ArchiveError } from '../../../src/domain/archive/project-archive.js'
@@ -34,7 +36,7 @@ const result = (over: Partial<ImportResult> = {}): ImportResult => ({
 
 /** The section, with `importFile` as its import. */
 async function section(
-  importFile: (file: Blob) => Promise<ImportResult>,
+  importFile: (file: Blob, password?: string) => Promise<ImportResult>,
 ): Promise<ProjectImportSection> {
   const element = (await fixture(
     html`<project-import-section .importFile=${importFile}></project-import-section>`,
@@ -277,6 +279,202 @@ describe('an import that fails', () => {
   })
 })
 
+describe('an export sealed with a password (#307)', () => {
+  const PASSWORD = 'a long enough password'
+
+  /** An import that wants {@link PASSWORD}, and records every password it was handed. */
+  function sealedImport() {
+    const tried: (string | undefined)[] = []
+    const importFile = async (_file: Blob, password?: string): Promise<ImportResult> => {
+      tried.push(password)
+      if (password === undefined) throw new ZipError('needsPassword', 'x')
+      if (password !== PASSWORD) throw new ZipError('wrongPassword', 'x')
+      return result()
+    }
+    return { tried, importFile }
+  }
+
+  /** Waits until the section is asking for a password and not importing. */
+  async function asked(element: ProjectImportSection): Promise<void> {
+    await waitUntil(
+      () => element.querySelector('[data-password-dialog][open]') !== null && !element.importing,
+      'the password was never asked for',
+    )
+    await element.updateComplete
+  }
+
+  /** Types a password into the prompt and presses Import. */
+  async function answer(element: ProjectImportSection, password: string): Promise<void> {
+    const input = element.querySelector('[data-field="import-password"]') as HTMLElement & {
+      value: string
+    }
+    input.value = password
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    await element.updateComplete
+    ;(element.querySelector('[data-import-password]') as HTMLElement).click()
+  }
+
+  it('asks for the password, then imports with it', async () => {
+    const { tried, importFile } = sealedImport()
+    const element = await section(importFile)
+
+    choose(element)
+    await asked(element)
+
+    // Asking is not failing: nothing is said to have gone wrong.
+    expect(element.querySelector('[data-import-problem]')).toBeNull()
+    expect(text(element.querySelector('[data-password-dialog]'))).toContain(
+      'This export is protected with a password.',
+    )
+    await answer(element, PASSWORD)
+    await outcome(element)
+
+    expect(tried).toEqual([undefined, PASSWORD])
+    expect(element.querySelector('[data-import-result]')).not.toBeNull()
+    expect(element.querySelector('[data-password-dialog][open]')).toBeNull()
+    expect(readCurrentProjectId(() => localStorage)).toBe('project_local_imported')
+    expect(projectActionRunning()).toBe(false)
+  })
+
+  it('says a wrong password is wrong, and asks again', async () => {
+    const { tried, importFile } = sealedImport()
+    const element = await section(importFile)
+
+    choose(element)
+    await asked(element)
+    await answer(element, 'not the password')
+    await waitUntil(
+      () => element.querySelector('[data-password-wrong]') !== null && !element.importing,
+      'the wrong password was never said',
+    )
+
+    expect(text(element.querySelector('[data-password-wrong]'))).toBe(
+      'This password does not open the file.',
+    )
+    // Announced, and focus back in the emptied field rather than on a disabled button.
+    expect(element.querySelector('[data-password-wrong]')?.getAttribute('role')).toBe('alert')
+    await waitUntil(
+      () => document.activeElement === element.querySelector('[data-field="import-password"]'),
+      'focus did not return to the password field',
+    )
+    expect(element.querySelector('[data-password-dialog][open]')).not.toBeNull()
+    await answer(element, PASSWORD)
+    await outcome(element)
+
+    expect(tried).toEqual([undefined, 'not the password', PASSWORD])
+  })
+
+  it('imports nothing when the prompt is cancelled', async () => {
+    const { tried, importFile } = sealedImport()
+    const element = await section(importFile)
+
+    choose(element)
+    await asked(element)
+    ;(element.querySelector('[data-cancel-password]') as HTMLElement).click()
+    await element.updateComplete
+
+    expect(element.asking).toBeUndefined()
+    // The dialog animates closed before it drops its `open` attribute.
+    await waitUntil(
+      () => element.querySelector('[data-password-dialog][open]') === null,
+      'the prompt never closed',
+    )
+    expect(element.querySelector('[data-import-result]')).toBeNull()
+    expect(tried).toEqual([undefined])
+    expect(localStorage.getItem(CURRENT_PROJECT_KEY)).toBeNull()
+  })
+
+  it('takes Enter in the password field as Import', async () => {
+    const { tried, importFile } = sealedImport()
+    const element = await section(importFile)
+
+    choose(element)
+    await asked(element)
+    const input = element.querySelector('[data-field="import-password"]') as HTMLElement & {
+      value: string
+    }
+    input.value = PASSWORD
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    await element.updateComplete
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    await outcome(element)
+
+    expect(tried).toEqual([undefined, PASSWORD])
+  })
+
+  it('treats the dialog closing itself (Escape) as Cancel', async () => {
+    const { importFile } = sealedImport()
+    const element = await section(importFile)
+
+    choose(element)
+    await asked(element)
+    const prompt = element.querySelector('[data-password-dialog]') as HTMLElement
+    // A field's hide event bubbling up is not the dialog closing.
+    element
+      .querySelector('[data-field="import-password"]')
+      ?.dispatchEvent(new Event('wa-after-hide', { bubbles: true }))
+    expect(element.asking).toBeDefined()
+    prompt.dispatchEvent(new Event('wa-after-hide'))
+
+    expect(element.asking).toBeUndefined()
+  })
+
+  it('cannot be closed while the password is being tried', async () => {
+    let release: ((value: ImportResult) => void) | undefined
+    const element = await section((_file, password) => {
+      if (password === undefined) return Promise.reject(new ZipError('needsPassword', 'x'))
+      return new Promise<ImportResult>((resolve) => {
+        release = resolve
+      })
+    })
+    choose(element)
+    await asked(element)
+    await answer(element, PASSWORD)
+    await waitUntil(() => release !== undefined, 'the password was never tried')
+    const prompt = element.querySelector('[data-password-dialog]') as HTMLElement
+
+    const hide = new Event('wa-hide', { cancelable: true })
+    prompt.dispatchEvent(hide)
+
+    expect(hide.defaultPrevented).toBe(true)
+    release?.(result())
+    await outcome(element)
+    const after = new Event('wa-hide', { cancelable: true })
+    prompt.dispatchEvent(after)
+    expect(after.defaultPrevented).toBe(false)
+  })
+
+  it('never asks for a plain export', async () => {
+    const tried: (string | undefined)[] = []
+    const element = await section(async (_file, password) => {
+      tried.push(password)
+      return result()
+    })
+
+    choose(element)
+    await outcome(element)
+
+    expect(tried).toEqual([undefined])
+    expect(element.querySelector('[data-password-dialog][open]')).toBeNull()
+  })
+
+  it('keeps the file it asked about, not one chosen later', async () => {
+    const files: number[] = []
+    const element = await section(async (file, password) => {
+      files.push(file.size)
+      if (password === undefined) throw new ZipError('needsPassword', 'x')
+      return result()
+    })
+
+    choose(element, new Uint8Array([1, 2, 3, 4, 5]))
+    await asked(element)
+    await answer(element, PASSWORD)
+    await outcome(element)
+
+    expect(files).toEqual([5, 5])
+  })
+})
+
 describe('what a failed import says', () => {
   it.each([
     [new ZipError('notAZip', 'x'), 'This file is not a zip file. Nothing was imported.'],
@@ -285,6 +483,15 @@ describe('what a failed import says', () => {
     [
       new ZipError('unsupported', 'x'),
       'This zip uses a format the import cannot read. Nothing was imported.',
+    ],
+    // Normally asked in the prompt rather than said; these are what stands when they are said.
+    [
+      new ZipError('needsPassword', 'x'),
+      'This export is protected with a password. Nothing was imported.',
+    ],
+    [
+      new ZipError('wrongPassword', 'x'),
+      'This password does not open the file. Nothing was imported.',
     ],
     [
       new ArchiveError('notAProject', 'x'),

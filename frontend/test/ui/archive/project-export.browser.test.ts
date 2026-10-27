@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import { ProjectLockedError } from '../../../src/data/index.js'
-import { ARCHIVE_LIMITS, readProjectArchive } from '../../../src/domain/archive/project-archive.js'
-import { readZip, type ZipEntry, ZipError } from '../../../src/domain/archive/zip.js'
+import {
+  ARCHIVE_LIMITS,
+  projectArchiveEntries,
+  readProjectArchive,
+} from '../../../src/domain/archive/project-archive.js'
+import { readZip, writeZip, type ZipEntry, ZipError } from '../../../src/domain/archive/zip.js'
 import type { DeviceDocument } from '../../../src/domain/index.js'
 import { streamCodecs } from '../../../src/ui/archive/codec.js'
 import {
@@ -193,6 +197,72 @@ describe('exporting a project', () => {
 
     await expect(exportProject(row, failing)).rejects.toThrow('indexed_db_went_bad')
     expect(downloads).toEqual([])
+  })
+})
+
+describe('an export with a password (#307)', () => {
+  const PASSWORD = 'eleven words of nothing'
+
+  it('seals the archive: nothing in the file reads without the password', async () => {
+    const { deps, downloads } = fakes({ name: 'Hillside', client: 'Acme' })
+
+    await exportProject(row, deps, PASSWORD)
+
+    const bytes = (downloads[0] as { bytes: Uint8Array }).bytes
+    // The raw file, as anyone holding it sees it: no setup code, no project name.
+    const raw = new TextDecoder('latin1').decode(bytes)
+    expect(raw).not.toContain('34970112332')
+    expect(raw).not.toContain('Hillside')
+    const failure = await readZip(bytes, streamCodecs, ARCHIVE_LIMITS).catch((e: unknown) => e)
+    expect((failure as ZipError).problem).toBe('needsPassword')
+  })
+
+  it('opens with the password into the same project', async () => {
+    const { deps, downloads } = fakes({ name: 'Hillside', client: 'Acme' })
+
+    await exportProject(row, deps, PASSWORD)
+
+    const bytes = (downloads[0] as { bytes: Uint8Array }).bytes
+    const imported = readProjectArchive(
+      await readZip(bytes, streamCodecs, ARCHIVE_LIMITS, PASSWORD),
+    )
+    expect(imported.project).toEqual({ name: 'Hillside', client: 'Acme' })
+    expect(imported.devices.map((d) => d._id).sort()).toEqual([`device:${LAMP}`, `device:${PLUG}`])
+    expect(downloads[0]?.filename).toBe('Hillside 2026-10-19.zip')
+  })
+
+  it('without a password, offers exactly the plain archive it always did', async () => {
+    const { deps, downloads } = fakes({ name: 'Hillside' })
+
+    await exportProject(row, deps)
+
+    const expected = await writeZip(
+      projectArchiveEntries(
+        { name: 'Hillside' },
+        [device(LAMP), device(PLUG, { room: 'Hall' })],
+        at(14, 30).toISOString(),
+      ),
+      streamCodecs,
+      at(14, 30),
+    )
+    expect(downloads[0]?.bytes).toEqual(expected)
+  })
+
+  it('still refuses a locked project: a password adds no codes to a locked read', async () => {
+    const encrypted = await lockedDatabase()
+    try {
+      const { _rev: _r, updatedAt: _u, ...fresh } = device(LAMP)
+      await encrypted.unlocked.devices.save(fresh)
+      const { deps, downloads } = fakes({ name: 'Hillside' })
+      const locked: ExportDependencies = { ...deps, devices: () => encrypted.locked.devices.list() }
+
+      const failure = await exportProject(row, locked, PASSWORD).catch((e: unknown) => e)
+
+      expect(failure).toBeInstanceOf(ProjectLockedError)
+      expect(downloads).toEqual([])
+    } finally {
+      await encrypted.destroy()
+    }
   })
 })
 
