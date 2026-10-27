@@ -1,6 +1,13 @@
 import PouchDB from 'pouchdb-browser'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { API_BASE, beginSignIn, COUCH_BASE, catalog, endSession } from '../../src/ui/composition.js'
+import {
+  API_BASE,
+  beginSignIn,
+  COUCH_BASE,
+  catalog,
+  endSession,
+  keyRecovery,
+} from '../../src/ui/composition.js'
 import { forgetTokens, pouchRefreshTokenStore, rememberAccessToken } from '../../src/ui/tokens.js'
 
 /**
@@ -77,5 +84,28 @@ describe('the catalogue lookup it hands out', () => {
     expect(outcome.kind).toBe('found')
     expect(outcome.kind === 'found' ? outcome.lookup.source : undefined).toBe('test-vendor')
     expect(fetchImpl).not.toHaveBeenCalled()
+  })
+})
+
+/** #304: the escrow recovery `main.ts` registers for projects that open locked. */
+describe('the key recovery it hands out', () => {
+  it('asks nothing while signed out, and nothing for a local-only project', async () => {
+    const db = new PouchDB(`project_recovery_${crypto.randomUUID().slice(0, 8)}`)
+    try {
+      const fetchImpl = vi.fn<typeof fetch>()
+      const recover = keyRecovery(fetchImpl)
+
+      // No token held: not reachable, so not even the pull is attempted.
+      expect(await recover('project_6ba7b810', db)).toBe(false)
+
+      // Signed in, but a local-only database has no server copy and no escrow to ask.
+      rememberAccessToken({ accessToken: 'access-1', expiresIn: 3600 })
+      expect(await recover('project_local', db)).toBe(false)
+      expect(await recover(`project_local_${crypto.randomUUID()}`, db)).toBe(false)
+
+      expect(fetchImpl).not.toHaveBeenCalled()
+    } finally {
+      await db.destroy()
+    }
   })
 })

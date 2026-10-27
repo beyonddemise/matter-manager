@@ -9,6 +9,10 @@
  * start. A 404 from `GET /escrowkey` is the feature being off server-side — the expected state
  * until the backend endpoints (B4/B5) are deployed — and is an answer, not an error.
  *
+ * The third use is recovery (#304): a project that opens locked asks `POST /escrow` to re-wrap
+ * its key for this device ({@link recoverProjectKey}), pull-first and with a single retry on a
+ * stale document. `ui/db/project-database.ts` triggers it; `composition.ts` binds the pull.
+ *
  * Like `profile.ts` and `projects.ts`, this module holds no PouchDB and no browser-only import,
  * so its tests run in Node; `composition.ts` wires the real cache, device key and token in.
  *
@@ -16,7 +20,9 @@
  */
 
 import type { CachedEscrowKey, LocalCache } from '../data/index.js'
+import { PROJECT_DOCUMENT_ID } from '../domain/documents/project.js'
 import type { DeviceKey } from './db/device-key.js'
+import { type KeyringDependencies, unlockProject } from './db/keyring.js'
 
 /** The escrow public key as `GET /escrowkey` answers it. */
 export type EscrowKeyInfo = { kid: string; alg: string; publicKey: string }
@@ -51,7 +57,27 @@ export interface EscrowApi {
    * server-side: an ordinary state, not a failure.
    */
   fetchEscrowKey(): Promise<EscrowKeyInfo | null>
+  /**
+   * `POST /escrow {document, deviceKeyId}` — asks the server to re-wrap the project's DEK for
+   * this device (spec endpoint 3). With no token held, nothing is sent and the answer is
+   * `refused`: the request could only earn a 401.
+   *
+   * @param document this browser's copy of the project document, freshly pulled — the server
+   *   compares it with its own (decision 5)
+   * @throws on a network failure or a 5xx — not a refusal, and the caller decides how quiet to be
+   */
+  rewrap(document: object, deviceKeyId: string): Promise<RewrapOutcome>
 }
+
+/**
+ * What `POST /escrow` answered, as recovery branches on it:
+ *
+ * - `rewrapped` — 204, the wrap for this device is on the server now; a pull brings it here.
+ * - `document-mismatch` — 409 naming that reason: the posted copy is stale, and one re-pull fixes it.
+ * - `refused` — any other 4xx: not a member, an unregistered kid, no escrow wrap to unwrap.
+ *   Nothing asking again right now could change, so recovery stops.
+ */
+export type RewrapOutcome = 'rewrapped' | 'document-mismatch' | 'refused'
 
 /**
  * The API client, in the bearer-fetch style of `projects.ts`: the access token in an
@@ -95,7 +121,109 @@ export function escrowApi(
       if (!isEscrowKeyInfo(body)) throw new Error('The escrow key answer was not one.')
       return { kid: body.kid, alg: body.alg, publicKey: body.publicKey }
     },
+
+    async rewrap(document: object, deviceKeyId: string): Promise<RewrapOutcome> {
+      const held = token()
+      if (held === undefined) return 'refused'
+      const response = await fetchImpl(`${base}/escrow`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          accept: 'application/problem+json, application/json',
+          authorization: `Bearer ${held}`,
+        },
+        body: JSON.stringify({ document, deviceKeyId }),
+      })
+      if (response.ok) return 'rewrapped'
+      if (response.status >= 500) {
+        throw new Error(`The project key could not be recovered (${response.status}).`)
+      }
+      // Branched on the problem's `reason`, never its title (the contract's `Problem` schema):
+      // a body that is missing or not JSON reads as a plain refusal, which stops recovery
+      // rather than retrying on a guess.
+      if (response.status === 409) {
+        const body = (await response.json().catch(() => undefined)) as
+          | { reason?: unknown }
+          | undefined
+        if (body?.reason === 'document-mismatch') return 'document-mismatch'
+      }
+      return 'refused'
+    },
   }
+}
+
+/** What escrow recovery reaches outside the database it is handed. Injected, so tests own it. */
+export interface RecoveryDependencies {
+  /** The escrow endpoints; only the re-wrap is used. */
+  readonly api: Pick<EscrowApi, 'rewrap'>
+  /**
+   * One pull of this project from the server into the database (`pullOnce` in the application).
+   * Rejects when the server cannot be reached, which recovery lets through.
+   */
+  readonly pull: () => Promise<unknown>
+  /** Whether a request can be made now: online, and signed in. Checked before anything is sent. */
+  readonly reachable: () => boolean
+  /** The device key, for the unlock and for the kid the server wraps for. */
+  readonly keyring: KeyringDependencies
+}
+
+/** The project document as this copy holds it, or `undefined` when it has none to prove. */
+async function readProjectDocument(database: PouchDB.Database): Promise<object | undefined> {
+  try {
+    return await database.get(PROJECT_DOCUMENT_ID)
+  } catch (error) {
+    if ((error as { status?: unknown }).status === 404) return undefined
+    throw error
+  }
+}
+
+/**
+ * Recovers a locked project's key through escrow (spec §Project keys, "Missing wrap"; #304).
+ *
+ * The protocol, in the order that matters:
+ *
+ * 1. **Pull first.** The wrap may already be on the server — an earlier attempt's, or one
+ *    another session asked for — and then there is nothing to ask for: the unlock that follows
+ *    succeeds and **no request is made**.
+ * 2. Still locked → `POST /escrow` with the **freshly pulled** `project` document: the server
+ *    compares it with its own copy and `_rev` (decision 5), so a copy from before the pull
+ *    would be refused as stale.
+ * 3. 204 → pull again (the server wrote `key:<kid>` into its copy) and unlock.
+ * 4. 409 `document-mismatch` → the document moved between pull and post: re-pull and post
+ *    **exactly once** more. Stale local metadata must not leave an online project locked, and
+ *    must not become a loop either.
+ * 5. Any other refusal → `false`. The project stays locked; the next open tries again.
+ *
+ * @returns whether the project now unlocks on this device
+ * @throws when the pull or the request fails outright (offline mid-way, a 5xx), or the wrap
+ *   that arrived does not unwrap — the caller logs it; the project simply stays locked
+ */
+export async function recoverProjectKey(
+  database: PouchDB.Database,
+  deps: RecoveryDependencies,
+): Promise<boolean> {
+  const { api, pull, reachable, keyring } = deps
+  // Offline or signed out: nothing could succeed, so nothing is attempted — not even the pull.
+  if (!reachable()) return false
+
+  await pull()
+  if ((await unlockProject(database, keyring)) !== null) return true
+
+  const { kid } = await keyring.deviceKey()
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    if (attempt > 0) await pull()
+    const document = await readProjectDocument(database)
+    // No project document means nothing to prove membership with: a copy that never received
+    // one cannot be re-wrapped, and asking would only earn a refusal.
+    if (document === undefined) return false
+    const outcome = await api.rewrap(document, kid)
+    if (outcome === 'rewrapped') {
+      await pull()
+      return (await unlockProject(database, keyring)) !== null
+    }
+    if (outcome === 'refused') return false
+  }
+  return false
 }
 
 /**

@@ -36,7 +36,9 @@ import { useBundledIcons } from './icons/library.js'
 useBundledIcons()
 
 import './app-shell.js'
+import { keyRecovery } from './composition.js'
 import { ensureDeviceKey } from './db/device-key.js'
+import { useKeyRecovery } from './db/project-database.js'
 import { negotiateLocale, readLocalePreference } from './i18n/locale.js'
 import { activateLocale } from './i18n/localization.js'
 import { registerServiceWorker } from './register-sw.js'
@@ -113,6 +115,10 @@ void requestPersistence(
 void ensureDeviceKey().catch((error: unknown) => {
   console.error('The device key could not be prepared at startup.', error)
 })
+
+// Escrow recovery for a project that opens locked (#304): registered before any view reads a
+// project, so the first locked resolution already has it. It checks online and signed-in itself.
+useKeyRecovery(keyRecovery())
 
 // Every lazy routed view, warmed now rather than fetched at navigation time (#214). The views
 // are split out of the entry chunk so that first paint parses only what first paint needs
