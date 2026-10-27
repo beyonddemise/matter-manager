@@ -8,6 +8,7 @@ import '@awesome.me/webawesome-pro/dist/components/button/button.js'
 import '@awesome.me/webawesome-pro/dist/components/icon/icon.js'
 import '@awesome.me/webawesome-pro/dist/components/input/input.js'
 import '@awesome.me/webawesome-pro/dist/components/tag/tag.js'
+import '@awesome.me/webawesome-pro/dist/components/tooltip/tooltip.js'
 import { waitUntil } from '@open-wc/testing-helpers'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { LocalProjectEntry } from '../../../src/data/index.js'
@@ -77,17 +78,18 @@ async function pageAt(width: number, input: ProjectsInput): Promise<ProjectsView
   view.input = input
   host.appendChild(view)
   await view.updateComplete
-  // Web Awesome's components render asynchronously; measuring before the input and the buttons
-  // have a height would compare nothing to nothing.
+  // Web Awesome's components render asynchronously; measuring before the input and the names
+  // have a height would compare nothing to nothing. The menu trigger rather than Open, because
+  // one scenario here is precisely a row that refuses Open.
   await waitUntil(
     () => {
       const field = view.querySelector('[data-slot-empty] wa-input')
-      const open = view.querySelector('[data-row] [data-open]')
+      const trigger = view.querySelector('[data-row] [data-actions-trigger]')
       return (
         field !== null &&
-        open !== null &&
+        trigger !== null &&
         field.getBoundingClientRect().height > 0 &&
-        open.getBoundingClientRect().height > 0
+        trigger.getBoundingClientRect().height > 0
       )
     },
     'the rows never took shape',
@@ -159,9 +161,41 @@ describe('a member row at 360px (#281)', () => {
     // Actually truncated (the text is wider than its box), not wrapped onto further lines.
     expect(span.scrollWidth).toBeGreaterThan(span.clientWidth)
     expect(getComputedStyle(span).textOverflow).toBe('ellipsis')
-    // And recoverable without opening anything: the title holds the whole name.
-    expect(span.getAttribute('title')).toBe(name)
+    // And recoverable where it is shown: the name takes focus (a tap gives it on a phone, Tab
+    // does on a keyboard) and its tooltip holds the whole name — not a `title`, which only a
+    // pointer that can hover ever sees.
+    expect(span.getAttribute('tabindex')).toBe('0')
+    expect(find(row, '[data-name-tip]').textContent).toContain(name)
     expect(onOneLine(span, find(row, '[data-open]'))).toBe(true)
+    expectNoHorizontalOverflow(row)
+  })
+
+  it('recovers a truncated name by focus even when the row offers nothing else', async () => {
+    // The hardest case (#318 review): a server-only copy while offline. Open is refused
+    // ("Not available offline"), the pen is disabled, so without a focusable reveal a touch
+    // or keyboard reader has no way back to the whole name.
+    const name = 'Hillside Residence Renovation with an Uncommonly Elaborate Project Name'
+    const view = await pageAt(
+      WIDTH,
+      memberInput({
+        local: [],
+        server: [project({ name })],
+        online: false,
+        serverStale: true,
+        syncStates: () => undefined,
+      }),
+    )
+
+    const row = find(view, '[data-row="project_p1"]')
+    expect(row.querySelector('[data-open]'), 'the premise: no Open on this row').toBeNull()
+    const span = find(row, '[data-name]')
+    expect(span.scrollWidth).toBeGreaterThan(span.clientWidth)
+    const tip = find<HTMLElement & { open: boolean }>(row, '[data-name-tip]')
+    expect(tip.textContent).toContain(name)
+    span.focus()
+    await waitUntil(() => tip.open, 'focusing the name never opened its tooltip')
+    // The reveal costs the row nothing: still one line, still nothing scrolling sideways.
+    expect(onOneLine(span, find(row, '[data-actions-trigger]'))).toBe(true)
     expectNoHorizontalOverflow(row)
   })
 

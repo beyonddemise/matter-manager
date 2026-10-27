@@ -1,6 +1,7 @@
-// Rendered by this view and by nothing in the shell, so imported here (#214): it travels in
+// Rendered by this view and by nothing in the shell, so imported here (#214): they travel in
 // this view's lazy chunk rather than in the entry chunk every visitor parses before first paint.
 import '@awesome.me/webawesome-pro/dist/components/scroller/scroller.js'
+import '@awesome.me/webawesome-pro/dist/components/tooltip/tooltip.js'
 import { msg, str, updateWhenLocaleChanges } from '@lit/localize'
 import { html, LitElement, nothing, type TemplateResult } from 'lit'
 import type { LocalProjectEntry } from '../../data/index.js'
@@ -703,7 +704,7 @@ export class ProjectsView extends LitElement {
     return html`
       <li data-row=${row.key} class="wa-flank:end wa-gap-s app-project-slot">
         <div class="wa-cluster wa-gap-xs app-row-content">
-          <div class="wa-cluster wa-gap-2xs app-project-name">${this.renderName(row, false)}</div>
+          <div class="wa-cluster wa-gap-2xs app-project-name">${this.renderName(row, false, true)}</div>
           ${this.renderLocation(row)} ${this.renderSync(row)} ${this.renderRowNote(row)}
         </div>
         <div class="wa-cluster wa-gap-2xs app-row-actions">
@@ -861,8 +862,16 @@ export class ProjectsView extends LitElement {
   /**
    * A row's name and its pen, or the form that edits them. The pro layout edits the client too;
    * the others have no client column to show it in.
+   *
+   * @param truncates whether this place truncates a long name with an ellipsis (the member
+   *   rows, `app.css` #281). The name must then stay recoverable where it is shown, and for
+   *   everyone — a `title` only a hovering pointer ever sees is not that (#318 review): the
+   *   span takes focus (a tap gives it on a phone, Tab on a keyboard) and a tooltip holds the
+   *   whole name. The hardest case needs exactly this reveal: a server-only copy while offline
+   *   has no Open and a disabled pen, so the name itself is the one thing left to ask. The
+   *   table and the cards never truncate, so there the span stays plain.
    */
-  private renderName(row: Row, withClient: boolean): TemplateResult {
+  private renderName(row: Row, withClient: boolean, truncates = false): TemplateResult {
     if (this.editing === row.key) {
       return html`
         <div data-rename-form class="wa-cluster wa-gap-xs">
@@ -900,9 +909,14 @@ export class ProjectsView extends LitElement {
     }
     const rename = row.actions.rename
     const shown = row.name === '' ? msg('Unnamed project') : row.name
-    // With the title, because a member row truncates a long name with an ellipsis (app.css,
-    // #281): the whole name stays recoverable where it is shown.
-    const name = html`<span data-name title=${shown}>${shown}</span>`
+    // `click` besides the default hover/focus triggers, because on some phones a tap does not
+    // move focus to a plain focusable span, and the tap is the reveal this exists for.
+    const name = truncates
+      ? html`<span data-name id=${`app-name-${row.key}`} tabindex="0">${shown}</span>
+          <wa-tooltip data-name-tip for=${`app-name-${row.key}`} trigger="hover focus click">
+            ${shown}
+          </wa-tooltip>`
+      : html`<span data-name>${shown}</span>`
     // No pen at all where renaming will never be possible here — a role that does not allow it,
     // a copy the server no longer takes, a promotion under way: an editing control that can only
     // ever be refused is noise. Disabled, with its reason, where it will come back (offline,
