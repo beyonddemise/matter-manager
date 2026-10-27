@@ -20,7 +20,14 @@ import { NAV_ROUTES } from '../../src/ui/router/routes.js'
 import { applyScheme, SCHEME_STORAGE_KEY } from '../../src/ui/scheme.js'
 import { accessToken, rememberAccessToken } from '../../src/ui/tokens.js'
 import { noEscrow } from './refresher-stub.js'
-import { destroyProjectStores, isolatedProjectStore } from './support/project-store.js'
+import {
+  destroyProjectStores,
+  isolatedProjectStore,
+  mintDeviceKeyUpFront,
+} from './support/project-store.js'
+
+// See `mintDeviceKeyUpFront`: the cold device keygen must not land in a `waitUntil` budget.
+mintDeviceKeyUpFront()
 
 /** A minimal shape for the reactive-update contract both `app-shell` and `wa-page` share. */
 interface Updatable {

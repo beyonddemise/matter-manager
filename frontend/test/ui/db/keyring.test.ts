@@ -12,6 +12,8 @@ import type { KeyringDependencies } from '../../../src/ui/db/keyring.js'
 import {
   createProjectKeys,
   ensureEscrowWrap,
+  ensureProjectKeys,
+  fieldCipher,
   memoiseKeyState,
   resolveKeyState,
   unlockProject,
@@ -255,5 +257,70 @@ describe('resolveKeyState', () => {
     await database.put(foreignWrap())
 
     expect(await resolveKeyState(database, deps)).toEqual({ kind: 'locked' })
+  })
+})
+
+describe('ensureProjectKeys', () => {
+  /** The real mint, counted: what the catalogue's provider and adoption both hand in. */
+  function countedMint() {
+    let calls = 0
+    const mint = async (database: PouchDB.Database): Promise<KeyState> => {
+      calls += 1
+      return {
+        kind: 'unlocked',
+        cipher: fieldCipher(await createProjectKeys(database, null, deps)),
+      }
+    }
+    return { mint, calls: () => calls }
+  }
+
+  it('mints a keyless database, then reuses its own wrap rather than minting again', async () => {
+    const database = freshDatabase()
+    const { mint, calls } = countedMint()
+
+    const first = await ensureProjectKeys(database, mint, deps)
+    const second = await ensureProjectKeys(database, mint, deps)
+
+    expect(calls()).toBe(1)
+    if (first?.kind !== 'unlocked' || second?.kind !== 'unlocked') throw new Error('not unlocked')
+    const sealed = await first.cipher.encrypt('device:a', 'manualCode', '34970112332')
+    expect(await second.cipher.decrypt('device:a', 'manualCode', sealed)).toBe('34970112332')
+  })
+
+  it('ends two concurrent callers on the winner’s DEK: the loser’s 409 re-reads it', async () => {
+    // Two tabs keying one catalogue at once: both resolve keyless, both mint, and the second
+    // `key:<own kid>` write conflicts. The loser must answer the winner's DEK — a DEK of its own
+    // would encrypt devices nobody can open after this page.
+    const database = freshDatabase()
+    const { mint } = countedMint()
+
+    const [a, b] = await Promise.all([
+      ensureProjectKeys(database, mint, deps),
+      ensureProjectKeys(database, mint, deps),
+    ])
+
+    const { rows } = await database.allDocs({ startkey: 'key:', endkey: 'key:￿' })
+    expect(rows).toHaveLength(1)
+    if (a?.kind !== 'unlocked' || b?.kind !== 'unlocked') throw new Error('not unlocked')
+    const sealed = await a.cipher.encrypt('device:a', 'payload', 'MT:Y.K9042C00KA0648G00')
+    expect(await b.cipher.decrypt('device:a', 'payload', sealed)).toBe('MT:Y.K9042C00KA0648G00')
+  })
+
+  it('raises a failed mint as itself, never as a lock', async () => {
+    const database = freshDatabase()
+    const quota = new Error('QuotaExceededError')
+
+    await expect(ensureProjectKeys(database, async () => Promise.reject(quota), deps)).rejects.toBe(
+      quota,
+    )
+  })
+
+  it('leaves a database holding only other devices’ wraps locked, minting nothing', async () => {
+    const database = freshDatabase()
+    await database.put(foreignWrap())
+    const { mint, calls } = countedMint()
+
+    expect(await ensureProjectKeys(database, mint, deps)).toEqual({ kind: 'locked' })
+    expect(calls()).toBe(0)
   })
 })

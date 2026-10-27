@@ -9,7 +9,14 @@ import '../../../src/ui/app-shell.js'
 import { targetLocales } from '../../../src/ui/generated/locale-codes.js'
 import { LOCALE_STORAGE_KEY, SOURCE_LOCALE } from '../../../src/ui/i18n/locale.js'
 import { activateLocale, getLocale, LOCALE_LOADERS } from '../../../src/ui/i18n/localization.js'
-import { destroyProjectStores, isolatedProjectStore } from '../support/project-store.js'
+import {
+  destroyProjectStores,
+  isolatedProjectStore,
+  mintDeviceKeyUpFront,
+} from '../support/project-store.js'
+
+// See `mintDeviceKeyUpFront`: the cold device keygen must not land in a `waitUntil` budget.
+mintDeviceKeyUpFront()
 
 interface Updatable {
   updateComplete?: Promise<unknown>

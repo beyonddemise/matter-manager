@@ -14,7 +14,12 @@
  * @module
  */
 
-import type { FieldCipher, KeyState } from '../../data/index.js'
+import {
+  type FieldCipher,
+  isConflict,
+  type KeyState,
+  projectRepositories,
+} from '../../data/index.js'
 // `domain/crypto` types keys structurally (its tsconfig has no DOM lib); the DOM's `CryptoKey`
 // and that shape are mutually assignable, which the signatures below rely on in both
 // directions — a DEK unwrapped there is answered here as a DOM `CryptoKey`, and a DOM key
@@ -23,6 +28,7 @@ import {
   decryptField,
   encryptField,
   generateDek,
+  isEncryptedField,
   unwrapDek,
   wrapDek,
 } from '../../domain/crypto/envelope.js'
@@ -33,6 +39,7 @@ import {
   projectKeyDocumentId,
   projectKeyRange,
 } from '../../domain/documents/keys.js'
+import { idRange } from '../../domain/index.js'
 import type { EscrowKeyInfo } from '../escrow-client.js'
 import { type DeviceKey, ensureDeviceKey } from './device-key.js'
 
@@ -223,7 +230,9 @@ export function memoiseKeyState(resolve: () => Promise<KeyState | undefined>): M
  *   before encryption existed — decision 2 migrates nothing — or one whose key documents have
  *   not replicated in yet, and in either case there is no DEK anywhere that could ever open it,
  *   so "locked" would be a promise no recovery can keep. Re-resolution (the provider seam in
- *   `ui/db/project-database.ts`) revisits the answer once replication delivers the wraps.
+ *   `ui/db/project-database.ts`) revisits the answer once replication delivers the wraps. Until
+ *   then the repository fails closed on any secret carrying the `enc:` prefix (#333): such a
+ *   document reads locked, so this state never hands ciphertext on as a code.
  * - **A wrap this device opens** → unlocked, with the cipher bound to the DEK.
  * - **Wraps for others only** → locked: the data is ciphertext and the key has not reached this
  *   device yet. F7's escrow recovery resolves this without ceremony when online.
@@ -236,4 +245,78 @@ export async function resolveKeyState(
   if (rows.length === 0) return undefined
   const dek = await unlockProject(database, deps)
   return dek === null ? { kind: 'locked' } : { kind: 'unlocked', cipher: fieldCipher(dek) }
+}
+
+/**
+ * The key state of a database that must have keys: what it already resolves to, else what
+ * `mint` makes of it — **only for a database this device is the source of** (the catalogue).
+ *
+ * Resolve before minting: an own wrap is reused, and wraps for other devices only answer locked
+ * and mint nothing (a second DEK beside one this device cannot open would split the project).
+ *
+ * Two minters at once — two tabs, or adoption beside the catalogue's own provider — both find
+ * nothing and both mint; the second `key:<own kid>` write then conflicts, before anything else is
+ * written, because the id is the same in every tab of this browser. The loser re-resolves and
+ * answers the **winner's** DEK, so no device is ever encrypted under a key that lost. Any other
+ * failure (quota, a keygen that fails) is raised as itself: it is a storage failure, not a lock,
+ * and saying "after the next sync" about it would promise a remedy that is not coming.
+ */
+export async function ensureProjectKeys(
+  database: PouchDB.Database,
+  mint: (database: PouchDB.Database) => Promise<KeyState>,
+  deps: KeyringDependencies = defaults,
+): Promise<KeyState> {
+  const existing = await resolveKeyState(database, deps)
+  if (existing !== undefined) return existing
+  try {
+    return await mint(database)
+  } catch (error) {
+    if (!isConflict(error)) throw error
+    const winner = await resolveKeyState(database, deps)
+    if (winner === undefined) throw error
+    return winner
+  }
+}
+
+/** Whether a stored document still holds a commissioning code in plaintext. */
+function holdsPlaintextCode(document: unknown): boolean {
+  const { payload, manualCode } = (document ?? {}) as { payload?: unknown; manualCode?: unknown }
+  return [payload, manualCode].some(
+    (value) => typeof value === 'string' && !isEncryptedField(value),
+  )
+}
+
+/**
+ * Re-saves, through the unlocked cipher, every device still holding a plaintext code (#331).
+ *
+ * Only those: a device already sealed — by an earlier, interrupted run — is not touched at all,
+ * and a half-sealed one is read back through the repository (whose decrypt passes plaintext
+ * through) so that each field reaches `encryptField` as plaintext, never as `enc:` input, which
+ * it refuses. Saved keeping `updatedAt`: re-encrypting changes nothing the reader entered, and
+ * a fresh stamp would outrank a real edit in the merge order (ADR 0010, ruling R26).
+ *
+ * **And every conflicted device**, whatever its winner holds (review of #335): a losing revision
+ * may be the plaintext one, and newer, so the merge takes its codes. The read below resolves the
+ * conflict — writing that merge below the seam, then deleting the losers — and the re-save
+ * encrypts the merged result, so the only live leaf left is ciphertext. Left to a later read,
+ * the plaintext merge would stay at rest as the winner.
+ */
+export async function encryptPlaintextDevices(
+  database: PouchDB.Database,
+  keyState: KeyState,
+  now?: () => string,
+): Promise<void> {
+  const { rows } = await database.allDocs({
+    ...idRange('device'),
+    include_docs: true,
+    conflicts: true,
+  })
+  const { devices } = projectRepositories(database, now, keyState)
+  for (const row of rows) {
+    const conflicted = ((row.doc as { _conflicts?: unknown[] } | undefined)?._conflicts ?? [])
+      .length
+    if (conflicted === 0 && !holdsPlaintextCode(row.doc)) continue
+    const device = await devices.get(row.id)
+    if (device !== undefined) await devices.saveKeepingUpdatedAt(device)
+  }
 }

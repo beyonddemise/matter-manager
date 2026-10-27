@@ -371,6 +371,32 @@ describe('catalogue backfill', () => {
     }
   })
 
+  // #333: the same harm through the other door. Devices replicated in before their `key:*`
+  // documents leave the database keyless, and keyless used to mean plaintext — so the pass sent
+  // `enc:v1:` ciphertext to the lookup and stamped the refusal for good. It must skip, exactly
+  // as for a locked project.
+  it('backfillSkipsKeylessCiphertext', async () => {
+    const encrypted = await lockedDatabase()
+    try {
+      await encrypted.unlocked.devices.save(device('a'))
+      const before = await encrypted.raw.get('device:a')
+      const { backfill, calls } = runner(() => Promise.resolve({ kind: 'unusable' }), {
+        devices: () => encrypted.keyless.devices,
+      })
+
+      backfill.trigger()
+      await backfill.idle()
+
+      expect(calls).toHaveLength(0)
+      const after = (await encrypted.raw.get('device:a')) as unknown as DeviceDocument
+      expect(after._rev).toBe(before._rev)
+      expect(after.catalogSource).toBeUndefined()
+      expect(after.catalogCheckedAt).toBeUndefined()
+    } finally {
+      await encrypted.destroy()
+    }
+  })
+
   it('runs again once when triggered while running, never twice at once', async () => {
     await database.repositories.devices.save(device('a'))
     const answer = deferred<LookupOutcome>()

@@ -20,6 +20,12 @@ export interface LockedTestDatabase {
    * still holds what it read under the lock (the F7 finding folded into #303).
    */
   readonly unlockable: ProjectRepositories
+  /**
+   * Repositories over the same store with no key state at all: what a database whose device
+   * documents replicated in before its `key:*` documents resolves to (#333). Must read exactly
+   * as {@link locked} does — the ciphertext is there, the key is not.
+   */
+  readonly keyless: ProjectRepositories
   /** Hands {@link unlockable} the DEK, as escrow recovery does. */
   unlock(): void
   /** The store itself, for asserting what is on disk rather than what a repository answers. */
@@ -47,6 +53,7 @@ export async function lockedDatabase(): Promise<LockedTestDatabase> {
     },
     unlocked: projectRepositories(raw, undefined, { kind: 'unlocked', cipher }),
     locked: projectRepositories(raw, undefined, () => ({ kind: 'locked' })),
+    keyless: projectRepositories(raw),
     raw,
     destroy: async () => {
       await raw.destroy()
