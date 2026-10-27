@@ -86,7 +86,9 @@ export interface RefreshTokenStore {
   read(): Promise<string | undefined>
   /**
    * Replaces the stored token. Called when an exchange returns a different one — after a fresh
-   * sign-in, since refresh tokens are not rotated (#209) and a refresh returns the same token.
+   * sign-in, and on every refresh since rotation landed (backend #27): each 200 carries the
+   * successor token, and the presented one dies 60 seconds later. Not storing the answer would
+   * sign the user out one grace window after the next refresh.
    */
   write(token: string): Promise<void>
   /** Removes the stored token; a no-op when there is none. */
