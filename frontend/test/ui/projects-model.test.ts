@@ -3,6 +3,7 @@ import type { LocalProjectEntry } from '../../src/data/index.js'
 import type { Plan } from '../../src/domain/plan.js'
 import type { Project } from '../../src/ui/projects.js'
 import {
+  detachableOrphans,
   type Permission,
   type ProjectsInput,
   projectsModel,
@@ -512,6 +513,90 @@ describe('joining the local index with the server list', () => {
     expect(rows(projectsModel(input())).map((row) => row.key)).toEqual(
       rows(projectsModel(input())).map((row) => row.dbName),
     )
+  })
+})
+
+describe('detaching the copies a fresh list proved orphans (#290)', () => {
+  // The server hard-deleted the project: the owner's copy is the last place its data exists, so
+  // the shell detaches it into a plain local project. The model names the candidates; only a
+  // copy on a server-named database that a fresh list no longer names, whose index entry
+  // *recorded* the owner role, qualifies.
+  const RECORDED: readonly LocalProjectEntry[] = [
+    local({ dbName: 'project_local_alpha', name: 'Alpha' }),
+    local({ dbName: 'project_bravo', name: 'Bravo', projectId: 'bravo', role: 'owner' }),
+    local({ dbName: 'project_delta', name: 'Delta', projectId: 'delta', role: 'owner' }),
+    local({ dbName: 'project_foxtrot', name: 'Foxtrot', projectId: 'foxtrot', role: 'read' }),
+  ]
+
+  it('names the owner’s orphans, and nothing else, on a fresh list', () => {
+    const model = projectsModel(input({ local: RECORDED, server: [] }))
+    expect(detachableOrphans(model).map((row) => row.dbName)).toEqual([
+      'project_bravo',
+      'project_delta',
+    ])
+  })
+
+  it('names nothing on a stale list, which may simply predate the project', () => {
+    const model = projectsModel(input({ local: RECORDED, server: [], serverStale: true }))
+    expect(detachableOrphans(model)).toEqual([])
+    expect(byKey(model, 'project_bravo').location).toBe('synced')
+  })
+
+  it('names nothing when no list was ever heard', () => {
+    const model = projectsModel(input({ local: RECORDED, server: undefined }))
+    expect(detachableOrphans(model)).toEqual([])
+  })
+
+  it('never names a copy whose entry recorded no role: owner-by-default is for counting', () => {
+    // `join` reads a role-less copy as the owner's so the plan count never over-creates. That
+    // safe default must not hand out editability: detaching needs the recorded role (#290).
+    const model = projectsModel(
+      input({ local: [local({ dbName: 'project_kilo', projectId: 'kilo' })], server: [] }),
+    )
+    expect(model.owned.map((row) => row.dbName)).toEqual(['project_kilo'])
+    expect(detachableOrphans(model)).toEqual([])
+  })
+
+  it('never names a collaborator’s copy: ownership is the index entry’s recorded role', () => {
+    const model = projectsModel(
+      input({
+        local: [local({ dbName: 'project_india', projectId: 'india', role: 'write' })],
+        server: [],
+      }),
+    )
+    expect(detachableOrphans(model)).toEqual([])
+  })
+
+  it('never names a remnant: its server project still exists, archived', () => {
+    const model = projectsModel(
+      input({
+        local: [local({ dbName: 'project_delta', projectId: 'delta', role: 'owner' })],
+        server: [server('delta', { archived: true })],
+      }),
+    )
+    expect(detachableOrphans(model)).toEqual([])
+  })
+
+  it('never names a half-done promotion, whose data has never been anywhere else', () => {
+    const model = projectsModel(
+      input({
+        local: [local({ dbName: 'project_local_hotel', projectId: 'hotel', role: 'owner' })],
+        server: [],
+      }),
+    )
+    expect(detachableOrphans(model)).toEqual([])
+  })
+
+  it('a collaborator’s orphan stays read-only, with only delete from this device', () => {
+    const model = projectsModel(input({ server: [] }))
+    const row = byKey(model, 'project_foxtrot')
+    expect(model.shared).toContain(row)
+    expect(row).toMatchObject({ location: 'local', editable: false })
+    expect(row.actions.rename).toEqual(no('read-only'))
+    expect(row.actions.promote).toEqual(na)
+    expect(row.actions.restore).toEqual(na)
+    expect(row.actions.removeLocal).toEqual(na)
+    expect(row.actions.deleteLocal).toEqual({ allowed: true, warn: 'unpushed-may-be-lost' })
   })
 })
 

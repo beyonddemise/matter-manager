@@ -14,6 +14,7 @@ import {
   adoptLegacyCatalogue,
   createLocalProject,
   destroyLocalProject,
+  detachOrphanedProject,
   indexServerProject,
   localProjectDefaults,
   renameLocalProject,
@@ -156,6 +157,109 @@ describe('indexing a copy of a server project', () => {
     const [entry] = await localProfileCache().readLocalProjects()
     expect(entry).toEqual({ ...first, name: 'Neu', client: undefined })
     expect(entry !== undefined && 'client' in entry).toBe(false)
+  })
+})
+
+describe('detaching an orphaned copy (#290)', () => {
+  /** A copy of a server project the server has since hard-deleted, with data worth keeping. */
+  const orphan = async () => {
+    await indexServerProject({
+      projectId: 'p1',
+      dbName: 'project_p1',
+      name: 'Beta',
+      client: 'Acme',
+      role: 'owner',
+    })
+    const source = rawDatabase('project_p1')
+    // As replication left it: the service's project document points at its server database.
+    await source.put({
+      _id: PROJECT_DOCUMENT_ID,
+      type: 'project',
+      name: 'Beta',
+      client: 'Acme',
+      serverDb: 'project_p1',
+    })
+    await source.put(device('device:one'))
+    return source
+  }
+
+  it('moves the data into a new local-only database and lists it as a local project', async () => {
+    await orphan()
+
+    const entry = await detachOrphanedProject('project_p1')
+
+    if (entry === undefined) throw new Error('the detach yielded, with no other tab around')
+    expect(entry).toMatchObject({ name: 'Beta', client: 'Acme' })
+    expect(entry.dbName).toMatch(/^project_local_[0-9a-f-]{36}$/)
+    expect(entry.projectId).toBeUndefined()
+    expect(entry.role).toBeUndefined()
+    expect(await localProfileCache().readLocalProjects()).toEqual([entry])
+    // The data travelled; the pointer at the server database did not.
+    const copy = rawDatabase(entry.dbName)
+    await expect(copy.get('device:one')).resolves.toMatchObject({ name: 'Kitchen lamp' })
+    const document = await copy.get(PROJECT_DOCUMENT_ID)
+    expect(document).toMatchObject({ type: 'project', name: 'Beta', client: 'Acme' })
+    expect('serverDb' in document).toBe(false)
+    // Only once everything was provably in the copy was the source destroyed.
+    expect(await documentCount('project_p1')).toBe(0)
+  })
+
+  it('copies again what lands while the copy runs, so nothing is destroyed unsent', async () => {
+    const source = await orphan()
+    const racing = Object.create(source) as PouchDB.Database
+    let raced = false
+    // An own property: on the PouchDB prototype `replicate` is a getter, so plain assignment
+    // through the prototype chain is refused.
+    Object.defineProperty(racing, 'replicate', {
+      value: {
+        to: async (target: never, options: never) => {
+          const result = await source.replicate.to(target, options)
+          if (!raced) {
+            raced = true
+            await source.put(device('device:late'))
+          }
+          return result
+        },
+      },
+    })
+
+    const entry = await detachOrphanedProject('project_p1', {
+      ...localProjectDefaults,
+      database: (dbName) => (dbName === 'project_p1' ? racing : rawDatabase(dbName)),
+    })
+
+    expect(raced).toBe(true)
+    if (entry === undefined) throw new Error('the detach yielded, with no other tab around')
+    await expect(rawDatabase(entry.dbName).get('device:late')).resolves.toMatchObject({
+      type: 'device',
+    })
+    expect(await documentCount('project_p1')).toBe(0)
+  })
+
+  it('yields, leaving no trace, when another tab detached first', async () => {
+    const source = await orphan()
+    const racing = Object.create(source) as PouchDB.Database
+    Object.defineProperty(racing, 'replicate', {
+      value: {
+        to: async (target: never, options: never) => {
+          // Another tab finished its detach while this one was copying: the entry is gone.
+          await localProfileCache().removeLocalProject('project_p1')
+          return source.replicate.to(target, options)
+        },
+      },
+    })
+
+    const entry = await detachOrphanedProject('project_p1', {
+      ...localProjectDefaults,
+      database: (dbName) => (dbName === 'project_p1' ? racing : rawDatabase(dbName)),
+      uuid: () => 'fixed',
+    })
+
+    expect(entry).toBeUndefined()
+    // Its half copy is gone, and the source — the other tab's to destroy — was not touched.
+    expect(await localProfileCache().readLocalProjects()).toEqual([])
+    expect(await documentCount('project_local_fixed')).toBe(0)
+    expect(await documentCount('project_p1')).toBe(2)
   })
 })
 

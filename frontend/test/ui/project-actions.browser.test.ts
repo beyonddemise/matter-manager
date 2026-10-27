@@ -6,8 +6,10 @@ import { coordinateWrites } from '../../src/ui/db/db-lock.js'
 import { PROJECT_DATABASE_NAME } from '../../src/ui/db/project-database.js'
 import {
   createLocalProject,
+  detachOrphanedProject,
   indexServerProject,
   type LocalProjectDependencies,
+  renameLocalProject,
 } from '../../src/ui/local-projects.js'
 import {
   type ProjectActionDependencies,
@@ -775,6 +777,65 @@ describe('putting a removed project back on the server', () => {
 
     expect(await refusal(w.actions.restore(model, row))).toBe('offline')
     expect(w.updated).toEqual([])
+  })
+})
+
+describe('an owner’s orphan, detached (#290)', () => {
+  /** A synchronized copy whose server project the server then hard-deleted. */
+  const orphaned = async (w: ReturnType<typeof world>) => {
+    const project = await w.syncedProject('Bravo')
+    // The replicated project document carries the server database's name.
+    await w
+      .database(project.dbName)
+      .put({ _id: PROJECT_DOCUMENT_ID, type: 'project', name: 'Bravo', serverDb: project.dbName })
+    w.server.length = 0 // the fresh list no longer names it
+    return project
+  }
+
+  it('is read-only before the detach, an ordinary local project after it', async () => {
+    const w = world()
+    const project = await orphaned(w)
+    const before = await w.view(project.dbName)
+    expect(before.row).toMatchObject({ location: 'local', editable: false })
+    expect(before.row.actions.rename).toMatchObject({ allowed: false })
+    expect(before.row.actions.promote).toMatchObject({ allowed: false })
+
+    const entry = await detachOrphanedProject(project.dbName, w.deps.local)
+
+    if (entry === undefined) throw new Error('the detach yielded, with no other tab around')
+    const { row } = await w.view(entry.dbName)
+    expect(row).toMatchObject({ location: 'local', editable: true })
+    expect(row.projectId).toBeUndefined()
+    expect(row.actions.rename).toEqual({ allowed: true })
+    expect(row.actions.promote).toEqual({ allowed: true })
+    await renameLocalProject(entry.dbName, 'Bravo again', w.deps.local)
+    expect((await w.view(entry.dbName)).row.name).toBe('Bravo again')
+  })
+
+  it('promotes as a new server project, whose devices arrive there', async () => {
+    const w = world()
+    const project = await orphaned(w)
+    const entry = await detachOrphanedProject(project.dbName, w.deps.local)
+    if (entry === undefined) throw new Error('the detach yielded, with no other tab around')
+
+    const { model, row } = await w.view(entry.dbName)
+    await w.actions.promote(model, row)
+
+    // A genuinely new `POST /projects` — the detached entry carries no id to reuse, so `target`
+    // creates rather than looks up — and nothing is patched or unarchived. (The fake server's
+    // ids restart per world, so the old and new id are not comparable here; the request log is.)
+    expect(w.created).toEqual([{ name: 'Bravo' }])
+    expect(w.updated).toEqual([])
+    const recreated = w.server[0]
+    if (recreated === undefined) throw new Error('no server project was created')
+    expect(w.pushes).toContain(recreated.projectId)
+    // The device went with it; the detached copy's own project document did not.
+    await expect(w.database(recreated.dbName).get('device:copy')).resolves.toMatchObject({
+      type: 'device',
+    })
+    expect(await w.count(recreated.dbName)).toBe(1)
+    // The index lists only the new server copy; the detached database finished its promotion.
+    expect((await w.cache.readLocalProjects()).map((e) => e.dbName)).toEqual([recreated.dbName])
   })
 })
 
