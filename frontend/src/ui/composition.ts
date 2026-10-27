@@ -29,6 +29,7 @@ import {
   localDatabase,
   localProfileCache,
   rawDatabase,
+  refreshKeyStateOnInboundKeys,
   removeLocalDatabases,
 } from './db/project-database.js'
 import { type EmailSignIn, emailSignIn } from './email-signin.js'
@@ -341,6 +342,10 @@ export function projectSync(
         token: accessToken,
         open: (url, options) => new PouchDB(url, { fetch: options.fetch }),
       }),
+    // Before the view notification, on both inbound paths: an inbound `key:*` document means
+    // the database's memoised key state (#302) is stale, and the re-read `onIncoming` triggers
+    // must already decrypt with the fresh one.
+    onInboundDocs: refreshKeyStateOnInboundKeys,
     ...(onState === undefined ? {} : { onState }),
     ...(onIncoming === undefined ? {} : { onIncoming }),
   })

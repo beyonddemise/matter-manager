@@ -1,4 +1,5 @@
 import { afterEach, beforeAll, describe, expect, it } from 'vitest'
+import { type KeyState, projectRepositories } from '../../../src/data/index.js'
 import { encodeBase64 } from '../../../src/domain/crypto/base64.js'
 import {
   decryptField,
@@ -11,6 +12,7 @@ import type { KeyringDependencies } from '../../../src/ui/db/keyring.js'
 import {
   createProjectKeys,
   ensureEscrowWrap,
+  memoiseKeyState,
   resolveKeyState,
   unlockProject,
 } from '../../../src/ui/db/keyring.js'
@@ -168,6 +170,61 @@ describe('ensureEscrowWrap', () => {
     await database.put(foreignWrap())
 
     await expect(ensureEscrowWrap(database, escrow, deps)).rejects.toThrow(/locked/i)
+  })
+})
+
+describe('memoiseKeyState', () => {
+  it('memoises a successful resolution for the handle lifetime', async () => {
+    let resolved = 0
+    const memo = memoiseKeyState(async () => {
+      resolved += 1
+      return { kind: 'locked' }
+    })
+
+    expect(await memo.provider()).toEqual({ kind: 'locked' })
+    expect(await memo.provider()).toEqual({ kind: 'locked' })
+    expect(resolved).toBe(1)
+  })
+
+  it('does not memoise a rejection: the failing operation throws, the next one retries', async () => {
+    // The browser-crashing version of this: `ensureDeviceKey` hiccups once (IndexedDB is
+    // allowed to), the rejected promise is memoised, and every read and write on the handle
+    // fails for the lifetime of the page. The error must surface once and then be forgotten.
+    let calls = 0
+    const memo = memoiseKeyState(async () => {
+      calls += 1
+      if (calls === 1) throw new Error('mm-keys was briefly unavailable')
+      return undefined
+    })
+
+    await expect(memo.provider()).rejects.toThrow(/unavailable/)
+    expect(await memo.provider()).toBeUndefined()
+    expect(calls).toBe(2)
+  })
+
+  it('refresh() drops the memo so the next consultation re-resolves', async () => {
+    const answers: (KeyState | undefined)[] = [undefined, { kind: 'locked' }]
+    const memo = memoiseKeyState(async () => answers.shift())
+
+    expect(await memo.provider()).toBeUndefined()
+    memo.refresh()
+    expect(await memo.provider()).toEqual({ kind: 'locked' })
+  })
+
+  it('a repository over a provider that failed once works on the next operation', async () => {
+    // The coordinator's framing of the bug, end to end at the seam: the first operation on the
+    // handle surfaces the resolution failure honestly, the second one succeeds.
+    const database = freshDatabase()
+    let calls = 0
+    const memo = memoiseKeyState(async () => {
+      calls += 1
+      if (calls === 1) throw new Error('key state could not be resolved')
+      return undefined
+    })
+    const { devices } = projectRepositories(database, undefined, memo.provider)
+
+    await expect(devices.list()).rejects.toThrow(/could not be resolved/)
+    expect(await devices.list()).toEqual([])
   })
 })
 

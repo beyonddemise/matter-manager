@@ -12,16 +12,16 @@
 import PouchDB from 'pouchdb-browser'
 import {
   isLocalOnlyDatabase,
-  type KeyState,
   type LocalCache,
   type LocalProjectEntry,
   localCache,
   type ProjectRepositories,
   projectRepositories,
 } from '../../data/index.js'
+import { PROJECT_KEY_PREFIX } from '../../domain/documents/keys.js'
 import { PROJECT_CHANGED } from '../current-project.js'
 import { coordinateWrites } from './db-lock.js'
-import { resolveKeyState } from './keyring.js'
+import { memoiseKeyState, resolveKeyState } from './keyring.js'
 
 /**
  * The local catalogue.
@@ -103,24 +103,34 @@ function openHandle(dbName: string): OpenedProject {
   // resolved once per opened database, not per read. Lazily, on the first repository operation
   // rather than here: opening is synchronous and, more importantly, project creation opens the
   // database *before* it writes the key documents, and a state resolved at that instant would
-  // memoise "plaintext" for a project that is about to be encrypted. The provider form is the
-  // F7 recovery seam: {@link refreshProjectKeyState} drops the memo, and the repositories every
-  // view already holds pick up the unlocked state on their next operation.
-  let keyState: Promise<KeyState | undefined> | undefined
-  const keyStateProvider = () => {
-    keyState ??= resolveKeyState(database)
-    return keyState
-  }
+  // memoise "plaintext" for a project that is about to be encrypted. `memoiseKeyState` also
+  // forgets a *rejected* resolution, so one IndexedDB hiccup fails one operation, not the
+  // handle. The provider form is the recovery seam: {@link refreshProjectKeyState} drops the
+  // memo, and the repositories every view already holds pick up the new state on their next
+  // operation.
+  const keyState = memoiseKeyState(() => resolveKeyState(database))
 
   const handle: OpenedProject = {
     database,
-    repositories: projectRepositories(database, undefined, keyStateProvider),
-    forgetKeyState: () => {
-      keyState = undefined
-    },
+    repositories: projectRepositories(database, undefined, keyState.provider),
+    forgetKeyState: keyState.refresh,
   }
   opened.set(dbName, handle)
   return handle
+}
+
+/**
+ * Drops a project's memoised key state when an inbound batch delivered wrap documents.
+ *
+ * Replication is how the `key:*` documents reach a database that resolved its state before they
+ * existed — a copy still downloading, or this device's missing wrap arriving via escrow — and a
+ * memo from before they landed is plaintext-or-locked about a database that can now do better.
+ * Filtered on the inbound ids rather than refreshing on every pull, so the common case (device
+ * edits arriving all day) never re-resolves anything. Wired to both inbound paths in
+ * `composition.ts`; the next repository operation picks the fresh state up.
+ */
+export function refreshKeyStateOnInboundKeys(dbName: string, docIds: readonly string[]): void {
+  if (docIds.some((id) => id.startsWith(PROJECT_KEY_PREFIX))) refreshProjectKeyState(dbName)
 }
 
 /**

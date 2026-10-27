@@ -181,6 +181,39 @@ export async function ensureEscrowWrap(
   return { kid: escrow.kid, wrapped }
 }
 
+/** A memoised key state: the provider the repositories consult, and the way to drop the memo. */
+export interface MemoisedKeyState {
+  /** Resolves the key state, once, and answers the same promise until {@link refresh}. */
+  readonly provider: () => Promise<KeyState | undefined>
+  /** Drops the memo, so the next consultation resolves afresh (the F7 recovery seam). */
+  readonly refresh: () => void
+}
+
+/**
+ * Memoises one database's key-state resolution for the lifetime of its handle.
+ *
+ * Success is remembered; **a rejection is not**. Resolution touches IndexedDB twice (`mm-keys`
+ * and the database itself), either of which is allowed a transient failure — and a memoised
+ * rejection would fail every later read and write on the handle for the lifetime of the page.
+ * So the operation that triggered the failed resolution still sees the error, honestly, and the
+ * next one resolves again.
+ */
+export function memoiseKeyState(resolve: () => Promise<KeyState | undefined>): MemoisedKeyState {
+  let memo: Promise<KeyState | undefined> | undefined
+  return {
+    provider: () => {
+      memo ??= resolve().catch((error: unknown) => {
+        memo = undefined
+        throw error
+      })
+      return memo
+    },
+    refresh: () => {
+      memo = undefined
+    },
+  }
+}
+
 /**
  * The key state a project database's repositories run under (`data/repository.ts`).
  *
