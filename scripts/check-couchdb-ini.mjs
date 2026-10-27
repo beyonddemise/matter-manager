@@ -67,17 +67,28 @@ const pin = read(PIN, `the drift pin for ${INI} has to be committed alongside it
 /**
  * The pinned hash: the single 64-hex-digit token among the pin file's non-comment lines
  * (shasum format, `<hash>  <path>`). Zero hashes means the pin lost its value in an edit or a
- * merge; more than one means nobody can say which the agreement is. Both refuse rather than
- * guess — a pin this check picked itself would certify agreement with nothing.
+ * merge; more than one means nobody can say which the agreement is. And a line that is
+ * *neither* a comment nor a hash — a `<<<<<<< HEAD` conflict marker, a truncated hash, stray
+ * prose — refuses too, rather than being skipped: a parser that quietly drops what it does not
+ * recognise is fail-open on exactly the corruption a pin file is most likely to suffer
+ * (PR #313 review). All three refuse rather than guess — a pin this check picked itself would
+ * certify agreement with nothing.
  */
 function pinnedHash(contents) {
-  const hashes = contents
+  const lines = contents
     .toString('utf8')
     .split('\n')
     .map((line) => line.trim())
     .filter((line) => line !== '' && !line.startsWith('#'))
-    .map((line) => /^([0-9a-f]{64})\b/.exec(line)?.[1])
-    .filter((hash) => hash !== undefined)
+  const strays = lines.filter((line) => !/^[0-9a-f]{64}\b/.test(line))
+  if (strays.length > 0) {
+    refuse(
+      PIN,
+      `${PIN} holds a line that is not a sha256 hash (${JSON.stringify(strays[0])}) — ` +
+        'the pin is unparseable, and refusing beats guessing which line is the pin',
+    )
+  }
+  const hashes = lines.map((line) => line.slice(0, 64))
   if (hashes.length !== 1) {
     refuse(
       PIN,

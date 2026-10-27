@@ -98,6 +98,29 @@ test('an unparseable pin fails rather than passes', () => {
   assert.match(output, /no sha256 hash/i)
 })
 
+test('a pin with a stray non-hash line fails rather than skipping it', () => {
+  // The line a merge leaves behind: one valid hash line plus `<<<<<<< HEAD`. A parser that
+  // quietly drops lines it does not recognise would pass this pin — fail-open on exactly the
+  // corruption a pin file is most likely to suffer (PR #313 review).
+  const { code, output } = runGuard(SCRIPT, {
+    [INI]: INI_CONTENTS,
+    [PIN]: `${pinFor(INI_CONTENTS)}<<<<<<< HEAD\n`,
+  })
+  assert.equal(code, 1)
+  assert.match(output, /00-base\.ini\.sha256/)
+  assert.match(output, /not a sha256 hash/i)
+})
+
+test('a truncated hash is a non-hash line, not a near-miss to accept', () => {
+  const truncated = createHash('sha256').update(INI_CONTENTS).digest('hex').slice(0, 63)
+  const { code, output } = runGuard(SCRIPT, {
+    [INI]: INI_CONTENTS,
+    [PIN]: `${truncated}  ${INI}\n`,
+  })
+  assert.equal(code, 1)
+  assert.match(output, /not a sha256 hash/i)
+})
+
 test('a pin with two competing hashes fails rather than picking one', () => {
   const hash = createHash('sha256').update(INI_CONTENTS).digest('hex')
   const other = createHash('sha256').update('something else').digest('hex')
