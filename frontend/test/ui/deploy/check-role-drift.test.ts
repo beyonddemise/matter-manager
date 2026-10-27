@@ -1,0 +1,165 @@
+import { spawnSync } from 'node:child_process'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { describe, expect, it } from 'vitest'
+
+const packageRoot = join(dirname(fileURLToPath(import.meta.url)), '../../..')
+const checker = join(packageRoot, 'scripts/check-role-drift.mjs')
+
+/**
+ * A contract fixture with the shape the real `openapi.yaml` has around its `Role` schema.
+ *
+ * The `Principal` schema above it is not decoration: its `enum: [user, org]` is a decoy. A
+ * parser that grabbed "the first enum in the file" would read that one and never fail these
+ * tests honestly, so the fixture plants it to prove the checker finds the `Role` schema
+ * specifically.
+ */
+const spec = (roles: string) => `openapi: 3.1.0
+info:
+  title: Fixture
+components:
+  schemas:
+    Principal:
+      type: object
+      properties:
+        ownerType: { type: string, enum: [user, org] }
+    Role:
+      type: string
+      enum: [${roles}]
+      description: |
+        What a participant may do in a project.
+    Device:
+      type: object
+`
+
+const union = (members: string[]) =>
+  `export type ProjectRole = ${members.map((m) => `'${m}'`).join(' | ')}\n`
+
+const AGREED_SPEC = spec('owner, manage, write, read')
+const AGREED_UNION = union(['owner', 'manage', 'write', 'read'])
+
+/** Runs the check over throwaway copies of the two files, as the other checker tests do. */
+function check(files: { spec?: string; union?: string }): { code: number; output: string } {
+  const dir = mkdtempSync(join(tmpdir(), 'check-role-drift-test-'))
+  try {
+    const args = [checker]
+    if (files.spec !== undefined) {
+      writeFileSync(join(dir, 'openapi.yaml'), files.spec)
+      args.push('--spec', join(dir, 'openapi.yaml'))
+    }
+    if (files.union !== undefined) {
+      writeFileSync(join(dir, 'role.ts'), files.union)
+      args.push('--union', join(dir, 'role.ts'))
+    }
+    const result = spawnSync('node', args, { encoding: 'utf8' })
+    return { code: result.status ?? -1, output: `${result.stdout}${result.stderr}` }
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+describe('the role-drift check', () => {
+  it('accepts a union and a contract enum that agree', () => {
+    const { code, output } = check({ spec: AGREED_SPEC, union: AGREED_UNION })
+    expect(output).toContain('ok')
+    expect(code).toBe(0)
+  })
+
+  it('accepts the files this repository actually has', () => {
+    // The positive control that matters: the parser recognises the real `openapi.yaml` and the
+    // real `src/domain/role.ts`, not just fixtures shaped by the same hand that wrote it.
+    const result = spawnSync('node', [checker], { encoding: 'utf8' })
+    const output = `${result.stdout}${result.stderr}`
+    expect(output).toContain('ok')
+    expect(result.status).toBe(0)
+  })
+
+  it('accepts a contract that writes the enum in block style', () => {
+    // The real file uses flow style today; a formatter could legitimately rewrite it.
+    const blockSpec = AGREED_SPEC.replace(
+      'enum: [owner, manage, write, read]',
+      'enum:\n        - owner\n        - manage\n        - write\n        - read',
+    )
+    const { code, output } = check({ spec: blockSpec, union: AGREED_UNION })
+    expect(output).toContain('ok')
+    expect(code).toBe(0)
+  })
+
+  it('fails when the contract has a role the union lacks, naming it and both files', () => {
+    const { code, output } = check({
+      spec: spec('owner, manage, write, read, audit'),
+      union: AGREED_UNION,
+    })
+    expect(code).toBe(1)
+    expect(output).toContain('audit')
+    expect(output).toContain('openapi.yaml')
+    expect(output).toContain('role.ts')
+  })
+
+  it('fails when the union has a role the contract lacks, naming it and both files', () => {
+    const { code, output } = check({
+      spec: AGREED_SPEC,
+      union: union(['owner', 'manage', 'write', 'read', 'comment']),
+    })
+    expect(code).toBe(1)
+    expect(output).toContain('comment')
+    expect(output).toContain('openapi.yaml')
+    expect(output).toContain('role.ts')
+  })
+
+  it('refuses a contract with no Role schema, rather than calling the union drifted or fine', () => {
+    // An empty extraction is the harness failing, not the subject passing (lessons.md L3). A
+    // renamed schema must turn this check red, never let it report ok against nothing.
+    const { code, output } = check({
+      spec: AGREED_SPEC.replace('    Role:', '    ParticipantRole:'),
+      union: AGREED_UNION,
+    })
+    expect(code).toBe(1)
+    expect(output).toContain('Role')
+  })
+
+  it('refuses a Role schema that carries no enum', () => {
+    const { code, output } = check({
+      spec: AGREED_SPEC.replace('enum: [owner, manage, write, read]', 'format: role'),
+      union: AGREED_UNION,
+    })
+    expect(code).toBe(1)
+    expect(output).toContain('enum')
+  })
+
+  it('refuses a role module with no ProjectRole union', () => {
+    const { code, output } = check({
+      spec: AGREED_SPEC,
+      union: 'export type Something = 1 | 2\n',
+    })
+    expect(code).toBe(1)
+    expect(output).toContain('ProjectRole')
+  })
+
+  it('refuses a ProjectRole that is no longer a union of string literals', () => {
+    const { code, output } = check({
+      spec: AGREED_SPEC,
+      union: 'export type ProjectRole = string\n',
+    })
+    expect(code).toBe(1)
+    expect(output).toContain('ProjectRole')
+  })
+
+  it('says so when the contract file is missing', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'check-role-drift-test-'))
+    try {
+      writeFileSync(join(dir, 'role.ts'), AGREED_UNION)
+      const result = spawnSync(
+        'node',
+        [checker, '--spec', join(dir, 'openapi.yaml'), '--union', join(dir, 'role.ts')],
+        { encoding: 'utf8' },
+      )
+      expect(result.status).toBe(1)
+      expect(`${result.stdout}${result.stderr}`).toContain('openapi.yaml')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
