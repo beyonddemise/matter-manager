@@ -326,10 +326,6 @@
   <source>Building the PDF: <x id="0" equiv-text="${this.exportProgress?.done ?? 0}"/> of <x id="1" equiv-text="${this.exportProgress?.total ?? 0}"/> devices.</source>
   <target>PDF wird erstellt: <x id="0" equiv-text="${this.exportProgress?.done ?? 0}"/> von <x id="1" equiv-text="${this.exportProgress?.total ?? 0}"/> Geräten.</target>
 </trans-unit>
-<trans-unit id="s8b62ca15bbdcc282">
-  <source>The PDF could not be built. Nothing was saved; try again.</source>
-  <target>Das PDF konnte nicht erstellt werden. Es wurde nichts gespeichert; bitte erneut versuchen.</target>
-</trans-unit>
 <trans-unit id="s01924e0434d0960b">
   <source>Select <x id="0" equiv-text="${device.name}"/></source>
   <target><x id="0" equiv-text="${device.name}"/> auswählen</target>
@@ -1329,6 +1325,23 @@
 <trans-unit id="s59160968bc6310cb">
   <source>This page could not be loaded. Check your connection, then reload.</source>
   <target>Diese Seite konnte nicht geladen werden. Prüfen Sie Ihre Verbindung und laden Sie dann neu.</target>
+</trans-unit>
+<trans-unit id="sfd7b1a72cf854ff4">
+  <source>Export Excel</source>
+  <target>Excel exportieren</target>
+</trans-unit>
+<trans-unit id="s43b7474ca5f057fa">
+  <source>The export could not be built. Nothing was saved; try again.</source>
+  <target>Der Export konnte nicht erstellt werden. Es wurde nichts gespeichert; bitte erneut versuchen.</target>
+</trans-unit>
+<trans-unit id="s3bb10cb52e8e0b41">
+  <source>Device type</source>
+  <target>Gerätetyp</target>
+</trans-unit>
+<trans-unit id="s597bb77e9ecf2134">
+  <source>QR payload</source>
+  <target>QR-Payload</target>
+  <note from="lit-localize">Column header for the MT: string a device QR code encodes.</note>
 </trans-unit>
 <trans-unit id="scd104d19b5a0ef92">
   <source>Plan</source>

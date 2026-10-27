@@ -62,6 +62,14 @@ const inventoryBuilder = () => import('../pdf/inventory.js')
 const labelBuilder = () => import('../pdf/labels.js')
 
 /**
+ * The Excel builder (#295), loaded the same way and for the same reason: the workbook writer
+ * is only wanted once somebody presses Export, so it travels in a chunk of its own rather than
+ * in the entry bundle. `scripts/check-lazy-xlsx.mjs` keeps this an `import()` the way
+ * `check-lazy-pdf.mjs` does for the two above.
+ */
+const xlsxBuilder = () => import('../xlsx/export.js')
+
+/**
  * The device list: rooms, in order, with what is in them.
  *
  * Every decision about *which* devices and *in what order* is `browseDevices` in `core` — a
@@ -582,6 +590,35 @@ export class DeviceListView extends LitElement {
   }
 
   /**
+   * Exports what is on screen as an Excel workbook (#295).
+   *
+   * The same narrowing as {@link onExport}, so the sheet, the PDF and the screen agree about
+   * what the project contains. It shares `exporting` and the token with the PDF exports —
+   * from the user's side there is one export running or none — but sets no progress: building
+   * rows of text is quick enough that a progress callout would only flicker, so the callout
+   * (gated on `exportProgress`) stays down.
+   */
+  private async onExportXlsx(): Promise<void> {
+    if (this.exporting) return
+    const token = ++this.exportToken
+    this.exporting = true
+    this.exportFailed = false
+
+    try {
+      const chosen = selectForExport(this.groups(), { kind: 'all' })
+      const { buildDeviceXlsx, offerXlsxDownload, xlsxFilename } = await xlsxBuilder()
+      const bytes = await buildDeviceXlsx(chosen)
+      if (token !== this.exportToken) return
+      ;(this.download ?? offerXlsxDownload)(bytes, xlsxFilename())
+    } catch {
+      // Not logged, as in onExport: the workbook carries setup passcodes.
+      if (token === this.exportToken) this.exportFailed = true
+    } finally {
+      if (token === this.exportToken) this.exporting = false
+    }
+  }
+
+  /**
    * Exports labels for whatever is selected, or for everything when nothing is.
    *
    * Sharing `exporting`, the progress callout and the cancel button with the inventory export,
@@ -748,6 +785,15 @@ export class DeviceListView extends LitElement {
               <wa-icon slot="start" name="file-pdf"></wa-icon>
               ${msg('Export PDF')}
             </wa-button>
+            <wa-button
+              data-export-xlsx
+              appearance="outlined"
+              ?disabled=${this.exporting}
+              @click=${() => void this.onExportXlsx()}
+            >
+              <wa-icon slot="start" name="file-excel"></wa-icon>
+              ${msg('Export Excel')}
+            </wa-button>
             ${
               // Absent, not disabled. A disabled button says "this is possible and you are
               // doing it wrong"; on a project somebody may only read, neither half is true
@@ -765,7 +811,10 @@ export class DeviceListView extends LitElement {
         </div>
 
         ${
-          this.exporting
+          // Gated on the progress, not only on `exporting`: the Excel export shares the flag
+          // (one export runs or none) but reports no progress, and only the PDF builders are
+          // slow enough to need saying what they are doing.
+          this.exporting && this.exportProgress !== undefined
             ? html`
                 <wa-callout variant="neutral" data-export-progress>
                   <wa-icon slot="icon" name="file-pdf"></wa-icon>
@@ -798,7 +847,10 @@ export class DeviceListView extends LitElement {
             ? html`
                 <wa-callout variant="danger" data-export-failed>
                   <wa-icon slot="icon" name="triangle-exclamation"></wa-icon>
-                  ${msg('The PDF could not be built. Nothing was saved; try again.')}
+                  ${
+                    // Format-neutral, because the PDF, label and Excel exports all report here.
+                    msg('The export could not be built. Nothing was saved; try again.')
+                  }
                 </wa-callout>
               `
             : ''

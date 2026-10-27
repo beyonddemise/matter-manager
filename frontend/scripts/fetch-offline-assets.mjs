@@ -84,6 +84,7 @@ const ICONS = [
   // control that looks broken in exactly the situation this application is built for.
   'image',
   'expand',
+  'file-excel',
   'file-pdf',
   // The Account page's import button, in `views/project-import.ts`.
   'file-import',
