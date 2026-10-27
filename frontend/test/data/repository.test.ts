@@ -596,6 +596,64 @@ describe('the encryption seam, keyless over ciphertext', () => {
     expect(after._conflicts).toEqual(['1-00000000000000000000000000000000'])
   })
 
+  // #336: reads fail closed, but a device *created* in the same window carries no prefix and
+  // used to go straight through "keyless = plaintext" — one plaintext secret at rest, for good.
+  describe('a new device written while the database is keyless', () => {
+    const OTHER = documentId('device', 'aaaaaaaa-0000-0000-0000-000000000000')
+    const another = (): Unsaved<DeviceDocument> => ({ ...lamp(), _id: OTHER, name: 'Hall sensor' })
+    const isStored = async (id: string): Promise<boolean> =>
+      (await database.allDocs({ keys: [id] })).rows.some((row) => 'value' in row)
+
+    it('is refused as locked once the database has served a ciphertext read', async () => {
+      const keyless = await seededKeyless()
+      await keyless.devices.list()
+
+      await expect(keyless.devices.save(another())).rejects.toThrow(ProjectLockedError)
+      expect(await isStored(OTHER)).toBe(false)
+    })
+
+    it('is refused in a fresh handle that has read nothing yet', async () => {
+      // A new tab whose first act is a write: nothing has been read, so the one-time scan is
+      // what knows the database is an encrypted project.
+      const keyless = await seededKeyless()
+
+      await expect(keyless.devices.save(another())).rejects.toThrow(ProjectLockedError)
+      expect(await isStored(OTHER)).toBe(false)
+    })
+
+    it('is accepted in a genuinely plaintext database', async () => {
+      await repositories.devices.save(lamp())
+      await repositories.devices.list()
+
+      const saved = await repositories.devices.save(another())
+
+      expect((await rawDocument(database, OTHER)).manualCode).toBe(saved.manualCode)
+    })
+
+    it('is encrypted once the wraps arrive', async () => {
+      const writer = projectRepositories(
+        database,
+        fixedClock('2026-08-20T10:00:00.000Z'),
+        unlocked(),
+      )
+      await writer.devices.save(lamp())
+      let state: KeyState | undefined
+      const repos = projectRepositories(
+        database,
+        fixedClock('2026-08-20T10:00:00.000Z'),
+        () => state,
+      )
+      await repos.devices.list()
+      await expect(repos.devices.save(another())).rejects.toThrow(ProjectLockedError)
+
+      state = unlocked()
+
+      const saved = await repos.devices.save(another())
+      expect(saved.manualCode).toBe('34970112332')
+      expect((await rawDocument(database, OTHER)).manualCode).toMatch(/^enc:v1:/)
+    })
+  })
+
   it('keylessCiphertextUnlocksInPlaceWhenTheKeyArrives', async () => {
     const writer = projectRepositories(database, fixedClock('2026-08-20T10:00:00.000Z'), unlocked())
     await writer.devices.save(lamp())

@@ -183,6 +183,36 @@ function revisionReadsLocked(document: object, state: KeyState | undefined): boo
   return carriesCiphertext(document)
 }
 
+/**
+ * What is known, per open database, about whether it holds ciphertext (#336).
+ *
+ * Keyed by the handle, so every repository over one database shares it and it lives exactly as
+ * long as the handle — `ui/db` memoises one per project, beside its key-state memo. `seen` is set
+ * by any read that meets an `enc:` value and by the one-time `scan`. Nothing clears it, and nothing
+ * needs to: it is consulted only while the key state is absent, ciphertext proves a DEK exists
+ * somewhere, and once the wraps arrive the key state is defined (unlocked writes encrypt, locked
+ * ones refuse) and the flag is never asked again.
+ */
+type CiphertextKnowledge = { seen: boolean; scan?: Promise<void> | undefined }
+const ciphertextKnowledge = new WeakMap<PouchDB.Database, CiphertextKnowledge>()
+
+function knowledgeOf(database: PouchDB.Database): CiphertextKnowledge {
+  let known = ciphertextKnowledge.get(database)
+  if (known === undefined) {
+    known = { seen: false }
+    ciphertextKnowledge.set(database, known)
+  }
+  return known
+}
+
+/** Whether a document about to be written carries a secret in plaintext. */
+function carriesPlaintextSecret(document: object): boolean {
+  return SECRET_FIELDS.some((field) => {
+    const value = (document as Record<string, unknown>)[field]
+    return typeof value === 'string' && !isEncryptedField(value)
+  })
+}
+
 /** Reading and writing one document type. */
 export interface Repository<T extends Revision> {
   /** The document, or `undefined` if there is none with that id. */
@@ -253,8 +283,19 @@ export function repository<T extends Revision>(
     document: Conflicted<T>,
     state: KeyState | undefined,
   ): Promise<boolean> => {
-    if (revisionReadsLocked(document, state)) return true
-    if (state !== undefined) return false
+    if (state !== undefined) return revisionReadsLocked(document, state)
+    if (await keylessRevisionsCarryCiphertext(document)) {
+      // What the write guard below consults: this database is an encrypted project whose key
+      // has not arrived, whatever the next document handed to `put` looks like.
+      knowledgeOf(database).seen = true
+      return true
+    }
+    return false
+  }
+
+  /** The keyless half of {@link readsLocked}: the winner, then each losing revision. */
+  const keylessRevisionsCarryCiphertext = async (document: Conflicted<T>): Promise<boolean> => {
+    if (carriesCiphertext(document)) return true
     for (const rev of document._conflicts ?? []) {
       try {
         if (carriesCiphertext(await database.get(document._id, { rev }))) return true
@@ -263,6 +304,35 @@ export function repository<T extends Revision>(
       }
     }
     return false
+  }
+
+  /**
+   * Whether this database is known to hold ciphertext, for a keyless write (#336).
+   *
+   * The read path usually knows already. For a handle that has not read anything yet — a fresh
+   * tab whose first act is a write — the device documents are scanned **once per handle**, and
+   * only on a keyless write that carries a secret: in practice a plaintext database, where that is
+   * one `allDocs` per page, not per write. A negative answer is kept too; ciphertext that
+   * replicates in afterwards is caught by the reads its arrival triggers (`PROJECT_DATA_CHANGED`
+   * re-reads every view before the user can act on it).
+   */
+  const holdsCiphertext = async (): Promise<boolean> => {
+    const known = knowledgeOf(database)
+    if (known.seen) return true
+    known.scan ??= database
+      .allDocs({ ...idRange('device'), include_docs: true })
+      .then(({ rows }) => {
+        if (rows.some((row) => row.doc !== undefined && carriesCiphertext(row.doc))) {
+          known.seen = true
+        }
+      })
+      .catch((error: unknown) => {
+        // Forgotten, like a rejected key-state resolution: one IndexedDB hiccup fails one write.
+        known.scan = undefined
+        throw error
+      })
+    await known.scan
+    return known.seen
   }
 
   /**
@@ -297,6 +367,13 @@ export function repository<T extends Revision>(
     // There is no DEK to encrypt with, and the caller's document — read with the ciphertext
     // dropped — would overwrite the stored secret with nothing.
     if (state?.kind === 'locked') throw new ProjectLockedError('saving')
+    // Keyless, but an encrypted project whose wraps have not arrived (#336): a secret written now
+    // would sit in plaintext at rest for good, since nothing re-encrypts it (spec decision 2). So
+    // it is refused as locked, and the F6 gates say "after the next sync". A document carrying no
+    // secret (the project document) has nothing to leak and is written as before.
+    if (state === undefined && carriesPlaintextSecret(document) && (await holdsCiphertext())) {
+      throw new ProjectLockedError('saving')
+    }
     const stored =
       state === undefined
         ? document
