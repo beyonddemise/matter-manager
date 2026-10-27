@@ -111,6 +111,108 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /escrowkey:
+    get:
+      operationId: getEscrowKey
+      tags: [escrow]
+      summary: The public escrow key
+      security: []
+      description: |
+        Public: a client wraps every project's data-encryption key for this RSA key (payload
+        encryption, backend #32), and it needs the key before anything is signed in — including
+        offline, so clients cache it locally. `kid` is the SHA-256 of the SPKI (full 64 lowercase
+        hex); a wrap made for a stale kid is rejected at provisioning rather than stored
+        unrecoverable. The route group exists only on deployments with escrow configured
+        (`ESCROW_KEK`); elsewhere it is 404 like every absent feature.
+      responses:
+        '200':
+          description: The current escrow public key
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EscrowKey' }
+        '404':
+          description: |
+            Escrow is not configured on this deployment (no `ESCROW_KEK`): the route group is
+            absent, as every unconfigured feature is. A client reads this as "escrow off".
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /escrow:
+    post:
+      operationId: rewrapProjectKey
+      tags: [escrow]
+      summary: Re-wrap a project key for one of the caller's devices
+      description: |
+        Device recovery (payload encryption, backend #32): a signed-in member who lost their
+        local key material posts their replica's copy of the project document plus the id of a
+        device key they registered (`PUT /profile/devicekeys`). The posted document is a
+        **claim**: the server extracts the database identity, checks membership via the
+        registry, and compares its own `project` document against the copy — a
+        prove-you-hold-the-data check layered on top of (never instead of) membership. It then
+        unwraps the project's `key:escrow` with the escrow private key and writes the DEK
+        re-wrapped for the named device as `key:<kid>`, which replicates to the device like any
+        other document. Nothing from the post is stored, no key material is returned, and an
+        audit entry records who re-wrapped for which kid. Rate-limited per subject.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [document, deviceKeyId]
+              properties:
+                document:
+                  type: object
+                  description: The client's copy of the project database's `project` document
+                deviceKeyId:
+                  type: string
+                  description: The kid of one of the caller's registered device keys
+      responses:
+        '204': { description: "The re-wrap is written; it reaches the device by replication" }
+        '400':
+          description: |
+            `unknown-device-key` — the named key is not registered to **this** account (a kid
+            on somebody else's record is exactly as unknown; the server never wraps for a key
+            the caller does not own). Also a body that is not JSON, as on every JSON operation.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404':
+          description: |
+            The posted document names no known project, or the caller is no participant —
+            one answer for both, never 403, so a project's existence is not probeable
+            (the `ProjectAccess` convention).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: |
+            `document-mismatch` — the posted copy differs from the server's `project` document
+            (fields, or a posted `_rev` that is stale). The client pulls and tries again.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '422':
+          description: |
+            `escrow-wrap-missing` — the project database holds no `key:escrow`;
+            `escrow-wrap-invalid` — it holds one the escrow key cannot open (RSA-OAEP
+            authenticates, so garbage fails loudly; a vandalised conflict branch is a
+            detectable denial of recovery, never silent corruption).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429':
+          description: Too many re-wraps by this account.
+          headers:
+            retry-after:
+              description: Seconds until the window resets. Never zero.
+              schema: { type: integer, minimum: 1 }
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /auth/methods:
     get:
       operationId: getAuthMethods
@@ -576,6 +678,44 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/NotAnOperator' }
 
+  /profile/devicekeys:
+    put:
+      operationId: registerDeviceKey
+      tags: [profile]
+      summary: Register this device's escrow public key
+      description: |
+        Stores the device's RSA public key on the caller's user record (payload encryption,
+        backend #32), so `POST /escrow` can re-wrap a project key for it. **No client-supplied
+        kid**: the server derives it as the full SHA-256 of the SPKI, which stops a member from
+        claiming — or grinding a key pair to collide with — another device's kid and getting its
+        wrap doc overwritten by a later re-wrap. Re-registering the same key refreshes it; an
+        account holds at most 10 device keys, evicting the least-recently-used.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [publicKey]
+              properties:
+                publicKey:
+                  type: string
+                  description: base64 SPKI, RSA of at least 3072 bits
+                label:
+                  type: string
+                  description: What the user calls the device
+      responses:
+        '204': { description: Registered (or refreshed) }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '422':
+          description: |
+            `invalid-device-key` — the key does not parse as an SPKI, is not RSA, or is smaller
+            than 3072 bits. Nothing more specific is said: the key never becomes probeable.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /customer:
     get:
       operationId: listCustomers
@@ -792,6 +932,25 @@ paths:
                 name: { type: string, minLength: 1, maxLength: 200 }
                 address: { type: string, maxLength: 500 }
                 client: { type: string, maxLength: 200 }
+                escrowWrap:
+                  type: object
+                  description: |
+                    The project DEK wrapped for the escrow public key (payload encryption,
+                    backend #32). **Required while the deployment has escrow configured**,
+                    ignored elsewhere: the server test-unwraps it against the actual escrow
+                    private key before creating anything, so no project can land on the
+                    server unrecoverable (a stale cached key after a rotation, an encoding
+                    bug, a cross-platform interop error are all caught here). Nothing from it
+                    is stored - the client replicates the same wrap into the new database as
+                    `key:escrow`.
+                  required: [kid, wrapped]
+                  properties:
+                    kid:
+                      type: string
+                      description: The escrow kid the wrap was made for (from `GET /escrowkey`)
+                    wrapped:
+                      type: string
+                      description: base64, RSA-OAEP-256 wrap of the project DEK
       responses:
         '201':
           description: Project created and its database provisioned
@@ -831,6 +990,15 @@ paths:
         # access rules, so a CouchDB that is unreachable mid-sequence is a real outcome. The
         # body deliberately says nothing about which step or which database - that goes to the
         # log, because a database name in a response is a fact about the deployment.
+        '422':
+          description: |
+            Escrow refusals, while the deployment has escrow configured.
+            `escrow-wrap-required` - the body carries no `escrowWrap`; `escrow-wrap-invalid` -
+            its kid is not the current escrow kid, or the wrap cannot be unwrapped (RSA-OAEP
+            authenticates, so garbage fails loudly). Nothing was created either way.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '500':
           description: The project could not be created, for a reason the caller cannot act on
           content:
@@ -1359,6 +1527,18 @@ components:
       properties:
         ownerType: { type: string, enum: [user, org] }
         ownerId: { type: string }
+
+    EscrowKey:
+      type: object
+      required: [kid, alg, publicKey]
+      properties:
+        kid:
+          type: string
+          description: SHA-256 of the SPKI, full 64 lowercase hex characters (untruncated on purpose)
+        alg: { type: string, const: RSA-OAEP-256 }
+        publicKey:
+          type: string
+          description: base64 SPKI of the RSA-3072 escrow public key
 
     PlanMatrix:
       type: object
