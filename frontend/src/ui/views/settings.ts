@@ -1,3 +1,9 @@
+// Rendered by this view and by nothing in the shell, so imported here (#214): they travel in
+// this view's lazy chunk rather than in the entry chunk every visitor parses before first paint.
+import '@awesome.me/webawesome-pro/dist/components/option/option.js'
+import '@awesome.me/webawesome-pro/dist/components/radio/radio.js'
+import '@awesome.me/webawesome-pro/dist/components/radio-group/radio-group.js'
+import '@awesome.me/webawesome-pro/dist/components/select/select.js'
 import { msg, updateWhenLocaleChanges } from '@lit/localize'
 import { html, LitElement, type TemplateResult } from 'lit'
 import {

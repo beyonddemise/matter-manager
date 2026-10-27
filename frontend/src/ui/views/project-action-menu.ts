@@ -14,6 +14,11 @@
  * @module
  */
 
+// Rendered by this menu and by nothing in the shell, so imported here (#214): they travel in
+// the projects view's lazy chunk rather than in the entry chunk every visitor parses first.
+import '@awesome.me/webawesome-pro/dist/components/divider/divider.js'
+import '@awesome.me/webawesome-pro/dist/components/dropdown/dropdown.js'
+import '@awesome.me/webawesome-pro/dist/components/dropdown-item/dropdown-item.js'
 import { msg, str } from '@lit/localize'
 import { html, nothing, type TemplateResult } from 'lit'
 import { isLocalOnlyDatabase } from '../../data/index.js'

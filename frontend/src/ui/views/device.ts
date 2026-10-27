@@ -1,3 +1,8 @@
+// Rendered by this view and by nothing in the shell, so imported here (#214): they travel in
+// this view's lazy chunk rather than in the entry chunk every visitor parses before first paint.
+import '@awesome.me/webawesome-pro/dist/components/copy-button/copy-button.js'
+import '@awesome.me/webawesome-pro/dist/components/details/details.js'
+import '@awesome.me/webawesome-pro/dist/components/textarea/textarea.js'
 import { msg, str, updateWhenLocaleChanges } from '@lit/localize'
 import { html, LitElement, type PropertyValues, type TemplateResult } from 'lit'
 import { isConflict, type ProjectRepositories } from '../../data/index.js'

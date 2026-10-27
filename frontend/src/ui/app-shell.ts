@@ -32,7 +32,7 @@ import { cachedProfileOf, type PlanRequest, type Profile } from './profile.js'
 import { beginProjectAction } from './project-busy.js'
 import type { Project } from './projects.js'
 import { ProjectsController } from './projects-controller.js'
-import { matchRoute } from './router/match.js'
+import { matchRoute, type Route, type RouteMatch } from './router/match.js'
 import { NAV_ROUTES, ROUTES } from './router/routes.js'
 import {
   applyScheme,
@@ -65,15 +65,14 @@ import { forgetTokens, pouchRefreshTokenStore } from './tokens.js'
 import { applyUpdate } from './updates.js'
 import { focusWaitlist, leftWaitlistText, type WaitlistProblem } from './upgrade-dialog.js'
 import type { WaitlistApi, WaitlistOutcome } from './waitlist.js'
-import './views/add-device.js'
-import './views/rooms.js'
+// Two views imported statically; every other one arrives through its route's dynamic import
+// (`routes.ts`), so the entry chunk does not carry them (#214). The exceptions are deliberate:
+// not-found is what renders when a view cannot, so it must never itself be behind a fetch that
+// can fail — and the device list is the offline-critical first view (the person in the basement
+// in front of the device), so it renders with no await of any kind. With it the entry is
+// ~311 kB, still well under the 500 kB default that #214 restored (PR #311 review).
 import './views/device-list.js'
-import './views/device.js'
-import './views/edit-device.js'
 import './views/not-found.js'
-import './views/projects.js'
-import './views/account.js'
-import './views/settings.js'
 /**
  * The application icon, as a fingerprinted /assets/ URL. `index.html` names the same file as the
  * favicon, which is what gets it precached for offline use; see the note there.
@@ -241,6 +240,8 @@ export class AppShell extends LitElement implements ViewHost {
     takeUpdate: { attribute: false },
     projectStore: { attribute: false },
     signOutPushTimeoutMs: { attribute: false },
+    routes: { attribute: false },
+    reloadPage: { attribute: false },
   }
 
   declare hash: string
@@ -407,6 +408,131 @@ export class AppShell extends LitElement implements ViewHost {
 
   private readonly onHashChange = () => {
     this.hash = window.location.hash
+  }
+
+  /**
+   * The route registry this shell matches against; injected by tests, `ROUTES` otherwise.
+   *
+   * A seam for exactly one thing: a route whose `load` fails or counts, which is how the lazy
+   * fallback is testable at all — the real loaders are module imports, and a test cannot make
+   * the dev server lose a chunk. Navigation always renders from `NAV_ROUTES`, so injecting
+   * routes changes what matches, never what is offered.
+   */
+  declare routes: readonly Route[] | undefined
+
+  /** Views whose route `load` has resolved: their elements are registered and safe to render. */
+  private readonly loadedViews = new Set<string>()
+
+  /**
+   * Views whose load failed — final for this document, deliberately. A failed module fetch is
+   * cached in the document's module map (Chromium caches the rejection), so running the same
+   * `import()` again rejects immediately without a network attempt; only a new document can
+   * fetch the chunk again. That is why the fallback offers a reload instead of an in-page retry.
+   */
+  private readonly failedViews = new Set<string>()
+
+  /**
+   * How the fallback's Reload reloads; injected by tests, `window.location.reload()` otherwise.
+   *
+   * A seam for the reason {@link takeUpdate} is one: the real thing reloads the page it is
+   * running in, and a test that called it would reload the test browser out of the middle of
+   * whatever ran next. User-triggered only — an automatic reload could interrupt a write a
+   * previous view still has in flight.
+   */
+  declare reloadPage?: () => void
+
+  /** The view loads in flight, which {@link getUpdateComplete} spans. */
+  private readonly viewLoads = new Map<string, Promise<unknown>>()
+
+  /**
+   * Starts the view's import if it is not here yet, and says where it stands.
+   *
+   * Called from render, which is what makes a navigation load its view with no second
+   * scheduling path: the hash changes, the shell renders, and the first render of a route is
+   * the moment its chunk is asked for. The import runs once per view — a module import is
+   * idempotent, but a loader that re-ran on every render would turn each hash change into a
+   * fetch — and its settling re-renders, which is when `loading` becomes the view or the
+   * fallback.
+   */
+  private ensureView(route: Route): 'ready' | 'loading' | 'failed' {
+    const { view, load } = route
+    if (load === undefined || this.loadedViews.has(view)) return 'ready'
+    if (this.failedViews.has(view)) return 'failed'
+    if (!this.viewLoads.has(view)) {
+      this.viewLoads.set(
+        view,
+        load()
+          .then(
+            () => this.loadedViews.add(view),
+            // The rejection is consumed here, deliberately: a failed chunk fetch is rendered
+            // (the fallback below), and an unhandled rejection on top of it would be the same
+            // fact reported twice, once invisibly.
+            () => this.failedViews.add(view),
+          )
+          .finally(() => {
+            this.viewLoads.delete(view)
+            this.requestUpdate()
+          }),
+      )
+    }
+    return 'loading'
+  }
+
+  /**
+   * Extends `updateComplete` across any view load in flight.
+   *
+   * Everything that awaits the shell — every test, and anything that reads the page after a
+   * navigation — gets the view rendered, not the moment between asking for its chunk and
+   * having it. A loop rather than one await, because the re-render a load triggers can itself
+   * start another load (a redirecting view, or a test switching routes mid-flight).
+   */
+  protected override async getUpdateComplete(): Promise<boolean> {
+    let settled = await super.getUpdateComplete()
+    while (this.viewLoads.size > 0) {
+      await Promise.allSettled(this.viewLoads.values())
+      settled = await super.getUpdateComplete()
+    }
+    return settled
+  }
+
+  /**
+   * The matched view, in whichever state its chunk is in.
+   *
+   * `loading` renders nothing rather than a spinner: the chunk comes from the service worker's
+   * cache or the warm-up `main.ts` already ran, so the gap is a frame or two, and a spinner
+   * for that is flicker. `failed` is the state the split invented — before #214 a view could
+   * not fail to arrive — and it gets a face and a reload, because a blank page with working
+   * navigation is the failure shape L28 exists to prevent.
+   */
+  private renderView(match: RouteMatch | null): TemplateResult | '' {
+    const view = match === null ? undefined : VIEWS[match.route.view]
+    if (match === null || view === undefined) return html`<not-found-view></not-found-view>`
+
+    switch (this.ensureView(match.route)) {
+      case 'ready':
+        return view(match.params, this)
+      case 'loading':
+        return ''
+      case 'failed':
+        // Reload, not "try again": the failed import is cached in the module map (see
+        // `failedViews`), so only a new document can fetch the chunk — and the reload stays
+        // the reader's decision, exactly as taking an update does.
+        return html`
+          <wa-callout variant="danger" data-view-failed>
+            <wa-icon slot="icon" name="triangle-exclamation"></wa-icon>
+            <div class="wa-split wa-gap-m">
+              <span>${msg('This page could not be loaded. Check your connection, then reload.')}</span>
+              <wa-button
+                data-view-reload
+                size="s"
+                @click=${() => (this.reloadPage ?? (() => window.location.reload()))()}
+              >
+                ${msg('Reload')}
+              </wa-button>
+            </div>
+          </wa-callout>
+        `
+    }
   }
 
   constructor() {
@@ -1332,8 +1458,7 @@ export class AppShell extends LitElement implements ViewHost {
   }
 
   override render() {
-    const match = matchRoute(this.hash, ROUTES)
-    const view = match ? VIEWS[match.route.view] : undefined
+    const match = matchRoute(this.hash, this.routes ?? ROUTES)
 
     return html`
       <wa-page>
@@ -1475,7 +1600,7 @@ export class AppShell extends LitElement implements ViewHost {
                 </wa-callout>`
               : ''
           }
-          ${view && match ? view(match.params, this) : html`<not-found-view></not-found-view>`}
+          ${this.renderView(match)}
         </main>
 
         <!-- The status bar and, on desktop, the website's links. Sticky (app.css): the network

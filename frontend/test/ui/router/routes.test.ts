@@ -82,6 +82,19 @@ describe('the route registry', () => {
     expect(NAV_ROUTES.map((route) => route.path)).not.toContain('/devices/new')
   })
 
+  it('gives every lazy route a loader for its view, and the device list none', () => {
+    // The shell renders a route's view only once its `load` has resolved (#214). An entry
+    // without one renders that view only if something else happened to import it - which for
+    // every view but one, nothing does, so the page would be blank with no error. The device
+    // list is that one: the offline-critical page ships in the entry chunk, imported statically
+    // by the shell, and a `load` beside that static import would be an INEFFECTIVE_DYNAMIC_IMPORT
+    // build warning - the import could never move it into a chunk of its own (PR #311 review).
+    for (const route of ROUTES) {
+      if (route.view === 'device-list') expect(route.load, `${route.path}`).toBeUndefined()
+      else expect(typeof route.load, `${route.path} has no load`).toBe('function')
+    }
+  })
+
   it('registers the views it is expected to, and no others', () => {
     // A pin on the registry rather than a check that each view exists: this file runs in Node,
     // and the shell's map of views cannot be imported here because loading it defines custom

@@ -69,6 +69,72 @@ function stripThirdPartyFontImports(): Plugin {
   }
 }
 
+/**
+ * Names every lazily-reached view chunk in `index.html`, so the service worker precaches it.
+ *
+ * `public/sw.js` precaches exactly the `/assets/` URLs the built shell names (`assetsNamedIn`
+ * there) — that is its whole manifest, chosen in ADR 0013 so the worker never needs
+ * regenerating per build. Route-level code splitting (#214) breaks that contract silently:
+ * a view chunk is reached only through `import()` in `routes.ts`, so nothing in the HTML names
+ * it, the worker never caches it, and an installed offline application opens to a shell whose
+ * views cannot arrive. This plugin closes the loop: each route view chunk, and everything it
+ * imports statically, gets a `<link rel="modulepreload">` in the head.
+ *
+ * `modulepreload` rather than a bespoke manifest, because it is true twice over: the browser
+ * fetches and compiles the views alongside first paint without executing them (the warm-up in
+ * `main.ts` is what executes them, and by then they are local), and the worker's existing
+ * `href` scan picks them up with no change to `sw.js` at all.
+ *
+ * Only the route views' closure, deliberately. The PDF writer and the ZXing fallback stay
+ * unnamed: their entire point is that most visitors never download them (`check:lazy`,
+ * `check:lazy-pdf`), and a preload would undo that for every visitor. The views are different —
+ * every user navigates.
+ *
+ * `scripts/check-lazy-views.mjs` fails the build if this injection stops finding the view
+ * chunks, so it cannot rot into a plugin that silently names nothing.
+ */
+function nameLazyViewChunksInShell(): Plugin {
+  return {
+    name: 'name-lazy-view-chunks-in-shell',
+    transformIndexHtml: {
+      order: 'post',
+      handler(html, context) {
+        const bundle = context.bundle
+        if (bundle === undefined) return
+
+        const byFileName = new Map(
+          Object.values(bundle)
+            .filter((output) => output.type === 'chunk')
+            .map((chunk) => [chunk.fileName, chunk]),
+        )
+
+        // The route views: the chunks whose facade module lives in src/ui/views/. Their static
+        // closure comes with them, because the worker caches URLs, not graphs — a view whose
+        // shared helper chunk is missing offline is exactly as unopenable as a missing view.
+        const wanted = new Set<string>()
+        const queue = [...byFileName.values()]
+          .filter((chunk) => /src[\\/]ui[\\/]views[\\/]/.test(chunk.facadeModuleId ?? ''))
+          .map((chunk) => chunk.fileName)
+        while (queue.length > 0) {
+          const fileName = queue.shift()
+          if (fileName === undefined || wanted.has(fileName)) continue
+          wanted.add(fileName)
+          queue.push(...(byFileName.get(fileName)?.imports ?? []))
+        }
+
+        return [...wanted]
+          .filter((fileName) => !html.includes(`"/${fileName}"`))
+          .sort()
+          .map((fileName) => ({
+            tag: 'link',
+            attrs: { rel: 'modulepreload', crossorigin: true, href: `/${fileName}` },
+            injectTo: 'head' as const,
+          }))
+      },
+    },
+  }
+}
+
 export default defineConfig(({ mode }) => {
   // From the repository root, where `.env` lives beside `.env.example` - the same file the API
   // and the compose stack read, so there is one place to say where things are.
@@ -80,22 +146,15 @@ export default defineConfig(({ mode }) => {
     // is the direct equivalent, available since Node 20.11 and always present given this
     // repo's node >=22 engine requirement.
     root: import.meta.dirname,
-    plugins: [stripThirdPartyFontImports()],
+    plugins: [stripThirdPartyFontImports(), nameLazyViewChunksInShell()],
     build: {
       outDir: 'dist',
       emptyOutDir: true,
-      // 500 kB is rolldown's default and the entry chunk is ~708 kB: Web Awesome, Lit, PouchDB
-      // and the application itself, which are all needed at first paint. The heavy optional
-      // parts (PDF writer, lazy fallback) are already split out and guarded by `check:lazy` and
-      // `check:lazy-pdf`, so the warning's advice is spent. A budget just above today's size
-      // keeps the warning meaningful: it fires again when the entry grows materially, instead of
-      // being printed on every build and ignored. Raised from 700 for #214, when the footer status
-      // bar and the projects page's scroller and menu divider took the entry from ~697 kB to
-      // ~708 kB, and from 720 to 730 for #238, when the catalogue follow-ups (#243 to #245) took it
-      // to ~720 kB, from 730 to 740 for the passkeys work, when the Account view and the
-      // passkey sign-in took it to ~735 kB, and from 740 to 770 once main had reached ~758 kB
-      // and the warning printed on every build.
-      chunkSizeWarningLimit: 770,
+      // `chunkSizeWarningLimit` is deliberately not set: the default 500 kB stands. It had been
+      // raised four times (700 → 730 → 740 → 770) to keep pace with an entry chunk that carried
+      // every view; #214 split the views out per route, which is what put the entry back under
+      // the default. If the warning fires again, split what grew — raising the limit is how it
+      // got to 770.
       rolldownOptions: {
         output: {
           /**

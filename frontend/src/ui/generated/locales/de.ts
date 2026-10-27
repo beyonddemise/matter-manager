@@ -114,6 +114,7 @@
 's54e0bdd4092ccf52': `Gerät speichern`,
 's5501d7aeca8e0f44': `Was getan wurde und was die nächste Person wissen muss. Anmerkungen lassen sich später weder ändern noch löschen.`,
 's566d8645a79e1253': `Melden Sie sich an, um zu synchronisieren`,
+'s59160968bc6310cb': `Diese Seite konnte nicht geladen werden. Prüfen Sie Ihre Verbindung und laden Sie dann neu.`,
 's5a16cd0c7f4bfd03': `Name des neuen Projekts`,
 's5aec541cd0a38006': `Die Anmeldung per E-Mail ist noch nicht verfügbar.`,
 's5b53408a9117f6bd': `Name, Raum, Seriennummer oder Produkt`,
