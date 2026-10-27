@@ -104,9 +104,11 @@ export function exportFilename(name: string, now: Date): string {
  *
  * @param row which database, and the name the page shows (used when the database has no
  *   `project` document, as the first-run catalogue may not)
- * @param password seals the archive with WinZip AES-256; absent or empty, it is plaintext. The
- *   strength floor is the dialog's (`ARCHIVE_PASSWORD_MIN_LENGTH`), not enforced here.
+ * @param password seals the archive with WinZip AES-256; absent (`undefined`), the archive is
+ *   plaintext. The strength floor is the dialog's (`ARCHIVE_PASSWORD_MIN_LENGTH`), not enforced
+ *   here. The dialog hands over `undefined` when no password is chosen, never `''`.
  * @throws {ProjectLockedError} when the project is locked on this device; nothing is offered
+ * @throws {RangeError} for an empty password, which cannot protect anything; nothing is offered
  */
 export async function exportProject(
   row: { readonly dbName: string; readonly name: string; readonly client?: string },
@@ -137,11 +139,13 @@ export async function exportProject(
     now.toISOString(),
   )
   checkLimits(entries)
+  // Only an absent password means plain. An empty one goes through and `writeZip` refuses it:
+  // a caller that asked for protection never silently gets a plaintext archive.
   const zipped = await writeZip(
     entries,
     streamCodecs,
     now,
-    password === undefined || password === '' ? {} : { password },
+    password === undefined ? {} : { password },
   )
   checkLimits(entries, zipped)
   deps.download(zipped, exportFilename(name, now))

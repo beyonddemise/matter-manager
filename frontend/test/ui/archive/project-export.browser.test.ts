@@ -248,6 +248,25 @@ describe('an export with a password (#307)', () => {
     expect(downloads[0]?.bytes).toEqual(expected)
   })
 
+  it('refuses an empty password rather than falling back to a plain archive', async () => {
+    // Fails closed: a caller that passes '' asked for protection it cannot have. Only an absent
+    // password means "plain".
+    const { deps, downloads } = fakes({ name: 'Hillside' })
+
+    const failure = await exportProject(row, deps, '').catch((e: unknown) => e)
+
+    expect(failure).toBeInstanceOf(RangeError)
+    expect(downloads).toEqual([])
+  })
+
+  it('writes a plain archive when the password is absent', async () => {
+    const { deps, downloads } = fakes({ name: 'Hillside' })
+
+    await exportProject(row, deps, undefined)
+
+    expect(readProjectArchive(await offered(downloads)).project).toEqual({ name: 'Hillside' })
+  })
+
   it('still refuses a locked project: a password adds no codes to a locked read', async () => {
     const encrypted = await lockedDatabase()
     try {
