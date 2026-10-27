@@ -25,6 +25,11 @@
  * Replication is always handed **every** synchronized project, never just the one that changed:
  * `SyncManager.set` makes the running set match its argument exactly.
  *
+ * **Going to the server carries the escrow wrap (#305).** Before `POST /projects`, promote
+ * makes sure the source database holds `key:escrow` — creating it from the project's DEK when
+ * the project was born offline — and sends its `{kid, wrapped}` for the server to validate.
+ * The DEK is reused (spec decision 8): ciphertext and the `key:*` documents replicate as-is.
+ *
  * @module
  */
 
@@ -32,7 +37,9 @@ import { isLocalOnlyDatabase } from '../data/index.js'
 import { PROJECT_DOCUMENT_ID } from '../domain/documents/project.js'
 import type { CurrentTarget } from './current-project.js'
 import { withDestroyLock } from './db/db-lock.js'
+import { ensureEscrowWrap } from './db/keyring.js'
 import { PROJECT_DATABASE_NAME } from './db/project-database.js'
+import type { EscrowKeyInfo } from './escrow-client.js'
 import {
   destroyLocalProject,
   indexServerProject,
@@ -41,6 +48,7 @@ import {
 import { beginProjectAction } from './project-busy.js'
 import {
   createProject,
+  type EscrowWrap,
   type Project,
   ProjectCreationError,
   type ProjectsApi,
@@ -80,11 +88,25 @@ export type ActionSync = Pick<SyncManager, 'set' | 'pushNow' | 'suspend' | 'resu
 
 export type { CurrentTarget }
 
+/**
+ * Where promote finds the escrow public key to wrap a project's DEK for: the copy `mm-local`
+ * cached at startup first, then `GET /escrowkey`. Both answer `null` for "none": nothing
+ * cached, or a 404 from a server with the feature off.
+ */
+export interface EscrowKeySource {
+  /** `cachedEscrowKey` over `mm-local`: never throws, never fetches. */
+  readonly cached: () => Promise<EscrowKeyInfo | null>
+  /** `escrowApi(...).fetchEscrowKey`: `null` on a 404, throws on any other failure. */
+  readonly fetch: () => Promise<EscrowKeyInfo | null>
+}
+
 /** Everything the actions touch. */
 export interface ProjectActionDependencies {
   readonly api: ProjectsApi
   /** Whether the browser believes it is online; trusted only when it says no. */
   readonly online: () => boolean
+  /** The escrow public key, for the wrap provisioning sends (#305). */
+  readonly escrowKey: EscrowKeySource
   readonly sync: ActionSync
   /** The local index and databases, as `local-projects.ts` takes them. */
   readonly local: LocalProjectDependencies
@@ -225,6 +247,54 @@ export function projectActions(deps: ProjectActionDependencies): ProjectActions 
   }
 
   /**
+   * The escrow public key provisioning wraps for: the cached one, else the server's.
+   *
+   * Provisioning is online by definition (ADR 0003), so the fallback fetch is always possible
+   * here, unlike at offline creation. Its failures are creation failures, so the page says them
+   * the way it says every other reason `POST /projects` did not happen.
+   *
+   * @throws {ProjectCreationError} `escrow-unavailable` when the server has no escrow key (404),
+   *   `unreachable` when the request did not arrive, `failed` for any other answer
+   */
+  const escrowKey = async (): Promise<EscrowKeyInfo> => {
+    const cached = await deps.escrowKey.cached()
+    if (cached !== null) return cached
+    let fetched: EscrowKeyInfo | null
+    try {
+      fetched = await deps.escrowKey.fetch()
+    } catch (error) {
+      // A `TypeError` is `fetch` never reaching the server; see `createProject` on why that is
+      // not `offline`.
+      throw new ProjectCreationError(error instanceof TypeError ? 'unreachable' : 'failed')
+    }
+    if (fetched === null) throw new ProjectCreationError('escrow-unavailable')
+    return fetched
+  }
+
+  /**
+   * The escrow wrap `POST /projects` sends, ensured in the source database first (#305).
+   *
+   * **Why here, before anything else touches the source.** It is the one write promote makes
+   * to the database it is about to destroy, and it lands before `settled` reads its first
+   * `update_seq`: the transfer copies it like every other document, and the final check under
+   * the exclusive lock sees an unchanged sequence. Written any later — after a transfer had
+   * started — it would trip that check and refuse the promotion as "still being written to".
+   * It takes only the ordinary shared write lock (the handle's `bulkDocs`), and no exclusive
+   * lock is held at this point, so it cannot wait on itself.
+   *
+   * Idempotent: a project born with the escrow key cached already has the wrap, which is sent
+   * as stored. A wrap written here for a creation the server then refuses stays: it is the
+   * project's own and the next attempt sends it again.
+   *
+   * @throws {ProjectCreationError} `offline` before anything is asked, or as {@link escrowKey}
+   */
+  const provisioningWrap = async (dbName: string): Promise<EscrowWrap> => {
+    // Asked first, so an offline device neither fetches nor writes a wrap it cannot send.
+    if (!deps.online()) throw new ProjectCreationError('offline')
+    return ensureEscrowWrap(local.database(dbName), await escrowKey())
+  }
+
+  /**
    * The server project a promotion is moving into: the one recorded on the entry if the server
    * still lists it, otherwise a new one, whose id is recorded at once.
    *
@@ -248,9 +318,11 @@ export function projectActions(deps: ProjectActionDependencies): ProjectActions 
       const existing = listed.find((project) => project.projectId === entry.projectId)
       if (existing !== undefined) return existing
     }
+    const escrowWrap = await provisioningWrap(row.dbName)
     const created = await createProject(serverDeps, {
       name: entry.name,
       ...(entry.client === undefined ? {} : { client: entry.client }),
+      escrowWrap,
     })
     await local.cache().updateLocalProject(row.dbName, { projectId: created.projectId })
     return created

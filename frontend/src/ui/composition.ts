@@ -33,11 +33,12 @@ import {
   removeLocalDatabases,
 } from './db/project-database.js'
 import { type EmailSignIn, emailSignIn } from './email-signin.js'
-import { escrowApi, prepareEscrowAtStartup } from './escrow-client.js'
+import { cachedEscrowKey, escrowApi, prepareEscrowAtStartup } from './escrow-client.js'
 import { type CredentialsLike, type PasskeySignIn, passkeySignIn } from './passkey-signin.js'
 
 import { type PlansApi, plansApi } from './plans.js'
 import { type Locale, profileApi, resolveProfileLocale } from './profile.js'
+import type { EscrowKeySource } from './project-actions.js'
 import { type Project, projectsApi } from './projects.js'
 import {
   endServerSessionVia,
@@ -371,6 +372,18 @@ export function prepareEscrow(
     cache,
     deviceKey: ensureDeviceKey,
   })
+}
+
+/**
+ * Where promoting finds the escrow public key (#305): the copy the startup pair cached in
+ * `mm-local`, and `GET /escrowkey` when there is none — provisioning is online, so the fetch is
+ * the fallback offline creation never had.
+ */
+export function provisioningEscrowKey(fetchImpl: typeof fetch = fetch): EscrowKeySource {
+  return {
+    cached: () => cachedEscrowKey(localProfileCache()),
+    fetch: () => escrowApi(API_BASE, accessToken, fetchImpl).fetchEscrowKey(),
+  }
 }
 
 /**

@@ -1351,6 +1351,10 @@
   <source>The plans appear here once this device has had a connection.</source>
   <target>Die Tarife erscheinen hier, sobald dieses Gerät einmal eine Verbindung hatte.</target>
 </trans-unit>
+<trans-unit id="sc854cf75aa7eeeb9">
+  <source>The server cannot accept encrypted projects yet. Please try again later.</source>
+  <target>Der Server kann noch keine verschlüsselten Projekte annehmen. Bitte versuchen Sie es später erneut.</target>
+</trans-unit>
 </body>
 </file>
 </xliff>
