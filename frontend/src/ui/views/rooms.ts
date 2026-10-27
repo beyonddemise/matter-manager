@@ -1,6 +1,6 @@
 import { msg, updateWhenLocaleChanges } from '@lit/localize'
 import { html, LitElement, nothing, type PropertyDeclarations, type TemplateResult } from 'lit'
-import type { ProjectRepositories } from '../../data/index.js'
+import { ProjectLockedError, type ProjectRepositories } from '../../data/index.js'
 import {
   type DeviceDocument,
   type Room,
@@ -13,7 +13,7 @@ import { PROJECT_CHANGED, PROJECT_DATA_CHANGED } from '../current-project.js'
 import { projectDatabase, projectIsEditable } from '../db/project-database.js'
 import { deviceCountText } from '../i18n/counts.js'
 import { displayOrder } from '../i18n/localization.js'
-import { problemMessage } from '../i18n/problems.js'
+import { lockedProjectMessage, problemMessage } from '../i18n/problems.js'
 import { fieldValue } from './device-form.js'
 import { projectLine } from './project-line.js'
 import { roomSpellings } from './room-breadcrumb.js'
@@ -50,6 +50,7 @@ export class RoomsView extends LitElement {
     devices: { state: true },
     loaded: { state: true },
     failed: { state: true },
+    locked: { state: true },
     editing: { state: true },
     renameProblem: { state: true },
     busy: { state: true },
@@ -63,6 +64,12 @@ export class RoomsView extends LitElement {
   declare loaded: boolean
   /** A read or a rename did not finish. */
   declare failed: boolean
+  /**
+   * The last rename was refused because the project is locked on this device (#303). Apart
+   * from {@link failed} because the sentence differs: a locked project refuses the first write,
+   * so nothing was saved, and retrying cannot help until the key arrives.
+   */
+  declare locked: boolean
   /** The room in the rename dialog, or `undefined` when it is closed. */
   declare editing: Editing | undefined
   /** Why the name last tried in the dialog is not a room path, until it is changed or closed. */
@@ -76,6 +83,7 @@ export class RoomsView extends LitElement {
     this.devices = []
     this.loaded = false
     this.failed = false
+    this.locked = false
     this.busy = false
   }
 
@@ -128,6 +136,11 @@ export class RoomsView extends LitElement {
       this.devices = devices
       this.loaded = true
       this.failed = false
+      // Cleared by every successful read, like `failed`: `onRename` re-reads *before* it sets
+      // the flag, so a fresh refusal still shows, and a read after the key arrived ends a stale
+      // "after the next sync" (#303). A read still locked keeps nothing stale either: the
+      // sentence returns with the next refused rename.
+      this.locked = false
     } catch {
       // Not logged: a device document carries a setup code. The message says the one thing
       // that is certainly true — the rooms were not read, and nothing has been lost.
@@ -167,12 +180,14 @@ export class RoomsView extends LitElement {
     if (planned.length === 0) return
 
     this.busy = true
+    this.locked = false
     try {
       for (const device of planned) await this.repos().devices.save(device)
       await this.load()
-    } catch {
+    } catch (error) {
       await this.load()
-      this.failed = true
+      if (error instanceof ProjectLockedError) this.locked = true
+      else this.failed = true
     } finally {
       this.busy = false
     }
@@ -194,6 +209,14 @@ export class RoomsView extends LitElement {
             ? html`<wa-callout variant="danger" data-rooms-failed>
                 <wa-icon slot="icon" name="triangle-exclamation"></wa-icon>
                 ${msg('That did not finish. Some changes may have been saved. Check and try again.')}
+              </wa-callout>`
+            : ''
+        }
+        ${
+          this.locked
+            ? html`<wa-callout variant="warning" data-rooms-locked>
+                <wa-icon slot="icon" name="circle-info"></wa-icon>
+                ${lockedProjectMessage('change')}
               </wa-callout>`
             : ''
         }

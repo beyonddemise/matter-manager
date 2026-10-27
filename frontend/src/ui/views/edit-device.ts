@@ -1,5 +1,6 @@
 import { msg } from '@lit/localize'
 import { html, type PropertyValues } from 'lit'
+import { isLockedDocument } from '../../data/index.js'
 import {
   type DeviceDocument,
   DraftError,
@@ -8,6 +9,7 @@ import {
   planDeviceEdit,
   uuidOf,
 } from '../../domain/index.js'
+import { codePendingTitle } from '../i18n/problems.js'
 import { DeviceFormView } from './device-form.js'
 
 /**
@@ -84,6 +86,29 @@ export class EditDeviceView extends DeviceFormView {
     this.rooms = rooms
     this.loaded = true
     if (device !== undefined) await this.fill(device)
+  }
+
+  /**
+   * Also replaces a device held from a locked read (#303), without touching the controls.
+   *
+   * That copy can never be saved (`StaleLockedDocumentError`), so once the key may have arrived
+   * the form needs a fresh one for the next submit. Re-read only then: a device read under the
+   * key stays as it is, for the reason the base class gives. Guarded like {@link load}, so a
+   * read outliving its route does not land on the next device.
+   */
+  protected override projectDataChanged(): void {
+    super.projectDataChanged()
+    const held = this.device
+    if (held === undefined || !isLockedDocument(held)) return
+    const token = this.request
+    void this.repos()
+      .devices.get(held._id)
+      .then((fresh) => {
+        if (token === this.request && fresh !== undefined) this.device = fresh
+      })
+      // A failed re-read leaves the locked copy, whose save is refused and says so: no harm,
+      // and nothing to log (the document carries a setup code).
+      .catch(() => undefined)
   }
 
   /**
@@ -181,7 +206,13 @@ export class EditDeviceView extends DeviceFormView {
              together or the QR stops commissioning. -->
         <div class="wa-stack wa-gap-2xs">
           <small class="app-empty">${msg('Pairing code')}</small>
-          <code class="app-pairing-code" data-manual-code>${device.manualCode}</code>
+          ${
+            // Locked on this device (#303): the read carries no code, and a blank one would read
+            // as a device without one. Said as on the device page, in the caption's quiet style.
+            isLockedDocument(device)
+              ? html`<span data-code-pending>${codePendingTitle()}</span>`
+              : html`<code class="app-pairing-code" data-manual-code>${device.manualCode}</code>`
+          }
           <small class="app-empty">
             ${msg('The setup code cannot be changed. If it is wrong, delete this device and add it again.')}
           </small>

@@ -5,10 +5,15 @@
  * what this device holds, not of what the server may have since. The format is
  * `domain/archive/project-archive.ts`; the container `domain/archive/zip.ts`.
  *
+ * **Refused for a project locked on this device** (#303; spec, "Locked projects"): the format is
+ * plaintext, and a locked read carries no codes, so the archive would be a backup with every
+ * commissioning secret missing — one its own import refuses.
+ *
  * @module
  */
 
 import { msg } from '@lit/localize'
+import { isLockedDocument, ProjectLockedError } from '../../data/index.js'
 import { ARCHIVE_LIMITS, projectArchiveEntries } from '../../domain/archive/project-archive.js'
 import { writeZip, type ZipEntry, ZipError } from '../../domain/archive/zip.js'
 import { isProjectDocument, PROJECT_DOCUMENT_ID } from '../../domain/documents/project.js'
@@ -94,6 +99,7 @@ export function exportFilename(name: string, now: Date): string {
  *
  * @param row which database, and the name the page shows (used when the database has no
  *   `project` document, as the first-run catalogue may not)
+ * @throws {ProjectLockedError} when the project is locked on this device; nothing is offered
  */
 export async function exportProject(
   row: { readonly dbName: string; readonly name: string; readonly client?: string },
@@ -103,6 +109,10 @@ export async function exportProject(
     deps.devices(row.dbName),
     deps.projectDocument(row.dbName),
   ])
+  // Before anything is built, so no partial archive exists even in memory. One locked document
+  // is enough: the key state is per project. A locked project with no devices holds no codes
+  // to lose and exports as the empty project it is.
+  if (devices.some(isLockedDocument)) throw new ProjectLockedError('exporting')
   const now = deps.now()
   const project = stored ?? {
     name: row.name,

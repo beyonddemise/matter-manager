@@ -1359,6 +1359,22 @@
   <source>Created on this device only. <x id="0" equiv-text="${reason}"/></source>
   <target>Nur auf diesem Gerät angelegt. <x id="0" equiv-text="${reason}"/></target>
 </trans-unit>
+<trans-unit id="s3d51076ed64593f1">
+  <source>This project’s key has not reached this browser yet, so it can be exported after the next sync. Nothing was downloaded.</source>
+  <target>Der Schlüssel dieses Projekts ist noch nicht in diesem Browser angekommen; exportieren können Sie es nach der nächsten Synchronisierung. Es wurde nichts heruntergeladen.</target>
+</trans-unit>
+<trans-unit id="s8227d32a4e86580e">
+  <source>This project’s key has not reached this browser yet, so it can be changed here after the next sync. Nothing was saved.</source>
+  <target>Der Schlüssel dieses Projekts ist noch nicht in diesem Browser angekommen; ändern können Sie es hier nach der nächsten Synchronisierung. Es wurde nichts gespeichert.</target>
+</trans-unit>
+<trans-unit id="s32cb8d6a84b6c20e">
+  <source>Available after next sync</source>
+  <target>Verfügbar nach der nächsten Synchronisierung</target>
+</trans-unit>
+<trans-unit id="s17b1d99907a5f1b3">
+  <source>The QR code and the pairing code are stored encrypted, and this project’s key has not reached this browser yet. They appear here once it has synchronized.</source>
+  <target>QR-Code und Kopplungscode sind verschlüsselt gespeichert, und der Schlüssel dieses Projekts ist noch nicht in diesem Browser angekommen. Sie erscheinen hier, sobald synchronisiert wurde.</target>
+</trans-unit>
 </body>
 </file>
 </xliff>

@@ -4,7 +4,7 @@ import '@awesome.me/webawesome-pro/dist/components/combobox/combobox.js'
 import '@awesome.me/webawesome-pro/dist/components/option/option.js'
 import { msg, updateWhenLocaleChanges } from '@lit/localize'
 import { html, LitElement, type PropertyDeclarations, type TemplateResult } from 'lit'
-import type { ProjectRepositories } from '../../data/index.js'
+import { ProjectLockedError, type ProjectRepositories } from '../../data/index.js'
 import {
   type CatalogNames,
   type DeviceDocument,
@@ -16,11 +16,11 @@ import {
   roomsOf,
   type Unsaved,
 } from '../../domain/index.js'
-import { PROJECT_CHANGED } from '../current-project.js'
+import { PROJECT_CHANGED, PROJECT_DATA_CHANGED } from '../current-project.js'
 import { projectDatabase } from '../db/project-database.js'
 import { displayOrder } from '../i18n/localization.js'
 import { shownManufacturer } from '../i18n/manufacturer.js'
-import { problemMessage } from '../i18n/problems.js'
+import { lockedProjectMessage, problemMessage } from '../i18n/problems.js'
 
 /**
  * Reads a form control's value defensively; controls report through DOM properties.
@@ -84,8 +84,13 @@ export abstract class DeviceFormView extends LitElement {
   // `exactOptionalPropertyTypes` assigning `undefined` to an optional property is an error.
   declare error: DraftError | undefined
   declare saving: boolean
-  /** Whether the last write was rejected by storage. Distinct from a rejected *field*. */
-  declare saveFailed: boolean
+  /**
+   * Why the last write was rejected, if it was. Distinct from a rejected *field*.
+   *
+   * Two reasons with two sentences: `storage` is worth retrying, `locked` (#303) is not — the
+   * project's key has not reached this browser, and every retry is refused until it has.
+   */
+  declare saveFailed: false | 'storage' | 'locked'
   /**
    * Whether the existing rooms could not be read.
    *
@@ -141,13 +146,34 @@ export abstract class DeviceFormView extends LitElement {
     window.location.hash = '#/devices'
   }
 
+  /** Bound once, so the listener removed is the listener added. */
+  private readonly onDataChanged = (): void => {
+    this.projectDataChanged()
+  }
+
+  /**
+   * Replication brought documents down, or Refresh was pressed. **Not a re-read of the
+   * controls** — that would overwrite what somebody is typing.
+   *
+   * It does end a locked refusal (#303). The sentence promised the save "after the next sync",
+   * and this is that sync: the inbound batch that carries the key also refreshes the key state
+   * before views hear of it (`refreshKeyStateOnInboundKeys`). A project still locked says so
+   * again on the next submit; leaving the sentence up after the key arrived would be a stale
+   * instruction about a save that now works.
+   */
+  protected projectDataChanged(): void {
+    if (this.saveFailed === 'locked') this.saveFailed = false
+  }
+
   override connectedCallback(): void {
     super.connectedCallback()
     window.addEventListener(PROJECT_CHANGED, this.onProjectChanged)
+    window.addEventListener(PROJECT_DATA_CHANGED, this.onDataChanged)
   }
 
   override disconnectedCallback(): void {
     window.removeEventListener(PROJECT_CHANGED, this.onProjectChanged)
+    window.removeEventListener(PROJECT_DATA_CHANGED, this.onDataChanged)
     super.disconnectedCallback()
   }
 
@@ -218,8 +244,8 @@ export abstract class DeviceFormView extends LitElement {
       // same reason `new-device.ts` keeps its unreachable rethrow.
       this.saveFailed = false
       return true
-    } catch {
-      this.saveFailed = true
+    } catch (error) {
+      this.saveFailed = error instanceof ProjectLockedError ? 'locked' : 'storage'
       return false
     }
   }
@@ -382,7 +408,16 @@ export abstract class DeviceFormView extends LitElement {
       `
     }
 
-    if (this.saveFailed) {
+    if (this.saveFailed === 'locked') {
+      return html`
+        <wa-callout variant="warning" data-save-locked>
+          <wa-icon slot="icon" name="circle-info"></wa-icon>
+          ${lockedProjectMessage('change')}
+        </wa-callout>
+      `
+    }
+
+    if (this.saveFailed === 'storage') {
       return html`
         <wa-callout variant="danger" data-save-failed>
           <wa-icon slot="icon" name="triangle-exclamation"></wa-icon>

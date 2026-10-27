@@ -4,11 +4,12 @@ import '@awesome.me/webawesome-pro/dist/components/scroller/scroller.js'
 import '@awesome.me/webawesome-pro/dist/components/tooltip/tooltip.js'
 import { msg, str, updateWhenLocaleChanges } from '@lit/localize'
 import { html, LitElement, nothing, type TemplateResult } from 'lit'
-import type { LocalProjectEntry } from '../../data/index.js'
+import { type LocalProjectEntry, ProjectLockedError } from '../../data/index.js'
 import { DEFAULT_PLAN, planSyncs, showsUpgrade } from '../../domain/plan.js'
 import { projects, provisioningEscrowKey } from '../composition.js'
 import { writeCurrentProjectId } from '../current-project.js'
 import { currentProjectDatabaseName, useProjectDatabase } from '../db/project-database.js'
+import { lockedProjectMessage } from '../i18n/problems.js'
 import {
   createLocalProject,
   indexServerProject,
@@ -169,6 +170,11 @@ function failureText(error: unknown): string {
     error instanceof ProjectActionError
   ) {
     return reasonText(error.reason)
+  }
+  if (error instanceof ProjectLockedError) {
+    // The export of a project whose key has not reached this browser (#303): not a fault, and
+    // not retryable until the next sync brings the key.
+    return lockedProjectMessage('export')
   }
   if (isExportTooLarge(error)) {
     return msg('This project is too large to export as one file. Nothing was downloaded.')

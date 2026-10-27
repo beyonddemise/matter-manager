@@ -16,12 +16,16 @@
  * edited the device in the meantime is left alone: their edit stands, and the next run fills
  * the block on top of it.
  *
+ * **Skips a locked project entirely** (#303; spec, "Locked projects"). A failed lookup stamps
+ * `catalogSource: 'unusable'` onto a device for good, so a pass run in the window before escrow
+ * delivers the key must never reach the API: the key gap is transient, the stamp is not.
+ *
  * Nothing is logged: every document here carries a setup code.
  *
  * @module
  */
 
-import { isConflict, type Repository } from '../data/index.js'
+import { isConflict, isLockedDocument, type Repository } from '../data/index.js'
 import {
   type CatalogFields,
   catalogFields,
@@ -123,6 +127,13 @@ async function runOnce(deps: BackfillDependencies, signal: AbortSignal): Promise
   if (!deps.editable()) return
   const devices = deps.devices()
   const listed = await devices.list()
+  // Why a gate of its own rather than trusting the filter below: today `needsCatalogLookup`
+  // happens to answer false for a locked read, but only because `LONG_MANUAL_CODE.test` coerces
+  // the absent `manualCode` to the string "undefined". The read is typed as a full device (see
+  // `LockedDocument`), so nothing would flag a change that made the filter answer true and sent
+  // the lookup `undefined` — and its `unusable` answer would then be stamped for good. The key
+  // state is per project, so one locked document means the whole pass has nothing to do.
+  if (listed.some(isLockedDocument)) return
   const now = deps.now()
   const candidates = listed.filter((device) => needsCatalogLookup(device, now))
 

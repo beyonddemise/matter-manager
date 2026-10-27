@@ -5,7 +5,7 @@ import {
   ArchiveError,
   projectArchiveEntries,
 } from '../../../src/domain/archive/project-archive.js'
-import { writeZip, ZipError } from '../../../src/domain/archive/zip.js'
+import { readZip, writeZip, ZipError } from '../../../src/domain/archive/zip.js'
 import { PROJECT_DOCUMENT_ID } from '../../../src/domain/documents/project.js'
 import type { DeviceDocument } from '../../../src/domain/index.js'
 import { streamCodecs } from '../../../src/ui/archive/codec.js'
@@ -137,6 +137,60 @@ describe('importing a project export', () => {
     expect(result.entry.name).toBe('Round trip (imported)')
     const [copied] = await openProject(result.entry.dbName).devices.list()
     expect(copied).toMatchObject({ _id: 'device:a', name: 'Lamp a', spot: 'ceiling' })
+  })
+})
+
+describe('an encrypted project, out and back in', () => {
+  // Review focus 3 of the encryption plan: the archive is plaintext by format, so an unlocked
+  // export must carry the codes in the clear, and the import must encrypt them again under the
+  // new project's own key — never copy ciphertext across, never store plaintext.
+  it('exportImportRoundTripsPlaintext', async () => {
+    const PAYLOAD = 'MT:Y.K9042C00KA0648G00'
+    const LONG = '749701123365521327687'
+    const source = await createLocalProject({ name: 'Encrypted' })
+    const {
+      _rev: _r,
+      updatedAt: _u,
+      ...fresh
+    } = device('a', { payload: PAYLOAD, manualCode: LONG })
+    await openProject(source.dbName).devices.save(fresh)
+    // The premise: the source really is encrypted, or the round trip proves nothing.
+    const sourceRaw = (await rawDatabase(source.dbName).get('device:a')) as Record<string, unknown>
+    expect(sourceRaw.payload).toMatch(/^enc:v1:/)
+    let bytes: Uint8Array = new Uint8Array()
+
+    await exportProject(
+      { dbName: source.dbName, name: 'Encrypted' },
+      {
+        devices: (dbName) => openProject(dbName).devices.list(),
+        projectDocument: async () => ({ name: 'Encrypted' }),
+        now: () => new Date('2026-10-19T15:00:00Z'),
+        download: (written) => {
+          bytes = written
+        },
+      },
+    )
+
+    // Every file in the archive, as text: the codes are there in the clear, and no ciphertext.
+    const files = await readZip(bytes, streamCodecs, ARCHIVE_LIMITS)
+    const text = files.map((file) => new TextDecoder().decode(file.data)).join('\n')
+    expect(text).toContain(PAYLOAD)
+    expect(text).toContain(LONG)
+    expect(text).not.toContain('enc:')
+
+    const result = await importBytes(bytes)
+
+    const stored = (await rawDatabase(result.entry.dbName).get('device:a')) as Record<
+      string,
+      unknown
+    >
+    expect(stored.payload).toMatch(/^enc:v1:/)
+    expect(stored.manualCode).toMatch(/^enc:v1:/)
+    // Encrypted afresh under the new project's key, not the source's ciphertext carried over.
+    expect(stored.payload).not.toBe(sourceRaw.payload)
+    const read = await openProject(result.entry.dbName).devices.get('device:a')
+    expect(read?.payload).toBe(PAYLOAD)
+    expect(read?.manualCode).toBe(LONG)
   })
 })
 

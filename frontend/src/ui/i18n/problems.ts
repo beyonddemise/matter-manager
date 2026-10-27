@@ -142,3 +142,40 @@ export function imageMessage(problem: ImageProblem | DraftProblem): string {
       return problemMessage(problem)
   }
 }
+
+/**
+ * What a write refused on a locked project means (#303): the project's key has not reached this
+ * browser yet, so `data/` refuses every write with `ProjectLockedError`.
+ *
+ * Not a storage failure, and deliberately not worded as one: "try again" would send the reader
+ * pressing a button that cannot work until replication brings the key. The one honest remedy is
+ * time — the next sync — so that is what it says.
+ *
+ * @param refused `change` for a save, rename or delete; `export` for an archive, PDF or sheet
+ */
+export function lockedProjectMessage(refused: 'change' | 'export'): string {
+  return refused === 'export'
+    ? msg(
+        'This project’s key has not reached this browser yet, so it can be exported after the next sync. Nothing was downloaded.',
+      )
+    : msg(
+        'This project’s key has not reached this browser yet, so it can be changed here after the next sync. Nothing was saved.',
+      )
+}
+
+/**
+ * The heading that stands in for the QR code and the pairing code of a locked device (#303).
+ *
+ * A function for the reason the switches above are: `msg()` must run at render time to follow a
+ * locale change.
+ */
+export function codePendingTitle(): string {
+  return msg('Available after next sync')
+}
+
+/** The sentence under {@link codePendingTitle}: why the codes are not shown, and when they are. */
+export function codePendingDetail(): string {
+  return msg(
+    'The QR code and the pairing code are stored encrypted, and this project’s key has not reached this browser yet. They appear here once it has synchronized.',
+  )
+}
