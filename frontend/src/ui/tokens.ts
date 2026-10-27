@@ -9,7 +9,8 @@
  * **The refresh token is the exception, by explicit decision.** It lives in `mm-local` as a
  * `_local/` document so a reload can get a new access token without signing in again. That makes
  * it readable by any script on this origin, which is the trade-off the spec's "The trade-off of a
- * body token" accepts and bounds: it is never replicated, it is **not** rotated (that is #209),
+ * body token" accepts and bounds: it is never replicated, it is **rotated on every refresh**
+ * (backend #27 superseded #209; a stolen copy dies one grace window after the next refresh),
  * and sign-out revokes it on the server and removes it here. The httpOnly cookies cannot do this job because
  * the page must be able to present the token itself, in a request body.
  *

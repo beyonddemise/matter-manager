@@ -118,10 +118,11 @@ export type TokenOutcome =
  * There is no "am I signed in" endpoint and there does not need to be: the exchange is the
  * question. The first call after sign-in has no stored token and authenticates with the httpOnly
  * handoff cookie, which is why `credentials: 'include'` stays; every later call sends the stored
- * refresh token in the body. The server does **not** rotate it (#209), so ordinarily the same
- * token comes back. It differs after a fresh sign-in: a handoff that verifies wins over the body
- * token on the server, and the new refresh token it returns replaces the stored one — which is
- * why the answer is written back whenever it differs.
+ * refresh token in the body. The server **rotates** it (backend #27, superseding #209): every
+ * 200 carries the successor token, and the presented one dies sixty seconds later. A fresh
+ * sign-in differs the same way — a handoff that verifies wins over the body token on the server.
+ * Either way the answer is written back whenever it differs, which is the complete client rule
+ * under rotation.
  *
  * Only a 401 ends anything. Offline, a proxy in the way or a 5xx is **not** an answer and
  * reports `unreachable` without discarding the stored token, because this application works
