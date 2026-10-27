@@ -2,8 +2,14 @@
  * The zip container a project export is written in and an import is read from.
  *
  * Small on purpose, rather than a library (ADR 0013): it writes and reads exactly what the
- * project archive needs - stored and deflated entries, UTF-8 names, no encryption, no Zip64 -
- * and refuses everything else by name instead of guessing.
+ * project archive needs - stored and deflated entries, UTF-8 names, optionally WinZip AES
+ * encrypted (AE-2 written, AE-1 and AE-2 read; `winzip-aes.ts`), no Zip64 - and refuses
+ * everything else by name instead of guessing. Legacy ZipCrypto is never written and never
+ * read: it is broken, and offering it would look like protection.
+ *
+ * **An encrypted archive is all or nothing.** Every file in it must be encrypted; one plain file
+ * among encrypted ones is refused, because anybody could have added it without the password and
+ * the import would restore it as part of a protected backup.
  *
  * **The compression is injected.** This package reaches for nothing ambient, so the deflate and
  * inflate it needs arrive as {@link ZipCodecs}; the web layer supplies the browser's
@@ -19,14 +25,22 @@
  */
 
 import { decodeUtf8, encodeUtf8 } from '../text/utf8.js'
+import { AES_256, type AesStrength, aesOverhead, openAes, sealAes } from './winzip-aes.js'
 
 /** Why an archive could not be read. A code, so the interface can translate it. */
 export type ZipProblem =
   /** No end-of-central-directory record: not a zip at all, or cut short. */
   | 'notAZip'
-  /** A zip, but using something this reader does not do: encryption, Zip64, another method. */
+  /** A zip, but using something this reader does not do: ZipCrypto, Zip64, another method. */
   | 'unsupported'
-  /** A record points outside the file, or an entry's CRC does not match its contents. */
+  /** AES encrypted, and no password was given: ask for one and read it again. */
+  | 'needsPassword'
+  /** AES encrypted, and the password given is not the one it was sealed with. */
+  | 'wrongPassword'
+  /**
+   * A record points outside the file, an entry's CRC does not match its contents, or an
+   * encrypted entry's authentication code does not match: it was changed after it was written.
+   */
   | 'corrupt'
   /** Over one of the {@link ZipLimits}. */
   | 'tooLarge'
@@ -63,6 +77,15 @@ export interface ZipCodecs {
   inflate(data: Uint8Array, limit: number): Promise<Uint8Array>
 }
 
+/** How {@link writeZip} protects what it writes. */
+export interface ZipWriteOptions {
+  /**
+   * Seals every entry with WinZip AES-256 (AE-2) under this password. Absent, the archive is
+   * plain and byte-for-byte what it was before passwords existed.
+   */
+  readonly password?: string
+}
+
 /** What an archive may not exceed. */
 export interface ZipLimits {
   /** The file itself. */
@@ -83,11 +106,22 @@ const MAX_COMMENT = 0xffff
 
 const STORED = 0
 const DEFLATED = 8
+/** The method a WinZip AES entry declares; the real one is in its 0x9901 extra field. */
+const AES_METHOD = 99
 /** General purpose flags: bit 0 encrypted, bit 11 the name is UTF-8. */
 const FLAG_ENCRYPTED = 0x0001
 const FLAG_UTF8 = 0x0800
 /** 2.0: deflate, and folders. What every unzip since the 1990s reads. */
 const VERSION = 20
+/** 5.1: the version needed the WinZip specification gives an AES entry. */
+const VERSION_AES = 51
+/** The WinZip AES extra field's header id, and its whole size: a 4-byte header, 7 of data. */
+const AES_EXTRA_ID = 0x9901
+const AES_EXTRA_SIZE = 11
+/** "AE", the vendor id the AES extra field carries, as a little-endian 16-bit value. */
+const AES_VENDOR = 0x4541
+/** AE-2: no CRC is stored, so the archive does not carry a checksum of the plaintext. */
+const AE_2 = 2
 
 /** The CRC-32 table (reflected polynomial 0xEDB88320), built once. */
 const CRC_TABLE = (() => {
@@ -119,7 +153,9 @@ function dosDateTime(date: Date): { readonly time: number; readonly day: number 
 /** One entry as written: its compressed bytes and the facts both headers repeat. */
 interface Prepared {
   readonly name: Uint8Array
+  /** The method the data was compressed with (stored or deflated), sealed or not. */
   readonly method: number
+  readonly encrypted: boolean
   readonly crc: number
   readonly body: Uint8Array
   readonly size: number
@@ -135,15 +171,23 @@ interface Prepared {
  *
  * @param entries the files, in the order they are to appear
  * @param codecs deflate (inflate is not used)
- * @param modified the timestamp every entry carries, so two exports of the same data at the
- *   same moment are byte-identical
- * @throws {RangeError} If two entries share a name, which every reader resolves differently.
+ * With a password, each entry's compressed data is sealed (`winzip-aes.ts`) under its own
+ * random salt, declared as method 99 with the real method in a 0x9901 extra field, and its CRC
+ * left 0 as AE-2 specifies. Two exports are then never byte-identical, by design.
+ *
+ * @param modified the timestamp every entry carries, so two plain exports of the same data at
+ *   the same moment are byte-identical
+ * @param options a password to encrypt with; none writes a plain archive
+ * @throws {RangeError} If two entries share a name, which every reader resolves differently,
+ *   or the password is empty.
  */
 export async function writeZip(
   entries: readonly ZipEntry[],
   codecs: Pick<ZipCodecs, 'deflate'>,
   modified: Date,
+  options: ZipWriteOptions = {},
 ): Promise<Uint8Array> {
+  const { password } = options
   const names = new Set(entries.map((entry) => entry.name))
   if (names.size !== entries.length) {
     throw new RangeError('A zip must not hold two entries with the same name.')
@@ -156,20 +200,23 @@ export async function writeZip(
     const deflated = await codecs.deflate(entry.data)
     const store = deflated.length >= entry.data.length
     const name = encodeUtf8(entry.name)
-    const body = store ? entry.data : deflated
+    const compressed = store ? entry.data : deflated
+    const encrypted = password !== undefined
+    const body = encrypted ? await sealAes(compressed, password) : compressed
     prepared.push({
       name,
       method: store ? STORED : DEFLATED,
-      crc: crc32(entry.data),
+      encrypted,
+      crc: encrypted ? 0 : crc32(entry.data),
       body,
       size: entry.data.length,
       offset,
     })
-    offset += LOCAL_HEADER_SIZE + name.length + body.length
+    offset += LOCAL_HEADER_SIZE + name.length + extraSize(encrypted) + body.length
   }
 
   const centralSize = prepared.reduce(
-    (sum, entry) => sum + CENTRAL_HEADER_SIZE + entry.name.length,
+    (sum, entry) => sum + CENTRAL_HEADER_SIZE + entry.name.length + extraSize(entry.encrypted),
     0,
   )
   const out = new Uint8Array(offset + centralSize + END_RECORD_SIZE)
@@ -177,34 +224,48 @@ export async function writeZip(
 
   /** The fields the local and central headers share, from `at` (version needed onwards). */
   const common = (at: number, entry: Prepared): void => {
-    view.setUint16(at, VERSION, true)
-    view.setUint16(at + 2, FLAG_UTF8, true)
-    view.setUint16(at + 4, entry.method, true)
+    view.setUint16(at, entry.encrypted ? VERSION_AES : VERSION, true)
+    view.setUint16(at + 2, entry.encrypted ? FLAG_UTF8 | FLAG_ENCRYPTED : FLAG_UTF8, true)
+    view.setUint16(at + 4, entry.encrypted ? AES_METHOD : entry.method, true)
     view.setUint16(at + 6, time, true)
     view.setUint16(at + 8, day, true)
     view.setUint32(at + 10, entry.crc, true)
     view.setUint32(at + 14, entry.body.length, true)
     view.setUint32(at + 18, entry.size, true)
     view.setUint16(at + 22, entry.name.length, true)
+    view.setUint16(at + 24, extraSize(entry.encrypted), true)
+  }
+
+  /** A sealed entry's AES extra field, at `at`; its last field is the real method. */
+  const aesExtra = (at: number, entry: Prepared): void => {
+    view.setUint16(at, AES_EXTRA_ID, true)
+    view.setUint16(at + 2, AES_EXTRA_SIZE - 4, true)
+    view.setUint16(at + 4, AE_2, true)
+    view.setUint16(at + 6, AES_VENDOR, true)
+    view.setUint8(at + 8, AES_256)
+    view.setUint16(at + 9, entry.method, true)
   }
 
   for (const entry of prepared) {
     view.setUint32(entry.offset, LOCAL_HEADER, true)
     common(entry.offset + 4, entry)
-    out.set(entry.name, entry.offset + LOCAL_HEADER_SIZE)
-    out.set(entry.body, entry.offset + LOCAL_HEADER_SIZE + entry.name.length)
+    const nameAt = entry.offset + LOCAL_HEADER_SIZE
+    out.set(entry.name, nameAt)
+    if (entry.encrypted) aesExtra(nameAt + entry.name.length, entry)
+    out.set(entry.body, nameAt + entry.name.length + extraSize(entry.encrypted))
   }
 
   let at = offset
   for (const entry of prepared) {
     view.setUint32(at, CENTRAL_HEADER, true)
-    view.setUint16(at + 4, VERSION, true) // version made by
+    view.setUint16(at + 4, entry.encrypted ? VERSION_AES : VERSION, true) // version made by
     common(at + 6, entry)
-    // Extra length, comment length, disk number and internal attributes stay 0.
+    // Comment length, disk number and internal attributes stay 0.
     view.setUint32(at + 38, 0, true) // external attributes
     view.setUint32(at + 42, entry.offset, true)
     out.set(entry.name, at + CENTRAL_HEADER_SIZE)
-    at += CENTRAL_HEADER_SIZE + entry.name.length
+    if (entry.encrypted) aesExtra(at + CENTRAL_HEADER_SIZE + entry.name.length, entry)
+    at += CENTRAL_HEADER_SIZE + entry.name.length + extraSize(entry.encrypted)
   }
 
   view.setUint32(at, END_OF_CENTRAL_DIRECTORY, true)
@@ -213,6 +274,47 @@ export async function writeZip(
   view.setUint32(at + 12, centralSize, true)
   view.setUint32(at + 16, offset, true)
   return out
+}
+
+/** The extra field a record carries: the AES one when sealed, none otherwise. */
+const extraSize = (encrypted: boolean): number => (encrypted ? AES_EXTRA_SIZE : 0)
+
+/** What an AES entry's 0x9901 extra field says. */
+interface AesField {
+  /** AE-1 keeps the CRC, AE-2 stores 0 instead. */
+  readonly version: 1 | 2
+  readonly strength: AesStrength
+  /** The method the data was compressed with before it was sealed. */
+  readonly method: number
+}
+
+/**
+ * Finds and checks the 0x9901 field among a record's extra fields.
+ *
+ * @throws {ZipError} `unsupported` when there is none, or it says something this reader does
+ *   not do: another vendor, a version other than AE-1 and AE-2, a strength other than 1-3.
+ */
+function aesField(view: DataView, start: number, length: number, name: string): AesField {
+  const end = start + length
+  for (let at = start; at + 4 <= end; ) {
+    const id = view.getUint16(at, true)
+    const size = view.getUint16(at + 2, true)
+    if (id === AES_EXTRA_ID && size >= AES_EXTRA_SIZE - 4 && at + AES_EXTRA_SIZE <= end) {
+      const version = view.getUint16(at + 4, true)
+      const vendor = view.getUint16(at + 6, true)
+      const strength = view.getUint8(at + 8)
+      if (
+        (version !== 1 && version !== 2) ||
+        vendor !== AES_VENDOR ||
+        (strength !== 1 && strength !== 2 && strength !== 3)
+      ) {
+        throw new ZipError('unsupported', `${name} uses an AES variant this reader does not know.`)
+      }
+      return { version, strength, method: view.getUint16(at + 9, true) }
+    }
+    at += 4 + size
+  }
+  throw new ZipError('unsupported', `${name} is encrypted, but not with WinZip AES.`)
 }
 
 /** Finds the end-of-central-directory record, searching back over a possible comment. */
@@ -244,16 +346,22 @@ function isSafeName(name: string): boolean {
  * Reads every file out of a zip, verified.
  *
  * Folder entries (a name ending in `/`) are skipped: the paths of the files say everything.
+ * An encrypted entry is opened with `password` before it is inflated, its authentication code
+ * checked before anything is decrypted.
  *
  * @param bytes the whole file
  * @param codecs inflate (deflate is not used)
  * @param limits what the file may not exceed; checked before anything is inflated
- * @throws {ZipError} For anything that is not a readable, intact archive within the limits.
+ * @param password for an AES encrypted archive; a plain one ignores it
+ * @throws {ZipError} For anything that is not a readable, intact archive within the limits:
+ *   `needsPassword` for an encrypted one read without a password, `wrongPassword` for one read
+ *   with another.
  */
 export async function readZip(
   bytes: Uint8Array,
   codecs: Pick<ZipCodecs, 'inflate'>,
   limits: ZipLimits,
+  password?: string,
 ): Promise<readonly ZipEntry[]> {
   if (bytes.length > limits.maxBytes) {
     throw new ZipError('tooLarge', `The file is over ${limits.maxBytes} bytes.`)
@@ -284,6 +392,8 @@ export async function readZip(
     readonly crc: number
     readonly size: number
     readonly body: Uint8Array
+    /** A sealed entry's AES field. */
+    readonly aes?: AesField
   }[] = []
   let declaredTotal = 0
   let at = centralStart
@@ -311,13 +421,19 @@ export async function readZip(
     } catch (cause) {
       throw new ZipError('unsupported', 'A file name in the zip is not UTF-8.', { cause })
     }
+    const extraStart = at + CENTRAL_HEADER_SIZE + nameLength
+    within(view, extraStart, extraLength, 'extra field')
     at += CENTRAL_HEADER_SIZE + nameLength + extraLength + commentLength
 
-    if ((flags & FLAG_ENCRYPTED) !== 0) {
-      throw new ZipError('unsupported', `${name} is encrypted.`)
+    const encrypted = (flags & FLAG_ENCRYPTED) !== 0
+    // Encrypted without method 99 is ZipCrypto, never read; method 99 unencrypted is nonsense.
+    if (encrypted !== (method === AES_METHOD)) {
+      throw new ZipError('unsupported', `${name} is encrypted with legacy ZipCrypto.`)
     }
-    if (method !== STORED && method !== DEFLATED) {
-      throw new ZipError('unsupported', `${name} uses compression method ${method}.`)
+    const aes = encrypted ? aesField(view, extraStart, extraLength, name) : undefined
+    const compression = aes?.method ?? method
+    if (compression !== STORED && compression !== DEFLATED) {
+      throw new ZipError('unsupported', `${name} uses compression method ${compression}.`)
     }
     if (!isSafeName(name)) {
       throw new ZipError('unsupported', `${JSON.stringify(name)} is not a path inside the archive.`)
@@ -344,23 +460,57 @@ export async function readZip(
       view.getUint16(localOffset + 26, true) +
       view.getUint16(localOffset + 28, true)
     within(view, dataStart, compressedSize, `data of ${name}`)
+    if (aes !== undefined && compressedSize < aesOverhead(aes.strength)) {
+      throw new ZipError('corrupt', `${name} is too short to be encrypted data.`)
+    }
     planned.push({
       name,
-      method,
+      method: compression,
       crc,
       size,
       body: bytes.subarray(dataStart, dataStart + compressedSize),
+      ...(aes === undefined ? {} : { aes }),
     })
   }
 
+  const sealed = planned.filter((entry) => entry.aes !== undefined).length
+  if (sealed > 0 && sealed < planned.length) {
+    throw new ZipError('unsupported', 'The zip mixes encrypted and unencrypted files.')
+  }
+  if (sealed > 0 && (password === undefined || password === '')) {
+    throw new ZipError('needsPassword', 'The zip is encrypted and needs its password.')
+  }
+
   const entries: ZipEntry[] = []
-  for (const { name, method, crc, size, body } of planned) {
+  for (const { name, method, crc, size, body, aes } of planned) {
+    const compressed = aes === undefined ? body : await open(body, password ?? '', aes, name)
     const data =
-      method === STORED ? body.slice() : await codecs.inflate(body, limits.maxInflatedBytes)
-    if (data.length !== size || crc32(data) !== crc) {
+      method === STORED
+        ? compressed.slice()
+        : await codecs.inflate(compressed, limits.maxInflatedBytes)
+    // AE-2 stores no CRC; its authentication code, checked already, stands in for it.
+    const checksummed = aes === undefined || aes.version === 1
+    if (data.length !== size || (checksummed && crc32(data) !== crc)) {
       throw new ZipError('corrupt', `${name} does not match its checksum.`)
     }
     entries.push({ name, data })
   }
   return entries
+}
+
+/** Opens one sealed entry, or throws why not as a {@link ZipError}. */
+async function open(
+  body: Uint8Array,
+  password: string,
+  aes: AesField,
+  name: string,
+): Promise<Uint8Array> {
+  const opened = await openAes(body, password, aes.strength)
+  if (opened === 'wrongPassword') {
+    throw new ZipError('wrongPassword', 'The password does not open this zip.')
+  }
+  if (opened === 'tampered') {
+    throw new ZipError('corrupt', `${name} was changed after it was encrypted.`)
+  }
+  return opened
 }
