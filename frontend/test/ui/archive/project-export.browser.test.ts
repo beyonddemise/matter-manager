@@ -245,7 +245,13 @@ describe('an export the import could not read back', () => {
     expect(downloads).toEqual([])
   })
 
-  it('is offered at exactly the number of files an import reads', async () => {
+  // Three times the default budget, for a reason worth naming: this writes a zip of 10,000
+  // device files and reads every one back — pure CPU, ~2.4 s on a development laptop — and CI's
+  // single-core runner executes it while other test files' iframes run in parallel on the same
+  // core. At the default 15 s it sat close enough to the edge to time out under load (first
+  // seen when #302 added WebCrypto work to the neighbouring suites); the assertion is
+  // unchanged.
+  it('is offered at exactly the number of files an import reads', { timeout: 45_000 }, async () => {
     const most = Array.from({ length: ARCHIVE_LIMITS.maxEntries - 2 }, (_, n) => device(`d${n}`))
     const { deps, downloads } = fakes({ name: 'Hillside' }, most)
 
