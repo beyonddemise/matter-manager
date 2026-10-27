@@ -223,6 +223,65 @@ export const line = (name) => html\`<p>
   })
 })
 
+// Review findings on #316: comment skipping must not read a regex literal as a comment, and
+// `html\`` mentioned inside a comment or a string is prose, not a template start. Both are
+// one root cause - template starts and comments are properties of *code*, so only a walker
+// that knows what is code may recognise them.
+describe('code that merely resembles comments or templates (#316 review)', () => {
+  it('walks a regex containing /* without reading it as a block comment', () => {
+    const view = `
+import { msg } from '@lit/localize'
+import { html } from 'lit'
+export const view = (path) => html\`<p>\${path.replace(/[/*]+/g, '-') || msg('None')}</p>\`
+`
+    const { code, output } = scan({ 'view.ts': view })
+    expect(output).not.toContain('never closes')
+    expect(output).toContain('ok')
+    expect(code).toBe(0)
+  })
+
+  it('still sees unwrapped text after a substitution holding such a regex', () => {
+    // Guards the regex skip against over-consuming: reading /[/*]+/ as a comment swallows
+    // the rest of the file, and this text with it.
+    const view = `
+import { html } from 'lit'
+export const view = (path) => html\`<p>
+  \${path.replace(/[/*]+/g, '-')}
+  Forgotten after the regex
+</p>\`
+`
+    const { code, output } = scan({ 'view.ts': view })
+    expect(code).toBe(1)
+    expect(output).toContain('Forgotten')
+  })
+
+  it('reads an html backtick inside a line comment as prose, not as a template start', () => {
+    // The phantom template opened in the comment used to swallow up to the real template's
+    // opening backtick and report the code between as unwrapped text.
+    const quiet = `
+import { msg } from '@lit/localize'
+import { html } from 'lit'
+// The view is built with html\` templates throughout.
+export const view = () => html\`<p>\${msg('Hello')}</p>\`
+`
+    const { code, output } = scan({ 'view.ts': quiet })
+    expect(output).toContain('ok')
+    expect(code).toBe(0)
+  })
+
+  it('reads an html backtick inside a quoted string the same way', () => {
+    const quiet = `
+import { msg } from '@lit/localize'
+import { html } from 'lit'
+export const hint = 'render with html\` when needed'
+export const view = () => html\`<p>\${msg('Hello')}</p>\`
+`
+    const { code, output } = scan({ 'view.ts': quiet })
+    expect(output).toContain('ok')
+    expect(code).toBe(0)
+  })
+})
+
 describe('the checker itself', () => {
   it('reports every violation it finds, not just the first', () => {
     const twice = `

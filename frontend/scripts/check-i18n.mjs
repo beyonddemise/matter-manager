@@ -56,9 +56,11 @@ const LOOKS_LIKE_A_WORD = /\p{L}{2,}/u
  * Reduces every `html` tagged template in `source` to its static text, with each substitution
  * replaced by {@link EXPRESSION}.
  *
- * Nested templates need no special handling: a template inside a substitution is found by this
- * same scan on its own, because the scan walks every `html` backtick in the file rather than
- * only the outermost ones.
+ * The file is walked as *code* from the top, so a comment, a string or a regular expression
+ * that happens to contain `` html` `` never opens a phantom template, and an apostrophe inside
+ * a comment never opens a phantom string (#283). Nested templates are found by the same walk:
+ * a substitution recurses into {@link walkCode}, which recognises templates wherever code can
+ * hold one.
  *
  * A template whose closing backtick is never reached — an unterminated comment or string ran
  * to the end of the file — comes back with `closed: false` so the caller can report it rather
@@ -66,55 +68,34 @@ const LOOKS_LIKE_A_WORD = /\p{L}{2,}/u
  */
 function htmlTemplateSkeletons(source) {
   const skeletons = []
-
-  for (let i = 0; i < source.length; i++) {
-    // A tag, not the word "html" inside an identifier, a string or a path.
-    if (!source.startsWith('html`', i)) continue
-    if (i > 0 && /[\w$.'"`/-]/.test(source[i - 1])) continue
-
-    let cursor = i + 'html`'.length
-    let skeleton = ''
-    let closed = false
-
-    while (cursor < source.length) {
-      const character = source[cursor]
-
-      if (character === '\\') {
-        cursor += 2
-        continue
-      }
-      if (character === '`') {
-        closed = true
-        break
-      }
-      if (character === '$' && source[cursor + 1] === '{') {
-        cursor = endOfSubstitution(source, cursor + 2)
-        skeleton += EXPRESSION
-        continue
-      }
-      skeleton += character
-      cursor++
-    }
-    skeletons.push({ skeleton, offset: i, closed })
-  }
+  walkCode(source, 0, skeletons, false)
   return skeletons
 }
 
 /**
- * Given the index just past an opening substitution, returns the index just past its matching
- * closing brace.
- *
- * Tracks nested braces and skips over string and template literals, so a brace inside a quoted
- * value or an inner template does not close the substitution early. Comments are skipped the
- * same way — this is the only walker that moves through *code*, so it is the only place
- * comments can occur: {@link endOfQuoted} and {@link endOfTemplate} walk string content, and a
- * substitution nested inside an inner template arrives back here (#283).
+ * A `/` after one of these ends a value, so it divides; anywhere else it opens a regular
+ * expression. The same heuristic every lightweight lexer uses, with the same documented limit:
+ * a regex right after a keyword — `return /x/` — reads as division here, and is then walked
+ * as plain code, which is harmless unless it contains a quote.
  */
-function endOfSubstitution(source, start) {
-  let depth = 1
-  let cursor = start
+const VALUE_END = /[\w$)\]'"`]/
 
-  while (cursor < source.length && depth > 0) {
+/**
+ * Walks `source` as code from `start`, collecting every `html` tagged template it passes into
+ * `skeletons`. With `insideSubstitution`, returns the index just past the `}` that closes the
+ * substitution; otherwise runs to the end of the file.
+ *
+ * This is the only walker that moves through code, so it is the only place comments, regular
+ * expressions and template starts are recognised: {@link endOfQuoted} walks string content,
+ * {@link walkTemplate} walks template text, and both kinds of nesting recurse back here.
+ */
+function walkCode(source, start, skeletons, insideSubstitution) {
+  let depth = insideSubstitution ? 1 : 0
+  let cursor = start
+  // The last significant character decides whether a `/` divides or opens a regex.
+  let previous = ''
+
+  while (cursor < source.length) {
     const character = source[cursor]
 
     if (character === '\\') {
@@ -136,13 +117,78 @@ function endOfSubstitution(source, start) {
       cursor = end === -1 ? source.length : end + 2
       continue
     }
+    // A regex is skipped whole so that `/*` inside it — the character class [/*], say — is
+    // never mistaken for a block comment and `'` inside it never opens a string.
+    if (character === '/' && !(previous && VALUE_END.test(previous))) {
+      const end = endOfRegex(source, cursor)
+      if (end !== -1) {
+        cursor = end
+        previous = '/'
+        continue
+      }
+      // No closing slash on this line, so it was not a regex after all: an ordinary character.
+    }
+    if (character === "'" || character === '"') {
+      cursor = endOfQuoted(source, cursor) + 1
+      previous = character
+      continue
+    }
+    if (character === '`') {
+      cursor = walkTemplate(source, cursor, skeletons)
+      previous = '`'
+      continue
+    }
     if (character === '{') depth++
-    else if (character === '}') depth--
-    else if (character === "'" || character === '"') cursor = endOfQuoted(source, cursor)
-    else if (character === '`') cursor = endOfTemplate(source, cursor)
-
+    else if (character === '}') {
+      depth--
+      if (insideSubstitution && depth === 0) return cursor + 1
+    }
+    if (!/\s/.test(character)) previous = character
     cursor++
   }
+  return cursor
+}
+
+/**
+ * Walks the template literal whose backtick opens at `start`, recursing into {@link walkCode}
+ * for each substitution, and returns the index just past its closing backtick. When the
+ * template is `html` tagged, its skeleton is recorded.
+ */
+function walkTemplate(source, start, skeletons) {
+  const offset = start - 'html'.length
+  // A tag, not the word "html" inside an identifier, a string or a path.
+  const tagged =
+    offset >= 0 &&
+    source.startsWith('html', offset) &&
+    (offset === 0 || !/[\w$.'"`/-]/.test(source[offset - 1]))
+
+  let cursor = start + 1
+  let skeleton = ''
+  let closed = false
+
+  while (cursor < source.length) {
+    const character = source[cursor]
+
+    if (character === '\\') {
+      cursor += 2
+      continue
+    }
+    if (character === '`') {
+      closed = true
+      cursor++
+      break
+    }
+    if (character === '$' && source[cursor + 1] === '{') {
+      // `walkCode` returns the index just past the closing brace; advancing further would
+      // skip a character — fatally so when it is this template's closing backtick.
+      cursor = walkCode(source, cursor + 2, skeletons, true)
+      if (tagged) skeleton += EXPRESSION
+      continue
+    }
+    if (tagged) skeleton += character
+    cursor++
+  }
+  if (tagged) skeletons.push({ skeleton, offset, closed })
   return cursor
 }
 
@@ -158,19 +204,26 @@ function endOfQuoted(source, start) {
   return cursor
 }
 
-/** Index of the backtick closing the template that opens at `start`, substitutions included. */
-function endOfTemplate(source, start) {
+/**
+ * Index just past the `/` closing the regular expression that opens at `start`, or -1 when no
+ * closing slash appears on the same line — a regex literal cannot span lines, so the opening
+ * slash divided after all. A `/` inside a character class does not close the regex.
+ */
+function endOfRegex(source, start) {
   let cursor = start + 1
+  let inClass = false
   while (cursor < source.length) {
-    if (source[cursor] === '\\') cursor += 2
-    else if (source[cursor] === '`') return cursor
-    else if (source[cursor] === '$' && source[cursor + 1] === '{') {
-      // `endOfSubstitution` already returns the index past the closing brace; advancing one
-      // more would skip a character — fatally so when it is this template's closing backtick.
-      cursor = endOfSubstitution(source, cursor + 2)
-    } else cursor++
+    const character = source[cursor]
+    if (character === '\\') cursor += 2
+    else if (character === '\n') return -1
+    else {
+      if (character === '[') inClass = true
+      else if (character === ']') inClass = false
+      else if (character === '/' && !inClass) return cursor + 1
+      cursor++
+    }
   }
-  return cursor
+  return -1
 }
 
 /**
