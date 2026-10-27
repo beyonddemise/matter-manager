@@ -39,6 +39,7 @@ import {
   escrowApi,
   prepareEscrowAtStartup,
   recoverProjectKey,
+  sharedDeviceKeyRegistration,
 } from './escrow-client.js'
 import { type CredentialsLike, type PasskeySignIn, passkeySignIn } from './passkey-signin.js'
 
@@ -350,8 +351,31 @@ export function keyRecovery(fetchImpl: typeof fetch = fetch): KeyRecovery {
       pull: () => pullOnce(database as unknown as Syncable, serverCopy(dbName)),
       reachable: () => navigator.onLine !== false && accessToken() !== undefined,
       keyring: { deviceKey: ensureDeviceKey, now: () => new Date().toISOString() },
+      ensureRegistered: deviceKeyRegistration(fetchImpl),
     })
   }
+}
+
+/** One shared registration per `fetch`, so the startup pair and recovery reach the same one. */
+const registrations = new WeakMap<typeof fetch, () => Promise<void>>()
+
+/**
+ * The device key registration the startup pair and escrow recovery share (#304 review): on a
+ * brand-new device's first sign-in a locked open must wait on the startup `PUT`, not race it.
+ * Keyed by `fetch` so the application — which passes the global to both — gets one, and a test
+ * handing in its own stub gets its own.
+ */
+function deviceKeyRegistration(fetchImpl: typeof fetch): () => Promise<void> {
+  let registration = registrations.get(fetchImpl)
+  if (registration === undefined) {
+    registration = sharedDeviceKeyRegistration(
+      escrowApi(API_BASE, accessToken, fetchImpl),
+      ensureDeviceKey,
+      accessToken,
+    )
+    registrations.set(fetchImpl, registration)
+  }
+  return registration
 }
 
 /**
@@ -402,6 +426,7 @@ export function prepareEscrow(
     api: escrowApi(API_BASE, accessToken, fetchImpl),
     cache,
     deviceKey: ensureDeviceKey,
+    register: deviceKeyRegistration(fetchImpl),
   })
 }
 

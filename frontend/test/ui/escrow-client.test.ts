@@ -16,6 +16,7 @@ import {
   escrowApi,
   prepareEscrowAtStartup,
   recoverProjectKey,
+  sharedDeviceKeyRegistration,
 } from '../../src/ui/escrow-client.js'
 import { memoryDatabase } from '../data/support/memory-database.js'
 
@@ -224,6 +225,8 @@ describe('recovering a locked project through escrow', () => {
 
   let device: DeviceKey
   let keyring: KeyringDependencies
+  /** A device key already registered with the server: the common case, nothing to wait for. */
+  const registered = async (): Promise<void> => {}
   /** The project's DEK, wrapped for this device — what the server writes on a 204. */
   let ownWrap: { _id: string; type: string; kid: string; alg: string; wrapped: string }
 
@@ -338,6 +341,7 @@ describe('recovering a locked project through escrow', () => {
       pull,
       reachable: () => true,
       keyring,
+      ensureRegistered: registered,
     })
 
     expect(recovered).toBe(true)
@@ -363,6 +367,7 @@ describe('recovering a locked project through escrow', () => {
       pull,
       reachable: () => true,
       keyring,
+      ensureRegistered: registered,
     })
 
     expect(recovered).toBe(true)
@@ -381,6 +386,7 @@ describe('recovering a locked project through escrow', () => {
       pull,
       reachable: () => true,
       keyring,
+      ensureRegistered: registered,
     })
 
     expect(recovered).toBe(true)
@@ -408,6 +414,7 @@ describe('recovering a locked project through escrow', () => {
       pull,
       reachable: () => true,
       keyring,
+      ensureRegistered: registered,
     })
 
     expect(recovered).toBe(true)
@@ -430,6 +437,7 @@ describe('recovering a locked project through escrow', () => {
       pull,
       reachable: () => true,
       keyring,
+      ensureRegistered: registered,
     })
 
     expect(recovered).toBe(false)
@@ -449,6 +457,7 @@ describe('recovering a locked project through escrow', () => {
         pull,
         reachable: () => true,
         keyring,
+        ensureRegistered: registered,
       })
 
       expect(recovered).toBe(false)
@@ -467,6 +476,7 @@ describe('recovering a locked project through escrow', () => {
       pull,
       reachable: () => false,
       keyring,
+      ensureRegistered: registered,
     })
 
     expect(recovered).toBe(false)
@@ -509,9 +519,159 @@ describe('recovering a locked project through escrow', () => {
       pull,
       reachable: () => true,
       keyring,
+      ensureRegistered: registered,
     })
 
     expect(recovered).toBe(false)
     expect(calls).toHaveLength(0)
+  })
+
+  it('postsOnlyAfterRegistrationCompletes', async () => {
+    // A brand-new device's first sign-in: the startup registration is still in flight when the
+    // locked open asks for a re-wrap. Posting now would earn `400 unknown-device-key`.
+    const database = await lockedCopy()
+    const { pull, pulls } = scriptedPull(database, async () => {}, deliverOwnWrap)
+    const order: string[] = []
+    const { fetchImpl, calls } = escrowFetch({ status: 204 })
+    const recording = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      order.push('post')
+      return fetchImpl(input, init)
+    }) as typeof fetch
+    let finishRegistration = (): void => {}
+    const registration = new Promise<void>((resolve) => {
+      finishRegistration = () => {
+        order.push('registered')
+        resolve()
+      }
+    })
+
+    const recovering = recoverProjectKey(database, {
+      api: escrowApi('/api', () => 'token-1', recording),
+      pull,
+      reachable: () => true,
+      keyring,
+      ensureRegistered: () => registration,
+    })
+    // The pull and the unlock retry are not held back by the registration; only the post is.
+    await vi.waitFor(() => expect(pulls()).toBe(1))
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(calls).toHaveLength(0)
+
+    finishRegistration()
+
+    expect(await recovering).toBe(true)
+    expect(order).toEqual(['registered', 'post'])
+    expect(calls).toHaveLength(1)
+  })
+
+  it('staysLockedWithoutPostingWhenRegistrationFails', async () => {
+    const database = await lockedCopy()
+    const { pull } = scriptedPull(database)
+    const { fetchImpl, calls } = escrowFetch({ status: 204 })
+
+    const recovered = await recoverProjectKey(database, {
+      api: escrowApi('/api', () => 'token-1', fetchImpl),
+      pull,
+      reachable: () => true,
+      keyring,
+      ensureRegistered: async () => {
+        throw new Error('registration refused')
+      },
+    })
+
+    // A doomed request is not sent: the project stays locked, and the next open retries.
+    expect(recovered).toBe(false)
+    expect(calls).toHaveLength(0)
+  })
+
+  it('does not wait for registration when the pull already brought the wrap', async () => {
+    const database = await lockedCopy()
+    const { pull } = scriptedPull(database, deliverOwnWrap)
+    const ensureRegistered = vi.fn(() => new Promise<void>(() => {}))
+
+    const recovered = await recoverProjectKey(database, {
+      api: escrowApi('/api', () => 'token-1', noNetwork),
+      pull,
+      reachable: () => true,
+      keyring,
+      ensureRegistered,
+    })
+
+    expect(recovered).toBe(true)
+    expect(ensureRegistered).not.toHaveBeenCalled()
+  })
+})
+
+describe('sharing the device key registration between startup and recovery', () => {
+  /** A registration API counting its PUTs, each answered by `answer`. */
+  function countingApi(answer: () => Promise<void> = async () => {}) {
+    const registered: string[] = []
+    const api = {
+      async registerDeviceKey(publicKeySpki: string) {
+        registered.push(publicKeySpki)
+        await answer()
+      },
+    }
+    return { api, registered }
+  }
+
+  it('registers once per token, however many callers wait on it', async () => {
+    const { api, registered } = countingApi()
+    let token: string | undefined = 'token-1'
+    const ensure = sharedDeviceKeyRegistration(
+      api,
+      async () => DEVICE_KEY,
+      () => token,
+    )
+
+    await Promise.all([ensure(), ensure(), ensure()])
+    expect(registered).toEqual([DEVICE_KEY.publicKeySpki])
+
+    // A new token may be a different account signing in on this page: registered again.
+    token = 'token-2'
+    await ensure()
+    expect(registered).toHaveLength(2)
+  })
+
+  it('rejects without a request while no token is held', async () => {
+    const { api, registered } = countingApi()
+    const ensure = sharedDeviceKeyRegistration(
+      api,
+      async () => DEVICE_KEY,
+      () => undefined,
+    )
+
+    await expect(ensure()).rejects.toThrow()
+    expect(registered).toHaveLength(0)
+  })
+
+  it('forgets a failed registration, so the next caller tries again', async () => {
+    let fail = true
+    const { api, registered } = countingApi(async () => {
+      if (fail) throw new Error('503')
+    })
+    const ensure = sharedDeviceKeyRegistration(
+      api,
+      async () => DEVICE_KEY,
+      () => 'token-1',
+    )
+
+    await expect(ensure()).rejects.toThrow('503')
+    fail = false
+    await expect(ensure()).resolves.toBeUndefined()
+    expect(registered).toHaveLength(2)
+  })
+
+  it('is what the startup pair registers through, when it is given one', async () => {
+    const { cache } = fakeCache()
+    const { fetchImpl, calls } = fakeFetch((url) =>
+      url.endsWith('/escrowkey') ? { status: 404 } : { status: 204 },
+    )
+    const register = vi.fn(async () => {})
+
+    await prepareEscrowAtStartup({ ...startupDeps(fetchImpl, cache), register })
+
+    expect(register).toHaveBeenCalledOnce()
+    expect(calls.filter((call) => call.init?.method === 'PUT')).toHaveLength(0)
   })
 })

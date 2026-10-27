@@ -165,6 +165,53 @@ export interface RecoveryDependencies {
   readonly reachable: () => boolean
   /** The device key, for the unlock and for the kid the server wraps for. */
   readonly keyring: KeyringDependencies
+  /**
+   * Resolves once this device's key is registered with the server (`PUT /profile/devicekeys`);
+   * rejects when it could not be. Awaited before `POST /escrow` only — a kid the server does not
+   * know yet earns `400 unknown-device-key`, which is exactly the race on a brand-new device's
+   * first sign-in, when the startup registration is still in flight. See
+   * {@link sharedDeviceKeyRegistration}.
+   */
+  readonly ensureRegistered: () => Promise<void>
+}
+
+/**
+ * One device key registration per access token, shared by every caller that needs it.
+ *
+ * The startup pair and escrow recovery both need the key registered, and on a brand-new device
+ * they run at the same moment: recovery must wait on the startup request, not race it or send
+ * a second one. So the first call starts `PUT /profile/devicekeys` and every caller until it
+ * settles shares that promise; a success is kept **for the token it was made with** — a new
+ * token may be another account signing in on this page, whose user record has never seen the
+ * key (the PUT is idempotent, so registering again is harmless). A failure is forgotten, so the
+ * next caller tries again rather than inheriting a stale rejection.
+ *
+ * @returns a function that resolves once registered, and rejects — without a request — while no
+ *   token is held, or when the registration fails
+ */
+export function sharedDeviceKeyRegistration(
+  api: Pick<EscrowApi, 'registerDeviceKey'>,
+  deviceKey: () => Promise<DeviceKey>,
+  token: () => string | undefined,
+): () => Promise<void> {
+  let memo: { token: string; registration: Promise<void> } | undefined
+  return () => {
+    const held = token()
+    if (held === undefined) {
+      return Promise.reject(new Error('The device key cannot be registered while signed out.'))
+    }
+    if (memo?.token === held) return memo.registration
+    const registration = (async () => {
+      const key = await deviceKey()
+      await api.registerDeviceKey(key.publicKeySpki)
+    })()
+    const entry = { token: held, registration }
+    memo = entry
+    registration.catch(() => {
+      if (memo === entry) memo = undefined
+    })
+    return registration
+  }
 }
 
 /** The project document as this copy holds it, or `undefined` when it has none to prove. */
@@ -187,7 +234,8 @@ async function readProjectDocument(database: PouchDB.Database): Promise<object |
  *    succeeds and **no request is made**.
  * 2. Still locked → `POST /escrow` with the **freshly pulled** `project` document: the server
  *    compares it with its own copy and `_rev` (decision 5), so a copy from before the pull
- *    would be refused as stale.
+ *    would be refused as stale. The post first waits for this device's key registration
+ *    (`ensureRegistered`); a registration that failed means no post and `false`.
  * 3. 204 → pull again (the server wrote `key:<kid>` into its copy) and unlock.
  * 4. 409 `document-mismatch` → the document moved between pull and post: re-pull and post
  *    **exactly once** more. Stale local metadata must not leave an online project locked, and
@@ -202,13 +250,21 @@ export async function recoverProjectKey(
   database: PouchDB.Database,
   deps: RecoveryDependencies,
 ): Promise<boolean> {
-  const { api, pull, reachable, keyring } = deps
+  const { api, pull, reachable, keyring, ensureRegistered } = deps
   // Offline or signed out: nothing could succeed, so nothing is attempted — not even the pull.
   if (!reachable()) return false
 
   await pull()
   if ((await unlockProject(database, keyring)) !== null) return true
 
+  // Only the post waits on the registration; the pull and the unlock retry above did not. A
+  // registration that failed would make the post a doomed `400 unknown-device-key`, so it is
+  // not sent: the project stays locked and the next open retries.
+  try {
+    await ensureRegistered()
+  } catch {
+    return false
+  }
   const { kid } = await keyring.deviceKey()
   for (let attempt = 0; attempt < 2; attempt += 1) {
     if (attempt > 0) await pull()
@@ -254,6 +310,12 @@ export interface EscrowStartupDependencies {
   readonly deviceKey: () => Promise<DeviceKey>
   /** When the escrow key was fetched; this module holds no clock. */
   readonly now?: () => string
+  /**
+   * The registration to run, shared with escrow recovery ({@link sharedDeviceKeyRegistration}),
+   * so a locked open on a brand-new device waits on this very request instead of racing it.
+   * Without one, the startup pair registers directly.
+   */
+  readonly register?: () => Promise<void>
 }
 
 /**
@@ -266,12 +328,17 @@ export interface EscrowStartupDependencies {
  */
 export async function prepareEscrowAtStartup(deps: EscrowStartupDependencies): Promise<void> {
   const { api, cache, deviceKey, now = () => new Date().toISOString() } = deps
+  const register =
+    deps.register ??
+    (async () => {
+      const key = await deviceKey()
+      await api.registerDeviceKey(key.publicKeySpki)
+    })
 
   await Promise.all([
     (async () => {
       try {
-        const key = await deviceKey()
-        await api.registerDeviceKey(key.publicKeySpki)
+        await register()
       } catch (error) {
         console.warn('The device key was not registered; the next sign-in retries.', error)
       }

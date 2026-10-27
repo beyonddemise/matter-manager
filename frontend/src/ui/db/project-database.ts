@@ -21,7 +21,7 @@ import {
 import { PROJECT_KEY_PREFIX } from '../../domain/documents/keys.js'
 import { PROJECT_CHANGED } from '../current-project.js'
 import { coordinateWrites } from './db-lock.js'
-import { memoiseKeyState, resolveKeyState } from './keyring.js'
+import { memoiseKeyState, resolveKeyState, unlockProject } from './keyring.js'
 
 /**
  * The local catalogue.
@@ -196,18 +196,33 @@ function recoverLockedProject(dbName: string, database: PouchDB.Database): void 
   if (recover === undefined || recovering.has(dbName)) return
   recovering.add(dbName)
   void recover(dbName, database)
-    .then((recovered) => {
-      // A handle forgotten meanwhile (the copy was removed) has nothing left to refresh.
-      if (!recovered || opened.get(dbName)?.database !== database) return
-      refreshProjectKeyState(dbName)
-      if (dbName === currentName) window.dispatchEvent(new CustomEvent(PROJECT_CHANGED))
-    })
     .catch((error: unknown) => {
       console.warn('The project key could not be recovered; the next open retries.', error)
+      return false
+    })
+    // A recovery that failed may still have delivered the wrap: a one-shot pull whose first
+    // batch carried `key:<kid>` and whose next batch failed rejects, and its ids go with it
+    // (#304 review). So a failure asks the database itself whether the project now unlocks,
+    // rather than trusting the outcome to have seen every batch.
+    .then(async (recovered) => recovered || (await unlocksNow(database)))
+    .then((unlocked) => {
+      // A handle forgotten meanwhile (the copy was removed) has nothing left to refresh.
+      if (!unlocked || opened.get(dbName)?.database !== database) return
+      refreshProjectKeyState(dbName)
+      if (dbName === currentName) window.dispatchEvent(new CustomEvent(PROJECT_CHANGED))
     })
     .finally(() => {
       recovering.delete(dbName)
     })
+}
+
+/** Whether this device's wrap is in the database and opens; a broken one answers `false`. */
+async function unlocksNow(database: PouchDB.Database): Promise<boolean> {
+  try {
+    return (await unlockProject(database)) !== null
+  } catch {
+    return false
+  }
 }
 
 /**

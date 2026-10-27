@@ -97,7 +97,12 @@ async function lockedServerProject(dbName: string) {
 }
 
 /** The recovery the application registers, over a stubbed `POST /escrow`, counting its runs. */
-function registerRecovery(server: PouchDB.Database, answer: () => Promise<Response>) {
+function registerRecovery(
+  server: PouchDB.Database,
+  answer: () => Promise<Response>,
+  pull: (database: PouchDB.Database) => Promise<unknown> = (database) =>
+    pullOnce(database as never, server),
+) {
   const runs: string[] = []
   const posts: string[] = []
   const fetchImpl = (async (input: RequestInfo | URL) => {
@@ -108,12 +113,44 @@ function registerRecovery(server: PouchDB.Database, answer: () => Promise<Respon
     runs.push(dbName)
     return recoverProjectKey(database, {
       api: escrowApi('/api', () => 'token-1', fetchImpl),
-      pull: () => pullOnce(database as never, server),
+      pull: () => pull(database),
       reachable: () => true,
       keyring: { deviceKey: ensureDeviceKey, now: () => NOW },
+      ensureRegistered: async () => {},
     })
   })
   return { runs, posts }
+}
+
+/**
+ * A one-shot pull, through the real `pullOnce`, whose first batch lands `documents` in the
+ * local copy and whose next batch fails: the connection dropping half way through.
+ */
+function pullFailingAfter(database: PouchDB.Database, documents: () => Promise<object[]>) {
+  type Handler = (value: never) => void
+  const handlers = new Map<string, Handler>()
+  const oneShot = {
+    on(event: string, handler: Handler) {
+      handlers.set(event, handler)
+      return oneShot
+    },
+    cancel() {},
+  }
+  const local = {
+    replicate: {
+      from: () => {
+        setTimeout(async () => {
+          const landed = await documents()
+          await database.bulkDocs(landed, { new_edits: false } as never)
+          handlers.get('change')?.({ docs: landed } as never)
+          handlers.get('error')?.(new Error('the connection dropped') as never)
+        }, 0)
+        return oneShot
+      },
+      to: () => oneShot,
+    },
+  }
+  return pullOnce(local as never, {})
 }
 
 /** Resolves on the next {@link PROJECT_CHANGED}, bounded so a recovery that never lands fails. */
@@ -195,5 +232,35 @@ describe('a locked project on open', () => {
     } finally {
       window.removeEventListener(PROJECT_CHANGED, told)
     }
+  })
+
+  it('unlocksTheViewWhenAFailedPullAlreadyDeliveredTheWrap', async () => {
+    const warned = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const dbName = uniqueName('project')
+    const { server, rewrapOnServer } = await lockedServerProject(dbName)
+    // The wrap is on the server already; the pull's first batch brings it, the second fails.
+    await rewrapOnServer()
+    const device = await ensureDeviceKey()
+    const { posts } = registerRecovery(
+      server,
+      async () => new Response(null, { status: 204 }),
+      (database) =>
+        pullFailingAfter(database, async () => [
+          await server.get(projectKeyDocumentId(device.kid)),
+        ]),
+    )
+    useProjectDatabase(dbName)
+    const changed = nextProjectChange()
+
+    const repositories = openProject(dbName)
+    const [before] = await repositories.devices.list()
+    expect(before !== undefined && isLockedDocument(before)).toBe(true)
+
+    // The recovery itself failed — but the wrap is local now, so the views are still told.
+    await changed
+    const [after] = await repositories.devices.list()
+    expect(after?.manualCode).toBe('34970112332')
+    expect(posts).toHaveLength(0)
+    expect(warned).toHaveBeenCalled()
   })
 })
