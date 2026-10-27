@@ -18,12 +18,15 @@
         "vitest.explorer",
         "runem.lit-plugin",
         "redhat.vscode-yaml",
-        "42crunch.vscode-openapi"
+        "42crunch.vscode-openapi",
+        "TypeScriptTeam.native-preview"
       ],
       "settings": {
         "editor.defaultFormatter": "biomejs.biome",
         "editor.formatOnSave": true,
-        "editor.codeActionsOnSave": { "source.organizeImports.biome": "explicit" }
+        "editor.codeActionsOnSave": { "source.organizeImports.biome": "explicit" },
+        "js/ts.experimental.useTsgo": true,
+        "js/ts.tsdk.path": "./frontend/node_modules/typescript"
       }
     }
   },
