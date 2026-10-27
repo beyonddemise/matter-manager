@@ -34,12 +34,13 @@ import {
   updateProject,
 } from '../projects.js'
 import {
+  type Location,
   type ProjectsInput,
   type ProjectsModel,
   projectsModel,
   type Row,
 } from '../projects-model.js'
-import { syncStatusOf, syncStatusText, syncStatusVariant } from '../shell-status.js'
+import { syncStatusIcon, syncStatusOf, syncStatusText, syncStatusVariant } from '../shell-status.js'
 import {
   type Confirmation,
   needsConfirmation,
@@ -92,6 +93,18 @@ const PERMANENT_REFUSALS: ReadonlySet<string | undefined> = new Set([
   'read-only',
   'not-applicable',
 ])
+
+/**
+ * The icon in each location's tag. At phone width the tag's words are clipped away and the icon
+ * carries the state alone (`app.css`, #281), so the three must read apart: the laptop for a copy
+ * only here (the status bar's own icon for that), the cloud for a project only on the server,
+ * the rotating arrows for one replicating in both places.
+ */
+const LOCATION_ICONS: Readonly<Record<Location, string>> = {
+  local: 'laptop',
+  server: 'cloud',
+  synced: 'arrows-rotate',
+}
 
 /** The local-only project operations the page performs. Injectable so a test owns no database. */
 export interface LocalProjects {
@@ -654,14 +667,20 @@ export class ProjectsView extends LitElement {
     `
   }
 
+  /**
+   * An empty slot: the create affordance, one per project the plan still has room for. A slot
+   * must be the very shape of a filled row — the layout answers "how many more can I have" by
+   * looking, which works only while filled and empty read as the same unit (#281). So the
+   * label is for assistive technology only (the placeholder says the same thing), and the
+   * field and its button are `size="s"` like a filled row's controls: one line, same height.
+   */
   private renderEmptySlot(model: ProjectsModel): TemplateResult {
     return html`
       <li data-slot-empty class="wa-flank:end wa-gap-s app-project-slot">
-        <!-- The label is for assistive technology only: the placeholder says the same thing,
-             and a visible one would make an empty slot twice as tall as a filled one. -->
         <wa-input
           data-field="name"
           class="wa-visually-hidden-label"
+          size="s"
           maxlength=${TEXT_MAX_LENGTH}
           label=${msg('New project')}
           placeholder=${msg('New project name')}
@@ -670,6 +689,7 @@ export class ProjectsView extends LitElement {
         <wa-button
           data-create
           appearance="filled-outlined"
+          size="s"
           ?disabled=${!model.canCreate.allowed || this.busy}
           @click=${(event: Event) => this.create(this.containerOf(event, '[data-slot-empty]'))}
         >
@@ -682,7 +702,7 @@ export class ProjectsView extends LitElement {
   private renderListRow(row: Row): TemplateResult {
     return html`
       <li data-row=${row.key} class="wa-flank:end wa-gap-s app-project-slot">
-        <div class="wa-cluster wa-gap-xs">
+        <div class="wa-cluster wa-gap-xs app-row-content">
           <div class="wa-cluster wa-gap-2xs app-project-name">${this.renderName(row, false)}</div>
           ${this.renderLocation(row)} ${this.renderSync(row)} ${this.renderRowNote(row)}
         </div>
@@ -879,7 +899,10 @@ export class ProjectsView extends LitElement {
       `
     }
     const rename = row.actions.rename
-    const name = html`<span data-name>${row.name === '' ? msg('Unnamed project') : row.name}</span>`
+    const shown = row.name === '' ? msg('Unnamed project') : row.name
+    // With the title, because a member row truncates a long name with an ellipsis (app.css,
+    // #281): the whole name stays recoverable where it is shown.
+    const name = html`<span data-name title=${shown}>${shown}</span>`
     // No pen at all where renaming will never be possible here — a role that does not allow it,
     // a copy the server no longer takes, a promotion under way: an editing control that can only
     // ever be refused is noise. Disabled, with its reason, where it will come back (offline,
@@ -926,9 +949,16 @@ export class ProjectsView extends LitElement {
     return note === '' ? nothing : html`<span class="app-empty" data-note>${note}</span>`
   }
 
+  /**
+   * Where a row's copy lives: an icon and the words, both in the tag. On a row too narrow for
+   * the words they are clipped away (`app.css`) and the icon and colour carry the state for
+   * sighted readers, while assistive technology keeps reading the words — the existing
+   * {@link locationText} units, not new ones.
+   */
   private renderLocation(row: Row): TemplateResult {
     return html`<wa-tag data-location size="s" variant=${row.location === 'synced' ? 'success' : 'neutral'}>
-      ${locationText(row.location)}
+      <wa-icon name=${LOCATION_ICONS[row.location]}></wa-icon>
+      <span class="app-tag-words">${locationText(row.location)}</span>
     </wa-tag>`
   }
 
@@ -941,7 +971,8 @@ export class ProjectsView extends LitElement {
     if (row.location !== 'synced') return nothing
     const status = syncStatusOf(row, this.input.session === 'signed-in')
     return html`<wa-tag data-sync size="s" variant=${syncStatusVariant(status)}>
-      ${syncStatusText(status)}
+      <wa-icon name=${syncStatusIcon(status)}></wa-icon>
+      <span class="app-tag-words">${syncStatusText(status)}</span>
     </wa-tag>`
   }
 

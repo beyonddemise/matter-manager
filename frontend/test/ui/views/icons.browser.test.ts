@@ -43,6 +43,8 @@ const RUNTIME_CHOSEN = [
   'triangle-exclamation',
   'wifi',
   'plug-circle-xmark',
+  // A project row's location tag in `views/projects.ts` (with `laptop` and `arrows-rotate`).
+  'cloud',
   // Included or not, per plan and row, in the upgrade dialog's comparison (`upgrade-dialog.ts`).
   'check',
   'minus',
