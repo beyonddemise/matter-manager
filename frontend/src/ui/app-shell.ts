@@ -836,16 +836,37 @@ export class AppShell extends LitElement implements ViewHost {
     ></projects-view>`
   }
 
-  /** The account page: the cached profile's email and plan, read as the header reads them. */
+  /**
+   * The account page: the cached profile's email, plan and limits, read as the header reads
+   * them, and the published plan matrix for the plans it lists (#263, ADR 0020).
+   */
   renderAccount(): TemplateResult {
     return html`<account-view
       .api=${this.signInMethodsApi ?? signInMethodsClient()}
       .passkeySupport=${this.passkeySupport}
       .email=${this.projects.facts?.email}
       .plan=${this.projects.facts?.plan}
+      .projectLimit=${this.projects.facts?.reportedLimit}
+      .planProjectLimit=${this.projects.facts?.reportedPlanLimit}
+      .loadPlans=${this.loadAccountPlans}
       .session=${this.session}
     ></account-view>`
   }
+
+  /**
+   * The account page's matrix load: the upgrade dialog's ladder (the cache's answer first, the
+   * server's correction behind it, see {@link loadPlanMatrix}). The shell's own copy is corrected
+   * on the way past, so an upgrade dialog opened later starts from the same answer.
+   */
+  private loadAccountPlans = (onMatrix: (matrix: PlanMatrix) => void): Promise<void> =>
+    resolvePlanMatrix(
+      this.plans ?? plansClient(),
+      (this.projectStore ?? localProjectDefaults).cache(),
+      (matrix) => {
+        this.planMatrix = matrix
+        onMatrix(matrix)
+      },
+    )
 
   /** The name the status bar announces, which is the open project's. See {@link ViewHost}. */
   projectName(): string {

@@ -4,10 +4,13 @@ import './project-import.js'
 import '@awesome.me/webawesome-pro/dist/components/format-date/format-date.js'
 import { msg, updateWhenLocaleChanges } from '@lit/localize'
 import { html, LitElement, nothing, type PropertyValues, type TemplateResult } from 'lit'
-import type { Plan } from '../../domain/plan.js'
+import { isLegacyLimit, type Plan, planOf, planSyncs } from '../../domain/plan.js'
 import type { CredentialsLike } from '../passkey-signin.js'
+import type { PlanMatrix } from '../plans.js'
 import type { SessionState } from '../session.js'
 import type { Passkey, SignInMethods, SignInMethodsApi } from '../sign-in-methods.js'
+import { renderPlanComparison } from '../upgrade-dialog.js'
+import { legacyText } from './projects-text.js'
 
 /**
  * Each plan's public name, a table so no plan is named by comparison (ADR 0009). The `member`
@@ -46,10 +49,14 @@ export class AccountView extends LitElement {
     api: { attribute: false },
     credentials: { attribute: false },
     passkeySupport: { attribute: false },
+    loadPlans: { attribute: false },
+    projectLimit: { attribute: false },
+    planProjectLimit: { attribute: false },
     email: {},
     plan: {},
     session: {},
     loaded: { state: true },
+    planMatrix: { state: true },
     editing: { state: true },
     busy: { state: true },
     announcement: { state: true },
@@ -69,6 +76,23 @@ export class AccountView extends LitElement {
 
   /** The cached profile's plan. */
   declare plan?: Plan
+
+  /**
+   * Loads the published plan matrix — the cache's answer first, the server's correction behind
+   * it (`resolvePlanMatrix` in `plans.ts`). Injected by the shell, which owns the client and the
+   * cache; a view without one shows the absent state. Never hardcoded here: the matrix alone
+   * says what each plan includes (ADR 0020).
+   */
+  declare loadPlans?: (onMatrix: (matrix: PlanMatrix) => void) => Promise<void>
+
+  /** The account's own recorded project limit (the profile's `projectLimit`); `-1` is unlimited. */
+  declare projectLimit?: number
+
+  /** What the plan includes today (the profile's `planProjectLimit`); `-1` is unlimited. */
+  declare planProjectLimit?: number
+
+  /** The published matrix, once the cache or the server answered. */
+  declare planMatrix: PlanMatrix | undefined
 
   /**
    * What the shell believes about the session. Optional: a view mounted without it reads once on
@@ -105,6 +129,12 @@ export class AccountView extends LitElement {
     super.connectedCallback()
     // A view that arrives already signed-in is read by `willUpdate`, so it is not read twice.
     if (this.session !== 'signed-in') void this.refresh()
+    // `resolvePlanMatrix` never throws, but what a test injects might; swallowed rather than
+    // left as an unhandled rejection (L47), because without a matrix the absent state already
+    // says everything there is to say.
+    void this.loadPlans?.((matrix) => {
+      this.planMatrix = matrix
+    }).catch(() => {})
   }
 
   protected override willUpdate(changed: PropertyValues<this>): void {
@@ -401,6 +431,42 @@ export class AccountView extends LitElement {
     `
   }
 
+  /**
+   * The plans with what each includes, from the published matrix, the account's own marked
+   * (#263, phase 1 — changing the plan waits for ADR 0009's billing decision).
+   *
+   * The comparison itself is the upgrade dialog's (#224): the matrix's columns and rows
+   * verbatim, "Your plan" on the account's. Where the account's recorded limit diverges from
+   * what the matrix gives its plan today, its own limit is said first, as a legacy plan, in the
+   * projects page's words (ADR 0020). Without a matrix — offline, and `GET /plans` never
+   * answered on this device — a calm sentence stands in: the comparison is marketing copy, and
+   * missing it stops nothing on this page.
+   */
+  private renderPlan(): TemplateResult {
+    const plan = planOf(this.plan)
+    const limit = this.projectLimit
+    const planLimit = this.planProjectLimit
+    const legacy =
+      limit !== undefined && planLimit !== undefined && isLegacyLimit(limit, planLimit)
+        ? html`<p data-legacy-plan>${legacyText(limit, planSyncs(plan), planLimit)}</p>`
+        : nothing
+    return html`
+      <wa-card>
+        <div class="wa-stack wa-gap-m">
+          <h2>${msg('Plan')}</h2>
+          ${legacy}
+          ${
+            this.planMatrix === undefined
+              ? html`<p data-plans-absent>
+                  ${msg('The plans appear here once this device has had a connection.')}
+                </p>`
+              : renderPlanComparison(plan, this.planMatrix)
+          }
+        </div>
+      </wa-card>
+    `
+  }
+
   override render() {
     const methods = this.methods
     return html`
@@ -421,6 +487,7 @@ export class AccountView extends LitElement {
               ? nothing
               : this.renderMethods(methods)
         }
+        ${this.renderPlan()}
         <p role="status">${this.announcement}</p>
         <!-- Signed in or not: an import makes a project on this device and needs no account. -->
         <project-import-section></project-import-section>

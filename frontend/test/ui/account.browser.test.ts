@@ -3,10 +3,13 @@ import '@awesome.me/webawesome-pro/dist/components/card/card.js'
 import '@awesome.me/webawesome-pro/dist/components/format-date/format-date.js'
 import '@awesome.me/webawesome-pro/dist/components/icon/icon.js'
 import '@awesome.me/webawesome-pro/dist/components/input/input.js'
+import '@awesome.me/webawesome-pro/dist/components/tag/tag.js'
 import { fixture, html, waitUntil } from '@open-wc/testing-helpers'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { CachedPlanMatrix, LocalCache } from '../../src/data/index.js'
 import { activateLocale } from '../../src/ui/i18n/localization.js'
 import type { CredentialsLike } from '../../src/ui/passkey-signin.js'
+import { type PlanMatrix, type PlansApi, resolvePlanMatrix } from '../../src/ui/plans.js'
 import type {
   AddOutcome,
   ChangeOutcome,
@@ -59,12 +62,16 @@ async function account(
   api: SignInMethodsApi,
   support: () => boolean = () => true,
   plan = 'free',
+  plans: Partial<Pick<AccountView, 'loadPlans' | 'projectLimit' | 'planProjectLimit'>> = {},
 ): Promise<AccountView> {
   const element = (await fixture(
     html`<account-view
       .api=${api}
       .credentials=${credentials}
       .passkeySupport=${support}
+      .loadPlans=${plans.loadPlans}
+      .projectLimit=${plans.projectLimit}
+      .planProjectLimit=${plans.planProjectLimit}
       email="ada@example.org"
       plan=${plan}
     ></account-view>`,
@@ -324,6 +331,141 @@ describe('the account view', () => {
   })
 })
 
+/** The backend's own test fixture, pivoted: see `PlansResourceTest` in matter-manager-backend. */
+const MATRIX: PlanMatrix = {
+  free: { Projects: 1, Price: 'Free forever' },
+  home: { Projects: 3, Price: 'Announced at launch' },
+  pro: { Projects: 'Unlimited*', Price: 'Announced at launch' },
+}
+
+/** A load that answers at once with `matrix`, the way the cache does. */
+const plansFrom =
+  (matrix: PlanMatrix) =>
+  async (onMatrix: (matrix: PlanMatrix) => void): Promise<void> => {
+    onMatrix(matrix)
+  }
+
+/**
+ * The slice of {@link LocalCache} the plans use, holding `cached`. Everything else throws, so a
+ * view that starts reading projects or the profile fails by name (the `plans.test.ts` pattern).
+ */
+function cacheHolding(cached: CachedPlanMatrix | undefined): LocalCache {
+  const unused = (): never => {
+    throw new Error('the account plans use no other part of the cache')
+  }
+  return {
+    readProfile: unused,
+    writeProfile: unused,
+    clearProfile: unused,
+    readProjects: unused,
+    writeProjects: unused,
+    setLocalState: unused,
+    markAccessRemoved: unused,
+    readLocalProjects: unused,
+    addLocalProject: unused,
+    updateLocalProject: unused,
+    removeLocalProject: unused,
+    clear: unused,
+    async readPlanMatrix() {
+      return cached
+    },
+    async writePlanMatrix() {},
+  }
+}
+
+describe('the plans on the account page', () => {
+  const comparison = async (el: AccountView) => {
+    await waitUntil(() => el.querySelector('[data-plan-table]') !== null, 'no comparison')
+  }
+
+  it('lists the plans with their limits from the published matrix', async () => {
+    const el = await account(stubApi(), () => true, 'free', { loadPlans: plansFrom(MATRIX) })
+    await comparison(el)
+    const cards = [...el.querySelectorAll('wa-card[data-plan-card]')]
+    expect(cards.map((card) => card.getAttribute('data-plan-card'))).toEqual([
+      'free',
+      'home',
+      'pro',
+    ])
+    const card = (key: string) =>
+      el.querySelector(`[data-plan-card="${key}"]`)?.textContent?.replace(/\s+/g, ' ') ?? ''
+    // The matrix's own values, verbatim — never the numbers of a table in code (ADR 0020).
+    expect(card('free')).toContain('Projects 1')
+    expect(card('home')).toContain('Projects 3')
+    expect(card('pro')).toContain('Unlimited*')
+    expect([...el.querySelectorAll('h2')].map((h) => h.textContent?.trim())).toContain('Plan')
+  })
+
+  it("marks the account's current plan, once per layout", async () => {
+    const el = await account(stubApi(), () => true, 'member', { loadPlans: plansFrom(MATRIX) })
+    await comparison(el)
+    const table = el.querySelector('[data-plan-table]') as HTMLElement
+    expect(table.querySelectorAll('[data-your-plan]')).toHaveLength(1)
+    expect(table.querySelector('[data-plan-column="home"] [data-your-plan]')).not.toBeNull()
+    expect(el.querySelector('[data-plan-card="home"] [data-your-plan]')).not.toBeNull()
+    expect(el.querySelector('[data-plan-card="free"] [data-your-plan]')).toBeNull()
+  })
+
+  it("shows the account's own limit as a legacy plan where it diverges from the matrix", async () => {
+    const el = await account(stubApi(), () => true, 'member', {
+      loadPlans: plansFrom(MATRIX),
+      projectLimit: 5,
+      planProjectLimit: 3,
+    })
+    await comparison(el)
+    expect(el.querySelector('[data-legacy-plan]')?.textContent?.trim()).toBe(
+      'Projects your plan includes: 3. Yours: 5 (legacy plan).',
+    )
+  })
+
+  it('says nothing about a legacy plan when the account holds exactly what the matrix says', async () => {
+    const el = await account(stubApi(), () => true, 'member', {
+      loadPlans: plansFrom(MATRIX),
+      projectLimit: 3,
+      planProjectLimit: 3,
+    })
+    await comparison(el)
+    expect(el.querySelector('[data-legacy-plan]')).toBeNull()
+  })
+
+  it('renders the plans offline, from the cache', async () => {
+    // The real resolver over a cache that holds the matrix and a server that cannot be reached.
+    const cache = cacheHolding({ matrix: MATRIX, fetchedAt: '2026-10-01T00:00:00Z' })
+    const offline: PlansApi = { read: async () => undefined }
+    const el = await account(stubApi(), () => true, 'free', {
+      loadPlans: (onMatrix) => resolvePlanMatrix(offline, cache, onMatrix),
+    })
+    await comparison(el)
+    expect(el.querySelector('[data-plan-card="pro"]')?.textContent).toContain('Unlimited*')
+  })
+
+  it('shows a calm absent state with neither cache nor connection', async () => {
+    const cache = cacheHolding(undefined)
+    const offline: PlansApi = { read: async () => undefined }
+    const el = await account(stubApi(), () => true, 'free', {
+      loadPlans: (onMatrix) => resolvePlanMatrix(offline, cache, onMatrix),
+    })
+    await el.updateComplete
+    expect(el.querySelector('[data-plans-absent]')).not.toBeNull()
+    expect(el.querySelector('[data-plan-table]')).toBeNull()
+    // Calm: a sentence, not an error.
+    expect(el.querySelector('wa-callout')).toBeNull()
+  })
+
+  it('lists the plans even when signed out — the comparison is public copy', async () => {
+    const el = await account(
+      stubApi({ read: async () => ({ kind: 'signed-out' }) }),
+      () => true,
+      'free',
+      {
+        loadPlans: plansFrom(MATRIX),
+      },
+    )
+    await comparison(el)
+    expect(el.querySelector('[data-signed-out]')).not.toBeNull()
+  })
+})
+
 describe('the account view in German at phone width', () => {
   it('translates headings and buttons', async () => {
     await activateLocale('de')
@@ -343,6 +485,11 @@ describe('the account view in German at phone width', () => {
       await waitUntil(() => el.querySelector('[data-provider]') !== null)
       expect(el.querySelector('h1')?.textContent).toBe('Konto')
       expect(el.querySelector('h2')?.textContent).toContain('Anmeldemethoden')
+      expect([...el.querySelectorAll('h2')].map((h) => h.textContent?.trim())).toContain('Tarif')
+      // No load wired at all: the same calm absent state, in German.
+      expect(el.querySelector('[data-plans-absent]')?.textContent?.trim()).toBe(
+        'Die Tarife erscheinen hier, sobald dieses Gerät einmal eine Verbindung hatte.',
+      )
       expect(el.querySelector('[data-add-passkey]')?.textContent).toContain('Passkey hinzufügen')
       expect(el.querySelector('[data-rename]')?.textContent).toContain('Umbenennen')
       expect(el.querySelector('[data-delete]')?.textContent).toContain('Löschen')
