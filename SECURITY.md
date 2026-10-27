@@ -49,9 +49,17 @@ Two exceptions are deliberate:
   so its codes are on no server at all, and for the same reason it has no recovery: if the
   browser loses its device key before the project is promoted, the codes survive only in an
   export. This is not end-to-end encryption, and the operator is trusted.
-- **Exports are plaintext.** The project archive is the backup of last resort and must import
-  without any key; the labels and inventory PDFs and the Excel sheet print the codes too.
-  Whoever exports any of them is responsible for protecting it.
+- **Exports are plaintext, unless the user sets an archive password.** The project archive is
+  the backup of last resort and must import without any device or escrow key. By default it
+  holds the codes in clear; the export dialog offers an optional password (#307), which seals
+  every entry as a WinZip AE-2 zip (AES-256-CTR with HMAC-SHA1, keys from PBKDF2-HMAC-SHA1 at
+  the 1000 iterations the format fixes, so 7-Zip, WinZip and macOS tools open it). The password
+  must be at least 12 characters, because 1000 iterations make each guess cheap for an offline
+  attacker. Password and file are all a restore needs; nothing recovers a lost password, and
+  the dialog says so. File names, sizes and the device count stay visible either way. Legacy
+  ZipCrypto is never offered. The password covers the project archive only: the labels and
+  inventory PDFs and the Excel sheet always print the codes in clear. Whoever exports any of
+  them unprotected is responsible for protecting it.
 
 The security boundary for everything but the codes is therefore still **database isolation plus
 transport security**. That places real obligations on anyone operating an instance:
@@ -132,4 +140,6 @@ JWT handling, injection, and dependency vulnerabilities.
 
 Out of scope: attacks requiring physical access to an already-unlocked device belonging to a
 legitimate user, and the deliberate trade-offs documented above: plaintext metadata, the
-operator's ability to decrypt through escrow, and the plaintext export.
+operator's ability to decrypt through escrow, and the export made without a password. Guessing
+the password of an archive someone already holds is also out of scope: its strength is the
+password's, by the format's design.

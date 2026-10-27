@@ -60,9 +60,15 @@ plaintext and never see ciphertext.
 - **Still exposed, knowingly.**
   - Device metadata (`vendorId`, `productId`, `discriminator`, names, rooms) stays plaintext. A
     dump reveals the inventory, not the codes.
-  - **The export archive is plaintext.** It is the backup of last resort and must import without
-    any key, so it holds every code in clear, and the menu says so. It is made only from an
-    unlocked project at the user's explicit request. Once exported, it is the user's to protect.
+  - **The export archive is plaintext unless the user sets an archive password.** It is the
+    backup of last resort and must import without any device or escrow key, so by default it
+    holds every code in clear, and the menu and the export dialog say so. It is made only from
+    an unlocked project at the user's explicit request. Since #307 the dialog offers an
+    optional password that makes it a WinZip AE-2 zip (AES-256, PBKDF2 at the format's fixed
+    1000 iterations, a 12-character floor); password and file are then all a restore needs,
+    and a lost password cannot be recovered. This covers the project archive only: the PDFs
+    and the Excel sheet stay plaintext. Once exported, an unprotected file is the user's to
+    protect. See DATA-MODEL, *Project export*.
 - **Accepted: a writer can deny recovery, never corrupt it silently.** CouchDB's validator sees
   a conflict branch pushed with `new_edits=false` as a create (`oldDoc = null`), so the
   `key:escrow` wrap cannot be made immutable against a member with write access. Such a member
