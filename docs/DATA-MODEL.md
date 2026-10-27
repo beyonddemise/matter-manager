@@ -277,8 +277,10 @@ Cleared on sign-out, along with the project replicas.
 **The device key is not in `mm-local`.** It lives in `mm-keys`, a raw IndexedDB database with a
 single record: `{id: "device", kid, publicKeySpki, privateKey}`, where `privateKey` is a
 non-extractable `CryptoKey`. PouchDB cannot hold one, because it JSON-encodes documents. It
-**survives sign-out**: the key belongs to the browser profile, not to the account, and a lost key
-is recovered through escrow ([ADR 0022](adr/0022-field-encryption-with-key-escrow.md)).
+**survives sign-out**: the key belongs to the browser profile, not to the account. A lost key is
+to be recovered through escrow ([ADR 0022](adr/0022-field-encryption-with-key-escrow.md)) once
+the backend with `POST /escrow` (merged) is deployed with `ESCROW_KEK`; until then, keeping it is the only
+way this browser keeps reading its projects' codes.
 
 ### The local index: `local:project:<dbName>`
 
@@ -538,7 +540,8 @@ by id, and positional identity would make "the same remark twice" indistinguisha
   `locked: true`, and every write is refused. A document read while locked is refused on save and
   remove even after the key arrives, because it no longer carries the codes. A database with no
   `key:*` documents at all is read as plaintext: one from before encryption, or one whose wraps
-  have not replicated in yet.
+  have not replicated in yet. In the second case its `enc:v1:` values currently pass through
+  undecrypted; #333 makes them read as locked.
 
 The conflict merge copies both fields as opaque strings and never decrypts them.
 
@@ -587,7 +590,8 @@ reads or writes one.
   public key is cached. A project born offline gets `key:escrow` when it is promoted, and
   `POST /projects` test-unwraps that wrap before creating the database. The documents reach the
   server by ordinary replication, and a promote copies them as they are.
-- **The server writes one in a single case:** `POST /escrow` re-wraps the DEK for a device of the
+- **The server writes one in a single case** (merged, available once the backend is deployed):
+  `POST /escrow` re-wraps the DEK for a device of the
   caller's and writes `key:<that kid>` as admin, with an `audit` entry
   (`action: "escrow-rewrap"`, `sub`, `kid`, `at`; no key material).
 - **Create-only for writers.** `_design/access` lets a writer create a `key:*` document and
@@ -604,6 +608,10 @@ reads or writes one.
   Wraps for other recipients only mean locked. No `key:*` document at all means plaintext. A
   malformed wrap reads as missing, so the project is locked and escrow recovery can repair it.
   A well-formed wrap that fails to unwrap is an error, not "locked".
+- **Known gap (#333):** "no `key:*` document means plaintext" also holds while a download has
+  delivered device documents but not yet their wraps. The pull does not order the two, so in
+  that window reads pass `enc:v1:` values through as if they were codes. The fix will read such
+  a document as locked.
 
 ## Project export: a zip of JSON documents
 

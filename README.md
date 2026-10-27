@@ -235,9 +235,12 @@ that makes it pass is written**.
 
 ## Security
 
-Setup codes are encrypted at rest per project, with the key escrowed on the server so that a
-new device recovers it without ceremony; the rest of the data is protected by database
-isolation and transport security. These are deliberate, documented trade-offs — read
+Setup codes are encrypted at rest per project, and every project on the server carries a copy
+of its key wrapped for a server escrow key. That copy lets a new device recover the key without
+ceremony through the backend's re-wrap endpoint (`POST /escrow`), which is merged and available
+once the backend is deployed with `ESCROW_KEK`. Until then a new device cannot read the codes of
+a project it has not unlocked before. The rest of the data is protected by database isolation
+and transport security. These are deliberate, documented trade-offs — read
 [SECURITY.md](SECURITY.md), [ADR 0005](docs/adr/0005-plaintext-payload-storage.md) and
 [ADR 0022](docs/adr/0022-field-encryption-with-key-escrow.md) before deploying an instance that
 holds anyone's data but your own.

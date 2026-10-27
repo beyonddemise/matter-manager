@@ -51,10 +51,12 @@ plaintext and never see ciphertext.
   leaked admin credentials, or `curl` against CouchDB yield ciphertext for the codes. A member
   replicating a project receives ciphertext and a key wrapped only for their own registered
   devices.
-- **Not protected, by design: the server operator.** The escrow private key can open every
-  project key, so this is server-mediated encryption, not end-to-end. That is the trade for
-  recovery without ceremony, and it is the trust ADR 0019 already extends when a code passes
-  through the API for a lookup.
+- **Not protected, by design: the server operator.** A project can only be taken to the server
+  with an escrow wrap the server has validated, so the escrow private key can open the key of
+  every project the server holds. This is server-mediated encryption, not end-to-end. That is
+  the trade for recovery without ceremony, and it is the trust ADR 0019 already extends when a
+  code passes through the API for a lookup. A local-only project never reaches the server, so
+  whatever wraps it carries, its codes are on no server at all.
 - **Still exposed, knowingly.**
   - Device metadata (`vendorId`, `productId`, `discriminator`, names, rooms) stays plaintext. A
     dump reveals the inventory, not the codes.
@@ -76,7 +78,7 @@ plaintext and never see ciphertext.
 |---|---|---|---|
 | KEK | 256-bit secret | `ESCROW_KEK` env var on the API host | operations: env file mode 0600, backed up out of band |
 | Escrow key pair | RSA-3072 | `matter_manager` doc `escrow:keys`, private key sealed | AES-256-GCM under the KEK, AAD `escrow:keys` |
-| Device key pair | RSA-OAEP-3072 / SHA-256, one per browser profile | raw IndexedDB `mm-keys`, private key non-extractable | browser origin isolation; a lost key is recovered through escrow |
+| Device key pair | RSA-OAEP-3072 / SHA-256, one per browser profile | raw IndexedDB `mm-keys`, private key non-extractable | browser origin isolation; a lost key is recovered through escrow, once the backend with `POST /escrow` is deployed |
 | Project DEK | AES-256-GCM | one `key:*` wrap document per recipient, in the project database | RSA-OAEP-256 under each device key and the escrow key |
 | Field ciphertext | AES-256-GCM, fresh 96-bit IV | `payload` / `manualCode` on device documents | the project DEK |
 
@@ -92,7 +94,10 @@ device's wrap.
 1. **Local-only projects are encrypted too.** The DEK is wrapped for this device, and for escrow
    too when the escrow public key is already cached.
 2. **No migration.** Pre-release databases are deleted. The `enc:v1:` prefix leaves room for a
-   later format, not for a migration.
+   later format, not for a migration. The one database that is adopted rather than created, the
+   first-run catalogue `project_local`, is keyed and its devices encrypted when it is adopted
+   (#331). A catalogue already adopted before that fix is not migrated and stays keyless; see
+   the consequences.
 3. **No DEK rotation when a member is removed.** Removal deletes their `key:<kid>` documents with
    the `_security` rewrite (matter-manager-backend#40, not yet shipped). ADR 0003's position
    stands: replicated data cannot be recalled, and the remedy for a compromised code is a
@@ -121,9 +126,10 @@ device's wrap.
     stale cached key or an interop bug before the first sync. At `POST /escrow`, a missing wrap
     (`422 escrow-wrap-missing`) and one that will not unwrap (`422 escrow-wrap-invalid`) are
     distinct problems, never a 500 and never silently served. (`POST /escrow` is
-    matter-manager-backend PR #54, open at the time of writing.) This loud failure is the mitigation for
-    the conflict-branch limitation above. The validator rule on `key:*` documents is
-    **create-only for writers**: only the server admin may update or delete one.
+    matter-manager-backend PR #54: merged, available once the backend is deployed with
+    `ESCROW_KEK`.) This loud failure is the mitigation for the conflict-branch limitation above.
+    The validator rule on `key:*` documents is **create-only for writers**: only the server admin
+    may update or delete one.
 
 ### How it shipped
 
@@ -135,7 +141,10 @@ The implementation refined the design in these places, and these are the rules n
 - **A database with no `key:*` documents is plaintext, not locked.** It predates encryption, or
   its wraps have not replicated in yet. No DEK anywhere could open it, so "locked" would promise
   a recovery that cannot happen. The key state is resolved again when an inbound batch carries a
-  `key:*` document.
+  `key:*` document. **Known gap (#333):** a pull does not order `key:*` before `device:*`, so a
+  download can briefly hold encrypted devices and no wraps. In that window the plaintext state
+  passes `enc:v1:` values through, and catalogue backfill could send one to the lookup and mark
+  the device `unusable`. The fix is to fail closed: such a document reads as locked.
 - **Locked means read-only.** A database with wraps for other recipients only is locked. Reads
   omit `payload` and `manualCode` and mark the document `locked: true`. Every write is refused
   (`ProjectLockedError`). A document **read while locked** is refused on save and remove even
@@ -144,8 +153,10 @@ The implementation refined the design in these places, and these are the rules n
 - **Nothing exports a locked project.** The PDF inventory, the labels PDF, the Excel sheet and
   the project archive all refuse, with the same message. Catalogue backfill skips a locked
   project entirely, because a lookup on a missing code would mark the device `unusable` for good.
-- **Recovery pulls first.** On a locked open: pull, try the unlock again (the wrap may already
-  be there), then `POST /escrow` with the freshly pulled `project` document. On 204, pull and
+- **Recovery pulls first.** The client half has shipped. The server half, `POST /escrow`
+  (matter-manager-backend PR #54), is merged and available once the backend is deployed with
+  `ESCROW_KEK`; until then a locked project stays locked. On a locked open: pull, try the unlock
+  again (the wrap may already be there), then `POST /escrow` with the freshly pulled `project` document. On 204, pull and
   unlock. A `409 document-mismatch` is retried once with a re-pulled document; any other refusal
   leaves the project locked until the next open. Recovery waits for this device's key
   registration, which is one shared promise per access token: on a brand-new device the startup
@@ -168,27 +179,40 @@ The implementation refined the design in these places, and these are the rules n
 - A database dump, a backup or a stolen browser profile no longer yields setup codes. The
   concentrated target ADR 0005 named, an installer's instance holding every customer's codes,
   now holds ciphertext.
-- A new device or a lost key recovers with nothing for the user to do beyond being signed in
-  and online once. Offline work on an unlocked project is unchanged.
+- Once the backend with `POST /escrow` is deployed, a new device or a lost key recovers with nothing for the user
+  to do beyond being signed in and online once. Offline work on an unlocked project is
+  unchanged.
 - No dependency was added: WebCrypto in the browser, JCA on the server.
 
 **Costs, accepted knowingly.**
-- **The operator can decrypt everything.** The escrow private key is in the API's memory.
-  Anyone who holds both the KEK and the `matter_manager` database holds every code.
+- **The operator can decrypt every project on the server.** The escrow private key is in the
+  API's memory. Anyone who holds the KEK, the `matter_manager` database and the project databases
+  holds every code in them.
 - **The KEK is now irreplaceable.** Losing it orphans every escrow wrap in existence, and the API
   refuses to start rather than regenerate the key pair. It must be backed up out of band, once,
   and never regenerated.
 - **A new device that is offline cannot read the codes** of a project it has not unlocked
   before. In place of the QR and manual code, the device page says they will be available after
-  the next sync.
+  the next sync. Until the backend with `POST /escrow` is deployed, the same holds online: the codes are readable
+  only in the browsers that hold a wrap, and losing `mm-keys` there loses them on that browser.
 - **A writer can deny recovery** through a conflict branch, as described above. A support case
   rather than a breach, and a detectable one.
 - **New places a secret could be logged:** setup codes, DEKs, wraps and the KEK. None may be
   logged at any level.
-- **The first-run catalogue `project_local` gets no keys.** On a brand-new device it is adopted
-  as the first project without key documents, so it resolves as plaintext and promoting it
-  fails, because no escrow wrap can be made without a DEK. Every project created or imported
-  since is encrypted. This needs its own fix.
+- **The first-run catalogue `project_local` was adopted without keys; fixed by #331.** Adoption
+  now writes its keys first and re-encrypts its devices, so it promotes like any other project.
+  Residual gaps:
+  - a catalogue indexed before the fix stays keyless, and so plaintext and unpromotable, since
+    nothing is migrated (decision 2);
+  - revisions written before the rewrite keep their plaintext bodies in IndexedDB until compaction.
+    Replication sends only leaf revisions, so they never reach the server;
+  - another tab that read the catalogue before it was adopted keeps reading it as plaintext until
+    it is reloaded; there is no cross-tab key-state signal yet.
+
+  If keying fails at first run, nothing is indexed and adoption is tried again on the next read
+  of the projects. It never falls back to a plaintext catalogue.
+- **Ciphertext can reach the views before the wraps arrive** (#333, above), until the keyless
+  state fails closed.
 - 0005's compensating controls (TLS, `_all_dbs` and Fauxton blocked, encrypted volumes and
   backups) stay mandatory: the metadata is still plaintext, and a backup still holds the escrow
   key, sealed.

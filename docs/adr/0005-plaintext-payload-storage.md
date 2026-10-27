@@ -6,11 +6,12 @@ Date: 2026-08-19
 
 Accepted — with mandatory compensating controls. **Amended by
 [ADR 0019](0019-setup-code-to-own-api.md)**, which lets a setup code travel to this service's own
-API for the catalogue lookup, and adds the controls that go with it. The decision below stands.
-**Amended by [ADR 0022](0022-field-encryption-with-key-escrow.md)**, the revisit this record
-scheduled: it takes option 1, so `payload` and `manualCode` are encrypted per project, with the
-project key escrowed on the server. The rest of the device document stays plaintext, and the
-compensating controls below remain mandatory for it.
+API for the catalogue lookup, and adds the controls that go with it; that amendment still
+applies. **Amended by [ADR 0022](0022-field-encryption-with-key-escrow.md)**, which is the
+revisit scheduled at the end of this record and changes its storage decision for the setup
+codes: it takes option 1, so `payload` and `manualCode` are encrypted per project, with the
+project key escrowed on the server. The decision below still stands for the rest of the device
+document, which stays plaintext, and the compensating controls below remain mandatory for it.
 
 ## Context
 

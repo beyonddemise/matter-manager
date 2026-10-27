@@ -15,8 +15,10 @@ The data is roughly as sensitive as a set of spare keys. The setup codes themsel
 encrypted at rest per project, with the project key escrowed on the server
 ([ADR 0022](adr/0022-field-encryption-with-key-escrow.md)); the rest of each device document is
 stored unencrypted by deliberate decision ([ADR 0005](adr/0005-plaintext-payload-storage.md)).
-The server can decrypt the codes, so every control below is still load-bearing rather than
-defence-in-depth.
+Every project on the server carries its key wrapped for the server's escrow key (a project
+cannot be taken there without one), so the server can decrypt the codes of every project it
+holds, and every control below is still load-bearing rather than defence-in-depth. Local-only
+projects never reach the server; with `ESCROW_KEK` unset, nothing can be taken there.
 
 ## Authentication
 

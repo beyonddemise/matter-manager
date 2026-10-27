@@ -29,9 +29,13 @@ lookup and the conflict merge keep working. A dump reveals the inventory, not th
 
 Two exceptions are deliberate:
 
-- **The server can decrypt.** It holds an escrow key that opens every project key, so a new
-  device or a lost browser key can be let in without ceremony. This is not end-to-end
-  encryption, and the operator is trusted.
+- **The server can decrypt every project it holds.** A project can only be taken to the server
+  with its key wrapped for the server's escrow key, so the escrow key opens every server
+  project's key. That is what lets a new device or a lost browser key be let in without ceremony,
+  through the re-wrap endpoint (`POST /escrow`), which is merged on the backend and available
+  once the backend is deployed with `ESCROW_KEK`. A
+  local-only project never reaches the server, so its codes are on no server at all. This is not
+  end-to-end encryption, and the operator is trusted.
 - **A project export is plaintext.** It is the backup of last resort, and it must import
   without any key. Whoever exports it is responsible for protecting it.
 
