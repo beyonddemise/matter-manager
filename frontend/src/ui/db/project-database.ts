@@ -12,6 +12,7 @@
 import PouchDB from 'pouchdb-browser'
 import {
   isLocalOnlyDatabase,
+  type KeyState,
   type LocalCache,
   type LocalProjectEntry,
   localCache,
@@ -20,6 +21,7 @@ import {
 } from '../../data/index.js'
 import { PROJECT_CHANGED } from '../current-project.js'
 import { coordinateWrites } from './db-lock.js'
+import { resolveKeyState } from './keyring.js'
 
 /**
  * The local catalogue.
@@ -34,6 +36,8 @@ export const PROJECT_DATABASE_NAME = 'project_local'
 interface OpenedProject {
   readonly database: PouchDB.Database
   readonly repositories: ProjectRepositories
+  /** Drops the memoised key state, so the next repository operation resolves it afresh. */
+  readonly forgetKeyState: () => void
 }
 
 /**
@@ -94,9 +98,40 @@ function openHandle(dbName: string): OpenedProject {
   if (existing !== undefined) return existing
 
   const database = coordinateWrites(dbName, new PouchDB(dbName))
-  const handle = { database, repositories: projectRepositories(database) }
+
+  // The project's key state (#302), memoised beside the handle for the handle's lifetime —
+  // resolved once per opened database, not per read. Lazily, on the first repository operation
+  // rather than here: opening is synchronous and, more importantly, project creation opens the
+  // database *before* it writes the key documents, and a state resolved at that instant would
+  // memoise "plaintext" for a project that is about to be encrypted. The provider form is the
+  // F7 recovery seam: {@link refreshProjectKeyState} drops the memo, and the repositories every
+  // view already holds pick up the unlocked state on their next operation.
+  let keyState: Promise<KeyState | undefined> | undefined
+  const keyStateProvider = () => {
+    keyState ??= resolveKeyState(database)
+    return keyState
+  }
+
+  const handle: OpenedProject = {
+    database,
+    repositories: projectRepositories(database, undefined, keyStateProvider),
+    forgetKeyState: () => {
+      keyState = undefined
+    },
+  }
   opened.set(dbName, handle)
   return handle
+}
+
+/**
+ * Drops a project's memoised key state, so the next read or write resolves it again.
+ *
+ * The re-resolution half of the #302 seam, for whoever changes what resolution would find: F7's
+ * escrow recovery after the missing wrap arrives, and any pull that delivers `key:*` documents
+ * into a database that resolved before they existed. A no-op for a database that is not open.
+ */
+export function refreshProjectKeyState(dbName: string): void {
+  opened.get(dbName)?.forgetKeyState()
 }
 
 /**

@@ -1,0 +1,206 @@
+/**
+ * The project keyring (#302): minting, wrapping, unwrapping and finding the per-project DEK.
+ *
+ * This is where the `FieldCipher` that `data/repository.ts` takes is actually built — `data/`
+ * imports neither WebCrypto nor PouchDB, `domain/crypto` does the cryptography and knows no
+ * database, and this module joins the two: it reads and writes the `key:*` wrap documents
+ * (`domain/documents/keys.ts`) in a project database and turns an unwrapped DEK into the cipher
+ * the repositories encrypt and decrypt with.
+ *
+ * Every function takes the open database rather than opening one, like the rest of the data
+ * path, so the tests run over an in-memory PouchDB in Node. The one browser-only dependency,
+ * the device key in `mm-keys`, is injected with `ensureDeviceKey` as its default.
+ *
+ * @module
+ */
+
+import type { FieldCipher, KeyState } from '../../data/index.js'
+// `domain/crypto` types keys structurally (its tsconfig has no DOM lib); the DOM's `CryptoKey`
+// and that shape are mutually assignable, which the signatures below rely on in both
+// directions — a DEK unwrapped there is answered here as a DOM `CryptoKey`, and a DOM key
+// handed to `fieldCipher` flows back in.
+import {
+  decryptField,
+  encryptField,
+  generateDek,
+  unwrapDek,
+  wrapDek,
+} from '../../domain/crypto/envelope.js'
+import {
+  ESCROW_KEY_DOCUMENT_ID,
+  isProjectKeyDocument,
+  type ProjectKeyDocument,
+  projectKeyDocumentId,
+  projectKeyRange,
+} from '../../domain/documents/keys.js'
+import type { EscrowKeyInfo } from '../escrow-client.js'
+import { type DeviceKey, ensureDeviceKey } from './device-key.js'
+
+/** What the keyring reaches outside the database it is handed. Injected, so tests own it. */
+export interface KeyringDependencies {
+  /** This browser's device key — `ensureDeviceKey` in the application, a made pair in tests. */
+  readonly deviceKey: () => Promise<DeviceKey>
+  /** Stamps `createdAt` on the wrap documents; this module holds no clock. */
+  readonly now: () => string
+}
+
+const defaults: KeyringDependencies = {
+  deviceKey: ensureDeviceKey,
+  now: () => new Date().toISOString(),
+}
+
+/** The wrap document under an id, or `undefined` when it is missing *or not one*: a document
+ * in a replicated database is whatever some client wrote, and a malformed wrap must read as "no
+ * usable wrap" — the locked state, which escrow recovery can repair — not as a crash. */
+async function readWrap(
+  database: PouchDB.Database,
+  id: string,
+): Promise<ProjectKeyDocument | undefined> {
+  let stored: unknown
+  try {
+    stored = await database.get(id)
+  } catch (error) {
+    if ((error as { status?: unknown }).status === 404) return undefined
+    throw error
+  }
+  return isProjectKeyDocument(stored) ? stored : undefined
+}
+
+/** Writes one wrap document, in exactly the spec's shape. */
+async function writeWrap(
+  database: PouchDB.Database,
+  id: string,
+  kid: string,
+  wrapped: string,
+  createdAt: string,
+): Promise<void> {
+  const document: ProjectKeyDocument = {
+    _id: id,
+    type: 'projectKey',
+    kid,
+    alg: 'RSA-OAEP-256',
+    wrapped,
+    createdAt,
+  }
+  await database.put(document as unknown as PouchDB.Core.PutDocument<object>)
+}
+
+/**
+ * The repositories' cipher over one unlocked DEK: `domain/crypto`'s field envelope, with the
+ * key bound in. This is the only constructor of the `FieldCipher` the seam takes.
+ */
+export function fieldCipher(dek: CryptoKey): FieldCipher {
+  return {
+    encrypt: (docId, field, value) => encryptField(dek, docId, field, value),
+    decrypt: (docId, field, value) => decryptField(dek, docId, field, value),
+  }
+}
+
+/**
+ * Opens a project's DEK with this device's key: reads `key:<own kid>` and unwraps it.
+ *
+ * `null` is the locked state — no wrap for this device (yet), including a wrap so malformed it
+ * cannot be one. Both resolve the same way: escrow re-wraps (F7). A well-formed wrap that fails
+ * to unwrap still **throws**, because that is not a missing key but a broken one, and reporting
+ * it as "locked" would send recovery chasing a wrap that already exists.
+ */
+export async function unlockProject(
+  database: PouchDB.Database,
+  deps: KeyringDependencies = defaults,
+): Promise<CryptoKey | null> {
+  const device = await deps.deviceKey()
+  const wrap = await readWrap(database, projectKeyDocumentId(device.kid))
+  if (wrap === undefined) return null
+  return unwrapDek(wrap.wrapped, device.privateKey)
+}
+
+/**
+ * Mints a project's keys at creation (spec decision 4: DEKs are generated on the device, never
+ * on the server): a fresh DEK, wrapped for this device, and for escrow when the escrow public
+ * key is known. Called by `local-projects.ts` **before the first device write**, so no document
+ * can be stored under a key that does not exist yet.
+ *
+ * @param escrow the cached escrow key, or `null` when none has been heard — a project born
+ *   offline carries no escrow wrap until promote (`ensureEscrowWrap`) adds one
+ * @returns the unlocked DEK, so creation can hand the repositories their cipher without a
+ *   read-back and unwrap of what was just written
+ */
+export async function createProjectKeys(
+  database: PouchDB.Database,
+  escrow: EscrowKeyInfo | null,
+  deps: KeyringDependencies = defaults,
+): Promise<CryptoKey> {
+  const device = await deps.deviceKey()
+  const dek = await generateDek()
+  await writeWrap(
+    database,
+    projectKeyDocumentId(device.kid),
+    device.kid,
+    await wrapDek(dek, device.publicKeySpki),
+    deps.now(),
+  )
+  if (escrow !== null) {
+    await writeWrap(
+      database,
+      ESCROW_KEY_DOCUMENT_ID,
+      escrow.kid,
+      await wrapDek(dek, escrow.publicKey),
+      deps.now(),
+    )
+  }
+  return dek
+}
+
+/**
+ * The escrow wrap, creating it when the project was born offline without one.
+ *
+ * Going to the server is where the wrap becomes a hard requirement (spec, "Project keys"):
+ * provisioning (F8) sends it for validation, so this answers the stored wrap when there is one
+ * and otherwise unwraps the project's DEK — which requires the project to be unlocked on this
+ * device — wraps it for escrow, and stores the document before answering it.
+ *
+ * @throws {Error} when the project is locked on this device: there is no DEK to wrap, and only
+ *   escrow recovery (F7) can change that
+ */
+export async function ensureEscrowWrap(
+  database: PouchDB.Database,
+  escrow: EscrowKeyInfo,
+  deps: KeyringDependencies = defaults,
+): Promise<{ kid: string; wrapped: string }> {
+  const existing = await readWrap(database, ESCROW_KEY_DOCUMENT_ID)
+  if (existing !== undefined) return { kid: existing.kid, wrapped: existing.wrapped }
+
+  const dek = await unlockProject(database, deps)
+  if (dek === null) {
+    throw new Error(
+      'This project is locked on this device, so no escrow wrap can be created from it.',
+    )
+  }
+  const wrapped = await wrapDek(dek, escrow.publicKey)
+  await writeWrap(database, ESCROW_KEY_DOCUMENT_ID, escrow.kid, wrapped, deps.now())
+  return { kid: escrow.kid, wrapped }
+}
+
+/**
+ * The key state a project database's repositories run under (`data/repository.ts`).
+ *
+ * Three answers, decided by the `key:*` documents alone:
+ *
+ * - **No key documents at all** → `undefined`, the plaintext state. That is a database from
+ *   before encryption existed — decision 2 migrates nothing — or one whose key documents have
+ *   not replicated in yet, and in either case there is no DEK anywhere that could ever open it,
+ *   so "locked" would be a promise no recovery can keep. Re-resolution (the provider seam in
+ *   `ui/db/project-database.ts`) revisits the answer once replication delivers the wraps.
+ * - **A wrap this device opens** → unlocked, with the cipher bound to the DEK.
+ * - **Wraps for others only** → locked: the data is ciphertext and the key has not reached this
+ *   device yet. F7's escrow recovery resolves this without ceremony when online.
+ */
+export async function resolveKeyState(
+  database: PouchDB.Database,
+  deps: KeyringDependencies = defaults,
+): Promise<KeyState | undefined> {
+  const { rows } = await database.allDocs({ ...projectKeyRange(), limit: 1 })
+  if (rows.length === 0) return undefined
+  const dek = await unlockProject(database, deps)
+  return dek === null ? { kind: 'locked' } : { kind: 'unlocked', cipher: fieldCipher(dek) }
+}

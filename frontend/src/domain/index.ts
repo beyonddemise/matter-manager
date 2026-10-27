@@ -54,6 +54,14 @@ export {
   idRange,
   uuidOf,
 } from './documents/ids.js'
+export {
+  ESCROW_KEY_DOCUMENT_ID,
+  isProjectKeyDocument,
+  PROJECT_KEY_PREFIX,
+  type ProjectKeyDocument,
+  projectKeyDocumentId,
+  projectKeyRange,
+} from './documents/keys.js'
 // Only the types and the error reach the entry point. `readName`, `matchRoom` and the rest
 // are how `planNewDevice` and `planDeviceEdit` agree with each other, not an API for callers:
 // a view that validated a name itself would be a second answer to a question `core` already

@@ -16,6 +16,7 @@
 
 import {
   isLocalOnlyDatabase,
+  type KeyState,
   type LocalCache,
   type LocalProjectEntry,
   projectRepositories,
@@ -28,6 +29,7 @@ import {
 } from '../domain/documents/project.js'
 import { profile } from './composition.js'
 import { withDestroyLock } from './db/db-lock.js'
+import { createProjectKeys, fieldCipher } from './db/keyring.js'
 import {
   forgetProject,
   localDatabase,
@@ -35,6 +37,7 @@ import {
   PROJECT_DATABASE_NAME,
   rawDatabase,
 } from './db/project-database.js'
+import { cachedEscrowKey } from './escrow-client.js'
 import { cachedProfileOf, type Profile } from './profile.js'
 import { type Project, ProjectCreationError } from './projects.js'
 import { pouchRefreshTokenStore } from './tokens.js'
@@ -63,6 +66,13 @@ export interface LocalProjectDependencies {
    * refresher first answers, and stays unknown through an offline start.
    */
   readonly signedIn: () => Promise<boolean>
+  /**
+   * Mints a new project database's keys (#302) and answers the key state its first writes run
+   * under. Called by creation and import **before the first device write** — a device stored
+   * first would be plaintext in a database whose every later open expects ciphertext. Optional
+   * so the existing test stores need not know about keys; absent, the real keyring is used.
+   */
+  readonly projectKeys?: (database: PouchDB.Database) => Promise<KeyState>
 }
 
 /** Where {@link resolveAccount} learns who is signed in: injectable, like the rest. */
@@ -120,6 +130,18 @@ const accountSources: AccountSources = {
     localProfileCache().writeProfile(cachedProfileOf(fresh, new Date().toISOString())),
 }
 
+/**
+ * The real keyring: a fresh DEK wrapped for this device, plus the escrow wrap whenever the
+ * escrow public key has been cached (decision 1) — `null` is an ordinary state, not a failure,
+ * and promote adds the wrap later (`ensureEscrowWrap`). The DEK comes back as the unlocked key
+ * state so creation's own writes encrypt without re-reading what was just written.
+ */
+async function mintProjectKeys(database: PouchDB.Database): Promise<KeyState> {
+  const escrow = await cachedEscrowKey(localProfileCache())
+  const dek = await createProjectKeys(database, escrow)
+  return { kind: 'unlocked', cipher: fieldCipher(dek) }
+}
+
 /** The real dependencies: the browser's databases and the shared `mm-local` index. */
 export const localProjectDefaults: LocalProjectDependencies = {
   cache: localProfileCache,
@@ -129,6 +151,7 @@ export const localProjectDefaults: LocalProjectDependencies = {
   now: () => new Date().toISOString(),
   account: () => resolveAccount(accountSources),
   signedIn: accountSources.signedIn,
+  projectKeys: mintProjectKeys,
 }
 
 /** An optional account stamp, absent rather than empty, like {@link clientField}. */
@@ -213,7 +236,12 @@ export async function createLocalProject(
   // Asked first: a refusal (signed in, account not yet known) must leave nothing behind.
   const account = await deps.account()
   const dbName = `${LOCAL_PROJECT_PREFIX}${deps.uuid()}`
-  await writeProjectDocument(deps.database(dbName), input.name, input.client)
+  const database = deps.database(dbName)
+  // The keys before anything else (#302): every project is encrypted from creation, and the
+  // key documents must exist before any write that could need them. A failure here leaves an
+  // unlisted, nearly empty database, like any other failure before the index entry.
+  await (deps.projectKeys ?? mintProjectKeys)(database)
+  await writeProjectDocument(database, input.name, input.client)
   const entry: LocalProjectEntry = {
     dbName,
     name: input.name,
@@ -262,10 +290,13 @@ export async function importLocalProject(
   const dbName = `${LOCAL_PROJECT_PREFIX}${deps.uuid()}`
   const database = deps.database(dbName)
   try {
+    // The keys before the first device write (#302): the archive is plaintext by design, and
+    // saving through the unlocked repository below is what re-encrypts it.
+    const keyState = await (deps.projectKeys ?? mintProjectKeys)(database)
     await writeProjectDocument(database, name, imported.project.client)
     // Through the repository, so each device gets this device's `updatedAt` stamp (ADR 0010)
     // rather than whatever the file said.
-    const { devices } = projectRepositories(database, deps.now)
+    const { devices } = projectRepositories(database, deps.now, keyState)
     for (const device of imported.devices) await devices.save(device)
     const entry: LocalProjectEntry = {
       dbName,

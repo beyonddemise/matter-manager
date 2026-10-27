@@ -38,6 +38,11 @@ const EXPECTED: ReadonlyArray<
   ['browseDevices', 'function'],
   ['PROJECT_DOCUMENT_ID', 'string'],
   ['isProjectDocument', 'function'],
+  ['PROJECT_KEY_PREFIX', 'string'],
+  ['ESCROW_KEY_DOCUMENT_ID', 'string'],
+  ['projectKeyDocumentId', 'function'],
+  ['projectKeyRange', 'function'],
+  ['isProjectKeyDocument', 'function'],
   // plan
   ['UNHEARD_PROJECT_LIMIT', 'number'],
   ['allowsMore', 'function'],
