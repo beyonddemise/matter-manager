@@ -1355,6 +1355,10 @@
   <source>The server cannot accept encrypted projects yet. Please try again later.</source>
   <target>Der Server kann noch keine verschlüsselten Projekte annehmen. Bitte versuchen Sie es später erneut.</target>
 </trans-unit>
+<trans-unit id="s534f2939b9173c58">
+  <source>Created on this device only. <x id="0" equiv-text="${reason}"/></source>
+  <target>Nur auf diesem Gerät angelegt. <x id="0" equiv-text="${reason}"/></target>
+</trans-unit>
 </body>
 </file>
 </xliff>

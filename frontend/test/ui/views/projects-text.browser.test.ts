@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { activateLocale } from '../../../src/ui/i18n/localization.js'
 import {
   introText,
+  keptLocalText,
   locationText,
   openRefusalText,
   overLimitText,
@@ -105,6 +106,12 @@ describe('reasons as sentences', () => {
     expect(unlimited).not.toContain('-1')
   })
 
+  it('says a project kept on this device exists here, then why the server did not take it (#326)', () => {
+    expect(keptLocalText(reasonText('escrow-unavailable'))).toBe(
+      'Created on this device only. The server cannot accept encrypted projects yet. Please try again later.',
+    )
+  })
+
   it('says an unlimited allowance in words, not a number', () => {
     const said = introText(-1, true)
     expect(said).toContain('Your plan has no project limit.')
@@ -120,5 +127,8 @@ describe('reasons as sentences', () => {
     expect(introText(1, false)).toContain('Ein Projekt')
     expect(introText(-1, true)).toContain('Projektlimit')
     expect(introText(5, true, 3)).toContain('Bestandstarif')
+    expect(keptLocalText(reasonText('escrow-unavailable'))).toBe(
+      'Nur auf diesem Gerät angelegt. Der Server kann noch keine verschlüsselten Projekte annehmen. Bitte versuchen Sie es später erneut.',
+    )
   })
 })

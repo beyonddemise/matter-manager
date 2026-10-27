@@ -1,12 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import type { Project } from '../../../src/ui/projects.js'
-import type { ProjectsModel, Row } from '../../../src/ui/projects-model.js'
-import {
-  clearFields,
-  fieldValue,
-  replicated,
-  sortRows,
-} from '../../../src/ui/views/projects-helpers.js'
+import type { Row } from '../../../src/ui/projects-model.js'
+import { clearFields, fieldValue, sortRows } from '../../../src/ui/views/projects-helpers.js'
 
 /** The projects page's mechanics, each on its own. */
 
@@ -20,40 +14,6 @@ const row = (over: Partial<Row> & Pick<Row, 'dbName'>): Row =>
     actions: {} as Row['actions'],
     ...over,
   }) as Row
-
-const created = { projectId: 'p-new', dbName: 'project_p-new' } as Project
-
-const model = (owned: Row[], shared: Row[] = []) => ({ owned, shared }) as unknown as ProjectsModel
-
-describe('what replication covers after a create', () => {
-  it('is every synchronized row, owned or shared, and the new project', () => {
-    const covered = replicated(
-      model(
-        [
-          row({ dbName: 'project_local_a' }),
-          row({ dbName: 'project_p1', projectId: 'p1', location: 'synced' }),
-          row({ dbName: 'project_p9', projectId: 'p9', location: 'server' }),
-          // An archived project's copy reads `local`: replicating it would only be refused.
-          row({ dbName: 'project_p8', projectId: 'p8', location: 'local' }),
-        ],
-        [row({ dbName: 'project_p2', projectId: 'p2', location: 'synced' })],
-      ),
-      created,
-    )
-    expect(covered).toEqual([
-      { projectId: 'p1', dbName: 'project_p1' },
-      { projectId: 'p2', dbName: 'project_p2' },
-      { projectId: 'p-new', dbName: 'project_p-new' },
-    ])
-  })
-
-  it('does not list the new project twice once the page already knows it', () => {
-    const known = row({ dbName: 'project_p-new', projectId: 'p-new', location: 'synced' })
-    expect(replicated(model([known]), created)).toEqual([
-      { projectId: 'p-new', dbName: 'project_p-new' },
-    ])
-  })
-})
 
 describe('sorting the table', () => {
   const rows = [

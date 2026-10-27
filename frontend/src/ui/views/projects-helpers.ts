@@ -1,14 +1,11 @@
 /**
  * The projects page's small mechanics, kept apart from its markup so each is tested directly:
- * what replication covers after a create, how the table sorts, and how a field is read and
- * cleared.
+ * how the table sorts, and how a field is read and cleared.
  *
  * @module
  */
 
-import type { Project } from '../projects.js'
-import { type ProjectsModel, type Row, synchronizedProjects } from '../projects-model.js'
-import type { SyncableProject } from '../sync/manager.js'
+import type { Row } from '../projects-model.js'
 
 /** Which column the pro table is sorted by, and which way. */
 export interface Sort {
@@ -33,17 +30,6 @@ export function clearFields(container: Element | null): void {
   for (const control of container?.querySelectorAll('[data-field]') ?? []) {
     ;(control as { value?: unknown }).value = ''
   }
-}
-
-/**
- * Every project replication should cover once `created` exists: the synchronized rows the page
- * already knows of, and the new one.
- */
-export function replicated(model: ProjectsModel, created: Project): SyncableProject[] {
-  const known = synchronizedProjects(model)
-  return known.some((project) => project.projectId === created.projectId)
-    ? known
-    : [...known, { projectId: created.projectId, dbName: created.dbName }]
 }
 
 /** Rows sorted by a column, ties broken by name and then by key so the order is stable. */

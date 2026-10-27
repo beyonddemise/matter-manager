@@ -19,7 +19,11 @@ import {
   useProjectDatabase,
 } from '../../../src/ui/db/project-database.js'
 import { activateLocale } from '../../../src/ui/i18n/localization.js'
-import { ProjectActionError, type ProjectActions } from '../../../src/ui/project-actions.js'
+import {
+  CreatedLocallyError,
+  ProjectActionError,
+  type ProjectActions,
+} from '../../../src/ui/project-actions.js'
 import { projectActionRunning } from '../../../src/ui/project-busy.js'
 import {
   type NewProject,
@@ -77,6 +81,8 @@ interface Recorded {
   readonly navigated: string[]
   /** Every project action the page asked for: which, on which database, and any typed name. */
   readonly acted: [string, string, string?][]
+  /** Every synchronized creation the page handed to the actions (#326). */
+  readonly syncedCreates: NewProject[]
   refreshed: number
 }
 
@@ -88,8 +94,15 @@ let createAnswer: () => Project
 /** How every fake project action ends: resolving by default, or as a test says. */
 let actionAnswer: () => Promise<void>
 
+/** How the fake synchronized creation ends: resolving by default, or as a test says. */
+let createSyncedAnswer: () => Promise<void>
+
 /** Project actions that record what they were asked and answer with {@link actionAnswer}. */
 const actions: ProjectActions = {
+  createSynced: async (_input, request: NewProject) => {
+    recorded.syncedCreates.push(request)
+    await createSyncedAnswer()
+  },
   promote: async (_model, row: Row) => {
     recorded.acted.push(['promote', row.dbName])
     await actionAnswer()
@@ -128,9 +141,11 @@ beforeEach(() => {
     indexedWhileBusy: [],
     navigated: [],
     acted: [],
+    syncedCreates: [],
     refreshed: 0,
   }
   actionAnswer = async () => {}
+  createSyncedAnswer = async () => {}
   createAnswer = () => project({ projectId: 'p-new', dbName: 'project_p-new', name: 'Neu' })
   localStorage.removeItem(CURRENT_PROJECT_KEY)
 })
@@ -383,7 +398,7 @@ describe('the member plan', () => {
     expect(tag.getAttribute('variant')).toBe('warning')
   })
 
-  it('creates on the server, keeps a local copy and refetches the list', async () => {
+  it('creates a synchronized project through the actions: born here, then promoted (#326)', async () => {
     const view = await member({
       local: [entry({ dbName: 'project_p1', name: 'Beta', projectId: 'p1' })],
       server: [project()],
@@ -394,22 +409,52 @@ describe('the member plan', () => {
     await click(view, '[data-create]', slot)
     await settled(view)
 
-    expect(recorded.created).toEqual([{ name: 'Neu' }])
-    expect(recorded.indexed).toEqual([expect.objectContaining({ projectId: 'p-new' })])
-    expect(recorded.synced).toEqual([
-      [
-        { projectId: 'p1', dbName: 'project_p1' },
-        { projectId: 'p-new', dbName: 'project_p-new' },
-      ],
-    ])
+    expect(recorded.syncedCreates).toEqual([{ name: 'Neu' }])
+    // No direct `POST /projects`: the only way to the server is the promotion, which carries
+    // the escrow wrap.
+    expect(recorded.created).toEqual([])
     expect(recorded.localCreated).toEqual([])
-    expect(recorded.refreshed).toBe(1)
-    // Indexed and handed to replication as a project action: a shell refresh in between would
-    // hand replication a list without the new copy.
-    expect(recorded.indexedWhileBusy).toEqual([true])
-    expect(projectActionRunning()).toBe(false)
+    // The actions re-read the page themselves; the page does not ask twice.
+    expect(recorded.refreshed).toBe(0)
     // The slot is reused for the next render; it must not still hold the name just created.
     expect(fieldOf(find(view, '[data-slot-empty]'), 'name')).toBe('')
+  })
+
+  it('says a project kept on this device was created, and why it is not on the server (#326)', async () => {
+    createSyncedAnswer = async () => {
+      throw new CreatedLocallyError(
+        entry({ dbName: 'project_local_new', name: 'Neu' }),
+        new ProjectCreationError('escrow-unavailable'),
+      )
+    }
+    const view = await member()
+
+    const slot = find(view, '[data-slot-empty]')
+    type(slot, '[data-field="name"]', 'Neu')
+    await click(view, '[data-create]', slot)
+    await settled(view)
+
+    const said = text(find(view, '[data-error]'))
+    expect(said).toContain('Created on this device only.')
+    expect(said).toContain('The server cannot accept encrypted projects yet.')
+    // It exists, so the form does not offer to create it a second time.
+    expect(fieldOf(find(view, '[data-slot-empty]'), 'name')).toBe('')
+  })
+
+  it('says a promotion cut short in its own words, without claiming the project is only here', async () => {
+    createSyncedAnswer = async () => {
+      throw new CreatedLocallyError(entry(), new ProjectActionError('unpushed'))
+    }
+    const view = await member()
+
+    const slot = find(view, '[data-slot-empty]')
+    type(slot, '[data-field="name"]', 'Neu')
+    await click(view, '[data-create]', slot)
+    await settled(view)
+
+    const said = text(find(view, '[data-error]'))
+    expect(said).toContain('Not everything could be uploaded')
+    expect(said).not.toContain('Created on this device only.')
   })
 
   it('says a refused sync plainly; an archived copy is only on this device now', async () => {
@@ -443,9 +488,9 @@ describe('the member plan', () => {
     expect(recorded.created).toEqual([])
   })
 
-  it('says why the server refused, in the reader’s words', async () => {
-    createAnswer = () => {
-      throw new ProjectCreationError('project-limit-reached')
+  it('says why nothing was created when it is refused before the local creation', async () => {
+    createSyncedAnswer = async () => {
+      throw new ProjectCreationError('offline')
     }
     const view = await member()
 
@@ -454,8 +499,10 @@ describe('the member plan', () => {
     await click(view, '[data-create]', slot)
     await settled(view)
 
-    expect(text(find(view, '[data-error]'))).toContain('Your plan has no room for another project')
+    expect(text(find(view, '[data-error]'))).toContain('Needs a connection')
     expect(recorded.refreshed).toBe(0)
+    // Nothing was created, so what was typed is kept for the next attempt.
+    expect(fieldOf(find(view, '[data-slot-empty]'), 'name')).toBe('Neu')
   })
 
   it('renames a server project on the server, and updates its listing here', async () => {
@@ -549,13 +596,29 @@ describe('the pro plan', () => {
     await click(view, '[data-create]', dialog)
     await settled(view)
 
-    expect(recorded.created).toEqual([{ name: 'Neu', client: 'Acme' }])
+    expect(recorded.syncedCreates).toEqual([{ name: 'Neu', client: 'Acme' }])
     expect(view.querySelector('[data-add-dialog][open]')).toBeNull()
 
     // Opened again, it must not offer to create the same project a second time.
     await click(view, '[data-add-project]')
     expect(fieldOf(dialog, 'name')).toBe('')
     expect(fieldOf(dialog, 'client')).toBe('')
+  })
+
+  it('closes the dialog on a project kept on this device, and says so on the page (#326)', async () => {
+    createSyncedAnswer = async () => {
+      throw new CreatedLocallyError(entry(), new ProjectCreationError('escrow-unavailable'))
+    }
+    const view = await pro()
+
+    await click(view, '[data-add-project]')
+    const dialog = find(view, '[data-add-dialog]')
+    type(dialog, '[data-field="name"]', 'Neu')
+    await click(view, '[data-create]', dialog)
+    await settled(view)
+
+    expect(view.querySelector('[data-add-dialog][open]')).toBeNull()
+    expect(text(find(view, '[data-error]'))).toContain('Created on this device only.')
   })
 
   it('edits name and client of a local project with the pen', async () => {

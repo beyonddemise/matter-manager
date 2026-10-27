@@ -18,14 +18,13 @@ import {
 } from '../local-projects.js'
 import {
   type ActionSync,
+  CreatedLocallyError,
   type CurrentTarget,
   ProjectActionError,
   type ProjectActions,
   projectActions,
 } from '../project-actions.js'
-import { beginProjectAction } from '../project-busy.js'
 import {
-  createProject,
   type NewProject,
   type Project,
   ProjectCreationError,
@@ -48,9 +47,10 @@ import {
   renderActionsMenu,
   renderConfirmDialog,
 } from './project-action-menu.js'
-import { clearFields, fieldValue, replicated, type Sort, sortRows } from './projects-helpers.js'
+import { clearFields, fieldValue, type Sort, sortRows } from './projects-helpers.js'
 import {
   introText,
+  keptLocalText,
   locationText,
   type MenuAction,
   openRefusalText,
@@ -148,6 +148,35 @@ const NOTHING_YET: ProjectsInput = {
   syncStates: () => undefined,
 }
 
+/**
+ * A failed action as the sentence the page shows.
+ *
+ * Only the API's and the actions' failures carry a reason; anything else is a fault in this
+ * device (a database that would not write), reported generically and logged, because there is
+ * no sentence that would tell the reader what to do about it. A project created here whose
+ * provisioning was refused says that it exists here before why the server did not take it
+ * (#326); one whose promotion failed later, once the server had it, says only why, since it is
+ * no longer only here.
+ */
+function failureText(error: unknown): string {
+  if (error instanceof CreatedLocallyError) {
+    const why = failureText(error.cause)
+    return error.cause instanceof ProjectCreationError ? keptLocalText(why) : why
+  }
+  if (
+    error instanceof ProjectCreationError ||
+    error instanceof ProjectUpdateError ||
+    error instanceof ProjectActionError
+  ) {
+    return reasonText(error.reason)
+  }
+  if (isExportTooLarge(error)) {
+    return msg('This project is too large to export as one file. Nothing was downloaded.')
+  }
+  console.error('A projects page action failed.', error)
+  return msg('That did not work. Please try again.')
+}
+
 /** The projects page. See the module comment. */
 export class ProjectsView extends LitElement {
   /** Light DOM, like every view: Web Awesome's layout utilities are global selectors. */
@@ -178,9 +207,9 @@ export class ProjectsView extends LitElement {
   /** The API. Unset in the application, where it reaches the real one. */
   declare api?: ProjectsApi
   /**
-   * Replication, so a project created on the server gets its local copy at once, and the pushes
-   * and holds that promoting and removing need. Unset, a copy starts when the host next hands
-   * replication its list — which it builds from the same index — and every push refuses.
+   * Replication: the pushes and holds that promoting — creating as synchronized included — and
+   * removing need. Unset, every push refuses, so nothing reaches the server and nothing is
+   * destroyed.
    */
   declare sync?: ActionSync
   /** Local-only project operations. Unset in the application, where they reach the real ones. */
@@ -225,11 +254,8 @@ export class ProjectsView extends LitElement {
   }
 
   /**
-   * Runs one action: busy while it runs, its failure shown as a sentence afterwards.
-   *
-   * Only the API's failures carry a reason; anything else is a fault in this device (a database
-   * that would not write), reported generically and logged, because there is no sentence that
-   * would tell the reader what to do about it.
+   * Runs one action: busy while it runs, its failure shown as a sentence afterwards
+   * ({@link failureText}).
    */
   private async run(action: () => Promise<void>): Promise<void> {
     this.busy = true
@@ -237,18 +263,7 @@ export class ProjectsView extends LitElement {
     try {
       await action()
     } catch (error) {
-      if (
-        error instanceof ProjectCreationError ||
-        error instanceof ProjectUpdateError ||
-        error instanceof ProjectActionError
-      ) {
-        this.error = reasonText(error.reason)
-      } else if (isExportTooLarge(error)) {
-        this.error = msg('This project is too large to export as one file. Nothing was downloaded.')
-      } else {
-        console.error('A projects page action failed.', error)
-        this.error = msg('That did not work. Please try again.')
-      }
+      this.error = failureText(error)
     } finally {
       this.busy = false
     }
@@ -257,13 +272,14 @@ export class ProjectsView extends LitElement {
   /**
    * Creates a project where the model says it goes.
    *
-   * On the server: `POST /projects`, then the copy is indexed and handed to replication, so it
-   * reads "Synchronized" and opens offline from the start. Replication is given **every**
-   * synchronized project, not only the new one, because `SyncManager.set` makes the running
-   * set match its argument exactly — handing it one would stop all the others.
+   * Always on this device first (spec decision 9, #326). When the model sends it to the server,
+   * the actions create it here and promote it, so it goes the one way every project goes to the
+   * server — with its escrow wrap — and reads "Synchronized" once the promotion is done. The
+   * actions re-read the page's inputs themselves then; a local creation is re-read here.
    *
    * Reads the name (and, in the dialog, the client) from `form`, and empties it once the project
-   * exists, so the same form never offers to create it twice.
+   * exists — also when only its server half failed ({@link CreatedLocallyError}): it exists
+   * here, so the same form never offers to create it twice.
    *
    * @returns whether it was created
    */
@@ -281,25 +297,21 @@ export class ProjectsView extends LitElement {
     await this.run(async () => {
       const request: NewProject = { name, ...(client === '' ? {} : { client }) }
       if (model.createTarget === 'synced') {
-        const project = await createProject(
-          { api: this.api ?? projects(), online: () => this.input.online },
-          request,
-        )
-        // Held as a project action (`project-busy.ts`): a shell refresh between the two would
-        // hand replication a list read before the copy was indexed, stopping the new copy.
-        const end = beginProjectAction()
         try {
-          await this.locals().indexServerProject(project)
-          this.sync?.set(replicated(model, project))
-        } finally {
-          end()
+          await this.projectActions().createSynced(this.input, request)
+        } catch (error) {
+          if (error instanceof CreatedLocallyError) {
+            created = true
+            clearFields(form)
+          }
+          throw error
         }
       } else {
         await this.locals().create(request)
+        await this.refresh?.()
       }
       created = true
       clearFields(form)
-      await this.refresh?.()
     })
     return created
   }

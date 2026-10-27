@@ -1,6 +1,11 @@
 import PouchDB from 'pouchdb-browser'
 import { afterEach, beforeAll, describe, expect, it } from 'vitest'
-import { type LocalCache, type LocalProjectEntry, localCache } from '../../src/data/index.js'
+import {
+  type LocalCache,
+  type LocalProjectEntry,
+  localCache,
+  projectRepositories,
+} from '../../src/data/index.js'
 import { encodeBase64 } from '../../src/domain/crypto/base64.js'
 import {
   decryptField,
@@ -14,9 +19,15 @@ import {
   projectKeyDocumentId,
 } from '../../src/domain/documents/keys.js'
 import { PROJECT_DOCUMENT_ID } from '../../src/domain/documents/project.js'
+import { type DeviceDocument, documentId, type Unsaved } from '../../src/domain/index.js'
 import { coordinateWrites } from '../../src/ui/db/db-lock.js'
 import { ensureDeviceKey } from '../../src/ui/db/device-key.js'
-import { createProjectKeys, ensureEscrowWrap, unlockProject } from '../../src/ui/db/keyring.js'
+import {
+  createProjectKeys,
+  ensureEscrowWrap,
+  resolveKeyState,
+  unlockProject,
+} from '../../src/ui/db/keyring.js'
 import { PROJECT_DATABASE_NAME } from '../../src/ui/db/project-database.js'
 import type { EscrowKeyInfo } from '../../src/ui/escrow-client.js'
 import {
@@ -27,6 +38,7 @@ import {
   renameLocalProject,
 } from '../../src/ui/local-projects.js'
 import {
+  CreatedLocallyError,
   type ProjectActionDependencies,
   ProjectActionError,
   projectActions,
@@ -39,7 +51,12 @@ import {
   type ProjectPatch,
   ProjectUpdateError,
 } from '../../src/ui/projects.js'
-import { type ProjectsModel, projectsModel, type Row } from '../../src/ui/projects-model.js'
+import {
+  type ProjectsInput,
+  type ProjectsModel,
+  projectsModel,
+  type Row,
+} from '../../src/ui/projects-model.js'
 import type { SyncableProject } from '../../src/ui/sync/manager.js'
 
 /**
@@ -267,16 +284,20 @@ function world(
     },
   }
 
+  /** What the page would compute its model from now: the index, the server, a member online. */
+  const input = async (over: Partial<ProjectsInput> = {}): Promise<ProjectsInput> => ({
+    local: await cache.readLocalProjects(),
+    server: [...server],
+    plan: 'member',
+    session: 'signed-in',
+    online: state.online,
+    syncStates: () => undefined,
+    ...over,
+  })
+
   /** The model the page would show now, and the row for one database. */
   const view = async (dbName: string): Promise<{ model: ProjectsModel; row: Row }> => {
-    const model = projectsModel({
-      local: await cache.readLocalProjects(),
-      server,
-      plan: 'member',
-      session: 'signed-in',
-      online: state.online,
-      syncStates: () => undefined,
-    })
+    const model = projectsModel(await input())
     const row = [...model.owned, ...model.shared].find((candidate) => candidate.dbName === dbName)
     if (row === undefined) throw new Error(`no row for ${dbName}`)
     return { model, row }
@@ -319,6 +340,7 @@ function world(
     switched,
     cache,
     database,
+    input,
     view,
     localProject,
     syncedProject,
@@ -704,6 +726,156 @@ describe('going to the server carries a validated escrow wrap (#305)', () => {
 
     expect(await refusal(w.actions.promote(model, row))).toBe('failed')
     expect(w.created).toEqual([])
+  })
+})
+
+describe('creating a project as synchronized is born locally, then promoted (#326)', () => {
+  /** A device as the devices view would save it: both secrets in plaintext. */
+  const lamp = (): Unsaved<DeviceDocument> => ({
+    _id: documentId('device', '6ba7b810-9dad-11d1-80b4-00c04fd430c8'),
+    type: 'device',
+    name: 'Kitchen ceiling light',
+    room: 'Ground Floor/Kitchen',
+    payload: 'MT:Y.K9042C00KA0648G00',
+    manualCode: '34970112332',
+    vendorId: 0xfff1,
+    productId: 0x8000,
+    discriminator: 3840,
+    installedAt: '2026-10-03',
+    addedAt: '2026-10-03T09:00:00.000Z',
+    disabled: false,
+    remarks: [],
+  })
+
+  /**
+   * Stands in for the server's CouchDB: every push replicates the server-named copy into a
+   * database of its own, so "the server holds it" is read from a database the code under test
+   * never opened, not from the copy it wrote.
+   */
+  const withRemote = (w: ReturnType<typeof world>): PouchDB.Database => {
+    const remoteName = `remote-${crypto.randomUUID().slice(0, 8)}`
+    touched.add(remoteName)
+    const remote = new PouchDB(remoteName)
+    w.state.duringPush = async () => {
+      const [project] = w.server as [Project]
+      const copied = await w.database(project.dbName).replicate.to(remote)
+      if (copied.doc_write_failures > 0) throw new Error('the remote refused a document')
+    }
+    return remote
+  }
+
+  it('escrow on: the server database holds key:<kid> and key:escrow, and a device added afterwards is stored enc:v1:', async () => {
+    const w = world()
+    const remote = withRemote(w)
+
+    await w.actions.createSynced(await w.input(), { name: 'Neu', client: 'Acme' })
+
+    // One provisioning request, carrying the escrow wrap the server validates (decision 10).
+    expect(w.created).toEqual([
+      {
+        name: 'Neu',
+        client: 'Acme',
+        escrowWrap: { kid: escrowPair.info.kid, wrapped: expect.any(String) },
+      },
+    ])
+    const [project] = w.server as [Project]
+    const remoteIds = (await remote.allDocs()).rows.map((doc) => doc.id)
+    expect(remoteIds).toContain(ESCROW_KEY_DOCUMENT_ID)
+    expect(remoteIds).toContain(projectKeyDocumentId((await ensureDeviceKey()).kid))
+    // Born locally (decision 9): the local database is gone, only the server-named copy listed.
+    expect(await w.cache.readLocalProjects()).toEqual([
+      expect.objectContaining({ dbName: project.dbName, projectId: project.projectId }),
+    ])
+    expect(w.log.filter((line) => line.startsWith('destroy project_local'))).toHaveLength(1)
+
+    // A device added afterwards goes through the encryption seam with the project's own DEK.
+    const survivor = w.database(project.dbName)
+    const repositories = projectRepositories(survivor, undefined, await resolveKeyState(survivor))
+    await repositories.devices.save(lamp())
+    await w.deps.sync.pushNow(project.projectId)
+    const stored = (await remote.get(lamp()._id)) as unknown as DeviceDocument
+    expect(stored.payload).toMatch(/^enc:v1:/)
+    expect(stored.manualCode).toMatch(/^enc:v1:/)
+    // And escrow opens it: the recovery route every other device takes.
+    const escrow = (await remote.get(ESCROW_KEY_DOCUMENT_ID)) as unknown as ProjectKeyDocument
+    const escrowDek = await unwrapDek(escrow.wrapped, escrowPair.privateKey)
+    expect(await decryptField(escrowDek, lamp()._id, 'payload', stored.payload ?? '')).toBe(
+      'MT:Y.K9042C00KA0648G00',
+    )
+  })
+
+  it('escrow off: refuses with escrow-unavailable and keeps the project, local-only', async () => {
+    // `GET /escrowkey` 404s and nothing is cached: the deployment has the feature off.
+    const w = world({ cachedEscrow: null, fetchedEscrow: null })
+
+    const error = await w.actions.createSynced(await w.input(), { name: 'Neu' }).then(
+      () => undefined,
+      (thrown: unknown) => thrown,
+    )
+
+    expect(error).toBeInstanceOf(CreatedLocallyError)
+    const cause = (error as CreatedLocallyError).cause
+    expect(cause).toBeInstanceOf(ProjectCreationError)
+    expect((cause as ProjectCreationError).reason).toBe('escrow-unavailable')
+    // Nothing reached the server, nothing replicates — never a plaintext server project.
+    expect(w.created).toEqual([])
+    expect(w.sets).toEqual([])
+    // The reader's project exists, here, and reads local-only: no id, so not half-synced.
+    const [kept] = (await w.cache.readLocalProjects()) as [LocalProjectEntry]
+    expect(kept).toMatchObject({ name: 'Neu' })
+    expect(kept.projectId).toBeUndefined()
+    expect((error as CreatedLocallyError).entry).toEqual(kept)
+    const { row } = await w.view(kept.dbName)
+    expect(row.location).toBe('local')
+    // It is still offered to synchronize later, once the server can take it.
+    expect(row.actions.promote.allowed).toBe(true)
+    // The page was asked to read what is there now, so it lists the kept project.
+    expect(w.state.refreshed).toBe(1)
+  })
+
+  it('offline: refuses before anything is created, as before', async () => {
+    const w = world()
+    const input = await w.input()
+    // The page rendered online; the browser says otherwise by the time Create is pressed.
+    w.state.online = false
+
+    expect(await refusal(w.actions.createSynced(input, { name: 'Neu' }))).toBe('offline')
+
+    expect(await w.cache.readLocalProjects()).toEqual([])
+    expect(w.created).toEqual([])
+    expect(w.state.escrowFetches).toBe(0)
+  })
+
+  it('counts against the limit once: the last free slot is used, not refused', async () => {
+    const w = world()
+
+    await w.actions.createSynced(await w.input({ reportedLimit: 1 }), { name: 'Neu' })
+
+    expect(w.created).toHaveLength(1)
+    // The local-only stage and the server project are one project, counted once.
+    expect(projectsModel(await w.input({ reportedLimit: 1 })).ownedCount).toBe(1)
+  })
+
+  it('refuses at the limit before creating anything here', async () => {
+    const w = world()
+    await w.localProject('Alpha')
+    const before = await w.cache.readLocalProjects()
+
+    expect(
+      await refusal(w.actions.createSynced(await w.input({ reportedLimit: 1 }), { name: 'Neu' })),
+    ).toBe('limit')
+
+    expect(await w.cache.readLocalProjects()).toEqual(before)
+    expect(w.created).toEqual([])
+  })
+
+  it('refuses when the model would not create on the server', async () => {
+    const w = world()
+
+    expect(
+      await refusal(w.actions.createSynced(await w.input({ plan: 'free' }), { name: 'Neu' })),
+    ).toBe('not-applicable')
+    expect(await w.cache.readLocalProjects()).toEqual([])
   })
 })
 
