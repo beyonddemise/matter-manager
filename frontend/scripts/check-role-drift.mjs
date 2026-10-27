@@ -81,7 +81,7 @@ function rolesFromSpec(yaml) {
   const values = []
   for (let i = at + 1; i < lines.length; i++) {
     const line = lines[i]
-    if (line.trim() === '') continue
+    if (line.trim() === '' || line.trim().startsWith('#')) continue // a comment is not a key
     const depth = line.search(/\S/)
     if (depth <= indent) break // next sibling schema
     if (childIndent === -1) childIndent = depth // the block's own keys sit at this depth
@@ -114,13 +114,25 @@ function rolesFromSpec(yaml) {
  * `'owner' | 'manage' | 'write' | 'read' | string` the four literals all agree with the
  * contract, and the `| string` quietly accepts everything the contract refuses. A member this
  * cannot read as a literal fails the check; it is never skipped.
+ *
+ * The match is anchored to the start of a line, so a commented-out `// export type ProjectRole`
+ * is not a declaration — a stale copy in a comment must never validate the file while the live
+ * declaration below it drifts. Two live declarations would make "the union" ambiguous, so that
+ * is refused too rather than silently reading the first.
  */
 function rolesFromUnion(source) {
-  const declaration = source.match(/export type ProjectRole\s*=([^\n]*(?:\n\s*\|[^\n]*)*)/)
-  if (declaration === null)
+  const declarations = [
+    ...source.matchAll(/^export type ProjectRole\s*=([^\n]*(?:\n\s*\|[^\n]*)*)/gm),
+  ]
+  if (declarations.length === 0)
     fail(
       `No \`ProjectRole\` declaration in ${unionPath}; the role-drift check cannot see the union.`,
     )
+  if (declarations.length > 1)
+    fail(
+      `More than one \`ProjectRole\` declaration in ${unionPath}; the role-drift check cannot tell which is live.`,
+    )
+  const declaration = declarations[0]
 
   const members = declaration[1]
     .split('|')

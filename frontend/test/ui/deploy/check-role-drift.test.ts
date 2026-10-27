@@ -98,6 +98,20 @@ describe('the role-drift check', () => {
     expect(code).toBe(0)
   })
 
+  it('accepts a Role schema that opens with a comment line', () => {
+    // A YAML comment sits at whatever indent its author liked; it must not be mistaken for the
+    // block's first key and fix the child indentation the real keys then fail to match.
+    const { code, output } = check({
+      spec: AGREED_SPEC.replace(
+        '    Role:\n',
+        '    Role:\n        # What a participant may do; see ADR 0017.\n',
+      ),
+      union: AGREED_UNION,
+    })
+    expect(output).toContain('ok')
+    expect(code).toBe(0)
+  })
+
   it('fails when the contract has a role the union lacks, naming it and both files', () => {
     const { code, output } = check({
       spec: spec('owner, manage, write, read, audit'),
@@ -182,6 +196,30 @@ describe('the role-drift check', () => {
     })
     expect(code).toBe(1)
     expect(output).toContain('enum')
+  })
+
+  it('reads the live declaration, not a commented-out one above it', () => {
+    // A stale `// export type ProjectRole = …` that still agrees with the contract must not
+    // validate the file while the live declaration below it has drifted.
+    const { code, output } = check({
+      spec: AGREED_SPEC,
+      union:
+        "// export type ProjectRole = 'owner' | 'manage' | 'write' | 'read'\n" +
+        "export type ProjectRole = 'owner' | 'manage' | 'write' | 'read' | 'comment'\n",
+    })
+    expect(code).toBe(1)
+    expect(output).toContain('comment')
+  })
+
+  it('refuses a module where ProjectRole survives only in a comment', () => {
+    const { code, output } = check({
+      spec: AGREED_SPEC,
+      union:
+        "// export type ProjectRole = 'owner' | 'manage' | 'write' | 'read'\n" +
+        'export type Something = 1\n',
+    })
+    expect(code).toBe(1)
+    expect(output).toContain('No `ProjectRole` declaration')
   })
 
   it('says so when the contract file is missing', () => {
