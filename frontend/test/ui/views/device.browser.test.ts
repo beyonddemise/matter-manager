@@ -466,6 +466,27 @@ describe('a device in a project locked on this device', () => {
     }
   })
 
+  // #333: the device replicated in before its `key:*` documents, so the database is keyless.
+  // The page must say the same calm thing as for a locked project — not draw the ciphertext as
+  // a QR, and not put it on the copy button.
+  it('shows "Available after next sync", and no ciphertext, before the key documents arrive', async () => {
+    const encrypted = await lockedDatabase()
+    try {
+      await encrypted.unlocked.devices.save(lamp())
+      const element = await page(UUID, encrypted.keyless)
+
+      expect(element.querySelector('[data-code-pending]')?.textContent).toContain(
+        'Available after next sync',
+      )
+      expect(element.querySelector('svg.app-qr')).toBeNull()
+      expect(element.querySelector('[data-manual-code]')).toBeNull()
+      expect(element.querySelector('wa-copy-button')).toBeNull()
+      expect(element.innerHTML).not.toContain('enc:')
+    } finally {
+      await encrypted.destroy()
+    }
+  })
+
   it('says a refused write is waiting for the key, not that storage failed', async () => {
     const encrypted = await lockedDatabase()
     try {

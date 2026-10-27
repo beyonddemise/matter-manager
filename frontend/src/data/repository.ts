@@ -12,6 +12,8 @@
  * @module
  */
 
+// The prefix test only: a pure string check, which reaches no WebCrypto (see `FieldCipher`).
+import { isEncryptedField } from '../domain/crypto/envelope.js'
 import {
   type DocumentType,
   documentTypeOf,
@@ -24,7 +26,8 @@ import type { Conflicted } from './conflicts.js'
 /**
  * Encrypts and decrypts one field value, bound to its document and field (#302).
  *
- * This is the whole of what `data/` knows about cryptography: an injected pair of functions.
+ * This is the whole of what `data/` knows about cryptography: an injected pair of functions —
+ * plus the `enc:` prefix test, so ciphertext met with no key state fails closed (#333).
  * The instance is built in `ui/db/` from `domain/crypto`, so this package imports WebCrypto as
  * little as it imports PouchDB — which is not at all, and for the same testability reason.
  */
@@ -151,6 +154,29 @@ function lockedView<T extends Revision>(document: Conflicted<T>): T {
   return { ...rest, locked: true } as unknown as T
 }
 
+/**
+ * Whether a document must be read as locked under the key state in hand.
+ *
+ * Locked state: always. **Keyless state: when a secret field carries the `enc:` prefix** (#333).
+ * Keyless normally means a plaintext database from before encryption, but it is also what a
+ * database looks like while its `device:*` documents have replicated in and its `key:*` ones have
+ * not — nothing orders a pull, and a multi-shard `_changes` feed keeps no global order. Passing
+ * that ciphertext through would put it on the QR and the copy button, send it to the catalogue
+ * lookup (which stamps `catalogSource: 'unusable'` for good), and let a save store it back as a
+ * "plaintext" code. So it fails closed into the existing locked contract, which every consumer
+ * already gates on; a genuine plaintext value never carries the prefix (a payload is `MT:…`, a
+ * manual code is digits), so real plaintext databases read exactly as before. Unlocked: never —
+ * the cipher decrypts the prefixed values and passes the rest through.
+ */
+function readsLocked(document: object, state: KeyState | undefined): boolean {
+  if (state?.kind === 'locked') return true
+  if (state !== undefined) return false
+  return SECRET_FIELDS.some((field) => {
+    const value = (document as Record<string, unknown>)[field]
+    return typeof value === 'string' && isEncryptedField(value)
+  })
+}
+
 /** Reading and writing one document type. */
 export interface Repository<T extends Revision> {
   /** The document, or `undefined` if there is none with that id. */
@@ -192,7 +218,8 @@ function isMissing(error: unknown): boolean {
  *   what it does about conflicts.
  * @param keyState the project's key state (#302), or a provider for it. **Omitted means
  *   plaintext** — the pre-encryption behaviour, kept for `mm-local`-style databases and unit
- *   tests. Unlocked: `payload` and `manualCode` are encrypted on the way in and decrypted on the
+ *   tests — except that a document whose secrets carry the `enc:` prefix still reads locked
+ *   (#333; see `readsLocked`). Unlocked: `payload` and `manualCode` are encrypted on the way in and decrypted on the
  *   way out. Locked: reads omit the two fields and mark the document ({@link LockedDocument}),
  *   writes throw {@link ProjectLockedError}.
  */
@@ -206,12 +233,12 @@ export function repository<T extends Revision>(
   /** The key state right now — asked per operation, which is what lets F7 unlock in place. */
   const currentKeyState = (): Promise<KeyState | undefined> => keyStateOf(keyState)
 
-  /** The stored document decrypted, or returned as-is on a plaintext repository. */
-  const decrypted = async (
-    document: T,
-    state: Extract<KeyState, { kind: 'unlocked' }> | undefined,
-  ): Promise<T> =>
-    state === undefined
+  /**
+   * The stored document decrypted, or returned as-is on a plaintext repository. Only reached
+   * for a document {@link readsLocked} let through, so a non-unlocked state here is plaintext.
+   */
+  const decrypted = async (document: T, state: KeyState | undefined): Promise<T> =>
+    state?.kind !== 'unlocked'
       ? document
       : withSecretFields(document, (field, value) =>
           state.cipher.decrypt(document._id, field, value),
@@ -269,9 +296,10 @@ export function repository<T extends Revision>(
 
       // Locked, the document is answered without resolving: resolution *writes* (the merge and
       // the prune), the locked contract refuses every write, and the conflict loses nothing by
-      // waiting — the next unlocked read merges it exactly as this one would have.
+      // waiting — the next unlocked read merges it exactly as this one would have. That holds for
+      // ciphertext met keyless too (see `readsLocked`).
       const state = await currentKeyState()
-      if (state?.kind === 'locked') return lockedView(document)
+      if (readsLocked(document, state)) return lockedView(document)
 
       // Outside the guard, and that placement is the whole point. Resolving reads each losing
       // revision by `_rev`, and one of those can be gone — compacted away, or removed by
@@ -295,10 +323,14 @@ export function repository<T extends Revision>(
       const documents = rows.flatMap((row) =>
         row.doc ? [row.doc as unknown as Conflicted<T>] : [],
       )
-      // Locked rows skip `resolve` for the reason `get` gives: resolution writes.
-      if (state?.kind === 'locked') return documents.map((document) => lockedView(document))
+      // Locked rows skip `resolve` for the reason `get` gives: resolution writes. Decided per row,
+      // since keyless the evidence is in each document's own fields.
       return Promise.all(
-        documents.map(async (document) => decrypted(await resolve(document), state)),
+        documents.map(async (document) =>
+          readsLocked(document, state)
+            ? lockedView(document)
+            : decrypted(await resolve(document), state),
+        ),
       )
     },
 

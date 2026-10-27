@@ -1,5 +1,6 @@
 import PouchDB from 'pouchdb-browser'
 import { afterEach, describe, expect, it } from 'vitest'
+import { isLockedDocument } from '../../../src/data/index.js'
 import { encryptField, generateDek, wrapDek } from '../../../src/domain/crypto/envelope.js'
 import { projectKeyDocumentId } from '../../../src/domain/documents/keys.js'
 import { documentId } from '../../../src/domain/index.js'
@@ -92,7 +93,9 @@ describe('the key state after inbound replication', () => {
     try {
       const devices = await until(
         () => repositories.devices.list(),
-        (listed) => listed.length === 1,
+        // Not locked as well as present: the batch's documents are visible a moment before
+        // `onInboundDocs` drops the memo, and in that window the device reads locked (#333).
+        (listed) => listed.length === 1 && !listed.some(isLockedDocument),
       )
       // The memo was dropped before the read: plaintext, not the ciphertext the stale
       // plaintext state would have passed through untouched.

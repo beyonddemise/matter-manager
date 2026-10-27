@@ -223,7 +223,9 @@ export function memoiseKeyState(resolve: () => Promise<KeyState | undefined>): M
  *   before encryption existed — decision 2 migrates nothing — or one whose key documents have
  *   not replicated in yet, and in either case there is no DEK anywhere that could ever open it,
  *   so "locked" would be a promise no recovery can keep. Re-resolution (the provider seam in
- *   `ui/db/project-database.ts`) revisits the answer once replication delivers the wraps.
+ *   `ui/db/project-database.ts`) revisits the answer once replication delivers the wraps. Until
+ *   then the repository fails closed on any secret carrying the `enc:` prefix (#333): such a
+ *   document reads locked, so this state never hands ciphertext on as a code.
  * - **A wrap this device opens** → unlocked, with the cipher bound to the DEK.
  * - **Wraps for others only** → locked: the data is ciphertext and the key has not reached this
  *   device yet. F7's escrow recovery resolves this without ceremony when online.

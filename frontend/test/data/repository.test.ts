@@ -473,3 +473,98 @@ describe('the encryption seam, locked', () => {
     expect(fresh?.payload).toBe(lamp().payload)
   })
 })
+
+// #333: nothing orders a pull so the `key:*` documents land before the `device:*` ones (a
+// multi-shard `_changes` feed keeps no global order), and until they do the database is keyless
+// — the plaintext state. Ciphertext met there must fail closed: read as locked, never handed on.
+describe('the encryption seam, keyless over ciphertext', () => {
+  /** Stores one encrypted device, then reopens the same database with no key state at all. */
+  async function seededKeyless(): Promise<ProjectRepositories> {
+    const writer = projectRepositories(database, fixedClock('2026-08-20T10:00:00.000Z'), unlocked())
+    await writer.devices.save(lamp())
+    return projectRepositories(database, fixedClock('2026-08-20T10:00:00.000Z'))
+  }
+
+  it('keylessCiphertextReadsLocked', async () => {
+    const keyless = await seededKeyless()
+
+    const read = await keyless.devices.get(LAMP)
+    const listed = await keyless.devices.list()
+
+    expect(listed).toHaveLength(1)
+    for (const document of [read, ...listed]) {
+      expect(document).toBeDefined()
+      expect(document !== undefined && isLockedDocument(document)).toBe(true)
+      expect('payload' in (document ?? {})).toBe(false)
+      expect('manualCode' in (document ?? {})).toBe(false)
+      // The bug in one line: before the fix, both secrets reached the consumer as `enc:v1:…`.
+      expect(JSON.stringify(document)).not.toContain('enc:')
+      expect(document?.name).toBe('Kitchen ceiling light')
+    }
+  })
+
+  it('keylessCiphertextInOneFieldStillLocksTheDocument', async () => {
+    // A device filed from a pairing code alone carries one secret, so one prefixed field is the
+    // whole of the evidence — and it is enough.
+    const writer = projectRepositories(database, fixedClock('2026-08-20T10:00:00.000Z'), unlocked())
+    const { payload: _absent, ...manualOnly } = lamp()
+    await writer.devices.save(manualOnly)
+    const keyless = projectRepositories(database, fixedClock('2026-08-20T10:00:00.000Z'))
+
+    const read = await keyless.devices.get(LAMP)
+
+    expect(read !== undefined && isLockedDocument(read)).toBe(true)
+    expect(JSON.stringify(read)).not.toContain('enc:')
+  })
+
+  it('keylessCiphertextWritesRefused', async () => {
+    const keyless = await seededKeyless()
+    const read = await keyless.devices.get(LAMP)
+    if (read === undefined) throw new Error('the seeded device is missing')
+
+    // As a view would hand it over: the locked read with an edit spread onto it. Before the
+    // fix this stored the ciphertext strings back as if they were plaintext codes.
+    const { updatedAt: _stamp, ...unsaved } = read
+    await expect(keyless.devices.save({ ...unsaved, name: 'Renamed' })).rejects.toThrow(
+      ProjectLockedError,
+    )
+    await expect(keyless.devices.saveKeepingUpdatedAt(read)).rejects.toThrow(ProjectLockedError)
+    await expect(keyless.devices.remove(read)).rejects.toThrow(ProjectLockedError)
+    const stored = await rawDocument(database, LAMP)
+    expect(stored.name).toBe('Kitchen ceiling light')
+    expect(stored.payload).toMatch(/^enc:v1:/)
+    expect(stored.manualCode).toMatch(/^enc:v1:/)
+  })
+
+  it('keylessPlaintextStillReadsPlaintext', async () => {
+    // The regression guard: "keyless = plaintext" stays true for a database that is plaintext —
+    // one from before encryption existed, which decision 2 migrates nothing in.
+    await repositories.devices.save(lamp())
+
+    const read = await repositories.devices.get(LAMP)
+    const [listed] = await repositories.devices.list()
+
+    for (const document of [read, listed]) {
+      expect(document !== undefined && isLockedDocument(document)).toBe(false)
+      expect(document?.payload).toBe('MT:Y.K9042C00KA0648G00')
+      expect(document?.manualCode).toBe('34970112332')
+    }
+  })
+
+  it('keylessCiphertextUnlocksInPlaceWhenTheKeyArrives', async () => {
+    const writer = projectRepositories(database, fixedClock('2026-08-20T10:00:00.000Z'), unlocked())
+    await writer.devices.save(lamp())
+    // The provider the UI hands the repositories: keyless now, unlocked once the wraps land.
+    let state: KeyState | undefined
+    const repos = projectRepositories(database, fixedClock('2026-08-20T10:00:00.000Z'), () => state)
+    const before = await repos.devices.get(LAMP)
+    expect(before !== undefined && isLockedDocument(before)).toBe(true)
+
+    state = unlocked()
+
+    const after = await repos.devices.get(LAMP)
+    expect(after !== undefined && isLockedDocument(after)).toBe(false)
+    expect(after?.payload).toBe('MT:Y.K9042C00KA0648G00')
+    expect(after?.manualCode).toBe('34970112332')
+  })
+})
