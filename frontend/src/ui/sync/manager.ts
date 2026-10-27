@@ -34,6 +34,12 @@ export interface ManagerDependencies {
   readonly onState?: (projectId: string, state: SyncState) => void
   /** Called when documents arrive for a project, so a view showing it can re-read. */
   readonly onIncoming?: (projectId: string) => void
+  /**
+   * Called with every inbound batch's document ids, by database name, **before** `onIncoming`:
+   * the key-state memo (#302) is dropped here when `key:*` documents arrive, and the view
+   * re-read that `onIncoming` triggers must already find the fresh state, not refresh behind it.
+   */
+  readonly onInboundDocs?: (dbName: string, docIds: readonly string[]) => void
 }
 
 /** Replications, by project. */
@@ -99,7 +105,10 @@ export function syncManager(deps: ManagerDependencies): SyncManager {
         states.set(project.projectId, state)
         deps.onState?.(project.projectId, state)
       },
-      onIncoming: () => deps.onIncoming?.(project.projectId),
+      onIncoming: (docIds) => {
+        deps.onInboundDocs?.(project.dbName, docIds)
+        deps.onIncoming?.(project.projectId)
+      },
     })
     handles.set(project.projectId, handle)
     known.set(project.projectId, project)
@@ -167,12 +176,15 @@ export function syncManager(deps: ManagerDependencies): SyncManager {
     async pullNow(projectId: string, options?: { signal?: AbortSignal }): Promise<void> {
       const project = known.get(projectId)
       if (project === undefined) throw new Error(`Project ${projectId} is not being synchronized`)
-      const { pulled } = await pullOnce(
+      const { pulled, docIds } = await pullOnce(
         deps.local(project.dbName),
         deps.remote(project.dbName),
         options,
       )
-      if (pulled > 0) deps.onIncoming?.(projectId)
+      if (pulled > 0) {
+        deps.onInboundDocs?.(project.dbName, docIds)
+        deps.onIncoming?.(projectId)
+      }
     },
 
     stopAll(): void {

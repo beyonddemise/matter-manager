@@ -40,4 +40,13 @@ export {
   type ServerProject,
 } from './local-cache.js'
 export { type ProjectRepositories, projectRepositories } from './project-database.js'
-export { type Repository, repository } from './repository.js'
+export {
+  type FieldCipher,
+  isLockedDocument,
+  type KeyState,
+  type KeyStateProvider,
+  type LockedDocument,
+  ProjectLockedError,
+  type Repository,
+  repository,
+} from './repository.js'

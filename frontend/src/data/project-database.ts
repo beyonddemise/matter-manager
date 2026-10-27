@@ -14,7 +14,13 @@ import {
   conflictResolver,
   watchConflicts as watchDatabaseConflicts,
 } from './conflicts.js'
-import { type Repository, repository } from './repository.js'
+import {
+  type KeyState,
+  type KeyStateProvider,
+  keyStateOf,
+  type Repository,
+  repository,
+} from './repository.js'
 
 /** Everything M2 reads and writes in a project database. */
 export interface ProjectRepositories {
@@ -40,17 +46,24 @@ const systemClock = (): string => new Date().toISOString()
  *
  * @param database an open PouchDB database - this package never opens one, see `repository.ts`
  * @param now the clock; defaults to the system clock, and tests pass their own
+ * @param keyState the project's key state (#302), passed to every repository and consulted by
+ *   the conflict watch. Omitted means plaintext — see `repository.ts` on the three states.
  */
 export function projectRepositories(
   database: PouchDB.Database,
   now: () => string = systemClock,
+  keyState?: KeyState | KeyStateProvider,
 ): ProjectRepositories {
   // One resolver for the database, so a read and the change feed reaching the same conflict at
   // the same moment share one resolution instead of racing to write two.
   const resolver = conflictResolver(database)
 
-  const devices = repository<DeviceDocument>(database, 'device', now, (document) =>
-    resolver.resolve(document, mergeDevice),
+  const devices = repository<DeviceDocument>(
+    database,
+    'device',
+    now,
+    (document) => resolver.resolve(document, mergeDevice),
+    keyState,
   )
 
   return {
@@ -68,6 +81,10 @@ export function projectRepositories(
           // The cast is the honest shape of a change feed: it yields documents of no
           // particular type, and this is the point at which the id says which one it is.
           if (documentTypeOf(document._id) !== 'device') return undefined
+          // Locked, the watch leaves the conflict alone for the reason the repository's reads
+          // do (#302): resolution writes, and the locked contract refuses every write. The
+          // conflict keeps replicating untouched and the first unlocked resolver merges it.
+          if ((await keyStateOf(keyState))?.kind === 'locked') return undefined
           return resolver.resolve(document as DeviceDocument, mergeDevice)
         },
         ...(onError === undefined ? {} : { onError }),

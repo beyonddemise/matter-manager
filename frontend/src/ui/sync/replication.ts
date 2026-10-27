@@ -61,8 +61,12 @@ export interface SyncHandle {
 export interface SyncOptions {
   /** Called whenever {@link SyncHandle.state} changes, and once with the initial state. */
   readonly onState?: (state: SyncState) => void
-  /** Called when documents arrive from the server, so a view can re-read. */
-  readonly onIncoming?: () => void
+  /**
+   * Called when documents arrive from the server, so a view can re-read — with the batch's
+   * document ids, because one listener (the key-state memo, #302) cares only about `key:*`
+   * documents and must not pay a re-resolution for every ordinary edit that replicates in.
+   */
+  readonly onIncoming?: (docIds: readonly string[]) => void
 }
 
 /**
@@ -111,15 +115,24 @@ export interface OneShot {
     event: 'complete',
     handler: (info: { docs_written: number; doc_write_failures?: number }) => void,
   ): unknown
+  on(event: 'change', handler: (info: { docs?: readonly ReplicatedDoc[] }) => void): unknown
   on(event: 'denied', handler: (reason: unknown) => void): unknown
   on(event: 'error', handler: (error: unknown) => void): unknown
   cancel(): void
 }
 
+/** The sliver of a replicated document the `change` events carry that this module reads. */
+export interface ReplicatedDoc {
+  readonly _id: string
+}
+
 /** What a sync `change` event says, narrowed to what this module reads. */
 export interface SyncChange {
   readonly direction: string
-  readonly change?: { readonly docs_written?: number }
+  readonly change?: {
+    readonly docs_written?: number
+    readonly docs?: readonly ReplicatedDoc[]
+  }
 }
 
 /**
@@ -176,7 +189,9 @@ export function replicateProject(
     report('active', pushed)
     // Only the inbound direction. A view re-reading because *this* browser wrote something
     // would be re-reading in response to its own write, which it already knows about.
-    if (info.direction === 'pull') options.onIncoming?.()
+    if (info.direction === 'pull') {
+      options.onIncoming?.((info.change?.docs ?? []).map((doc) => doc._id))
+    }
   })
 
   sync.on('active', () => report('active'))
@@ -309,7 +324,7 @@ export function pullOnce(
   local: Syncable,
   remote: unknown,
   options: { signal?: AbortSignal } = {},
-): Promise<{ pulled: number }> {
+): Promise<{ pulled: number; docIds: readonly string[] }> {
   return new Promise((resolve, reject) => {
     const pull = local.replicate.from(remote, { live: false, retry: false, checkpoint: false })
     const onAbort = (): void => {
@@ -320,9 +335,15 @@ export function pullOnce(
     const done = (): void => options.signal?.removeEventListener('abort', onAbort)
     if (options.signal?.aborted) return onAbort()
 
+    // Collected from the per-batch events rather than the completion, which only carries every
+    // document under `return_docs` — an unbounded buffer this one-shot has no other use for.
+    const docIds: string[] = []
+    pull.on('change', (info) => {
+      for (const doc of info.docs ?? []) docIds.push(doc._id)
+    })
     pull.on('complete', (info) => {
       done()
-      resolve({ pulled: info.docs_written })
+      resolve({ pulled: info.docs_written, docIds })
     })
     pull.on('error', (error) => {
       done()

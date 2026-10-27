@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { type LocalCache, type LocalProjectEntry, localCache } from '../../src/data/index.js'
 import { PROJECT_DOCUMENT_ID } from '../../src/domain/documents/project.js'
 import { coordinateWrites } from '../../src/ui/db/db-lock.js'
+import { ensureDeviceKey } from '../../src/ui/db/device-key.js'
 import { PROJECT_DATABASE_NAME } from '../../src/ui/db/project-database.js'
 import {
   createLocalProject,
@@ -217,6 +218,9 @@ function world(options: { fault?: FaultAt } = {}) {
     return { model, row }
   }
 
+  // Since #302 a local project is born with one `key:<own kid>` wrap document beside its
+  // `project` document, so a freshly created project holds **four** documents (project, wrap,
+  // two devices) — and the wrap replicates with the data on promote (spec decision 8).
   /** A local-only project with two devices in it. */
   const localProject = async (name = 'Alpha', client?: string) => {
     const entry = await createLocalProject(
@@ -314,7 +318,12 @@ describe('promoting a local-only project', () => {
     expect(w.created).toEqual([{ name: 'Alpha', client: 'Acme' }])
     const [project] = w.server as [Project]
     const copy = w.database(project.dbName)
-    expect((await copy.allDocs()).rows.map((doc) => doc.id)).toEqual(['device:one', 'device:two'])
+    // The devices travel, and so does the key wrap — the copy must stay decryptable (#302).
+    expect((await copy.allDocs()).rows.map((doc) => doc.id)).toEqual([
+      'device:one',
+      'device:two',
+      `key:${(await ensureDeviceKey()).kid}`,
+    ])
     // The service owns the server database's project document; the local one must not travel.
     await expect(copy.get(PROJECT_DOCUMENT_ID)).rejects.toMatchObject({ status: 404 })
     expect(w.pushes).toEqual([project.projectId])
@@ -368,7 +377,7 @@ describe('promoting a local-only project', () => {
 
     expect(await refusal(w.actions.promote(model, row))).toBe('unpushed')
 
-    expect(await w.count(alpha.dbName)).toBe(5)
+    expect(await w.count(alpha.dbName)).toBe(6)
     expect(w.state.current).toBe(alpha.dbName)
     const recorded = await w.cache.readLocalProjects()
     expect(recorded).toEqual([expect.objectContaining({ dbName: alpha.dbName })])
@@ -378,7 +387,7 @@ describe('promoting a local-only project', () => {
     await w.actions.promote(again.model, again.row)
     expect(w.created).toHaveLength(1)
     const [project] = w.server as [Project]
-    expect((await w.database(project.dbName).allDocs()).rows).toHaveLength(4)
+    expect((await w.database(project.dbName).allDocs()).rows).toHaveLength(5)
   })
 
   it('brings back what was written to the new copy when the push is refused', async () => {
@@ -434,7 +443,7 @@ describe('promoting a local-only project', () => {
       // Nothing is lost while it is half done: the data is still where it was, and the id is
       // remembered so the retry does not mint another project.
       const [project] = w.server as [Project]
-      expect(await w.count(alpha.dbName)).toBe(3)
+      expect(await w.count(alpha.dbName)).toBe(4)
       const recorded = (await w.cache.readLocalProjects()).find((e) => e.dbName === alpha.dbName)
       expect(recorded?.projectId).toBe(project.projectId)
 
@@ -444,7 +453,7 @@ describe('promoting a local-only project', () => {
 
       expect(w.created).toHaveLength(1)
       expect(w.server).toHaveLength(1)
-      expect((await w.database(project.dbName).allDocs()).rows).toHaveLength(2)
+      expect((await w.database(project.dbName).allDocs()).rows).toHaveLength(3)
       expect(await w.cache.readLocalProjects()).toEqual([
         expect.objectContaining({ dbName: project.dbName, projectId: project.projectId }),
       ])
@@ -464,7 +473,7 @@ describe('promoting a local-only project', () => {
     w.state.createFails = 'project-limit-reached'
     expect(await refusal(w.actions.promote(model, row))).toBe('project-limit-reached')
     expect(await w.cache.readLocalProjects()).toEqual([alpha])
-    expect(await w.count(alpha.dbName)).toBe(3)
+    expect(await w.count(alpha.dbName)).toBe(4)
     expect(w.sets).toEqual([])
   })
 
@@ -644,7 +653,7 @@ describe('deleting a local-only project', () => {
 
     expect(await refusal(w.actions.deleteLocalProject(model, row, 'alpha'))).toBe('name-mismatch')
     expect(await refusal(w.actions.deleteLocalProject(model, row, ''))).toBe('name-mismatch')
-    expect(await w.count(alpha.dbName)).toBe(3)
+    expect(await w.count(alpha.dbName)).toBe(4)
     expect(await w.cache.readLocalProjects()).toEqual([alpha])
 
     await w.actions.deleteLocalProject(model, row, ' Alpha ')
@@ -905,12 +914,12 @@ describe('coordination across tabs (#220)', () => {
 
     await w.actions.promote(model, row)
 
-    // The project document and two devices the check verified, and not one document more.
-    expect(docsAtDestroy).toBe(3)
+    // The project document, the key wrap and two devices the check verified — not one more.
+    expect(docsAtDestroy).toBe(4)
     expect(await outcome).toBe('refused')
     // The verified copy is untouched by any of it.
     const [project] = w.server as [Project]
-    expect((await w.database(project.dbName).allDocs()).rows).toHaveLength(2)
+    expect((await w.database(project.dbName).allDocs()).rows).toHaveLength(3)
     await tabB.close().catch(() => undefined)
   })
 })

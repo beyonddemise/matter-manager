@@ -1,7 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { type ProjectRepositories, projectRepositories } from '../../src/data/index.js'
+import {
+  type FieldCipher,
+  isLockedDocument,
+  type KeyState,
+  ProjectLockedError,
+  type ProjectRepositories,
+  projectRepositories,
+} from '../../src/data/index.js'
 import { type DeviceDocument, documentId, type Unsaved } from '../../src/domain/index.js'
-import { fixedClock, memoryDatabase } from './support/memory-database.js'
+import {
+  fixedClock,
+  memoryDatabase,
+  reconnect,
+  replicas,
+  syncOnce,
+} from './support/memory-database.js'
 
 /** A room document from before ADR 0021. This application no longer writes or reads them. */
 const KITCHEN = 'room:3fa85f64-5717-4562-b3fc-2c963f66afa6'
@@ -254,5 +267,178 @@ describe('remove', () => {
 
     await expect(repositories.devices.remove(first)).rejects.toThrow()
     expect(await repositories.devices.get(LAMP)).toBeDefined()
+  })
+})
+
+/**
+ * A stub cipher with the real one's contract, not its cryptography: deterministic output in the
+ * `enc:v1:` format, bound to `(docId, field)` so a transplanted value fails, refusing to encrypt
+ * a value that already carries the prefix, and passing an unprefixed value through on decrypt.
+ * Deterministic on purpose — two replicas encrypting the same value must agree here, so a
+ * replication test can tell "ciphertext carried through" from "ciphertext re-made".
+ */
+function stubCipher(): FieldCipher {
+  return {
+    async encrypt(docId: string, field: string, value: string): Promise<string> {
+      if (value.startsWith('enc:')) throw new Error(`double encryption of ${docId}.${field}`)
+      return `enc:v1:${docId}|${field}|${value}`
+    },
+    async decrypt(docId: string, field: string, value: string): Promise<string> {
+      if (!value.startsWith('enc:v1:')) return value
+      const [boundId, boundField, ...plain] = value.slice('enc:v1:'.length).split('|')
+      if (boundId !== docId || boundField !== field) {
+        throw new Error(`a ciphertext of ${boundId}.${boundField} was read as ${docId}.${field}`)
+      }
+      return plain.join('|')
+    },
+  }
+}
+
+const unlocked = (): KeyState => ({ kind: 'unlocked', cipher: stubCipher() })
+
+/** The raw stored document, ciphertext and all, read past the repository seam. */
+const rawDocument = async (db: PouchDB.Database, id: string): Promise<DeviceDocument> =>
+  (await db.get(id)) as unknown as DeviceDocument
+
+describe('the encryption seam, unlocked', () => {
+  it('encryptsOnSaveDecryptsOnRead', async () => {
+    const repos = projectRepositories(database, fixedClock('2026-08-20T10:00:00.000Z'), unlocked())
+
+    const saved = await repos.devices.save(lamp())
+    // The save answers plaintext: the caller keeps the returned document and reads it.
+    expect(saved.payload).toBe('MT:Y.K9042C00KA0648G00')
+    expect(saved.manualCode).toBe('34970112332')
+
+    const stored = await rawDocument(database, LAMP)
+    expect(stored.payload).toMatch(/^enc:v1:/)
+    expect(stored.manualCode).toMatch(/^enc:v1:/)
+    // Only the two secrets are encrypted; everything else stays readable to the merge.
+    expect(stored.name).toBe('Kitchen ceiling light')
+
+    const read = await repos.devices.get(LAMP)
+    expect(read?.payload).toBe('MT:Y.K9042C00KA0648G00')
+    expect(read?.manualCode).toBe('34970112332')
+    if (read === undefined) throw new Error('the saved device must read back')
+    expect(isLockedDocument(read)).toBe(false)
+  })
+
+  it('saveKeepingUpdatedAt encrypts through the same seam', async () => {
+    const repos = projectRepositories(database, fixedClock('2026-08-20T10:00:00.000Z'), unlocked())
+    const saved = await repos.devices.save(lamp())
+
+    const kept = await repos.devices.saveKeepingUpdatedAt({ ...saved, vendorName: 'Aqara' })
+
+    expect(kept.manualCode).toBe('34970112332')
+    expect((await rawDocument(database, LAMP)).manualCode).toMatch(/^enc:v1:/)
+    expect((await repos.devices.get(LAMP))?.vendorName).toBe('Aqara')
+  })
+
+  it('listDecryptsEveryDoc', async () => {
+    const repos = projectRepositories(database, fixedClock('2026-08-20T10:00:00.000Z'), unlocked())
+    const other = documentId('device', 'aaaaaaaa-0000-0000-0000-000000000000')
+    await repos.devices.save(lamp())
+    // A manual-code-only device: `payload` is legitimately absent and must stay absent.
+    const { payload: _absent, ...manualOnly } = lamp()
+    await repos.devices.save({ ...manualOnly, _id: other })
+
+    const devices = await repos.devices.list()
+
+    expect(devices).toHaveLength(2)
+    for (const device of devices) expect(device.manualCode).toBe('34970112332')
+    expect(devices.find((device) => device._id === LAMP)?.payload).toBe('MT:Y.K9042C00KA0648G00')
+    expect('payload' in (devices.find((device) => device._id === other) ?? {})).toBe(false)
+  })
+
+  it('tombstoneStaysBare', async () => {
+    const repos = projectRepositories(database, fixedClock('2026-08-20T10:00:00.000Z'), unlocked())
+    const saved = await repos.devices.save(lamp())
+
+    await repos.devices.remove(saved)
+
+    const { rows } = await database.allDocs({ keys: [LAMP] })
+    const value = (rows[0] as { value?: { rev: string; deleted?: boolean } }).value
+    expect(value?.deleted).toBe(true)
+    // The deleted revision itself: nothing but the tombstone — no secret, no ciphertext.
+    const tombstone = await database.get(LAMP, { rev: value?.rev ?? '' })
+    expect(tombstone).toEqual({ _id: LAMP, _rev: value?.rev, _deleted: true })
+  })
+
+  it('conflictMergeCarriesCiphertext', async () => {
+    const { deviceA, server, deviceB } = replicas()
+    const a = projectRepositories(
+      deviceA,
+      fixedClock('2026-08-20T10:00:00.000Z', '2026-08-20T11:00:00.000Z'),
+      unlocked(),
+    )
+    const b = projectRepositories(deviceB, fixedClock('2026-08-20T10:30:00.000Z'), unlocked())
+
+    await a.devices.save(lamp())
+    await syncOnce(deviceA, server)
+    await syncOnce(deviceB, server)
+
+    // Two edits of the same revision, neither touching a secret, so the merge's `{...latest}`
+    // carries the ciphertext as an opaque atom — or corrupts it, which is what this pins.
+    const onB = await b.devices.get(LAMP)
+    if (onB === undefined) throw new Error('device B never received the document')
+    await b.devices.save({ ...onB, room: 'Cellar' })
+    const onA = await a.devices.get(LAMP)
+    if (onA === undefined) throw new Error('device A lost the document')
+    await a.devices.save({ ...onA, name: 'Kitchen spotlight' })
+    await reconnect({ deviceA, server, deviceB })
+
+    const merged = await a.devices.get(LAMP)
+
+    expect(merged?.name).toBe('Kitchen spotlight')
+    expect(merged?.payload).toBe('MT:Y.K9042C00KA0648G00')
+    expect(merged?.manualCode).toBe('34970112332')
+    // The resolution wrote below the seam: what is stored is still ciphertext.
+    expect((await rawDocument(deviceA, LAMP)).payload).toMatch(/^enc:v1:/)
+
+    await Promise.all([deviceA.destroy(), server.destroy(), deviceB.destroy()])
+  })
+})
+
+describe('the encryption seam, locked', () => {
+  /** Stores one encrypted device, then reopens the same database locked. */
+  async function seededLocked(): Promise<{
+    locked: ProjectRepositories
+    saved: DeviceDocument
+  }> {
+    const writer = projectRepositories(database, fixedClock('2026-08-20T10:00:00.000Z'), unlocked())
+    const saved = await writer.devices.save(lamp())
+    // As a provider rather than a value: the UI wiring resolves the key state lazily, so the
+    // locked tests exercise that form of the argument.
+    const locked = projectRepositories(database, fixedClock('2026-08-20T10:00:00.000Z'), () => ({
+      kind: 'locked',
+    }))
+    return { locked, saved }
+  }
+
+  it('lockedReadsOmitSecrets', async () => {
+    const { locked } = await seededLocked()
+
+    const read = await locked.devices.get(LAMP)
+    const listed = await locked.devices.list()
+
+    for (const document of [read, ...listed]) {
+      expect(document).toBeDefined()
+      // Absent, not emptied: `'' as manualCode` would render as a device with a blank code.
+      expect('payload' in (document ?? {})).toBe(false)
+      expect('manualCode' in (document ?? {})).toBe(false)
+      expect(document !== undefined && isLockedDocument(document)).toBe(true)
+      // The whole contract in one line: no ciphertext reaches a consumer, under any key.
+      expect(JSON.stringify(document)).not.toContain('enc:')
+      expect(document?.name).toBe('Kitchen ceiling light')
+    }
+  })
+
+  it('lockedWritesThrow', async () => {
+    const { locked, saved } = await seededLocked()
+
+    await expect(locked.devices.save(lamp())).rejects.toThrow(ProjectLockedError)
+    await expect(locked.devices.saveKeepingUpdatedAt(saved)).rejects.toThrow(ProjectLockedError)
+    await expect(locked.devices.remove(saved)).rejects.toThrow(ProjectLockedError)
+    // Nothing was written: the stored document still holds its ciphertext, undisturbed.
+    expect((await rawDocument(database, LAMP)).payload).toMatch(/^enc:v1:/)
   })
 })

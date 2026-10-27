@@ -19,7 +19,13 @@ function manager() {
   const started: string[] = []
   const cancelled: string[] = []
   const pause = new Map<string, (error?: unknown) => void>()
-  const change = new Map<string, (info: { direction: string }) => void>()
+  const change = new Map<
+    string,
+    (info: {
+      direction: string
+      change?: { docs_written?: number; docs?: { _id: string }[] }
+    }) => void
+  >()
 
   const deps: ManagerDependencies = {
     local: (dbName) =>
@@ -199,6 +205,57 @@ describe('what the interface is told', () => {
     change.get('project_p2')?.({ direction: 'pull' })
 
     expect(arrived).toEqual(['p2'])
+  })
+
+  it('hands the inbound ids to onInboundDocs, by database, before the view notification', () => {
+    // The key-state memo (#302) is dropped on inbound `key:*` documents, and it must be dropped
+    // *before* any view re-reads — the other order would have the re-read decrypt with the
+    // stale state and only the read after that see plaintext.
+    const order: string[] = []
+    const { deps, change } = manager()
+    syncManager({
+      ...deps,
+      onInboundDocs: (dbName, ids) => order.push(`inbound ${dbName}: ${ids.join(',')}`),
+      onIncoming: (id) => order.push(`incoming ${id}`),
+    }).set([KITCHEN])
+
+    change.get('project_p1')?.({
+      direction: 'pull',
+      change: { docs_written: 2, docs: [{ _id: 'key:abc' }, { _id: 'device:1' }] },
+    })
+
+    expect(order).toEqual(['inbound project_p1: key:abc,device:1', 'incoming p1'])
+  })
+
+  it('pullNow reports the pulled ids the same way, before the view notification', async () => {
+    const order: string[] = []
+    const handlers = new Map<string, (info: unknown) => void>()
+    const deps: ManagerDependencies = {
+      local: () =>
+        ({
+          sync: () => ({ on: () => undefined, cancel: () => undefined }),
+          replicate: {
+            from: () => ({
+              on: (event: string, handler: (info: unknown) => void) =>
+                void handlers.set(event, handler),
+              cancel: () => undefined,
+            }),
+          },
+        }) as never,
+      remote: () => ({ info: async () => ({}) }) as never,
+      onInboundDocs: (dbName, ids) => order.push(`inbound ${dbName}: ${ids.join(',')}`),
+      onIncoming: (id) => order.push(`incoming ${id}`),
+    }
+    const running = syncManager(deps)
+    running.set([KITCHEN])
+    order.length = 0
+
+    const pull = running.pullNow('p1')
+    handlers.get('change')?.({ docs: [{ _id: 'key:escrow' }] })
+    handlers.get('complete')?.({ docs_written: 1 })
+    await pull
+
+    expect(order).toEqual(['inbound project_p1: key:escrow', 'incoming p1'])
   })
 
   it('knows nothing about a project that is not running', () => {
