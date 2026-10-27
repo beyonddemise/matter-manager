@@ -11,9 +11,12 @@ device whenever it is commissionable — the state a factory reset produces. The
 threat is an attacker with physical access to a building and a copy of its project data:
 factory-reset a device, adopt it onto their own fabric.
 
-The data is roughly as sensitive as a set of spare keys, and it is stored unencrypted by
-deliberate decision ([ADR 0005](adr/0005-plaintext-payload-storage.md)). That makes every
-control below load-bearing rather than defence-in-depth.
+The data is roughly as sensitive as a set of spare keys. The setup codes themselves are
+encrypted at rest per project, with the project key escrowed on the server
+([ADR 0022](adr/0022-field-encryption-with-key-escrow.md)); the rest of each device document is
+stored unencrypted by deliberate decision ([ADR 0005](adr/0005-plaintext-payload-storage.md)).
+The server can decrypt the codes, so every control below is still load-bearing rather than
+defence-in-depth.
 
 ## Authentication
 
@@ -382,6 +385,9 @@ passcode.
 
 - **Never log a payload or passcode.** Not at debug level, not temporarily, not while
   chasing a bug. Log the device id.
+- **Never log key material:** a project DEK, a `key:*` wrap, the sealed or unsealed escrow key,
+  a device private key, or `ESCROW_KEK`. Log the kid, which names a public key
+  ([SECURITY.md](../SECURITY.md), *Rule for contributors*).
 - **Never send a payload to a third party.** The one place a setup code leaves the browser,
   other than replication, is `POST /catalog/lookup` to our own API, in a POST body over TLS
   ([ADR 0019](adr/0019-setup-code-to-own-api.md)). The API decodes it in memory, never stores or

@@ -235,10 +235,12 @@ that makes it pass is written**.
 
 ## Security
 
-Setup passcodes are stored unencrypted, protected by database isolation and transport
-security. This is a deliberate, documented trade-off — read
-[SECURITY.md](SECURITY.md) and [ADR 0005](docs/adr/0005-plaintext-payload-storage.md)
-before deploying an instance that holds anyone's data but your own.
+Setup codes are encrypted at rest per project, with the key escrowed on the server so that a
+new device recovers it without ceremony; the rest of the data is protected by database
+isolation and transport security. These are deliberate, documented trade-offs — read
+[SECURITY.md](SECURITY.md), [ADR 0005](docs/adr/0005-plaintext-payload-storage.md) and
+[ADR 0022](docs/adr/0022-field-encryption-with-key-escrow.md) before deploying an instance that
+holds anyone's data but your own.
 
 ## License
 
