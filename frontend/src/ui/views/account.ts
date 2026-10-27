@@ -52,6 +52,7 @@ export class AccountView extends LitElement {
     loadPlans: { attribute: false },
     projectLimit: { attribute: false },
     planProjectLimit: { attribute: false },
+    online: { attribute: false },
     email: {},
     plan: {},
     session: {},
@@ -95,6 +96,13 @@ export class AccountView extends LitElement {
   declare planMatrix: PlanMatrix | undefined
 
   /**
+   * What the shell believes about the network, as the status bar shows it. Only its transition
+   * to online is acted on — a load that found neither cache nor server is retried then, so the
+   * absent state does not outlive the outage that caused it.
+   */
+  declare online?: boolean
+
+  /**
    * What the shell believes about the session. Optional: a view mounted without it reads once on
    * connect. Why it exists: a reload on this page mounts the view before the token refresher's
    * first exchange, so the connect-time read finds nobody signed in; the view reads again when
@@ -129,15 +137,37 @@ export class AccountView extends LitElement {
     super.connectedCallback()
     // A view that arrives already signed-in is read by `willUpdate`, so it is not read twice.
     if (this.session !== 'signed-in') void this.refresh()
-    // `resolvePlanMatrix` never throws, but what a test injects might; swallowed rather than
-    // left as an unhandled rejection (L47), because without a matrix the absent state already
-    // says everything there is to say.
-    void this.loadPlans?.((matrix) => {
+    this.loadPlanMatrix()
+  }
+
+  /** The one matrix load in flight, so a retry can never race the load it retries. */
+  private plansLoad: Promise<void> | undefined
+
+  /**
+   * Starts one matrix load, unless one is already on its way. `resolvePlanMatrix` never throws,
+   * but what a test injects might; swallowed rather than left as an unhandled rejection (L47),
+   * because without a matrix the absent state already says everything there is to say.
+   */
+  private loadPlanMatrix(): void {
+    const load = this.loadPlans
+    if (load === undefined || this.plansLoad !== undefined) return
+    this.plansLoad = load((matrix) => {
       this.planMatrix = matrix
-    }).catch(() => {})
+    })
+      .catch(() => {})
+      .finally(() => {
+        this.plansLoad = undefined
+      })
   }
 
   protected override willUpdate(changed: PropertyValues<this>): void {
+    // Retry when connectivity returns while the page stays open: the connect-time load may have
+    // found neither cache nor server, and nothing else would ever replace the absent state. A
+    // transition only — the first update's previous value is `undefined`, so mounting online
+    // never loads twice — and only while no matrix is held: one on screen needs no reload.
+    if (changed.get('online') === false && this.online === true && this.planMatrix === undefined) {
+      this.loadPlanMatrix()
+    }
     if (!changed.has('session')) return
     if (this.session === 'signed-in') void this.refresh()
     else if (this.session !== undefined) this.forget()

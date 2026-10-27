@@ -2574,3 +2574,37 @@ describe('upgrading', () => {
     ])
   })
 })
+
+describe('the account page plans (#263)', () => {
+  /** The backend's own `/plans` fixture, pivoted — Home includes 3 projects today. */
+  const MATRIX: PlanMatrix = {
+    free: { Projects: 1, Price: 'Free forever' },
+    home: { Projects: 3, Price: 'Announced at launch' },
+    pro: { Projects: 'Unlimited*', Price: 'Announced at launch' },
+  }
+
+  it('rereads the profile behind the matrix, so the legacy line compares like with like', async () => {
+    // The cached profile predates the operator lowering Home to 3: it still says the plan
+    // includes 5, so no divergence is visible from the cache alone. Loading the account page
+    // fetches the matrix and must bring the profile up to date behind it (`GET /profile`
+    // recomputes `planProjectLimit` on every answer, ADR 0020) — only then can the page say
+    // "Projects your plan includes: 3. Yours: 5 (legacy plan)."
+    window.location.hash = '#/account'
+    const readProfile = vi.fn(async () =>
+      serverProfile({ plan: 'member', projectLimit: 5, planProjectLimit: 3 }),
+    )
+    const { element } = await mount({
+      cachedProfile: profile({ plan: 'member', projectLimit: 5, planProjectLimit: 5 }),
+      plans: { read: async () => MATRIX },
+      readProfile,
+    })
+    await waitUntil(
+      () => element.querySelector('account-view [data-legacy-plan]') !== null,
+      'the legacy line never appeared — the profile was not reread behind the matrix',
+    )
+    expect(text(element.querySelector('account-view [data-legacy-plan]'))).toBe(
+      'Projects your plan includes: 3. Yours: 5 (legacy plan).',
+    )
+    expect(readProfile).toHaveBeenCalled()
+  })
+})

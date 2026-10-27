@@ -464,6 +464,37 @@ describe('the plans on the account page', () => {
     await comparison(el)
     expect(el.querySelector('[data-signed-out]')).not.toBeNull()
   })
+
+  it('retries the load when connectivity returns and no matrix was heard', async () => {
+    // The first load finds neither cache nor server; the matrix is published by the time the
+    // browser comes back online, so the retry hears it.
+    let published: PlanMatrix | undefined
+    const loadPlans = vi.fn(async (onMatrix: (matrix: PlanMatrix) => void): Promise<void> => {
+      if (published !== undefined) onMatrix(published)
+    })
+    const el = await account(stubApi(), () => true, 'free', { loadPlans })
+    el.online = false
+    await el.updateComplete
+    expect(loadPlans).toHaveBeenCalledTimes(1)
+    expect(el.querySelector('[data-plans-absent]')).not.toBeNull()
+
+    published = MATRIX
+    el.online = true
+    await waitUntil(() => el.querySelector('[data-plan-table]') !== null, 'never retried')
+    expect(loadPlans).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not reload a matrix it already shows when connectivity returns', async () => {
+    const loadPlans = vi.fn(plansFrom(MATRIX))
+    const el = await account(stubApi(), () => true, 'free', { loadPlans })
+    await comparison(el)
+    el.online = false
+    await el.updateComplete
+    el.online = true
+    await el.updateComplete
+    await el.updateComplete
+    expect(loadPlans).toHaveBeenCalledTimes(1)
+  })
 })
 
 describe('the account view in German at phone width', () => {

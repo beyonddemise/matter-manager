@@ -849,6 +849,7 @@ export class AppShell extends LitElement implements ViewHost {
       .projectLimit=${this.projects.facts?.reportedLimit}
       .planProjectLimit=${this.projects.facts?.reportedPlanLimit}
       .loadPlans=${this.loadAccountPlans}
+      .online=${this.online}
       .session=${this.session}
     ></account-view>`
   }
@@ -857,9 +858,15 @@ export class AppShell extends LitElement implements ViewHost {
    * The account page's matrix load: the upgrade dialog's ladder (the cache's answer first, the
    * server's correction behind it, see {@link loadPlanMatrix}). The shell's own copy is corrected
    * on the way past, so an upgrade dialog opened later starts from the same answer.
+   *
+   * The profile is reread behind the matrix when signed in: the page's legacy-plan line compares
+   * the profile's two limits, and `GET /profile` recomputes `planProjectLimit` on every answer
+   * (ADR 0020) — a fresh matrix beside a stale cached limit would say the wrong thing until the
+   * next startup. The limits keep coming from the profile alone; nothing parses the matrix's
+   * display values. `rereadProfile` never throws, so offline the cached pair stands, coherent.
    */
-  private loadAccountPlans = (onMatrix: (matrix: PlanMatrix) => void): Promise<void> =>
-    resolvePlanMatrix(
+  private loadAccountPlans = async (onMatrix: (matrix: PlanMatrix) => void): Promise<void> => {
+    await resolvePlanMatrix(
       this.plans ?? plansClient(),
       (this.projectStore ?? localProjectDefaults).cache(),
       (matrix) => {
@@ -867,6 +874,8 @@ export class AppShell extends LitElement implements ViewHost {
         onMatrix(matrix)
       },
     )
+    if (this.session === 'signed-in') await this.rereadProfile()
+  }
 
   /** The name the status bar announces, which is the open project's. See {@link ViewHost}. */
   projectName(): string {
