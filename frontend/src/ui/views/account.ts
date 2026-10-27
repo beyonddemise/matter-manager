@@ -144,19 +144,37 @@ export class AccountView extends LitElement {
   private plansLoad: Promise<void> | undefined
 
   /**
-   * Starts one matrix load, unless one is already on its way. `resolvePlanMatrix` never throws,
-   * but what a test injects might; swallowed rather than left as an unhandled rejection (L47),
-   * because without a matrix the absent state already says everything there is to say.
+   * An online transition arrived while a load was pending: one follow-up load is owed once that
+   * load settles without a matrix. A boolean, so however many transitions arrive while the same
+   * load is pending, at most one follow-up runs.
+   */
+  private retryQueued = false
+
+  /**
+   * Starts one matrix load; with one already on its way, queues the one follow-up instead. The
+   * queue exists for a load that started offline and is still pending when connectivity
+   * returns: skipping the retry then would leave the absent state standing until a remount.
+   * `resolvePlanMatrix` never throws, but what a test injects might; swallowed rather than left
+   * as an unhandled rejection (L47), because without a matrix the absent state already says
+   * everything there is to say.
    */
   private loadPlanMatrix(): void {
     const load = this.loadPlans
-    if (load === undefined || this.plansLoad !== undefined) return
+    if (load === undefined) return
+    if (this.plansLoad !== undefined) {
+      this.retryQueued = true
+      return
+    }
     this.plansLoad = load((matrix) => {
       this.planMatrix = matrix
     })
       .catch(() => {})
       .finally(() => {
         this.plansLoad = undefined
+        const retry = this.retryQueued
+        this.retryQueued = false
+        // Only while the settled load heard nothing: a matrix on screen needs no follow-up.
+        if (retry && this.planMatrix === undefined) this.loadPlanMatrix()
       })
   }
 

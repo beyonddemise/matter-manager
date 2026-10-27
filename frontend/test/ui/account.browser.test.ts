@@ -484,6 +484,43 @@ describe('the plans on the account page', () => {
     expect(loadPlans).toHaveBeenCalledTimes(2)
   })
 
+  it('queues one retry when connectivity returns during a pending load', async () => {
+    // The connect-time load starts offline and is still pending when the browser comes back
+    // online. The retry must not run beside it — single-flight — but must not be dropped
+    // either: it runs once the pending load settles without a matrix. Exactly once, however
+    // many transitions arrive while the load is pending.
+    let calls = 0
+    let settleFirst: () => void = () => {}
+    const loadPlans = vi.fn((onMatrix: (matrix: PlanMatrix) => void): Promise<void> => {
+      calls += 1
+      if (calls === 1) {
+        return new Promise<void>((resolve) => {
+          settleFirst = resolve
+        })
+      }
+      onMatrix(MATRIX)
+      return Promise.resolve()
+    })
+    const el = await account(stubApi(), () => true, 'free', { loadPlans })
+    el.online = false
+    await el.updateComplete
+    el.online = true
+    await el.updateComplete
+    // A second pair of transitions while the same load is still pending: still one queued retry.
+    el.online = false
+    await el.updateComplete
+    el.online = true
+    await el.updateComplete
+    expect(loadPlans).toHaveBeenCalledTimes(1)
+
+    settleFirst() // the offline load settles with no matrix
+    await waitUntil(
+      () => el.querySelector('[data-plan-table]') !== null,
+      'the queued retry never ran',
+    )
+    expect(loadPlans).toHaveBeenCalledTimes(2)
+  })
+
   it('does not reload a matrix it already shows when connectivity returns', async () => {
     const loadPlans = vi.fn(plansFrom(MATRIX))
     const el = await account(stubApi(), () => true, 'free', { loadPlans })
