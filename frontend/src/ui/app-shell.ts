@@ -65,9 +65,13 @@ import { forgetTokens, pouchRefreshTokenStore } from './tokens.js'
 import { applyUpdate } from './updates.js'
 import { focusWaitlist, leftWaitlistText, type WaitlistProblem } from './upgrade-dialog.js'
 import type { WaitlistApi, WaitlistOutcome } from './waitlist.js'
-// The one view imported statically (#214). Every routed view arrives through its route's
-// dynamic import (`routes.ts`), so the entry chunk no longer carries them — but not-found is
-// what renders when a view cannot, so it must never itself be behind a fetch that can fail.
+// Two views imported statically; every other one arrives through its route's dynamic import
+// (`routes.ts`), so the entry chunk does not carry them (#214). The exceptions are deliberate:
+// not-found is what renders when a view cannot, so it must never itself be behind a fetch that
+// can fail — and the device list is the offline-critical first view (the person in the basement
+// in front of the device), so it renders with no await of any kind. With it the entry is
+// ~311 kB, still well under the 500 kB default that #214 restored (PR #311 review).
+import './views/device-list.js'
 import './views/not-found.js'
 /**
  * The application icon, as a fingerprinted /assets/ URL. `index.html` names the same file as the
@@ -237,6 +241,7 @@ export class AppShell extends LitElement implements ViewHost {
     projectStore: { attribute: false },
     signOutPushTimeoutMs: { attribute: false },
     routes: { attribute: false },
+    reloadPage: { attribute: false },
   }
 
   declare hash: string
@@ -418,8 +423,23 @@ export class AppShell extends LitElement implements ViewHost {
   /** Views whose route `load` has resolved: their elements are registered and safe to render. */
   private readonly loadedViews = new Set<string>()
 
-  /** Views whose last load failed, until the fallback's "Try again" clears them. */
+  /**
+   * Views whose load failed — final for this document, deliberately. A failed module fetch is
+   * cached in the document's module map (Chromium caches the rejection), so running the same
+   * `import()` again rejects immediately without a network attempt; only a new document can
+   * fetch the chunk again. That is why the fallback offers a reload instead of an in-page retry.
+   */
   private readonly failedViews = new Set<string>()
+
+  /**
+   * How the fallback's Reload reloads; injected by tests, `window.location.reload()` otherwise.
+   *
+   * A seam for the reason {@link takeUpdate} is one: the real thing reloads the page it is
+   * running in, and a test that called it would reload the test browser out of the middle of
+   * whatever ran next. User-triggered only — an automatic reload could interrupt a write a
+   * previous view still has in flight.
+   */
+  declare reloadPage?: () => void
 
   /** The view loads in flight, which {@link getUpdateComplete} spans. */
   private readonly viewLoads = new Map<string, Promise<unknown>>()
@@ -458,12 +478,6 @@ export class AppShell extends LitElement implements ViewHost {
     return 'loading'
   }
 
-  /** The fallback's "Try again": forget the failure, so render asks `ensureView` afresh. */
-  private retryView(route: Route): void {
-    this.failedViews.delete(route.view)
-    this.requestUpdate()
-  }
-
   /**
    * Extends `updateComplete` across any view load in flight.
    *
@@ -487,7 +501,7 @@ export class AppShell extends LitElement implements ViewHost {
    * `loading` renders nothing rather than a spinner: the chunk comes from the service worker's
    * cache or the warm-up `main.ts` already ran, so the gap is a frame or two, and a spinner
    * for that is flicker. `failed` is the state the split invented — before #214 a view could
-   * not fail to arrive — and it gets a face and a retry, because a blank page with working
+   * not fail to arrive — and it gets a face and a reload, because a blank page with working
    * navigation is the failure shape L28 exists to prevent.
    */
   private renderView(match: RouteMatch | null): TemplateResult | '' {
@@ -500,13 +514,20 @@ export class AppShell extends LitElement implements ViewHost {
       case 'loading':
         return ''
       case 'failed':
+        // Reload, not "try again": the failed import is cached in the module map (see
+        // `failedViews`), so only a new document can fetch the chunk — and the reload stays
+        // the reader's decision, exactly as taking an update does.
         return html`
           <wa-callout variant="danger" data-view-failed>
             <wa-icon slot="icon" name="triangle-exclamation"></wa-icon>
             <div class="wa-split wa-gap-m">
-              <span>${msg('This page could not be loaded. Check your connection and try again.')}</span>
-              <wa-button data-view-retry size="s" @click=${() => this.retryView(match.route)}>
-                ${msg('Try again')}
+              <span>${msg('This page could not be loaded. Check your connection, then reload.')}</span>
+              <wa-button
+                data-view-reload
+                size="s"
+                @click=${() => (this.reloadPage ?? (() => window.location.reload()))()}
+              >
+                ${msg('Reload')}
               </wa-button>
             </div>
           </wa-callout>

@@ -103,15 +103,17 @@ void requestPersistence(
   () => localStorage,
 )
 
-// Every routed view, warmed now rather than fetched at navigation time (#214). The views are
-// split out of the entry chunk so that first paint parses only what first paint needs — but
-// this application is offline-first (ADR 0002), and lazy must not mean absent: someone who
-// opens the application online and walks into the basement has left the network *after* this
-// line ran, so every view is already in memory when they navigate. Started here, during the
-// entry module's evaluation, so the fetches go out while the connection that delivered the
-// entry is demonstrably there; not awaited, because the shell awaits each view itself and
-// renders a retryable fallback for one that failed. The catch is for exactly that case — the
-// shell reports it where the user can see it, so a second, invisible report would be noise.
+// Every lazy routed view, warmed now rather than fetched at navigation time (#214). The views
+// are split out of the entry chunk so that first paint parses only what first paint needs
+// (the device list, the offline-critical page, is the exception: it ships in the entry and has
+// no `load`) — but this application is offline-first (ADR 0002), and lazy must not mean
+// absent: someone who opens the application online and walks into the basement has left the
+// network *after* this line ran, so every view is already in memory when they navigate.
+// Started here, during the entry module's evaluation, so the fetches go out while the
+// connection that delivered the entry is demonstrably there; not awaited, because the shell
+// awaits each view itself and renders a fallback, with a reload, for one that failed. The
+// catch is for exactly that case — the shell reports it where the user can see it, so a
+// second, invisible report would be noise.
 // On the *next* visit the service worker has them precached (`sw.js` reads them from the
 // links `vite.config.ts` injects into index.html), and these imports resolve from its cache.
 for (const route of ROUTES) void route.load?.().catch(() => undefined)

@@ -20,7 +20,8 @@ import type { Route } from './match.js'
 // the guards (`check:graph` follows these; `check:lazy-views` holds the built result to it).
 // The views stay out of the entry chunk this way (#214) — the shell awaits the import before
 // rendering the element, and `main.ts` warms all of them right after first paint so an
-// application that loses its network after opening still has every view in memory.
+// application that loses its network after opening still has every view in memory. The device
+// list is the deliberate exception: it has no `load`, because the shell imports it statically.
 export const ROUTES: readonly Route[] = [
   // The landing page: which project, before what is in it. Every device has one (the first-run
   // catalogue), so the page always has something to open.
@@ -32,13 +33,11 @@ export const ROUTES: readonly Route[] = [
     icon: 'folder',
   },
   // The current project's devices. Every "back to the list" in the device views points here.
-  {
-    path: '/devices',
-    view: 'device-list',
-    load: () => import('../views/device-list.js'),
-    label: () => msg('Devices'),
-    icon: 'lightbulb',
-  },
+  // Deliberately no `load` — the one routed view without one: this is the offline-critical
+  // page (#214), so `app-shell.ts` imports it statically and it renders from the entry chunk
+  // with no await at all. A `load` beside the static import would also be a build warning
+  // (INEFFECTIVE_DYNAMIC_IMPORT): the dynamic import could never move it to a chunk of its own.
+  { path: '/devices', view: 'device-list', label: () => msg('Devices'), icon: 'lightbulb' },
   // No label, so it stays out of the navigation: it is reached from the button on the device
   // list, and a permanent "Add a device" nav entry beside "Devices" would be one section for
   // what is one section's action.

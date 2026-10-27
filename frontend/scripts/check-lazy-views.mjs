@@ -9,8 +9,8 @@
  * parsed the projects page, the account page, the settings page and both device forms first.
  *
  * The split this guards is the route-level one: each view in `src/ui/views/` that a route
- * reaches is imported dynamically (`routes.ts` carries the loaders), so it lands in a chunk of
- * its own. That split is one static import away from being undone, and undoing it is silent —
+ * reaches lazily is imported dynamically (`routes.ts` carries the loaders), so it lands in a
+ * chunk of its own. That split is one static import away from being undone, and undoing it is silent —
  * every test still passes, every view still renders, the only symptom is a first load nobody
  * is counting until the size warning returns. The sibling scripts `check-lazy-fallback.mjs`
  * and `check-lazy-pdf.mjs` explain the method; this one adds a second claim of its own:
@@ -20,7 +20,7 @@
  * names (see `public/sw.js`, `assetsNamedIn`). A view chunk the shell does not name is a view
  * an installed offline application cannot open. So every view chunk — and everything it pulls
  * in statically — must be named in `index.html`; the build injects `<link rel="modulepreload">`
- * tags for them (`nameLazyChunksInShell` in `vite.config.ts`), and this is what notices that
+ * tags for them (`nameLazyViewChunksInShell` in `vite.config.ts`), and this is what notices that
  * injection silently finding nothing.
  *
  * It does not look for the custom element tags (`<device-list-view>` and friends): the entry
@@ -52,22 +52,17 @@ if (!existsSync(join(dist, 'index.html'))) {
 }
 
 /**
- * The views the route registry reaches, by module name. Chunk names follow the module
+ * The views the route registry reaches lazily, by module name. Chunk names follow the module
  * (`[name]-[hash].js`), so renaming a view file fails here loudly — which is the intended
  * behaviour, since whoever renames it should decide anew whether it stays lazy.
- * `not-found` is deliberately absent: it is the fallback for a view that failed to arrive,
- * so it stays in the entry chunk, where no fetch can take it away.
+ *
+ * Two views are deliberately absent. `not-found` is the fallback for a view that failed to
+ * arrive, so it stays in the entry chunk, where no fetch can take it away. And `device-list`
+ * is the offline-critical first view, shipped eagerly in the entry by decision (PR #311
+ * review): with it the entry is ~311 kB, still well under the 500 kB default this split
+ * restored, and the page the product exists for renders with no await at all.
  */
-const VIEWS = [
-  'projects',
-  'device-list',
-  'add-device',
-  'device',
-  'edit-device',
-  'rooms',
-  'account',
-  'settings',
-]
+const VIEWS = ['projects', 'add-device', 'device', 'edit-device', 'rooms', 'account', 'settings']
 
 const html = readFileSync(join(dist, 'index.html'), 'utf8')
 
@@ -158,7 +153,7 @@ for (const view of VIEWS) {
       failures.push(
         `${view}: ${missing.join(', ')} ${missing.length === 1 ? 'is' : 'are'} not named in ` +
           'index.html, so the service worker never precaches it and an installed offline ' +
-          'application cannot open this view. See nameLazyChunksInShell in vite.config.ts.',
+          'application cannot open this view. See nameLazyViewChunksInShell in vite.config.ts.',
       )
     }
   }

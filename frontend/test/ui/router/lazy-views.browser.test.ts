@@ -69,7 +69,7 @@ for (const { path, element } of NAVIGATIONS) {
   })
 }
 
-it('shows a fallback with a retry when the view chunk cannot be fetched', async () => {
+it('shows a fallback with a reload when the view chunk cannot be fetched', async () => {
   // The failure mode the split introduces: the application opened, the user navigated, and the
   // chunk is not there (evicted cache, a deploy mid-session, no network on a first visit).
   // Rendering nothing would be a blank page with working navigation — the exact shape L28 warns
@@ -81,34 +81,50 @@ it('shows a fallback with a retry when the view chunk cannot be fetched', async 
 
   expect(host.querySelector('projects-view')).toBeNull()
   expect(host.querySelector('[data-view-failed]')).not.toBeNull()
-  expect(host.querySelector('[data-view-retry]')).not.toBeNull()
+  expect(host.querySelector('[data-view-reload]')).not.toBeNull()
 })
 
-it('retries the import from the fallback, and renders the view once it arrives', async () => {
-  // First fetch fails, the retry succeeds — a flaky connection recovering, without a full page
-  // reload that would lose unsaved state elsewhere.
-  let attempts = 0
-  const flaky: readonly Route[] = [
+it('offers a reload from the fallback, and never re-runs the import', async () => {
+  // A failed module fetch is cached in the document's module map (Chromium caches the
+  // rejection), so re-running the same `import()` rejects immediately without touching the
+  // network — an in-page "Try again" would be a dead button (PR #311 review). Recovery is a new
+  // document, so the fallback offers a reload the *user* triggers: an automatic one could
+  // interrupt a write a previous view still has in flight.
+  //
+  // The reload itself goes through the shell's seam, for the reason `takeUpdate` has one: the
+  // real thing reloads the page it runs in, and a test that called it would reload the test
+  // browser out of the middle of whatever runs next. The injected fault is one rejection,
+  // consumed by the load it targets (lesson L47) — `loads` pins that nothing asks twice.
+  let loads = 0
+  let reloads = 0
+  const failing: readonly Route[] = [
     {
       path: '/',
       view: 'projects',
       load: () => {
-        attempts += 1
-        return attempts === 1
-          ? Promise.reject(new Error('chunk unreachable'))
-          : import('../../../src/ui/views/projects.js')
+        loads += 1
+        return Promise.reject(new Error('chunk unreachable'))
       },
     },
   ]
-  const host = await shell(flaky)
+  const host = await fixture(
+    html`<app-shell
+      .projectStore=${isolatedProjectStore()}
+      .routes=${failing}
+      .reloadPage=${() => {
+        reloads += 1
+      }}
+    ></app-shell>`,
+  )
   expect(host.querySelector('[data-view-failed]')).not.toBeNull()
 
-  host.querySelector<HTMLElement>('[data-view-retry]')?.click()
+  host.querySelector<HTMLElement>('[data-view-reload]')?.click()
   await (host as Element & { updateComplete: Promise<unknown> }).updateComplete
 
-  expect(attempts).toBe(2)
-  expect(host.querySelector('[data-view-failed]')).toBeNull()
-  expect(host.querySelector('projects-view')).not.toBeNull()
+  expect(reloads).toBe(1)
+  // Still exactly one: the button asks for a new document, never for the same import again.
+  expect(loads).toBe(1)
+  expect(host.querySelector('[data-view-failed]')).not.toBeNull()
 })
 
 it('does not re-run a loader the shell has already loaded a view through', async () => {
