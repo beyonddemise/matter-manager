@@ -68,6 +68,29 @@ it('rejects a payload whose Base38 length does not match the declared chunk size
 it('tests decodeBase38');
 ```
 
+## The editor's TypeScript is not the TypeScript that CI runs
+
+CI typechecks with TypeScript 7 — the native (Go) port, installed as `frontend`'s
+devDependency — with `exactOptionalPropertyTypes` and `noUncheckedIndexedAccess` on. That
+compiler ships no tsserver, so out of the box VS Code's **bundled, older TypeScript** supplies
+your completions and inline errors, silently. The editor is approximate; CI's `tsc` is
+authoritative. Code that is red in the editor can build, and code that is clean in the editor
+can fail CI — most often in exactly those two flags' territory. Before pushing, ask the real
+compiler:
+
+```
+npm run typecheck --prefix frontend   # the compiler CI runs
+npm run verify                        # the full gate
+```
+
+The devcontainer narrows the gap: it installs the [TypeScript 7
+extension](https://marketplace.visualstudio.com/items?itemName=TypeScriptTeam.native-preview)
+(`TypeScriptTeam.native-preview`), enables it (`js/ts.experimental.useTsgo`) and points it at
+the workspace compiler (`js/ts.tsdk.path`). That is the closest an editor currently gets to
+CI, and its own names — `native-preview`, `experimental.useTsgo` — say how settled it is:
+when its diagnostics and `tsc`'s disagree, `tsc` wins. Outside the devcontainer, install and
+enable the same extension, or live with the bundled service and lean on `npm run typecheck`.
+
 ## Issues and branches
 
 - Every change starts from an issue. Issues carry acceptance criteria as Given/When/Then.
