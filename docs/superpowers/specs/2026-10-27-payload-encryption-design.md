@@ -38,7 +38,9 @@ codes transit the server in memory for the catalogue lookup.
 lookup and sync-time merging keep working. A dump reveals the inventory, not the
 commissioning secrets — exactly ADR 0005 option 1's shape. A user-initiated
 export archive intentionally contains the plaintext codes (see Intent); it is
-produced only from an unlocked project at the user's explicit request.
+produced only from an unlocked project at the user's explicit request. Since
+#307 the user may give it a password, which makes it a WinZip AE-2 (AES-256)
+zip; without one it stays plaintext. See DATA-MODEL, *Project export*.
 
 ## Goals
 
@@ -399,7 +401,8 @@ Paths that bypass the repositories, checked against this design:
 - Catalogue lookup and backfill (ADR 0019) — `catalog-backfill.ts` reads
   through the repository; `add-device.ts` sends the not-yet-saved form value.
 - Export: `devices.list()` decrypts; archives stay plaintext by design (the
-  backup of last resort, and the import validator re-derives and checks codes).
+  backup of last resort, and the import validator re-derives and checks codes),
+  unless the user seals one with an optional password (#307, WinZip AE-2).
 - Import: rebuilds via `planNewDevice` → `save`, so re-encryption is free.
 - Search: already omits both fields.
 

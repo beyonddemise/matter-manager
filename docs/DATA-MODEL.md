@@ -518,7 +518,8 @@ either, never send them to a third party, and never include them in a bug report
 [SECURITY.md](../SECURITY.md). Both are stored encrypted (below). The only network destination
 of a decrypted code is `POST /catalog/lookup`: to our own API, in a POST body, decoded in memory
 and never stored. Separately, every export the user asks for (the project archive, the labels
-and inventory PDFs, the Excel sheet) holds the codes in plain text; see *Project export* below. Only the vendor and product IDs reach the DCL
+and inventory PDFs, the Excel sheet) holds the codes in plain text, unless the user seals the
+project archive with a password; see *Project export* below. Only the vendor and product IDs reach the DCL
 ([ADR 0019](adr/0019-setup-code-to-own-api.md)).
 
 **Remark ids are client-generated UUIDs**, not indices or counts. The conflict merge unions
@@ -625,7 +626,9 @@ reads or writes one.
 A project's ⋯ menu offers **Export project**: this device's copy as a zip. **Import a project**,
 on the Account page, reads one back as a new local-only project. It is never merged into an
 existing one. The format is `domain/archive/project-archive.ts`, and the container
-`domain/archive/zip.ts`: stored or deflated entries with UTF-8 names, and no encryption or Zip64.
+`domain/archive/zip.ts`: stored or deflated entries with UTF-8 names, no Zip64, and optionally
+WinZip AES encryption (`domain/archive/winzip-aes.ts`, #307). Legacy ZipCrypto is never written
+or read.
 
 ```
 manifest.json          { "format": "matter-manager-project", "version": 1, "exportedAt": "…", "devices": 2 }
@@ -633,13 +636,41 @@ project.json           { "name": "Hillside", "client": "…" }
 devices/<uuid>.json    one device document each, without _rev, _conflicts, _attachments or updatedAt
 ```
 
-- **The file holds every setup code in plain text.** That is what makes it a backup, and the
-  menu entry says so. It is the one deliberate exception to encryption at rest (ADR 0022):
+- **Without a password, the file holds every setup code in plain text.** That is what makes it
+  a backup, and the menu entry and the export dialog say so. It is the one deliberate exception
+  to encryption at rest (ADR 0022):
   - the `key:*` documents are not in it, since a wrap means nothing outside its database;
   - a project locked on this device is not exported at all, because its reads carry no codes.
     The PDF inventory, the labels PDF and the Excel sheet refuse it the same way.
   - Import saves through an unlocked repository of a new project with its own DEK, so the codes
     are encrypted again.
+- **With a password, every entry is WinZip AE-2.** The export dialog offers it; the password is
+  typed twice and must be at least 12 characters.
+  - Each entry's compressed data is sealed as `salt (16) ‖ verifier (2) ‖ AES-256-CTR ciphertext
+    ‖ HMAC-SHA1 (first 10 bytes)`, with WinZip's little-endian counter starting at 1. Keys come
+    from PBKDF2-HMAC-SHA1 over the UTF-8 password and a fresh salt per entry.
+  - The entry declares method 99 and version 5.1, sets general-purpose bit 0, carries the
+    `0x9901` extra field (`AE-2`, vendor `AE`, strength 3, the real method) in both headers,
+    and stores a CRC of 0, as AE-2 specifies.
+  - **PBKDF2 runs 1000 iterations, because the format fixes it.** AE-1 and AE-2 have no field
+    for the count, so every reader derives at 1000; a higher count would make a private format
+    that 7-Zip, WinZip and macOS tools cannot open, which is the point of a zip backup. The
+    password carries the strength instead, hence the 12-character floor (the import accepts any
+    password, since archives from elsewhere owe nothing to it).
+  - What stays readable: the file names (`manifest.json`, `project.json`,
+    `devices/<uuid>.json`), so the number of devices, and each entry's size and timestamp. The
+    download's file name still carries the project name.
+  - The password and the file are all a restore needs, independent of the device key and the
+    server escrow. **A lost password makes the archive unrecoverable**, and the dialog says so.
+  - Import reads every file without a password first; only an encrypted archive is answered
+    with `needsPassword`, and only then is the user asked. A wrong password is `wrongPassword`
+    (the verifier), a changed byte `corrupt` (the authentication code, checked before anything
+    is decrypted). AE-1 and AES-128/192 written by other tools are read too. An archive that
+    mixes encrypted and plain files is refused, since a plain file could have been added by
+    anyone without the password.
+  - Interoperability is pinned by archives that pyzipper 0.4.0 and 7-Zip 26.05 wrote
+    (`test/domain/archive/zip-aes.test.ts`); the reverse, an export opening in 7-Zip, pyzipper
+    and macOS `bsdtar`, was checked by hand when this landed (#307).
 - **Import rebuilds each device rather than trusting it.**
   - It goes through `planNewDevice`, so the credential fields are derived again from the setup
     code.
@@ -650,7 +681,7 @@ devices/<uuid>.json    one device document each, without _rev, _conflicts, _atta
   is inflated:
   - at most 5 MB as a file and 50 MB inflated;
   - the inflate is capped as well;
-  - every CRC is verified;
+  - every CRC is verified (for AE-2, the authentication code instead);
   - every device is validated.
 
   The database and devices are written before the index entry, and a failure destroys the

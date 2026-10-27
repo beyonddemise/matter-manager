@@ -1375,6 +1375,78 @@
   <source>The QR code and the pairing code are stored encrypted, and this project’s key has not reached this browser yet. They appear here once it has synchronized.</source>
   <target>QR-Code und Kopplungscode sind verschlüsselt gespeichert, und der Schlüssel dieses Projekts ist noch nicht in diesem Browser angekommen. Sie erscheinen hier, sobald synchronisiert wurde.</target>
 </trans-unit>
+<trans-unit id="s343dcfba85e5f5d8">
+  <source>A zip file of “<x id="0" equiv-text="${this.projectName}"/>” with every device and its setup codes, to keep as a backup or to import on another device.</source>
+  <target>Eine ZIP-Datei von „<x id="0" equiv-text="${this.projectName}"/>“ mit allen Geräten und ihren Setup-Codes, als Sicherung oder zum Import auf einem anderen Gerät.</target>
+</trans-unit>
+<trans-unit id="sa57a23c2e22bddeb">
+  <source>Opens with the password in Matter Manager, 7-Zip, WinZip and other zip tools that support AES.</source>
+  <target>Lässt sich mit dem Passwort in Matter Manager, 7-Zip, WinZip und anderen ZIP-Programmen mit AES-Unterstützung öffnen.</target>
+</trans-unit>
+<trans-unit id="se21d9959afbee040">
+  <source>Protect with a password</source>
+  <target>Mit einem Passwort schützen</target>
+</trans-unit>
+<trans-unit id="s293aa6a6446fb153">
+  <source>Export</source>
+  <target>Exportieren</target>
+</trans-unit>
+<trans-unit id="s7e12c9109543bd3a">
+  <source>Without a password, the setup codes are in plain text: whoever has the file can commission the devices. Keep it safe.</source>
+  <target>Ohne Passwort stehen die Setup-Codes im Klartext in der Datei: Wer sie hat, kann die Geräte in Betrieb nehmen. Bewahren Sie sie sicher auf.</target>
+</trans-unit>
+<trans-unit id="s8ea650b53f03e460">
+  <source>The password needs at least <x id="0" equiv-text="${ARCHIVE_PASSWORD_MIN_LENGTH}"/> characters.</source>
+  <target>Das Passwort muss mindestens <x id="0" equiv-text="${ARCHIVE_PASSWORD_MIN_LENGTH}"/> Zeichen lang sein.</target>
+</trans-unit>
+<trans-unit id="se1f5e77b812ae91c">
+  <source>The two passwords are not the same.</source>
+  <target>Die beiden Passwörter stimmen nicht überein.</target>
+</trans-unit>
+<trans-unit id="sf6e1665c7022a1f8">
+  <source>Password</source>
+  <target>Passwort</target>
+</trans-unit>
+<trans-unit id="s50528013f2048277">
+  <source>At least <x id="0" equiv-text="${ARCHIVE_PASSWORD_MIN_LENGTH}"/> characters. A few unrelated words are easy to remember and hard to guess.</source>
+  <target>Mindestens <x id="0" equiv-text="${ARCHIVE_PASSWORD_MIN_LENGTH}"/> Zeichen. Einige zusammenhanglose Wörter sind leicht zu merken und schwer zu erraten.</target>
+</trans-unit>
+<trans-unit id="se62445f2cb6921b6">
+  <source>Repeat the password</source>
+  <target>Passwort wiederholen</target>
+</trans-unit>
+<trans-unit id="sfc2d9e54d89a7a0b">
+  <source>If the password is lost, the file cannot be opened. Nobody can recover it: not Matter Manager, not the server, not your other devices.</source>
+  <target>Geht das Passwort verloren, lässt sich die Datei nicht mehr öffnen. Niemand kann es wiederherstellen: weder Matter Manager noch der Server noch Ihre anderen Geräte.</target>
+</trans-unit>
+<trans-unit id="se82de5d6cc5742dd">
+  <source>Enter the export’s password</source>
+  <target>Passwort des Exports eingeben</target>
+</trans-unit>
+<trans-unit id="s2cf8c0c90a0ca1cc">
+  <source>This export is protected with a password. It is needed to import it.</source>
+  <target>Dieser Export ist mit einem Passwort geschützt. Sie benötigen es für den Import.</target>
+</trans-unit>
+<trans-unit id="sde1942690d2f775d">
+  <source>This password does not open the file.</source>
+  <target>Dieses Passwort öffnet die Datei nicht.</target>
+</trans-unit>
+<trans-unit id="s3914cb410fca44d4">
+  <source>Import</source>
+  <target>Importieren</target>
+</trans-unit>
+<trans-unit id="s0c076d6d66e17327">
+  <source>This export is protected with a password. Nothing was imported.</source>
+  <target>Dieser Export ist mit einem Passwort geschützt. Es wurde nichts importiert.</target>
+</trans-unit>
+<trans-unit id="sca0273e990c48a93">
+  <source>This password does not open the file. Nothing was imported.</source>
+  <target>Dieses Passwort öffnet die Datei nicht. Es wurde nichts importiert.</target>
+</trans-unit>
+<trans-unit id="s862419dd2bd42e77">
+  <source>Repeat the password to export.</source>
+  <target>Wiederholen Sie das Passwort, um zu exportieren.</target>
+</trans-unit>
 </body>
 </file>
 </xliff>

@@ -7,7 +7,12 @@
  *
  * **Refused for a project locked on this device** (#303; spec, "Locked projects"): the format is
  * plaintext, and a locked read carries no codes, so the archive would be a backup with every
- * commissioning secret missing — one its own import refuses.
+ * commissioning secret missing — one its own import refuses. A password does not change that.
+ *
+ * **Optionally sealed with a password** (#307): WinZip AES-256 (AE-2), which 7-Zip, WinZip and
+ * macOS's own tools open. The password and the file are all a restore needs, independent of
+ * the device key and the server escrow, and nothing recovers a lost password. Without one the
+ * archive is plaintext, exactly as before.
  *
  * @module
  */
@@ -99,11 +104,16 @@ export function exportFilename(name: string, now: Date): string {
  *
  * @param row which database, and the name the page shows (used when the database has no
  *   `project` document, as the first-run catalogue may not)
+ * @param password seals the archive with WinZip AES-256; absent (`undefined`), the archive is
+ *   plaintext. The strength floor is the dialog's (`ARCHIVE_PASSWORD_MIN_LENGTH`), not enforced
+ *   here. The dialog hands over `undefined` when no password is chosen, never `''`.
  * @throws {ProjectLockedError} when the project is locked on this device; nothing is offered
+ * @throws {RangeError} for an empty password, which cannot protect anything; nothing is offered
  */
 export async function exportProject(
   row: { readonly dbName: string; readonly name: string; readonly client?: string },
   deps: ExportDependencies = exportDefaults,
+  password?: string,
 ): Promise<void> {
   const [devices, stored] = await Promise.all([
     deps.devices(row.dbName),
@@ -129,7 +139,14 @@ export async function exportProject(
     now.toISOString(),
   )
   checkLimits(entries)
-  const zipped = await writeZip(entries, streamCodecs, now)
+  // Only an absent password means plain. An empty one goes through and `writeZip` refuses it:
+  // a caller that asked for protection never silently gets a plaintext archive.
+  const zipped = await writeZip(
+    entries,
+    streamCodecs,
+    now,
+    password === undefined ? {} : { password },
+  )
   checkLimits(entries, zipped)
   deps.download(zipped, exportFilename(name, now))
 }

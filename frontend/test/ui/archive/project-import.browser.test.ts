@@ -54,8 +54,11 @@ const zipOf = (name: string, devices: readonly DeviceDocument[], client?: string
   )
 
 /** Imports bytes the way the picker hands them over: as a file. */
-const importBytes = (bytes: Uint8Array, deps?: Parameters<typeof importProjectFile>[1]) =>
-  importProjectFile(new Blob([bytes as BlobPart]), deps)
+const importBytes = (
+  bytes: Uint8Array,
+  deps?: Parameters<typeof importProjectFile>[1],
+  password?: string,
+) => importProjectFile(new Blob([bytes as BlobPart]), deps, password)
 
 /** How many documents a database holds, opened fresh so no memoised handle answers. */
 async function documentCount(name: string): Promise<number> {
@@ -191,6 +194,43 @@ describe('an encrypted project, out and back in', () => {
     const read = await openProject(result.entry.dbName).devices.get('device:a')
     expect(read?.payload).toBe(PAYLOAD)
     expect(read?.manualCode).toBe(LONG)
+  })
+})
+
+describe('an export sealed with a password (#307)', () => {
+  const PASSWORD = 'eleven words of nothing'
+  const sealed = () =>
+    writeZip(
+      projectArchiveEntries({ name: 'Hillside' }, [device('a')], '2026-10-19T15:00:00.000Z'),
+      streamCodecs,
+      new Date('2026-10-19T15:00:00Z'),
+      { password: PASSWORD },
+    )
+
+  it('imports with its password', async () => {
+    const result = await importBytes(await sealed(), undefined, PASSWORD)
+
+    expect(result.devices).toBe(1)
+    const [copied] = await openProject(result.entry.dbName).devices.list()
+    expect(copied).toMatchObject({ _id: 'device:a', manualCode: MANUAL })
+  })
+
+  it.each([
+    ['no password', undefined, 'needsPassword'],
+    ['the wrong password', `${PASSWORD}.`, 'wrongPassword'],
+  ])('refuses it with %s, and creates nothing', async (_case, password, problem) => {
+    const failure = await importBytes(await sealed(), undefined, password).catch(
+      (error: unknown) => error,
+    )
+
+    expect((failure as ZipError).problem).toBe(problem)
+    expect(await localProfileCache().readLocalProjects()).toEqual([])
+  })
+
+  it('imports a plain export whether or not a password was typed', async () => {
+    const result = await importBytes(await zipOf('Hillside', [device('a')]), undefined, 'unused')
+
+    expect(result.devices).toBe(1)
   })
 })
 

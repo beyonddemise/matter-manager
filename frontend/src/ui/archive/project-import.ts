@@ -33,19 +33,22 @@ export interface ImportResult {
  *
  * @param file the chosen file; its size is checked before it is read, so a huge one is refused
  *   without being held in memory whole
- * @throws {ZipError} for a file that is not a readable zip within the limits
+ * @param password for an export sealed with one (#307); a plain export ignores it
+ * @throws {ZipError} for a file that is not a readable zip within the limits; `needsPassword`
+ *   when it is encrypted and no password was given, `wrongPassword` for the wrong one
  * @throws {ArchiveError} for a zip that is not a project export, or holds a broken device
  * @throws whatever storage throws, after removing what was written
  */
 export async function importProjectFile(
   file: Blob,
   deps: LocalProjectDependencies = localProjectDefaults,
+  password?: string,
 ): Promise<ImportResult> {
   if (file.size > ARCHIVE_LIMITS.maxBytes) {
     throw new ZipError('tooLarge', `The file is larger than ${ARCHIVE_LIMITS.maxBytes} bytes.`)
   }
   const bytes = new Uint8Array(await file.arrayBuffer())
-  const imported = readProjectArchive(await readZip(bytes, streamCodecs, ARCHIVE_LIMITS))
+  const imported = readProjectArchive(await readZip(bytes, streamCodecs, ARCHIVE_LIMITS, password))
   const entry = await importLocalProject(imported, deps)
   return { entry, devices: imported.devices.length, refiled: imported.refiled }
 }

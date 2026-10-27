@@ -48,6 +48,8 @@ import {
   renderActionsMenu,
   renderConfirmDialog,
 } from './project-action-menu.js'
+import type { ExportConfirmDetail } from './project-export-dialog.js'
+import './project-export-dialog.js'
 import { clearFields, fieldValue, type Sort, sortRows } from './projects-helpers.js'
 import {
   introText,
@@ -199,6 +201,7 @@ export class ProjectsView extends LitElement {
     refresh: { attribute: false },
     actions: { attribute: false },
     exportProject: { attribute: false },
+    exporting: { state: true },
     busy: { state: true },
     confirming: { state: true },
     typed: { state: true },
@@ -229,8 +232,13 @@ export class ProjectsView extends LitElement {
   declare refresh?: () => Promise<void>
   /** Promote, download and the removals. Unset in the application, where they are the real ones. */
   declare actions?: ProjectActions
-  /** The export, injected by tests; the real one reads the database and offers a download. */
-  declare exportProject?: (row: Row) => Promise<void>
+  /**
+   * The export, injected by tests; the real one reads the database and offers a download,
+   * sealed with the password when there is one.
+   */
+  declare exportProject?: (row: Row, password?: string) => Promise<void>
+  /** The row whose export dialog is open, if any. */
+  declare exporting: Row | undefined
 
   /** Whether an action is running. Every control that starts one is disabled meanwhile. */
   declare busy: boolean
@@ -257,6 +265,7 @@ export class ProjectsView extends LitElement {
     this.sort = { by: 'name', ascending: true }
     this.confirming = undefined
     this.typed = ''
+    this.exporting = undefined
   }
 
   /**
@@ -395,15 +404,8 @@ export class ProjectsView extends LitElement {
       return
     }
     if (action === 'export') {
-      // Reads this device's copy only, so it is not a project action: nothing on the server or
-      // in the index changes, and replication need not be held for it.
-      void this.run(async () => {
-        // Loaded when chosen, like the PDF builders: the zip writer and the archive format are
-        // for a rare action and have no business in the bundle every visitor downloads.
-        const run =
-          this.exportProject ?? (await import('../archive/project-export.js')).exportProject
-        await run(row)
-      })
+      // Asks first, but not as a confirmation: whether to protect the file with a password.
+      this.exporting = row
       return
     }
     const model = this.model()
@@ -415,6 +417,27 @@ export class ProjectsView extends LitElement {
           ? actions.restore(model, row)
           : actions.download(model, row),
     )
+  }
+
+  /**
+   * Runs the export the dialog settled on, with its password or none (#307). The dialog closes
+   * first, so a failure is read on the page like any other action's.
+   */
+  private runExport(detail: ExportConfirmDetail): void {
+    const row = this.exporting
+    if (row === undefined) return
+    this.exporting = undefined
+    // Reads this device's copy only, so it is not a project action: nothing on the server or
+    // in the index changes, and replication need not be held for it.
+    void this.run(async () => {
+      // Loaded when chosen, like the PDF builders: the zip writer and the archive format are
+      // for a rare action and have no business in the bundle every visitor downloads.
+      const run =
+        this.exportProject ??
+        (async (chosen: Row, password?: string) =>
+          (await import('../archive/project-export.js')).exportProject(chosen, undefined, password))
+      await run(row, detail.password)
+    })
   }
 
   /**
@@ -521,6 +544,15 @@ export class ProjectsView extends LitElement {
             if (!this.busy) this.confirming = undefined
           },
         })}
+        <project-export-dialog
+          ?open=${this.exporting !== undefined}
+          .projectName=${this.exporting?.name ?? ''}
+          ?busy=${this.busy}
+          @export-confirm=${(event: CustomEvent<ExportConfirmDetail>) => this.runExport(event.detail)}
+          @export-cancel=${() => {
+            this.exporting = undefined
+          }}
+        ></project-export-dialog>
       </section>
     `
   }
