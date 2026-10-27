@@ -14,6 +14,17 @@ export interface Route {
   readonly path: string
   /** Key into the shell's view map. */
   readonly view: string
+  /**
+   * Imports the view's module, registering its custom element as a side effect (#214).
+   *
+   * A function returning the import rather than the import itself, so the module stays out of
+   * the entry chunk: the shell awaits it on first navigation, `main.ts` warms every one of them
+   * right after first paint, and the built chunks are precached for offline (`sw.js` via the
+   * links `vite.config.ts` injects). Optional only because this module cannot name the views —
+   * it is pure and browser-free on purpose; every registered route carries one, which
+   * `routes.test.ts` pins.
+   */
+  readonly load?: () => Promise<unknown>
   /** Navigation label. A function so it re-evaluates when the locale changes. */
   readonly label?: () => string
   /** Web Awesome icon name for the navigation entry. */

@@ -1,3 +1,6 @@
+// Rendered by this view and by nothing in the shell, so imported here (#214): it travels in
+// this view's lazy chunk rather than in the entry chunk every visitor parses before first paint.
+import '@awesome.me/webawesome-pro/dist/components/scroller/scroller.js'
 import { msg, str, updateWhenLocaleChanges } from '@lit/localize'
 import { html, LitElement, nothing, type TemplateResult } from 'lit'
 import type { LocalProjectEntry } from '../../data/index.js'

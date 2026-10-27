@@ -5,7 +5,7 @@ import { VIEWS, type ViewHost } from '../../src/ui/app-shell.js'
 import { ROUTES } from '../../src/ui/router/routes.js'
 import '../../src/ui/views/not-found.js'
 
-it('has a registered view for every route the registry declares', () => {
+it('has a registered view for every route the registry declares', async () => {
   // The claim `routes.test.ts` cannot make: that file runs in Node, where importing the shell
   // would define custom elements. A route whose view the shell does not know matches a path and
   // then renders nothing - worse than not matching, because an unregistered path falls through
@@ -18,6 +18,11 @@ it('has a registered view for every route the registry declares', () => {
   // That rests on every view `x` defining `<x-view>`, which all six do. A view breaking the
   // convention fails here rather than silently, which is the right way round for a convention
   // nothing else enforces.
+  //
+  // Since #214 the shell no longer imports the views - each route's own `load` does - so the
+  // registrations asserted below are made by running every loader first, exactly as the shell
+  // and the `main.ts` warm-up do. A route whose loader imports the wrong module fails here.
+  await Promise.all(ROUTES.map((route) => route.load?.()))
   const missing = ROUTES.filter(
     (route) =>
       VIEWS[route.view] === undefined || customElements.get(`${route.view}-view`) === undefined,

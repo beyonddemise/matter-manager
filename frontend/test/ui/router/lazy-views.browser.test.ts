@@ -124,7 +124,11 @@ it('does not re-run a loader the shell has already loaded a view through', async
         return import('../../../src/ui/views/projects.js')
       },
     },
-    { path: '/settings', view: 'settings', load: () => import('../../../src/ui/views/settings.js') },
+    {
+      path: '/settings',
+      view: 'settings',
+      load: () => import('../../../src/ui/views/settings.js'),
+    },
   ]
   const host = await shell(counted)
   expect(host.querySelector('projects-view')).not.toBeNull()

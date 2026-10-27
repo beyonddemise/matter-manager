@@ -14,30 +14,19 @@ import '@awesome.me/webawesome-pro/dist/styles/color/palettes/anodized.css'
 // The theme's own webfont @import is stripped at build time; this replaces it with files
 // served from this origin, so the interface has its typography offline (#106).
 import './fonts/fonts.css'
-import '@awesome.me/webawesome-pro/dist/components/badge/badge.js'
+// Only the components the shell itself renders — app-shell, its header, status bar and
+// dialogs. A component that only a view renders is imported by that view (#214), so it travels
+// in the view's lazily-loaded chunk instead of in the entry every visitor parses first.
 import '@awesome.me/webawesome-pro/dist/components/button/button.js'
 import '@awesome.me/webawesome-pro/dist/components/callout/callout.js'
 import '@awesome.me/webawesome-pro/dist/components/card/card.js'
 import '@awesome.me/webawesome-pro/dist/components/checkbox/checkbox.js'
-import '@awesome.me/webawesome-pro/dist/components/combobox/combobox.js'
-import '@awesome.me/webawesome-pro/dist/components/copy-button/copy-button.js'
 import '@awesome.me/webawesome-pro/dist/components/dialog/dialog.js'
-import '@awesome.me/webawesome-pro/dist/components/details/details.js'
-import '@awesome.me/webawesome-pro/dist/components/divider/divider.js'
-import '@awesome.me/webawesome-pro/dist/components/dropdown/dropdown.js'
-import '@awesome.me/webawesome-pro/dist/components/dropdown-item/dropdown-item.js'
-import '@awesome.me/webawesome-pro/dist/components/format-date/format-date.js'
 import '@awesome.me/webawesome-pro/dist/components/icon/icon.js'
 import '@awesome.me/webawesome-pro/dist/components/input/input.js'
-import '@awesome.me/webawesome-pro/dist/components/option/option.js'
 import '@awesome.me/webawesome-pro/dist/components/otp-input/otp-input.js'
 import '@awesome.me/webawesome-pro/dist/components/page/page.js'
-import '@awesome.me/webawesome-pro/dist/components/radio/radio.js'
-import '@awesome.me/webawesome-pro/dist/components/radio-group/radio-group.js'
-import '@awesome.me/webawesome-pro/dist/components/scroller/scroller.js'
-import '@awesome.me/webawesome-pro/dist/components/select/select.js'
 import '@awesome.me/webawesome-pro/dist/components/tag/tag.js'
-import '@awesome.me/webawesome-pro/dist/components/textarea/textarea.js'
 import './styles/app.css'
 import { useBundledIcons } from './icons/library.js'
 
@@ -50,6 +39,7 @@ import './app-shell.js'
 import { negotiateLocale, readLocalePreference } from './i18n/locale.js'
 import { activateLocale } from './i18n/localization.js'
 import { registerServiceWorker } from './register-sw.js'
+import { ROUTES } from './router/routes.js'
 import { applyScheme, readPreference, resolveScheme } from './scheme.js'
 import { requestPersistence } from './storage.js'
 import { loadAndApplyLook, readPalettePreference, readThemePreference } from './theme.js'
@@ -112,6 +102,19 @@ void requestPersistence(
   () => navigator.storage,
   () => localStorage,
 )
+
+// Every routed view, warmed now rather than fetched at navigation time (#214). The views are
+// split out of the entry chunk so that first paint parses only what first paint needs — but
+// this application is offline-first (ADR 0002), and lazy must not mean absent: someone who
+// opens the application online and walks into the basement has left the network *after* this
+// line ran, so every view is already in memory when they navigate. Started here, during the
+// entry module's evaluation, so the fetches go out while the connection that delivered the
+// entry is demonstrably there; not awaited, because the shell awaits each view itself and
+// renders a retryable fallback for one that failed. The catch is for exactly that case — the
+// shell reports it where the user can see it, so a second, invisible report would be noise.
+// On the *next* visit the service worker has them precached (`sw.js` reads them from the
+// links `vite.config.ts` injects into index.html), and these imports resolve from its cache.
+for (const route of ROUTES) void route.load?.().catch(() => undefined)
 
 // Last, and not awaited. The worker is what makes the application open with no connectivity on
 // the *next* visit; it does nothing for this one, so holding anything back on it would trade a

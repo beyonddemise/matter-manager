@@ -1,3 +1,7 @@
+// Rendered by the device forms and by nothing in the shell, so imported here (#214): they
+// travel in the forms' lazy chunks rather than in the entry chunk every visitor parses first.
+import '@awesome.me/webawesome-pro/dist/components/combobox/combobox.js'
+import '@awesome.me/webawesome-pro/dist/components/option/option.js'
 import { msg, updateWhenLocaleChanges } from '@lit/localize'
 import { html, LitElement, type PropertyDeclarations, type TemplateResult } from 'lit'
 import type { ProjectRepositories } from '../../data/index.js'

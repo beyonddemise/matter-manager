@@ -1,3 +1,10 @@
+// Rendered by this view and by nothing in the shell, so imported here (#214): they travel in
+// this view's lazy chunk rather than in the entry chunk every visitor parses before first paint.
+import '@awesome.me/webawesome-pro/dist/components/badge/badge.js'
+import '@awesome.me/webawesome-pro/dist/components/dropdown/dropdown.js'
+import '@awesome.me/webawesome-pro/dist/components/dropdown-item/dropdown-item.js'
+import '@awesome.me/webawesome-pro/dist/components/option/option.js'
+import '@awesome.me/webawesome-pro/dist/components/select/select.js'
 import { msg, str, updateWhenLocaleChanges } from '@lit/localize'
 import { html, LitElement, nothing } from 'lit'
 import type { ProjectRepositories } from '../../data/index.js'

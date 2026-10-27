@@ -1326,6 +1326,14 @@
   <source>This project is too large to export as one file. Nothing was downloaded.</source>
   <target>Dieses Projekt ist zu groß, um es als eine Datei zu exportieren. Es wurde nichts heruntergeladen.</target>
 </trans-unit>
+<trans-unit id="s367e982e38fdf5e9">
+  <source>This page could not be loaded. Check your connection and try again.</source>
+  <target>Diese Seite konnte nicht geladen werden. Prüfen Sie Ihre Verbindung und versuchen Sie es erneut.</target>
+</trans-unit>
+<trans-unit id="scd1dd6ff53d0d01a">
+  <source>Try again</source>
+  <target>Erneut versuchen</target>
+</trans-unit>
 </body>
 </file>
 </xliff>

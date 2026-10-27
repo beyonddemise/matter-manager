@@ -82,6 +82,15 @@ describe('the route registry', () => {
     expect(NAV_ROUTES.map((route) => route.path)).not.toContain('/devices/new')
   })
 
+  it('gives every route a loader for its view', () => {
+    // The shell renders a route's view only once its `load` has resolved (#214). An entry
+    // without one renders that view only if something else happened to import it - which in
+    // the application nothing does any more, so the page would be blank with no error.
+    for (const route of ROUTES) {
+      expect(typeof route.load, `${route.path} has no load`).toBe('function')
+    }
+  })
+
   it('registers the views it is expected to, and no others', () => {
     // A pin on the registry rather than a check that each view exists: this file runs in Node,
     // and the shell's map of views cannot be imported here because loading it defines custom

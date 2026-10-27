@@ -127,7 +127,11 @@ const failures = []
 const found = []
 
 for (const view of VIEWS) {
-  const pattern = new RegExp(`^assets/${view}-[\\w-]+\\.js$`)
+  // The suffix is exactly the build's 8-character hash, not `[\w-]+`: `device-` would otherwise
+  // also match `device-form-<hash>.js` and `device-list-<hash>.js`, and the positive control for
+  // the device view would be satisfied by a neighbour while the view itself was folded away. A
+  // bundler upgrade that changes the hash length fails here loudly, which is the right way round.
+  const pattern = new RegExp(`^assets/${view}-[\\w-]{8}\\.js$`)
   const matching = [...chunks.keys()].filter((name) => pattern.test(name))
 
   if (matching.length === 0) {

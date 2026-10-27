@@ -1,4 +1,7 @@
 import './project-import.js'
+// Rendered by this view and by nothing in the shell, so imported here (#214): it travels in
+// this view's lazy chunk rather than in the entry chunk every visitor parses before first paint.
+import '@awesome.me/webawesome-pro/dist/components/format-date/format-date.js'
 import { msg, updateWhenLocaleChanges } from '@lit/localize'
 import { html, LitElement, nothing, type PropertyValues, type TemplateResult } from 'lit'
 import type { Plan } from '../../domain/plan.js'
