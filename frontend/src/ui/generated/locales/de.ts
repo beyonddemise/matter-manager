@@ -265,6 +265,7 @@
 'sc70cb5a0fb8377ea': `Nur lesbar`,
 'sc75323c324a6d369': `Sie haben diesen Plan bereits.`,
 'sc7b1d12ffb3328be': `1 Gerät`,
+'sc854cf75aa7eeeb9': `Der Server kann noch keine verschlüsselten Projekte annehmen. Bitte versuchen Sie es später erneut.`,
 'sc8af536e2084ade0': `Farbpalette`,
 'sca7d152bef51d9ba': `Raum`,
 'sca80944eb187d088': `Über Matter Manager`,

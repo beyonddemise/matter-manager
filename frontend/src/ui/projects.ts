@@ -18,11 +18,31 @@
  * @module
  */
 
+/**
+ * A project DEK wrapped for the escrow public key, as `POST /projects` carries it (#305): the
+ * `kid` and `wrapped` of the source database's `key:escrow` document, verbatim.
+ */
+export interface EscrowWrap {
+  /** The escrow kid the wrap was made for, from `GET /escrowkey`. */
+  readonly kid: string
+  /** base64, the RSA-OAEP-256 wrap of the project DEK. */
+  readonly wrapped: string
+}
+
 /** What the caller wants to create. */
 export interface NewProject {
   readonly name: string
   /** Who the project is for. Optional, as the contract has it. */
   readonly client?: string
+  /**
+   * The escrow wrap the server test-unwraps before creating anything (spec decision 10). The
+   * server stores nothing from it: the same wrap reaches the new database by replication, as
+   * `key:escrow`. Promoting always sends one (`project-actions.ts`).
+   *
+   * Optional in the type because the contract makes it so — it is required only on a
+   * deployment with escrow configured, and ignored elsewhere.
+   */
+  readonly escrowWrap?: EscrowWrap
 }
 
 /**
@@ -82,6 +102,12 @@ export type CreateFailure =
   | 'refused'
   /** Something went wrong at the other end. */
   | 'failed'
+  /**
+   * The server has no escrow key (`GET /escrowkey` answers 404: the feature is off there), so
+   * no escrow wrap can be made and the project would land on the server unrecoverable. Nothing
+   * was sent (#305).
+   */
+  | 'escrow-unavailable'
 
 /** Creating a project did not work, and nothing was created. */
 export class ProjectCreationError extends Error {

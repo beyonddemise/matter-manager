@@ -233,6 +233,19 @@ describe('talking to the API', () => {
     })
   })
 
+  it('posts the escrow wrap for the server to validate (#305)', async () => {
+    const { calls, impl } = stubFetch(201, PROJECT)
+    await projectsApi('https://api.example', () => 't', impl).create({
+      name: 'Musterstraße 12',
+      escrowWrap: { kid: 'escrow-kid', wrapped: 'd3JhcHBlZA==' },
+    })
+
+    expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({
+      name: 'Musterstraße 12',
+      escrowWrap: { kid: 'escrow-kid', wrapped: 'd3JhcHBlZA==' },
+    })
+  })
+
   it('does not build a doubled slash from a base url that has one', async () => {
     const { calls, impl } = stubFetch(200, [])
     await projectsApi('https://api.example/', () => 't', impl).list()

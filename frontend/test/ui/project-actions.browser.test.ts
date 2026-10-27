@@ -1,10 +1,24 @@
 import PouchDB from 'pouchdb-browser'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { type LocalCache, type LocalProjectEntry, localCache } from '../../src/data/index.js'
+import { encodeBase64 } from '../../src/domain/crypto/base64.js'
+import {
+  decryptField,
+  deriveKid,
+  encryptField,
+  unwrapDek,
+} from '../../src/domain/crypto/envelope.js'
+import {
+  ESCROW_KEY_DOCUMENT_ID,
+  type ProjectKeyDocument,
+  projectKeyDocumentId,
+} from '../../src/domain/documents/keys.js'
 import { PROJECT_DOCUMENT_ID } from '../../src/domain/documents/project.js'
 import { coordinateWrites } from '../../src/ui/db/db-lock.js'
 import { ensureDeviceKey } from '../../src/ui/db/device-key.js'
+import { createProjectKeys, ensureEscrowWrap, unlockProject } from '../../src/ui/db/keyring.js'
 import { PROJECT_DATABASE_NAME } from '../../src/ui/db/project-database.js'
+import type { EscrowKeyInfo } from '../../src/ui/escrow-client.js'
 import {
   createLocalProject,
   detachOrphanedProject,
@@ -46,6 +60,33 @@ afterEach(async () => {
   touched.clear()
 })
 
+/**
+ * The escrow key pair the fake server holds (#305): a real RSA-OAEP pair, so a wrap sent at
+ * provisioning can be opened here exactly as the server's test-unwrap would. 2048-bit, which
+ * the envelope accepts, to keep the file quick; the key size is not what is under test.
+ */
+let escrowPair: { info: EscrowKeyInfo; privateKey: CryptoKey }
+
+beforeAll(async () => {
+  const pair = await crypto.subtle.generateKey(
+    {
+      name: 'RSA-OAEP',
+      modulusLength: 2048,
+      publicExponent: new Uint8Array([0x01, 0x00, 0x01]),
+      hash: 'SHA-256',
+    },
+    false,
+    ['wrapKey', 'unwrapKey'],
+  )
+  const publicKey = encodeBase64(
+    new Uint8Array(await crypto.subtle.exportKey('spki', pair.publicKey)),
+  )
+  escrowPair = {
+    info: { kid: await deriveKid(publicKey), alg: 'RSA-OAEP-256', publicKey },
+    privateKey: pair.privateKey,
+  }
+})
+
 /** Where a fault is injected, once. */
 type FaultAt = 'replicate' | 'push' | 'index' | 'destroy'
 
@@ -67,7 +108,15 @@ async function documentCount(name: string): Promise<number> {
 }
 
 /** A world of one device: its index, its databases, a fake server and a fake replication. */
-function world(options: { fault?: FaultAt } = {}) {
+function world(
+  options: {
+    fault?: FaultAt
+    /** What `mm-local` has cached of the escrow key; the test key unless given. */
+    cachedEscrow?: EscrowKeyInfo | null
+    /** What `GET /escrowkey` answers; the test key unless given, `null` being a 404. */
+    fetchedEscrow?: EscrowKeyInfo | null | Error
+  } = {},
+) {
   counter += 1
   const run = `${counter}-${crypto.randomUUID().slice(0, 8)}`
   let fault = options.fault
@@ -145,6 +194,10 @@ function world(options: { fault?: FaultAt } = {}) {
     beforeDestroy: undefined as (() => Promise<void>) | undefined,
     refreshed: 0,
     onRefresh: undefined as (() => void) | undefined,
+    /** Runs as `POST /projects` arrives, before it answers: the moment provisioning sees. */
+    onCreate: undefined as (() => Promise<void>) | undefined,
+    /** How often `GET /escrowkey` was asked. */
+    escrowFetches: 0,
   }
 
   const deps: ProjectActionDependencies = {
@@ -152,6 +205,7 @@ function world(options: { fault?: FaultAt } = {}) {
       list: async () => server,
       create: async (request) => {
         created.push(request)
+        await state.onCreate?.()
         if (state.createFails !== undefined) throw new ProjectCreationError(state.createFails)
         const projectId = `p${run}-${created.length}`
         const project: Project = {
@@ -176,6 +230,16 @@ function world(options: { fault?: FaultAt } = {}) {
       },
     },
     online: () => state.online,
+    escrowKey: {
+      cached: async () =>
+        options.cachedEscrow === undefined ? escrowPair.info : options.cachedEscrow,
+      fetch: async () => {
+        state.escrowFetches += 1
+        const answer = options.fetchedEscrow
+        if (answer instanceof Error) throw answer
+        return answer === undefined ? escrowPair.info : answer
+      },
+    },
     sync: {
       set: (projects) => {
         log.push('set')
@@ -315,15 +379,25 @@ describe('promoting a local-only project', () => {
 
     await w.actions.promote(model, row)
 
-    expect(w.created).toEqual([{ name: 'Alpha', client: 'Acme' }])
+    expect(w.created).toEqual([
+      {
+        name: 'Alpha',
+        client: 'Acme',
+        escrowWrap: { kid: escrowPair.info.kid, wrapped: expect.any(String) },
+      },
+    ])
     const [project] = w.server as [Project]
     const copy = w.database(project.dbName)
-    // The devices travel, and so does the key wrap — the copy must stay decryptable (#302).
-    expect((await copy.allDocs()).rows.map((doc) => doc.id)).toEqual([
-      'device:one',
-      'device:two',
-      `key:${(await ensureDeviceKey()).kid}`,
-    ])
+    // The devices travel, and so do both key wraps — the copy must stay decryptable (#302) and
+    // recoverable (#305).
+    expect((await copy.allDocs()).rows.map((doc) => doc.id).sort()).toEqual(
+      [
+        'device:one',
+        'device:two',
+        ESCROW_KEY_DOCUMENT_ID,
+        projectKeyDocumentId((await ensureDeviceKey()).kid),
+      ].sort(),
+    )
     // The service owns the server database's project document; the local one must not travel.
     await expect(copy.get(PROJECT_DOCUMENT_ID)).rejects.toMatchObject({ status: 404 })
     expect(w.pushes).toEqual([project.projectId])
@@ -377,7 +451,8 @@ describe('promoting a local-only project', () => {
 
     expect(await refusal(w.actions.promote(model, row))).toBe('unpushed')
 
-    expect(await w.count(alpha.dbName)).toBe(6)
+    // Project, two wraps, two devices and the two busy writes.
+    expect(await w.count(alpha.dbName)).toBe(7)
     expect(w.state.current).toBe(alpha.dbName)
     const recorded = await w.cache.readLocalProjects()
     expect(recorded).toEqual([expect.objectContaining({ dbName: alpha.dbName })])
@@ -387,7 +462,7 @@ describe('promoting a local-only project', () => {
     await w.actions.promote(again.model, again.row)
     expect(w.created).toHaveLength(1)
     const [project] = w.server as [Project]
-    expect((await w.database(project.dbName).allDocs()).rows).toHaveLength(5)
+    expect((await w.database(project.dbName).allDocs()).rows).toHaveLength(6)
   })
 
   it('brings back what was written to the new copy when the push is refused', async () => {
@@ -442,8 +517,9 @@ describe('promoting a local-only project', () => {
 
       // Nothing is lost while it is half done: the data is still where it was, and the id is
       // remembered so the retry does not mint another project.
+      // The escrow wrap was added before `POST /projects` (#305), so five documents, not four.
       const [project] = w.server as [Project]
-      expect(await w.count(alpha.dbName)).toBe(4)
+      expect(await w.count(alpha.dbName)).toBe(5)
       const recorded = (await w.cache.readLocalProjects()).find((e) => e.dbName === alpha.dbName)
       expect(recorded?.projectId).toBe(project.projectId)
 
@@ -453,7 +529,7 @@ describe('promoting a local-only project', () => {
 
       expect(w.created).toHaveLength(1)
       expect(w.server).toHaveLength(1)
-      expect((await w.database(project.dbName).allDocs()).rows).toHaveLength(3)
+      expect((await w.database(project.dbName).allDocs()).rows).toHaveLength(4)
       expect(await w.cache.readLocalProjects()).toEqual([
         expect.objectContaining({ dbName: project.dbName, projectId: project.projectId }),
       ])
@@ -473,7 +549,8 @@ describe('promoting a local-only project', () => {
     w.state.createFails = 'project-limit-reached'
     expect(await refusal(w.actions.promote(model, row))).toBe('project-limit-reached')
     expect(await w.cache.readLocalProjects()).toEqual([alpha])
-    expect(await w.count(alpha.dbName)).toBe(4)
+    // Only the escrow wrap was added, which provisioning needed first and the project keeps.
+    expect(await w.count(alpha.dbName)).toBe(5)
     expect(w.sets).toEqual([])
   })
 
@@ -490,6 +567,142 @@ describe('promoting a local-only project', () => {
     })
 
     expect(await refusal(w.actions.promote(model, model.owned[0] as Row))).toBe('plan')
+    expect(w.created).toEqual([])
+  })
+})
+
+describe('going to the server carries a validated escrow wrap (#305)', () => {
+  /** The stored `key:escrow` document of a database, or `undefined` when it has none. */
+  const escrowWrapOf = async (database: PouchDB.Database) =>
+    (await database.get(ESCROW_KEY_DOCUMENT_ID).catch(() => undefined)) as unknown as
+      | ProjectKeyDocument
+      | undefined
+
+  it('provisioningSendsEscrowWrap: the body carries the source database’s own key:escrow', async () => {
+    const w = world()
+    const alpha = await w.localProject('Alpha')
+    // Born with the escrow key cached, so the wrap is already there.
+    await ensureEscrowWrap(w.database(alpha.dbName), escrowPair.info)
+    const stored = await escrowWrapOf(w.database(alpha.dbName))
+    if (stored === undefined) throw new Error('no escrow wrap was written')
+    const { model, row } = await w.view(alpha.dbName)
+
+    await w.actions.promote(model, row)
+
+    // Exactly the stored wrap, not a fresh one: RSA-OAEP is randomised, so a re-wrap would
+    // differ, and the server must validate the wrap that will actually replicate.
+    expect(w.created).toEqual([
+      { name: 'Alpha', escrowWrap: { kid: stored.kid, wrapped: stored.wrapped } },
+    ])
+    // The cached key was enough: nothing was asked of `GET /escrowkey`.
+    expect(w.state.escrowFetches).toBe(0)
+  })
+
+  it('offlineBornProjectGetsWrapAtPromote: a project without key:escrow gets one before POST /projects', async () => {
+    // Born offline with no escrow key cached, and still none cached: provisioning asks the server.
+    const w = world({ cachedEscrow: null })
+    const alpha = await w.localProject('Alpha')
+    expect(await escrowWrapOf(w.database(alpha.dbName))).toBeUndefined()
+    let atCreate: ProjectKeyDocument | undefined
+    w.state.onCreate = async () => {
+      atCreate = await escrowWrapOf(w.database(alpha.dbName))
+    }
+    const { model, row } = await w.view(alpha.dbName)
+
+    await w.actions.promote(model, row)
+
+    expect(w.state.escrowFetches).toBe(1)
+    // Stored in the source before the request went out, and sent as stored.
+    if (atCreate === undefined) throw new Error('key:escrow did not exist when provisioning ran')
+    expect(atCreate).toMatchObject({ kid: escrowPair.info.kid, alg: 'RSA-OAEP-256' })
+    expect(w.created[0]?.escrowWrap).toEqual({ kid: atCreate.kid, wrapped: atCreate.wrapped })
+    // It wraps the project's own DEK: what the device key seals, the escrow key opens.
+    const [project] = w.server as [Project]
+    const deviceDek = await unlockProject(w.database(project.dbName))
+    if (deviceDek === null) throw new Error('the survivor is locked')
+    const escrowDek = await unwrapDek(atCreate.wrapped, escrowPair.privateKey)
+    const sealed = await encryptField(deviceDek, 'device:x', 'payload', 'MT:Y.K9042C00KA0648G00')
+    expect(await decryptField(escrowDek, 'device:x', 'payload', sealed)).toBe(
+      'MT:Y.K9042C00KA0648G00',
+    )
+  })
+
+  it('promoteCarriesKeyDocs: the survivor holds key:escrow and key:<kid>, and still decrypts', async () => {
+    const w = world()
+    const alpha = await w.localProject('Alpha')
+    const source = w.database(alpha.dbName)
+    const dek = await unlockProject(source)
+    if (dek === null) throw new Error('a freshly created project is locked')
+    const code = 'MT:Y.K9042C00KA0648G00'
+    const sealed = await encryptField(dek, 'device:secret', 'payload', code)
+    await source.put({ _id: 'device:secret', type: 'device', name: 'secret', payload: sealed })
+    const { model, row } = await w.view(alpha.dbName)
+
+    await w.actions.promote(model, row)
+
+    const [project] = w.server as [Project]
+    const survivor = w.database(project.dbName)
+    const ids = (await survivor.allDocs()).rows.map((doc) => doc.id)
+    expect(ids).toContain(ESCROW_KEY_DOCUMENT_ID)
+    expect(ids).toContain(projectKeyDocumentId((await ensureDeviceKey()).kid))
+    // The DEK is reused (decision 8): the ciphertext arrived byte for byte, not re-encrypted.
+    const stored = (await survivor.get('device:secret')) as unknown as { payload: string }
+    expect(stored.payload).toBe(sealed)
+    // This device still opens it, and so does escrow — the recovery route for every other one.
+    const deviceDek = await unlockProject(survivor)
+    if (deviceDek === null) throw new Error('the survivor is locked')
+    expect(await decryptField(deviceDek, 'device:secret', 'payload', stored.payload)).toBe(code)
+    const escrow = await escrowWrapOf(survivor)
+    if (escrow === undefined) throw new Error('no escrow wrap on the survivor')
+    const escrowDek = await unwrapDek(escrow.wrapped, escrowPair.privateKey)
+    expect(await decryptField(escrowDek, 'device:secret', 'payload', stored.payload)).toBe(code)
+  })
+
+  it('escrowDisabledFailsProvisioning: no escrow key anywhere refuses before anything is sent', async () => {
+    // `GET /escrowkey` 404s: the deployment has the feature off.
+    const w = world({ cachedEscrow: null, fetchedEscrow: null })
+    const alpha = await w.localProject('Alpha')
+    w.state.current = alpha.dbName
+    const { model, row } = await w.view(alpha.dbName)
+
+    expect(await refusal(w.actions.promote(model, row))).toBe('escrow-unavailable')
+
+    expect(w.state.escrowFetches).toBe(1)
+    expect(w.created).toEqual([])
+    expect(w.sets).toEqual([])
+    expect(w.state.current).toBe(alpha.dbName)
+    expect(await w.cache.readLocalProjects()).toEqual([alpha])
+    expect(await escrowWrapOf(w.database(alpha.dbName))).toBeUndefined()
+    expect(await w.count(alpha.dbName)).toBe(4)
+  })
+
+  it('refuses offline before asking for the escrow key', async () => {
+    const w = world({ cachedEscrow: null })
+    const alpha = await w.localProject('Alpha')
+    const { model, row } = await w.view(alpha.dbName)
+    // The page rendered online; the browser says otherwise by the time it is chosen.
+    w.state.online = false
+
+    expect(await refusal(w.actions.promote(model, row))).toBe('offline')
+    expect(w.state.escrowFetches).toBe(0)
+    expect(w.created).toEqual([])
+  })
+
+  it('reads a network failure fetching the escrow key as unreachable', async () => {
+    const w = world({ cachedEscrow: null, fetchedEscrow: new TypeError('Failed to fetch') })
+    const alpha = await w.localProject('Alpha')
+    const { model, row } = await w.view(alpha.dbName)
+
+    expect(await refusal(w.actions.promote(model, row))).toBe('unreachable')
+    expect(w.created).toEqual([])
+  })
+
+  it('reads any other failure fetching the escrow key as failed', async () => {
+    const w = world({ cachedEscrow: null, fetchedEscrow: new Error('500') })
+    const alpha = await w.localProject('Alpha')
+    const { model, row } = await w.view(alpha.dbName)
+
+    expect(await refusal(w.actions.promote(model, row))).toBe('failed')
     expect(w.created).toEqual([])
   })
 })
@@ -793,6 +1006,9 @@ describe('an owner’s orphan, detached (#290)', () => {
   /** A synchronized copy whose server project the server then hard-deleted. */
   const orphaned = async (w: ReturnType<typeof world>) => {
     const project = await w.syncedProject('Bravo')
+    // Encrypted, as every server project is since #302: its wrap for this device replicated in.
+    // Without one there would be no DEK to make the escrow wrap that promoting it again needs.
+    await createProjectKeys(w.database(project.dbName), null)
     // The replicated project document carries the server database's name.
     await w
       .database(project.dbName)
@@ -833,16 +1049,16 @@ describe('an owner’s orphan, detached (#290)', () => {
     // A genuinely new `POST /projects` — the detached entry carries no id to reuse, so `target`
     // creates rather than looks up — and nothing is patched or unarchived. (The fake server's
     // ids restart per world, so the old and new id are not comparable here; the request log is.)
-    expect(w.created).toEqual([{ name: 'Bravo' }])
+    expect(w.created).toEqual([{ name: 'Bravo', escrowWrap: expect.any(Object) }])
     expect(w.updated).toEqual([])
     const recreated = w.server[0]
     if (recreated === undefined) throw new Error('no server project was created')
     expect(w.pushes).toContain(recreated.projectId)
-    // The device went with it; the detached copy's own project document did not.
+    // The device and both wraps went with it; the detached copy's own project document did not.
     await expect(w.database(recreated.dbName).get('device:copy')).resolves.toMatchObject({
       type: 'device',
     })
-    expect(await w.count(recreated.dbName)).toBe(1)
+    expect(await w.count(recreated.dbName)).toBe(3)
     // The index lists only the new server copy; the detached database finished its promotion.
     expect((await w.cache.readLocalProjects()).map((e) => e.dbName)).toEqual([recreated.dbName])
   })
@@ -914,12 +1130,14 @@ describe('coordination across tabs (#220)', () => {
 
     await w.actions.promote(model, row)
 
-    // The project document, the key wrap and two devices the check verified — not one more.
-    expect(docsAtDestroy).toBe(4)
+    // The project document, both key wraps and two devices the check verified — not one more.
+    // The escrow wrap was written before the transfer's first `update_seq`, so it is part of
+    // what the check saw rather than a write that trips it (#305).
+    expect(docsAtDestroy).toBe(5)
     expect(await outcome).toBe('refused')
     // The verified copy is untouched by any of it.
     const [project] = w.server as [Project]
-    expect((await w.database(project.dbName).allDocs()).rows).toHaveLength(3)
+    expect((await w.database(project.dbName).allDocs()).rows).toHaveLength(4)
     await tabB.close().catch(() => undefined)
   })
 })

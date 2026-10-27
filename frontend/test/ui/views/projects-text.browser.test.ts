@@ -33,6 +33,7 @@ const REASONS: readonly Reason[] = [
   'refused',
   'failed',
   'not-found',
+  'escrow-unavailable',
 ]
 
 afterEach(async () => {

@@ -56,6 +56,8 @@ export function reasonText(reason: Reason): string {
       return msg('Something went wrong on the server')
     case 'not-found':
       return msg('This project is no longer on the server')
+    case 'escrow-unavailable':
+      return msg('The server cannot accept encrypted projects yet. Please try again later.')
     case 'unpushed':
       return msg('Not everything could be uploaded, so the local copy was kept. Please try again.')
     case 'name-mismatch':

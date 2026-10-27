@@ -6,7 +6,7 @@ import { msg, str, updateWhenLocaleChanges } from '@lit/localize'
 import { html, LitElement, nothing, type TemplateResult } from 'lit'
 import type { LocalProjectEntry } from '../../data/index.js'
 import { DEFAULT_PLAN, planSyncs, showsUpgrade } from '../../domain/plan.js'
-import { projects } from '../composition.js'
+import { projects, provisioningEscrowKey } from '../composition.js'
 import { writeCurrentProjectId } from '../current-project.js'
 import { currentProjectDatabaseName, useProjectDatabase } from '../db/project-database.js'
 import {
@@ -434,6 +434,7 @@ export class ProjectsView extends LitElement {
         // The browser is asked as well as the input: the input may be a render old, and a
         // `false` from `navigator.onLine` is the one answer it gives that can be trusted.
         online: () => this.input.online && navigator.onLine,
+        escrowKey: provisioningEscrowKey(),
         sync: this.sync ?? NO_SYNC,
         local: localProjectDefaults,
         currentDatabase: currentProjectDatabaseName,
