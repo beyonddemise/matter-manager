@@ -71,6 +71,35 @@ test('stops saying so once the network is back', async ({ page, context }) => {
   await expect(page.locator('[data-offline]')).toHaveCount(0)
 })
 
+test('opens every view from the service worker with the network gone', async ({
+  page,
+  context,
+}) => {
+  // #214 split the views into chunks of their own, loaded per route. Lazy must not mean absent:
+  // the worker precaches each view chunk (it reads them from the modulepreload links the build
+  // injects into index.html), so an installed application opens *every* section offline — not
+  // just the one route the first visit happened to render. Reloading offline first makes the
+  // claim honest: nothing below can be living off the online visit's module registry.
+  await page.goto('/')
+  await page.waitForFunction(() => navigator.serviceWorker.controller !== null)
+
+  await context.setOffline(true)
+  await page.reload()
+
+  const views: readonly [string, string][] = [
+    ['/#/', 'projects-view'],
+    ['/#/devices', 'device-list-view'],
+    ['/#/devices/new', 'add-device-view'],
+    ['/#/rooms', 'rooms-view'],
+    ['/#/settings', 'settings-view'],
+    ['/#/account', 'account-view'],
+  ]
+  for (const [path, view] of views) {
+    await page.goto(path)
+    await expect(page.locator(view)).toBeVisible()
+  }
+})
+
 test('opens from the service worker with the network gone', async ({ page, context }) => {
   // The strongest claim the suite makes, and the only place it can be made: the application
   // opens with no connectivity at all. That depends on the worker having precached the shell
