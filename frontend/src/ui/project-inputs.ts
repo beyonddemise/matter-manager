@@ -18,7 +18,7 @@
 import type { LocalCache, LocalProjectEntry, ServerProject } from '../data/index.js'
 import { DEFAULT_PLAN, type Plan } from '../domain/plan.js'
 import { cachedPlan, cachedRequest, type PlanRequest } from './profile.js'
-import type { Project } from './projects.js'
+import { type Project, readLifecycle } from './projects.js'
 import type { ListedProject } from './projects-model.js'
 
 /** The part of the projects page's input that is read from storage and the server. */
@@ -56,7 +56,11 @@ const NOTHING: ProjectFacts = {
   accountPending: false,
 }
 
-/** What of a listed project is remembered: the fields an offline page has questions about. */
+/**
+ * What of a listed project is remembered: the fields an offline page has questions about — the
+ * read-only grace among them (#211, #284), so a copy opened offline is still non-editable and the
+ * page still says until when.
+ */
 function remembered(project: ListedProject): ServerProject {
   return {
     projectId: project.projectId,
@@ -65,18 +69,24 @@ function remembered(project: ListedProject): ServerProject {
     role: project.role,
     archived: project.archived,
     ...(project.client === undefined ? {} : { client: project.client }),
+    ...readLifecycle(project),
   }
 }
 
-/** A remembered project, back in the shape the page reads. Absent `archived` is not archived. */
+/**
+ * A remembered project, back in the shape the page reads. Absent `archived` is not archived, and
+ * the lifecycle is read as from the server: the cache may hold what an older or newer build wrote.
+ */
 function listed(project: ServerProject): ListedProject {
+  const archived = project.archived ?? false
   return {
     projectId: project.projectId,
     dbName: project.dbName,
     name: project.name,
     role: project.role,
-    archived: project.archived ?? false,
+    archived,
     ...(project.client === undefined ? {} : { client: project.client }),
+    ...readLifecycle({ ...project, archived }),
   }
 }
 

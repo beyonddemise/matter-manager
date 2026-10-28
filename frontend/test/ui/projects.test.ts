@@ -341,6 +341,139 @@ describe('talking to the API', () => {
   it('lists what the server returned', async () => {
     const { impl } = stubFetch(200, [PROJECT])
 
-    expect(await projectsApi('https://api.example', () => 't', impl).list()).toEqual([PROJECT])
+    // With the lifecycle answered for every project, as the contract requires (#211, #284).
+    expect(await projectsApi('https://api.example', () => 't', impl).list()).toEqual([
+      { ...PROJECT, readOnly: false, autoArchived: false },
+    ])
+  })
+})
+
+describe('reading the read-only grace lifecycle (#211, #284)', () => {
+  /** `GET /projects` answering one project with the given fields added. */
+  async function listed(fields: Record<string, unknown>): Promise<Project | undefined> {
+    const impl = (async () =>
+      new Response(JSON.stringify([{ ...PROJECT, ...fields }]), {
+        status: 200,
+      })) as unknown as typeof fetch
+    const [first] = await projectsApi('https://api.example', () => 't', impl).list()
+    return first
+  }
+
+  it('reads a read-only project and when its grace ends', async () => {
+    const project = await listed({ readOnly: true, autoArchived: false, graceUntil: 1_793_000_000 })
+
+    expect(project).toMatchObject({
+      readOnly: true,
+      autoArchived: false,
+      graceUntil: 1_793_000_000,
+    })
+  })
+
+  it('reads an auto-archived project and when it will be deleted', async () => {
+    const project = await listed({
+      archived: true,
+      archivedAt: 1_790_000_000,
+      readOnly: false,
+      autoArchived: true,
+      deleteAfter: 1_797_776_000,
+    })
+
+    expect(project).toMatchObject({
+      archived: true,
+      autoArchived: true,
+      deleteAfter: 1_797_776_000,
+    })
+    expect(project?.readOnly).toBe(false)
+  })
+
+  it('reads a project from an older server, with no lifecycle fields, as writable', async () => {
+    const project = await listed({})
+
+    expect(project?.readOnly).toBe(false)
+    expect(project?.autoArchived).toBe(false)
+    expect(project !== undefined && 'graceUntil' in project).toBe(false)
+    expect(project !== undefined && 'deleteAfter' in project).toBe(false)
+  })
+
+  it.each([
+    ['a string', 'true'],
+    ['a number', 1],
+    ['null', null],
+  ])('reads readOnly as %s as writable', async (_label, value) => {
+    expect((await listed({ readOnly: value }))?.readOnly).toBe(false)
+  })
+
+  it.each([
+    ['a string', '1793000000'],
+    ['null', null],
+    ['negative', -5],
+    ['zero', 0],
+    ['not a whole number of seconds', 1.5],
+  ])('drops a deadline that is %s', async (_label, value) => {
+    const project = await listed({ readOnly: true, graceUntil: value })
+
+    expect(project?.readOnly).toBe(true)
+    expect(project !== undefined && 'graceUntil' in project).toBe(false)
+  })
+
+  it('never reads an archived project as read-only, nor an active one as auto-archived', async () => {
+    // The contract: `readOnly` is never true on an archived project, and `autoArchived` only
+    // ever is on one. A body that says otherwise is read as the contract allows.
+    const archived = await listed({ archived: true, readOnly: true, graceUntil: 1_793_000_000 })
+    const active = await listed({ autoArchived: true, deleteAfter: 1_797_776_000 })
+
+    expect(archived?.readOnly).toBe(false)
+    expect(archived !== undefined && 'graceUntil' in archived).toBe(false)
+    expect(active?.autoArchived).toBe(false)
+    expect(active !== undefined && 'deleteAfter' in active).toBe(false)
+  })
+
+  it('reads the lifecycle from a PATCH answer too', async () => {
+    const impl = (async () =>
+      new Response(JSON.stringify({ ...PROJECT, readOnly: 'yes' }), {
+        status: 200,
+      })) as unknown as typeof fetch
+
+    const updated = await projectsApi('https://api.example', () => 't', impl).update('p1', {
+      readOnly: false,
+    })
+
+    expect(updated.readOnly).toBe(false)
+  })
+
+  it('refuses a list that is not a list, rather than reading it as one', async () => {
+    const impl = (async () =>
+      new Response(JSON.stringify({ not: 'a list' }), { status: 200 })) as unknown as typeof fetch
+
+    const error = await projectsApi('https://api.example', () => 't', impl)
+      .list()
+      .catch((thrown: unknown) => thrown)
+
+    expect((error as ProjectCreationError).reason).toBe('failed')
+  })
+
+  it('sends readOnly in a patch', async () => {
+    let sent: unknown
+    const impl = (async (_url: string, init?: RequestInit) => {
+      sent = JSON.parse(String(init?.body))
+      return new Response(JSON.stringify(PROJECT), { status: 200 })
+    }) as unknown as typeof fetch
+
+    await projectsApi('https://api.example', () => 't', impl).update('p1', { readOnly: true })
+
+    expect(sent).toEqual({ readOnly: true })
+  })
+
+  it('tells a manager’s refused readOnly apart: only the owner chooses (403 not-the-owner)', async () => {
+    const impl = (async () =>
+      new Response(JSON.stringify({ title: 'Forbidden', status: 403, reason: 'not-the-owner' }), {
+        status: 403,
+      })) as unknown as typeof fetch
+
+    const error = await projectsApi('https://api.example', () => 't', impl)
+      .update('p1', { readOnly: false })
+      .catch((thrown: unknown) => thrown)
+
+    expect((error as ProjectUpdateError).reason).toBe('not-the-owner')
   })
 })

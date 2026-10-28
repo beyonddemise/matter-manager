@@ -45,6 +45,9 @@ const RUNTIME_CHOSEN = [
   'plug-circle-xmark',
   // A project row's location tag in `views/projects.ts` (with `laptop` and `arrows-rotate`).
   'cloud',
+  // A project row's read-only-grace tag in `views/projects.ts` (#211, #284).
+  'lock',
+  'box-archive',
   // Included or not, per plan and row, in the upgrade dialog's comparison (`upgrade-dialog.ts`).
   'check',
   'minus',

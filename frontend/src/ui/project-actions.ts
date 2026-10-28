@@ -214,10 +214,11 @@ function elsewhere(model: ProjectsModel, leaving: string): CurrentTarget {
 }
 
 /**
- * How long promoting or removing waits for its push. Without a bound a stalled connection would
+ * How long promoting or removing waits for its push — and the projects page's lock before it
+ * makes a project read-only (#284). Without a bound a stalled connection would
  * leave the page busy for good; a push cut short is a failure, and a failure keeps the data.
  */
-const PUSH_TIMEOUT_MS = 120_000
+export const PUSH_TIMEOUT_MS = 120_000
 
 /** How many times a transfer is repeated because the source changed while it ran. */
 const TRANSFER_ATTEMPTS = 2

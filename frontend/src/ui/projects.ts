@@ -55,6 +55,13 @@ export interface ProjectPatch {
   readonly client?: string | null
   /** Absent leaves the state alone: archiving and unarchiving are both explicit. */
   readonly archived?: boolean
+  /**
+   * The owner's choice during the read-only grace (#211, #284): `false` keeps the project
+   * writable, taking one of the plan's writable slots; `true` gives its slot up, which the
+   * server allows only while the owner is over the limit. Owner only, and never in one body
+   * with `archived` (the contract answers that with a 400).
+   */
+  readonly readOnly?: boolean
 }
 
 /** A project, as `GET /projects` and `POST /projects` both return it. */
@@ -80,6 +87,74 @@ export interface Project {
    * active.
    */
   readonly archivedAt?: number
+  /**
+   * Over its owner's plan limit after a downgrade (#211, #284): listed, readable and syncing,
+   * and CouchDB refuses every write to it, for every participant. Never `true` on an archived
+   * project.
+   *
+   * Required by the contract, optional here: a list cached by an older build, or answered by an
+   * API older than #57, lacks it, and absent reads as writable. {@link readLifecycle} always
+   * fills it in for what this client parses.
+   */
+  readonly readOnly?: boolean
+  /** When the read-only grace ends, in seconds since the epoch. Present only while `readOnly`. */
+  readonly graceUntil?: number
+  /**
+   * Archived because its read-only grace ended, rather than by a person: an upgrade brings it
+   * back, which it never does for an archive somebody chose. Only ever `true` on an archived
+   * project; optional for the reason {@link readOnly} is.
+   */
+  readonly autoArchived?: boolean
+  /**
+   * When the server may hard-delete the archived project, in seconds since the epoch
+   * (`archivedAt` plus 90 days). Present only while archived.
+   */
+  readonly deleteAfter?: number
+}
+
+/** The read-only grace lifecycle fields of a {@link Project}, as {@link readLifecycle} reads them. */
+export type Lifecycle = Pick<Project, 'readOnly' | 'graceUntil' | 'autoArchived' | 'deleteAfter'>
+
+/** A deadline as the contract writes one: whole seconds since the epoch, after it began. */
+function isEpochSeconds(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0
+}
+
+/**
+ * The read-only grace lifecycle of a project as the contract allows it to be, whatever the body
+ * said (#211, #284).
+ *
+ * Read defensively, because a wrong answer here is a page that invites writes the server refuses,
+ * or tells a reader a project is deleted on a date nobody set. A flag that is not exactly `true`
+ * reads as `false`, so an older API or cache reads as writable, which is what it was. A deadline
+ * that is not whole positive seconds is dropped, and the page then says what it can without a
+ * date. The pairings the contract fixes are enforced too: `readOnly` and `graceUntil` only on an
+ * active project, `autoArchived` and `deleteAfter` only on an archived one.
+ *
+ * @param raw a project as the server or the cache gave it, possibly from another build
+ */
+export function readLifecycle(raw: {
+  readonly archived?: unknown
+  readonly readOnly?: unknown
+  readonly graceUntil?: unknown
+  readonly autoArchived?: unknown
+  readonly deleteAfter?: unknown
+}): Required<Pick<Lifecycle, 'readOnly' | 'autoArchived'>> & Lifecycle {
+  const archived = raw.archived === true
+  const readOnly = !archived && raw.readOnly === true
+  const autoArchived = archived && raw.autoArchived === true
+  return {
+    readOnly,
+    autoArchived,
+    ...(readOnly && isEpochSeconds(raw.graceUntil) ? { graceUntil: raw.graceUntil } : {}),
+    ...(archived && isEpochSeconds(raw.deleteAfter) ? { deleteAfter: raw.deleteAfter } : {}),
+  }
+}
+
+/** A project from the API, its lifecycle read by {@link readLifecycle} and nothing else changed. */
+function parsed(raw: Project): Project {
+  const { readOnly: _r, graceUntil: _g, autoArchived: _a, deleteAfter: _d, ...rest } = raw
+  return { ...rest, ...readLifecycle(raw) }
 }
 
 /** Why creating a project did not work. The view turns each of these into a sentence. */
@@ -125,6 +200,11 @@ export type UpdateFailure =
   | CreateFailure
   /** No such project, or the caller is not a participant — the API answers both the same. */
   | 'not-found'
+  /**
+   * `readOnly` was sent by somebody other than the owner (`403`, `not-the-owner`): which projects
+   * keep the plan's writable slots is the owner's choice (#284).
+   */
+  | 'not-the-owner'
 
 /** Changing a project did not work, and nothing was changed. */
 export class ProjectUpdateError extends Error {
@@ -141,7 +221,7 @@ export class ProjectUpdateError extends Error {
 export interface ProjectsApi {
   list(): Promise<readonly Project[]>
   create(request: NewProject): Promise<Project>
-  /** Changes a project's name, client or archived state, and returns it as it now stands. */
+  /** Changes a project's name, client, archived or read-only state; returns it as it now stands. */
   update(projectId: string, patch: ProjectPatch): Promise<Project>
 }
 
@@ -160,10 +240,11 @@ export interface CreateDependencies {
 }
 
 /** The 403 reasons the contract pins, which a client branches on. */
-const FORBIDDEN_REASONS: readonly CreateFailure[] = [
+const FORBIDDEN_REASONS: readonly UpdateFailure[] = [
   'plan-no-sync',
   'project-limit-reached',
   'not-a-manager',
+  'not-the-owner',
 ]
 
 /**
@@ -192,7 +273,9 @@ async function reasonFor(response: Response): Promise<UpdateFailure> {
  */
 async function creationReasonFor(response: Response): Promise<CreateFailure> {
   const reason = await reasonFor(response)
-  return reason === 'not-found' ? 'refused' : reason
+  // `not-the-owner` answers only a patch's `readOnly`; on a create it is a reason this client
+  // does not know there, read as the status alone.
+  return reason === 'not-found' ? 'refused' : reason === 'not-the-owner' ? 'not-entitled' : reason
 }
 
 /**
@@ -222,7 +305,11 @@ export function projectsApi(
     async list(): Promise<readonly Project[]> {
       const response = await fetchImpl(`${base}/projects`, { headers: headers() })
       if (!response.ok) throw new ProjectCreationError(await creationReasonFor(response))
-      return (await response.json()) as Project[]
+      const body: unknown = await response.json()
+      // Not a list is a server fault, not an empty list: read as empty, it would prove every
+      // copy here an orphan (`projects-model.ts`).
+      if (!Array.isArray(body)) throw new ProjectCreationError('failed')
+      return (body as Project[]).map(parsed)
     },
 
     async create(request: NewProject): Promise<Project> {
@@ -232,7 +319,7 @@ export function projectsApi(
         body: JSON.stringify(request),
       })
       if (!response.ok) throw new ProjectCreationError(await creationReasonFor(response))
-      return (await response.json()) as Project
+      return parsed((await response.json()) as Project)
     },
 
     async update(projectId: string, patch: ProjectPatch): Promise<Project> {
@@ -242,7 +329,7 @@ export function projectsApi(
         body: JSON.stringify(patch),
       })
       if (!response.ok) throw new ProjectUpdateError(await reasonFor(response))
-      return (await response.json()) as Project
+      return parsed((await response.json()) as Project)
     },
   }
 }

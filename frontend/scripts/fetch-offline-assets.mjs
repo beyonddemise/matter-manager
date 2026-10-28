@@ -112,6 +112,10 @@ const ICONS = [
   // Chosen at run time: a project row's location tag in `views/projects.ts` (with `laptop` and
   // `arrows-rotate` above). Free's stand-in for the Pro-only `cloud-check` (#132).
   'cloud',
+  // Chosen at run time: a project row's read-only-grace tag in `views/projects.ts` (#211, #284):
+  // `lock` while read-only, `box-archive` once the grace archived it.
+  'lock',
+  'box-archive',
   // Sign out, the last item of the navigation in `app-shell.ts`.
   'right-from-bracket',
   // The header's Upgrade button in `app-shell.ts`.

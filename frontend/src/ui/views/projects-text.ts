@@ -9,9 +9,10 @@
  */
 
 import { msg, str } from '@lit/localize'
+import { getLocale } from '../i18n/localization.js'
 import type { ActionRefusal } from '../project-actions.js'
 import type { UpdateFailure } from '../projects.js'
-import type { CreateRefusal, Location, Refusal, RowActions } from '../projects-model.js'
+import type { CreateRefusal, Lifecycle, Location, Refusal, RowActions } from '../projects-model.js'
 
 /** Every reason the page may have to say why something is not possible. */
 export type Reason = Refusal | CreateRefusal | UpdateFailure | ActionRefusal
@@ -46,6 +47,8 @@ export function reasonText(reason: Reason): string {
     case 'role':
     case 'not-a-manager':
       return msg('Only the owner or a manager can change this')
+    case 'not-the-owner':
+      return msg('Only the owner can choose this')
     case 'read-only':
       return msg('Read-only')
     case 'unreachable':
@@ -106,6 +109,10 @@ export function actionText(action: MenuAction): string {
       return msg('Put back on the server')
     case 'export':
       return msg('Export project')
+    case 'keepActive':
+      return msg('Keep this one active')
+    case 'makeReadOnly':
+      return msg('Make read-only')
   }
 }
 
@@ -178,5 +185,104 @@ export function legacyText(limit: number, syncs: boolean, planLimit: number): st
 export function overLimitText(limit: number, owned: number): string {
   return msg(
     str`Projects your plan allows: ${limit}. Projects you own: ${owned}. Everything stays usable, but no new project can be created.`,
+  )
+}
+
+/**
+ * A deadline the server set, as a date in the interface's language: "Oct 26, 2026",
+ * "26.10.2026". A date rather than a time: the server's job runs once a day, so the hour would
+ * promise a precision it does not have.
+ *
+ * @param seconds seconds since the epoch, as the contract writes deadlines (`graceUntil`,
+ *   `deleteAfter`); `projects.ts` has already refused anything that is not whole and positive
+ */
+export function dateText(seconds: number): string {
+  return new Intl.DateTimeFormat(getLocale(), { dateStyle: 'medium' }).format(seconds * 1000)
+}
+
+/** The word on a row's read-only-grace tag (#211, #284); the tooltip says the rest. */
+export function lifecycleTagText(state: Lifecycle['state']): string {
+  return state === 'read-only' ? msg('Read-only') : msg('Archived by plan')
+}
+
+/**
+ * What a row in the read-only grace says, behind its tag: why, until when, and how it comes
+ * back (#211, #284). The owner is told both ways out; anyone it is shared with only that it is
+ * the owner's to restore, because nothing they do changes it. Each part is a sentence of its
+ * own, so a deadline the server did not name leaves the rest intact rather than "until ."
+ *
+ * @param owner whether the reader owns the project, whose plan the limit is
+ * @param swaps whether the layout offers the swap in the row's menu; see {@link graceText}
+ */
+export function lifecycleText(lifecycle: Lifecycle, owner: boolean, swaps = true): string {
+  if (lifecycle.state === 'read-only') {
+    const why = owner
+      ? msg('Read-only: this project is over your plan’s project limit.')
+      : msg('Read-only: this project is over its owner’s plan limit.')
+    const until = lifecycle.until
+    const when =
+      until === undefined
+        ? ''
+        : msg(str`On ${dateText(until)} it is archived, and 90 days later deleted.`)
+    const restore = !owner
+      ? msg('Only the owner can make it writable again.')
+      : swaps
+        ? msg(
+            str`Upgrade to keep it, or make another project read-only and choose “${actionText('keepActive')}” here.`,
+          )
+        : msg('Upgrade to keep it.')
+    return [why, when, restore].filter((part) => part !== '').join(' ')
+  }
+  const why = owner
+    ? msg(
+        'Archived: this project was over your plan’s project limit when its read-only period ended.',
+      )
+    : msg('Archived: this project was over its owner’s plan limit.')
+  const at = lifecycle.deleteAfter
+  const when = at === undefined ? '' : msg(str`The server deletes it on ${dateText(at)}.`)
+  const restore = owner
+    ? msg('Upgrading brings it back.')
+    : msg('Only the owner can bring it back, by upgrading.')
+  return [why, when, restore].filter((part) => part !== '').join(' ')
+}
+
+/**
+ * The page-wide sentence while some of the owner's projects are read-only for the grace: the
+ * counts, as {@link overLimitText} gives them, then what that means and both ways out. Replaces
+ * that sentence, whose "everything stays usable" is no longer true.
+ *
+ * @param until the earliest grace end among the owner's read-only projects, if the server named
+ *   one: a swap takes the earliest running deadline, so it is the one that matters
+ * @param swaps whether the layout offers the swap in each project's menu. The free card does
+ *   not (C-R14), and on a plan without synchronized projects no slot is ever writable, so
+ *   there the only way back is upgrading, and nothing points at a menu item that is not there.
+ */
+export function graceText(
+  limit: number,
+  owned: number,
+  until: number | undefined,
+  swaps = true,
+): string {
+  const counts = msg(str`Projects your plan allows: ${limit}. Projects you own: ${owned}.`)
+  const what =
+    until === undefined
+      ? msg('Those over the limit are read-only, then archived, and deleted 90 days later.')
+      : msg(
+          str`Those over the limit are read-only until ${dateText(until)}, then archived, and deleted 90 days later.`,
+        )
+  const restore = swaps
+    ? msg('Upgrade to keep them all, or choose which stay writable from each project’s menu.')
+    : msg('Upgrade to keep them all.')
+  return `${counts} ${what} ${restore}`
+}
+
+/**
+ * Why keeping a project active was refused for want of a writable slot (403
+ * `project-limit-reached`), and the swap that frees one: lock another project, or archive one.
+ * Names the two menu items, so the reader can find them.
+ */
+export function swapText(): string {
+  return msg(
+    str`No writable project is free on your plan. Choose “${actionText('makeReadOnly')}” or “${actionText('removeServer')}” on another project first, then try again.`,
   )
 }

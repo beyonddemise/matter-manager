@@ -23,6 +23,7 @@ import {
   type CurrentTarget,
   ProjectActionError,
   type ProjectActions,
+  PUSH_TIMEOUT_MS,
   projectActions,
 } from '../project-actions.js'
 import {
@@ -35,6 +36,7 @@ import {
   updateProject,
 } from '../projects.js'
 import {
+  type Lifecycle,
   type Location,
   type ProjectsInput,
   type ProjectsModel,
@@ -52,13 +54,17 @@ import type { ExportConfirmDetail } from './project-export-dialog.js'
 import './project-export-dialog.js'
 import { clearFields, fieldValue, type Sort, sortRows } from './projects-helpers.js'
 import {
+  graceText,
   introText,
   keptLocalText,
+  lifecycleTagText,
+  lifecycleText,
   locationText,
   type MenuAction,
   openRefusalText,
   overLimitText,
   reasonText,
+  swapText,
 } from './projects-text.js'
 
 /**
@@ -108,6 +114,35 @@ const LOCATION_ICONS: Readonly<Record<Location, string>> = {
   local: 'laptop',
   server: 'cloud',
   synced: 'arrows-rotate',
+}
+
+/**
+ * The icon on a row's read-only-grace tag (#211, #284), which carries the state alone at phone
+ * width like the location's: a lock while writes are refused, the archive box once the grace
+ * has archived it.
+ */
+const LIFECYCLE_ICONS: Readonly<Record<Lifecycle['state'], string>> = {
+  'read-only': 'lock',
+  'auto-archived': 'box-archive',
+}
+
+/**
+ * Lets Enter and Space toggle the tooltip that belongs to a focusable reveal, as a button would.
+ * Escape closes a Web Awesome tooltip while focus stays put; without this, nothing short of
+ * leaving and coming back could reopen it (#318 review). Space is cancelled so the page does
+ * not scroll.
+ *
+ * @param tip the selector of the tooltip, among the reveal's siblings
+ */
+function toggleTipOnKey(tip: string): (event: KeyboardEvent) => void {
+  return (event) => {
+    if (event.key !== 'Enter' && event.key !== ' ') return
+    event.preventDefault()
+    const found = (event.currentTarget as Element).parentElement?.querySelector(tip) as
+      | (HTMLElement & { open: boolean })
+      | null
+    if (found != null) found.open = !found.open
+  }
 }
 
 /** The local-only project operations the page performs. Injectable so a test owns no database. */
@@ -271,17 +306,71 @@ export class ProjectsView extends LitElement {
   /**
    * Runs one action: busy while it runs, its failure shown as a sentence afterwards
    * ({@link failureText}).
+   *
+   * @param explain a sentence for a failure this action knows better than the generic one, or
+   *   `undefined` to leave it to {@link failureText}
    */
-  private async run(action: () => Promise<void>): Promise<void> {
+  private async run(
+    action: () => Promise<void>,
+    explain: (error: unknown) => string | undefined = () => undefined,
+  ): Promise<void> {
     this.busy = true
     this.error = undefined
     try {
       await action()
     } catch (error) {
-      this.error = failureText(error)
+      this.error = explain(error) ?? failureText(error)
     } finally {
       this.busy = false
     }
+  }
+
+  /**
+   * The owner's choice during the read-only grace (#284): keep a read-only project active
+   * (`readOnly: false`), or give a writable one's slot up (`readOnly: true`).
+   *
+   * Nothing on this device changes, so it is a plain `PATCH`, like a rename — except that a
+   * lock is **preceded by a push** of this device's copy: once locked the validator refuses
+   * every write, so a change that had not left the copy by then never would. A push that fails
+   * or times out refuses the lock (`unpushed`, the removals' own refusal) and nothing is sent.
+   * Lifting a lock loses nothing, so it pushes nothing; a server-only row has no copy to push.
+   *
+   * The list is read again afterwards **whether or not it worked**: a swap changes other rows'
+   * state too (the server lifts locks once the owner is within the limit), a refusal may mean
+   * the page's list is out of date, and the open project's editability follows the list. A
+   * refused "keep this one active" for want of a slot is explained as the swap that frees one.
+   */
+  private setReadOnly(row: Row, readOnly: boolean): void {
+    const { projectId } = row
+    if (projectId === undefined) return
+    void this.run(
+      async () => {
+        try {
+          if (readOnly && row.location === 'synced') {
+            // Offline the push cannot succeed: say so, rather than "not everything uploaded".
+            if (!this.input.online) throw new ProjectUpdateError('offline')
+            const sync = this.sync ?? NO_SYNC
+            try {
+              await sync.pushNow(projectId, { signal: AbortSignal.timeout(PUSH_TIMEOUT_MS) })
+            } catch (error) {
+              throw new ProjectActionError('unpushed', { cause: error })
+            }
+          }
+          await updateProject(
+            { api: this.api ?? projects(), online: () => this.input.online },
+            projectId,
+            { readOnly },
+          )
+        } finally {
+          // Best effort: a failed re-read must not replace the refusal the reader needs to see.
+          await this.refresh?.().catch(() => undefined)
+        }
+      },
+      (error) =>
+        !readOnly && error instanceof ProjectUpdateError && error.reason === 'project-limit-reached'
+          ? swapText()
+          : undefined,
+    )
   }
 
   /**
@@ -406,6 +495,12 @@ export class ProjectsView extends LitElement {
     if (action === 'export') {
       // Asks first, but not as a confirmation: whether to protect the file with a password.
       this.exporting = row
+      return
+    }
+    // Neither loses anything: a lock can be lifted the same way, and keeping one active only
+    // takes a free slot. So neither is asked first.
+    if (action === 'keepActive' || action === 'makeReadOnly') {
+      this.setReadOnly(row, action === 'makeReadOnly')
       return
     }
     const model = this.model()
@@ -578,12 +673,23 @@ export class ProjectsView extends LitElement {
           : nothing
       }
       ${
-        model.overLimit
-          ? html`<wa-callout variant="neutral" data-over-limit>
+        // While the grace has locked some of the reader's projects, the over-limit sentence's
+        // "everything stays usable" is no longer true: this one says which, until when, and
+        // both ways out (#211, #284). A warning: nothing failed, but writes are being refused.
+        model.readOnlyCount > 0
+          ? html`<wa-callout variant="warning" data-grace>
+              <wa-icon slot="icon" name="triangle-exclamation"></wa-icon>
+              ${
+                // The free card hides the swap (C-R14): there, upgrading is the way back.
+                graceText(model.limit, model.ownedCount, model.graceUntil, model.layout !== 'free')
+              }
+            </wa-callout>`
+          : model.overLimit
+            ? html`<wa-callout variant="neutral" data-over-limit>
               <wa-icon slot="icon" name="circle-info"></wa-icon>
               ${overLimitText(model.limit, model.ownedCount)}
             </wa-callout>`
-          : nothing
+            : nothing
       }
     `
   }
@@ -690,7 +796,10 @@ export class ProjectsView extends LitElement {
               'promote',
               'download',
               'restore',
+              'keepActive',
+              'makeReadOnly',
             ])}
+            ${this.renderLifecycle(row, false)}
           </div>
           ${this.renderRowNote(row)}
         </div>
@@ -756,7 +865,8 @@ export class ProjectsView extends LitElement {
       <li data-row=${row.key} class="wa-flank:end wa-gap-s app-project-slot">
         <div class="wa-cluster wa-gap-xs app-row-content">
           <div class="wa-cluster wa-gap-2xs app-project-name">${this.renderName(row, false, true)}</div>
-          ${this.renderLocation(row)} ${this.renderSync(row)} ${this.renderRowNote(row)}
+          ${this.renderLocation(row)} ${this.renderSync(row)} ${this.renderLifecycle(row)}
+          ${this.renderRowNote(row)}
         </div>
         <div class="wa-cluster wa-gap-2xs app-row-actions">
           ${this.renderOpen(row)} ${this.renderMenu(row)}
@@ -823,7 +933,9 @@ export class ProjectsView extends LitElement {
                   </div>
                 </td>
                 <td role="cell" class="app-cell-client" data-client>${this.editing === row.key ? nothing : (row.client ?? nothing)}</td>
-                <td role="cell" class="app-col-fit app-cell-location">${this.renderLocation(row)}</td>
+                <td role="cell" class="app-col-fit app-cell-location">
+                  <div class="wa-cluster wa-gap-2xs">${this.renderLocation(row)} ${this.renderLifecycle(row)}</div>
+                </td>
                 <td role="cell" class="app-col-fit app-cell-sync">${this.renderSync(row)}</td>
                 <td role="cell" class="app-col-fit app-col-end app-cell-actions">
                   <div class="wa-cluster wa-gap-2xs wa-justify-content-end app-row-actions">
@@ -971,14 +1083,7 @@ export class ProjectsView extends LitElement {
             id=${`app-name-${row.key}`}
             tabindex="0"
             role="button"
-            @keydown=${(event: KeyboardEvent) => {
-              if (event.key !== 'Enter' && event.key !== ' ') return
-              event.preventDefault()
-              const tip = (event.currentTarget as Element).parentElement?.querySelector(
-                '[data-name-tip]',
-              ) as (HTMLElement & { open: boolean }) | null
-              if (tip != null) tip.open = !tip.open
-            }}
+            @keydown=${toggleTipOnKey('[data-name-tip]')}
           >${shown}</span>
           <wa-tooltip data-name-tip for=${`app-name-${row.key}`} trigger="hover focus click">
             ${shown}
@@ -1041,6 +1146,39 @@ export class ProjectsView extends LitElement {
       <wa-icon name=${LOCATION_ICONS[row.location]}></wa-icon>
       <span class="app-tag-words">${locationText(row.location)}</span>
     </wa-tag>`
+  }
+
+  /**
+   * Where a row stands in the read-only grace after a downgrade (#211, #284), when it is in it:
+   * a tag in the row's own tag style — so at phone width its icon carries the state and the row
+   * keeps to one line (#281) — and a tooltip with the whole of it: why, until when, how it comes
+   * back. The tag takes focus and answers Enter and Space like the truncated name's reveal, since
+   * a tooltip only a hovering pointer could open would hide the deadline from touch and keyboard
+   * readers. Nothing for the owner's own archive, which keeps today's wording.
+   *
+   * @param swaps whether this layout's menu offers the swap; the free card's does not (C-R14),
+   *   so its tooltip names only the upgrade
+   */
+  private renderLifecycle(row: Row, swaps = true): TemplateResult | typeof nothing {
+    const { lifecycle } = row
+    if (lifecycle === undefined) return nothing
+    const id = `app-lifecycle-${row.key}`
+    const owner = row.role === undefined || row.role === 'owner'
+    return html`<wa-tag
+        data-lifecycle=${lifecycle.state}
+        id=${id}
+        size="s"
+        variant="warning"
+        tabindex="0"
+        role="button"
+        @keydown=${toggleTipOnKey('[data-lifecycle-tip]')}
+      >
+        <wa-icon name=${LIFECYCLE_ICONS[lifecycle.state]}></wa-icon>
+        <span class="app-tag-words">${lifecycleTagText(lifecycle.state)}</span>
+      </wa-tag>
+      <wa-tooltip data-lifecycle-tip for=${id} trigger="hover focus click">
+        ${lifecycleText(lifecycle, owner, swaps)}
+      </wa-tooltip>`
   }
 
   /**
