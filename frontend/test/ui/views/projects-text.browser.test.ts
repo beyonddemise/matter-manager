@@ -202,6 +202,13 @@ describe('the read-only grace in words (#211, #284)', () => {
     expect(graceText(1, 3, undefined)).not.toMatch(/until/)
   })
 
+  it('offers only the upgrade where the page has no swap to offer', () => {
+    const said = graceText(1, 3, GRACE, false)
+    expect(said).toContain('Upgrade')
+    expect(said).not.toContain('menu')
+    expect(graceText(1, 3, GRACE, true)).toContain('menu')
+  })
+
   it('says how to free a slot when keeping one active was refused for want of one', () => {
     const said = swapText()
     expect(said).toContain('Make read-only')

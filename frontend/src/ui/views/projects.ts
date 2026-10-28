@@ -663,7 +663,10 @@ export class ProjectsView extends LitElement {
         model.readOnlyCount > 0
           ? html`<wa-callout variant="warning" data-grace>
               <wa-icon slot="icon" name="triangle-exclamation"></wa-icon>
-              ${graceText(model.limit, model.ownedCount, model.graceUntil)}
+              ${
+                // The free card hides the swap (C-R14): there, upgrading is the way back.
+                graceText(model.limit, model.ownedCount, model.graceUntil, model.layout !== 'free')
+              }
             </wa-callout>`
           : model.overLimit
             ? html`<wa-callout variant="neutral" data-over-limit>
@@ -780,7 +783,7 @@ export class ProjectsView extends LitElement {
               'keepActive',
               'makeReadOnly',
             ])}
-            ${this.renderLifecycle(row)}
+            ${this.renderLifecycle(row, false)}
           </div>
           ${this.renderRowNote(row)}
         </div>
@@ -1136,8 +1139,11 @@ export class ProjectsView extends LitElement {
    * back. The tag takes focus and answers Enter and Space like the truncated name's reveal, since
    * a tooltip only a hovering pointer could open would hide the deadline from touch and keyboard
    * readers. Nothing for the owner's own archive, which keeps today's wording.
+   *
+   * @param swaps whether this layout's menu offers the swap; the free card's does not (C-R14),
+   *   so its tooltip names only the upgrade
    */
-  private renderLifecycle(row: Row): TemplateResult | typeof nothing {
+  private renderLifecycle(row: Row, swaps = true): TemplateResult | typeof nothing {
     const { lifecycle } = row
     if (lifecycle === undefined) return nothing
     const id = `app-lifecycle-${row.key}`
@@ -1155,7 +1161,7 @@ export class ProjectsView extends LitElement {
         <span class="app-tag-words">${lifecycleTagText(lifecycle.state)}</span>
       </wa-tag>
       <wa-tooltip data-lifecycle-tip for=${id} trigger="hover focus click">
-        ${lifecycleText(lifecycle, owner)}
+        ${lifecycleText(lifecycle, owner, swaps)}
       </wa-tooltip>`
   }
 

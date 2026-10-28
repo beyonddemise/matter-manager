@@ -1358,6 +1358,25 @@ describe('the read-only grace after a downgrade (#211, #284)', () => {
     expect(view.querySelector('[data-over-limit]')).toBeNull()
   })
 
+  it('points to the menu only where the menu offers the swap: not on the free card', async () => {
+    // The free card hides "Keep this one active" and "Make read-only" (C-R14), and on a plan
+    // with no synchronized projects archiving frees no writable slot: upgrading is the way back.
+    const freeView = await page(overInput({ plan: 'free' }))
+    const free = text(find(freeView, '[data-grace]'))
+    expect(free).toContain('Upgrade')
+    expect(free).not.toContain('menu')
+    // The row's own explanation names no hidden action either.
+    const freeTip = text(find(freeView, '[data-row="project_p2"] [data-lifecycle-tip]'))
+    expect(freeTip).toContain('Upgrade')
+    expect(freeTip).not.toContain('Keep this one active')
+
+    const memberView = await page(overInput())
+    expect(text(find(memberView, '[data-grace]'))).toContain('menu')
+    expect(text(find(memberView, '[data-row="project_p2"] [data-lifecycle-tip]'))).toContain(
+      'Keep this one active',
+    )
+  })
+
   it('marks an auto-archived row with its deletion date and the upgrade that restores it', async () => {
     const view = await page(
       overInput({

@@ -1527,6 +1527,14 @@
   <source>No writable project is free on your plan. Choose “<x id="0" equiv-text="${actionText('makeReadOnly')}"/>” or “<x id="1" equiv-text="${actionText('removeServer')}"/>” on another project first, then try again.</source>
   <target>Ihr Tarif hat keinen freien Platz für ein beschreibbares Projekt. Wählen Sie zuerst bei einem anderen Projekt „<x id="0" equiv-text="${actionText('makeReadOnly')}"/>“ oder „<x id="1" equiv-text="${actionText('removeServer')}"/>“ und versuchen Sie es dann erneut.</target>
 </trans-unit>
+<trans-unit id="s8d42c85ae23a46cc">
+  <source>Upgrade to keep it.</source>
+  <target>Wechseln Sie auf einen höheren Tarif, um es zu behalten.</target>
+</trans-unit>
+<trans-unit id="s4b13a650cdadf554">
+  <source>Upgrade to keep them all.</source>
+  <target>Wechseln Sie auf einen höheren Tarif, um alle zu behalten.</target>
+</trans-unit>
 </body>
 </file>
 </xliff>

@@ -212,8 +212,9 @@ export function lifecycleTagText(state: Lifecycle['state']): string {
  * own, so a deadline the server did not name leaves the rest intact rather than "until ."
  *
  * @param owner whether the reader owns the project, whose plan the limit is
+ * @param swaps whether the layout offers the swap in the row's menu; see {@link graceText}
  */
-export function lifecycleText(lifecycle: Lifecycle, owner: boolean): string {
+export function lifecycleText(lifecycle: Lifecycle, owner: boolean, swaps = true): string {
   if (lifecycle.state === 'read-only') {
     const why = owner
       ? msg('Read-only: this project is over your plan’s project limit.')
@@ -223,11 +224,13 @@ export function lifecycleText(lifecycle: Lifecycle, owner: boolean): string {
       until === undefined
         ? ''
         : msg(str`On ${dateText(until)} it is archived, and 90 days later deleted.`)
-    const restore = owner
-      ? msg(
-          str`Upgrade to keep it, or make another project read-only and choose “${actionText('keepActive')}” here.`,
-        )
-      : msg('Only the owner can make it writable again.')
+    const restore = !owner
+      ? msg('Only the owner can make it writable again.')
+      : swaps
+        ? msg(
+            str`Upgrade to keep it, or make another project read-only and choose “${actionText('keepActive')}” here.`,
+          )
+        : msg('Upgrade to keep it.')
     return [why, when, restore].filter((part) => part !== '').join(' ')
   }
   const why = owner
@@ -250,8 +253,16 @@ export function lifecycleText(lifecycle: Lifecycle, owner: boolean): string {
  *
  * @param until the earliest grace end among the owner's read-only projects, if the server named
  *   one: a swap takes the earliest running deadline, so it is the one that matters
+ * @param swaps whether the layout offers the swap in each project's menu. The free card does
+ *   not (C-R14), and on a plan without synchronized projects no slot is ever writable, so
+ *   there the only way back is upgrading, and nothing points at a menu item that is not there.
  */
-export function graceText(limit: number, owned: number, until: number | undefined): string {
+export function graceText(
+  limit: number,
+  owned: number,
+  until: number | undefined,
+  swaps = true,
+): string {
   const counts = msg(str`Projects your plan allows: ${limit}. Projects you own: ${owned}.`)
   const what =
     until === undefined
@@ -259,7 +270,10 @@ export function graceText(limit: number, owned: number, until: number | undefine
       : msg(
           str`Those over the limit are read-only until ${dateText(until)}, then archived, and deleted 90 days later.`,
         )
-  return `${counts} ${what} ${msg('Upgrade to keep them all, or choose which stay writable from each project’s menu.')}`
+  const restore = swaps
+    ? msg('Upgrade to keep them all, or choose which stay writable from each project’s menu.')
+    : msg('Upgrade to keep them all.')
+  return `${counts} ${what} ${restore}`
 }
 
 /**
