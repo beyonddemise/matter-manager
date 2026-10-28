@@ -128,6 +128,18 @@ export interface ServerProject {
    * an archived project's copy read-only, and must not count it.
    */
   readonly archived?: boolean
+  /**
+   * Over its owner's plan limit, and so refusing writes (#211, #284). Cached because an offline
+   * page must open the copy non-editable and say why. Optional, as `archived` is: lists cached
+   * by older builds lack it, and absent reads as writable.
+   */
+  readonly readOnly?: boolean
+  /** When the read-only grace ends, in seconds since the epoch; absent when not heard. */
+  readonly graceUntil?: number
+  /** Archived by the grace's end rather than by a person; absent reads as `false`. */
+  readonly autoArchived?: boolean
+  /** When the server may hard-delete the archived project, in seconds since the epoch. */
+  readonly deleteAfter?: number
 }
 
 /**

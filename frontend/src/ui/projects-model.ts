@@ -62,6 +62,13 @@
  *   asks for. Its role is the one the index recorded, and **owner** when none was: counting a
  *   project that may be shared can refuse a create that would have fitted, while the opposite
  *   reading could create past the limit.
+ * - **A project the read-only grace locked** (#211, #284; `readOnly` in the list, fresh or
+ *   stale) keeps its location and is opened non-editable by everyone, since CouchDB refuses
+ *   every write to it. It still counts: it is active, and the server counts it. Its owner may
+ *   keep it active, or give up a writable project's slot for it while over the limit; both are
+ *   the server's to allow ({@link RowActions.keepActive}). Once the grace archives it
+ *   (`autoArchived`), a copy here is a remnant like any other, and with no copy the owner still
+ *   sees it listed, inert, until an upgrade restores it or the server deletes it.
  *
  * **No tier literal** (ADR 0009): every plan question goes through `domain/plan.ts`.
  *
@@ -89,8 +96,31 @@ import type { SyncState } from './sync/replication.js'
  */
 export type ListedProject = Pick<
   Project,
-  'projectId' | 'dbName' | 'name' | 'client' | 'role' | 'archived'
+  | 'projectId'
+  | 'dbName'
+  | 'name'
+  | 'client'
+  | 'role'
+  | 'archived'
+  | 'readOnly'
+  | 'graceUntil'
+  | 'autoArchived'
+  | 'deleteAfter'
 >
+
+/**
+ * Where a project stands in the read-only grace after a downgrade (#211, #284), as the page
+ * says it. Absent on a row for everything else, the owner's own archive included.
+ *
+ * - `read-only`: over the owner's plan limit; writes are refused until the owner upgrades or
+ *   keeps it as one of the writable projects. `until` is when the grace ends and the server
+ *   archives it, when the server said.
+ * - `auto-archived`: the grace ended; the server deletes it at `deleteAfter`, when it said, and
+ *   an upgrade brings it back.
+ */
+export type Lifecycle =
+  | { readonly state: 'read-only'; readonly until?: number }
+  | { readonly state: 'auto-archived'; readonly deleteAfter?: number }
 
 /**
  * Whether there is a session, and if not, why.
@@ -166,6 +196,19 @@ export interface RowActions {
    * what is here. Not for a server-only row, which has nothing here to read.
    */
   readonly export: Permission
+  /**
+   * Make a read-only project writable again (`PATCH readOnly: false`, #284): the owner choosing
+   * it as one of the plan's writable projects. Owner only. Not refused for want of a slot here:
+   * the server counts only its own projects, so it alone knows whether one is free, and its
+   * `project-limit-reached` is explained on the page as a swap.
+   */
+  readonly keepActive: Permission
+  /**
+   * Give up a writable project's slot (`PATCH readOnly: true`), the first half of a swap. Owner
+   * only, and only while one of the owner's projects is read-only: that is the server's own word
+   * that the owner is over the limit, and within it the server refuses (409).
+   */
+  readonly makeReadOnly: Permission
 }
 
 /** One project on the page. */
@@ -196,6 +239,8 @@ export interface Row {
   readonly syncState?: SyncState
   /** Whether opening it allows writes — what `useProjectDatabase(dbName, editable)` is given. */
   readonly editable: boolean
+  /** Where it stands in the read-only grace after a downgrade, if it is in it (#211, #284). */
+  readonly lifecycle?: Lifecycle
   readonly actions: RowActions
 }
 
@@ -223,6 +268,14 @@ export interface ProjectsModel {
   readonly ownedCount: number
   /** Whether a downgrade left more projects than the plan allows. */
   readonly overLimit: boolean
+  /** How many of the caller's own projects are read-only for the grace (#211, #284). */
+  readonly readOnlyCount: number
+  /**
+   * The earliest grace end among the caller's own read-only projects, in seconds since the epoch:
+   * the date the page names. A swap takes the earliest running deadline, so it is the one that
+   * matters. `undefined` when none is read-only or the server named no deadline.
+   */
+  readonly graceUntil: number | undefined
   readonly canCreate: Permission<CreateRefusal>
   /** Where a new project goes: the server when signed in, online and on a plan that syncs. */
   readonly createTarget: 'synced' | 'local'
@@ -273,8 +326,18 @@ export interface ProjectsInput {
  * project is archived) and `orphan` (a copy a fresh server list no longer names) are shown as
  * `local`, but neither is a local-only project. `promoting` (a local-only database whose
  * promotion stopped half way) is shown as `local` too, and its data is local-only.
+ * `grace-archived` is an owned server project the read-only grace archived (#211, #284) with no
+ * copy here: shown as `server`, offering nothing, and listed only so that the owner's project
+ * does not vanish from the page unexplained before the server deletes it.
  */
-type Kind = 'local-only' | 'promoting' | 'remnant' | 'orphan' | 'synced' | 'server'
+type Kind =
+  | 'local-only'
+  | 'promoting'
+  | 'remnant'
+  | 'orphan'
+  | 'synced'
+  | 'server'
+  | 'grace-archived'
 
 const LOCATIONS: Readonly<Record<Kind, Location>> = {
   'local-only': 'local',
@@ -283,6 +346,22 @@ const LOCATIONS: Readonly<Record<Kind, Location>> = {
   orphan: 'local',
   synced: 'synced',
   server: 'server',
+  'grace-archived': 'server',
+}
+
+/** A listed project's place in the read-only grace, if it has one; see {@link Lifecycle}. */
+function lifecycleOf(project: ListedProject | undefined): Lifecycle | undefined {
+  if (project === undefined) return undefined
+  if (project.archived) {
+    if (project.autoArchived !== true) return undefined
+    return project.deleteAfter === undefined
+      ? { state: 'auto-archived' }
+      : { state: 'auto-archived', deleteAfter: project.deleteAfter }
+  }
+  if (project.readOnly !== true) return undefined
+  return project.graceUntil === undefined
+    ? { state: 'read-only' }
+    : { state: 'read-only', until: project.graceUntil }
 }
 
 const ALLOWED: Permission<never> = Object.freeze({ allowed: true })
@@ -332,6 +411,17 @@ export function projectsModel(input: ProjectsInput): ProjectsModel {
   const legacyPlanLimit = isLegacyLimit(limit, input.reportedPlanLimit)
     ? input.reportedPlanLimit
     : undefined
+  // The caller's own read-only projects: the server's word that the owner is over the limit,
+  // which "make read-only" needs (the server refuses it within the limit).
+  const lockedOwn = sources.filter(
+    (source) =>
+      mine(source) &&
+      source.kind !== 'promoting' &&
+      lifecycleOf(source.project)?.state === 'read-only',
+  )
+  const deadlines = lockedOwn.flatMap((source) =>
+    source.project?.graceUntil === undefined ? [] : [source.project.graceUntil],
+  )
 
   // Every action that needs the server asks these, in this order. Only a fresh list lets one
   // through: a stale one (offline, or the request failed) is good enough to count against, never
@@ -354,6 +444,12 @@ export function projectsModel(input: ProjectsInput): ProjectsModel {
     const manages = owner || role === 'manage'
     const removable =
       kind === 'local-only' || kind === 'promoting' || kind === 'remnant' || kind === 'orphan'
+    // A half-done promotion's data is still only here, so the server's lock does not reach it.
+    const lifecycle = kind === 'promoting' ? undefined : lifecycleOf(project)
+    const readOnly = lifecycle?.state === 'read-only'
+    const onServer = kind === 'server' || kind === 'synced'
+    // Nothing on this device and nothing to do but wait for an upgrade: see `Kind`.
+    const inert = kind === 'grace-archived'
 
     return {
       key: dbName,
@@ -366,14 +462,19 @@ export function projectsModel(input: ProjectsInput): ProjectsModel {
       ...(entry?.role === undefined ? {} : { recordedRole: entry.role }),
       archived: project?.archived ?? false,
       ...(syncState === undefined ? {} : { syncState }),
-      editable: editable(kind, role, owner, syncs),
+      editable: !readOnly && editable(kind, role, owner, syncs),
+      ...(lifecycle === undefined ? {} : { lifecycle }),
       actions: {
         // A server-only row has nothing on this device, so it cannot be opened without the server.
-        open: kind === 'server' ? gate<Refusal>(...needsServer) : ALLOWED,
+        open: inert
+          ? gate<Refusal>([false, 'not-applicable'])
+          : kind === 'server'
+            ? gate<Refusal>(...needsServer)
+            : ALLOWED,
         rename:
           kind === 'local-only'
             ? ALLOWED
-            : kind === 'promoting'
+            : kind === 'promoting' || inert
               ? gate<Refusal>([false, 'not-applicable'])
               : kind === 'remnant' && owner
                 ? gate<Refusal>([false, 'not-applicable'])
@@ -419,7 +520,19 @@ export function projectsModel(input: ProjectsInput): ProjectsModel {
           [syncs, 'plan'],
           [canOwnAnother(ownedCount, input.reportedLimit), 'limit'],
         ),
-        export: gate<Refusal>([kind !== 'server', 'not-applicable']),
+        export: gate<Refusal>([kind !== 'server' && !inert, 'not-applicable']),
+        // Owner only, though the service answers a manager too (403 `not-the-owner`): which
+        // projects keep the plan's writable slots is the owner's to decide. `not-applicable`
+        // rather than `role`, as for putting a project back: a manager has nothing to ask for.
+        keepActive: gate<Refusal>(
+          [onServer && readOnly && owner, 'not-applicable'],
+          ...needsServer,
+          [syncs, 'plan'],
+        ),
+        makeReadOnly: gate<Refusal>(
+          [onServer && !readOnly && owner && lockedOwn.length > 0, 'not-applicable'],
+          ...needsServer,
+        ),
       },
     }
   }
@@ -440,6 +553,8 @@ export function projectsModel(input: ProjectsInput): ProjectsModel {
     legacyPlanLimit,
     ownedCount,
     overLimit,
+    readOnlyCount: lockedOwn.length,
+    graceUntil: deadlines.length === 0 ? undefined : Math.min(...deadlines),
     canCreate: gate<CreateRefusal>(
       [signedIn, input.session === 'checking' ? 'offline-server' : 'signed-out'],
       [canOwnAnother(ownedCount, input.reportedLimit), 'limit'],
@@ -502,7 +617,8 @@ export function detachableOrphans(model: ProjectsModel): readonly Row[] {
  *
  * A local entry matches its server project by database name or project id. Server projects
  * nothing local matches become `server` rows, unless archived: an archived project with no copy
- * has nothing to open and nothing to remove, so it is not on the page.
+ * has nothing to open and nothing to remove, so it is not on the page — except an owned one the
+ * read-only grace archived (`grace-archived`, #211), which nobody chose to put away.
  */
 function join(
   local: readonly LocalProjectEntry[],
@@ -530,8 +646,12 @@ function join(
     }
   })
   for (const project of server ?? []) {
-    if (!matched.has(project) && !project.archived) {
-      sources.push({ project, kind: 'server', role: project.role })
+    if (matched.has(project)) continue
+    if (!project.archived) sources.push({ project, kind: 'server', role: project.role })
+    // Except one the grace archived, which is the owner's and was archived by nobody: listed,
+    // so the page can say when it is deleted and that an upgrade brings it back.
+    else if (project.autoArchived === true && project.role === 'owner') {
+      sources.push({ project, kind: 'grace-archived', role: project.role })
     }
   }
   return sources
@@ -588,10 +708,12 @@ function kindOf(
  * it is a local-only project. Otherwise the validator's rule is
  * predicted — readers never write, an owner only on a plan that syncs (the lapsed owner), and a
  * writer or manager always, since the owner's plan, not theirs, is what the project rests on.
+ * A project the grace made read-only is never editable, for anyone; the row asks that before
+ * this (#211, #284), and a grace-archived one has nothing here to edit.
  */
 function editable(kind: Kind, role: Project['role'] | undefined, owner: boolean, syncs: boolean) {
   if (kind === 'local-only' || kind === 'promoting') return true
   if (kind === 'remnant') return owner
-  if (kind === 'orphan' || role === 'read') return false
+  if (kind === 'orphan' || kind === 'grace-archived' || role === 'read') return false
   return owner ? syncs : true
 }

@@ -140,6 +140,8 @@ describe('the page for every plan × session × connection × server list × loc
               removeServer: na,
               restore: na,
               export: ok,
+              keepActive: na,
+              makeReadOnly: na,
             })
           })
 
@@ -161,6 +163,8 @@ describe('the page for every plan × session × connection × server list × loc
               removeServer: server() ?? ok,
               restore: na,
               export: ok,
+              keepActive: na,
+              makeReadOnly: na,
             })
           })
 
@@ -212,6 +216,8 @@ describe('the page for every plan × session × connection × server list × loc
                 removeServer: server() ?? ok,
                 restore: na,
                 export: na,
+                keepActive: na,
+                makeReadOnly: na,
               })
             })
 
@@ -231,6 +237,8 @@ describe('the page for every plan × session × connection × server list × loc
                 // Three owned projects leave room under every limit of a plan that syncs.
                 restore: server() ?? (syncs ? ok : no('plan')),
                 export: ok,
+                keepActive: na,
+                makeReadOnly: na,
               })
             })
 
@@ -248,6 +256,8 @@ describe('the page for every plan × session × connection × server list × loc
                 removeServer: server() ?? no('role'),
                 restore: na,
                 export: na,
+                keepActive: na,
+                makeReadOnly: na,
               })
             })
 
@@ -644,6 +654,8 @@ describe('a promotion that stopped half way', () => {
       removeServer: na,
       restore: na,
       export: ok,
+      keepActive: na,
+      makeReadOnly: na,
     })
   })
 
@@ -810,5 +822,161 @@ describe('exporting a project', () => {
     ['shared', 'project_echo'],
   ])('is not applicable to a project only on the server (%s)', (_label, dbName) => {
     expect(byKey(projectsModel(input()), dbName).actions.export).toEqual(na)
+  })
+})
+
+describe('the read-only grace after a downgrade (#211, #284)', () => {
+  const GRACE = 1_793_000_000
+  const DELETE = 1_797_776_000
+  /** A member account of limit 1 over it: Bravo kept writable, Charlie and India read-only. */
+  const over = (over: Partial<ProjectsInput> = {}) =>
+    projectsModel(
+      input({
+        local: [
+          local({ dbName: 'project_bravo', name: 'Bravo', projectId: 'bravo' }),
+          local({ dbName: 'project_charlie', name: 'Charlie', projectId: 'charlie' }),
+          local({ dbName: 'project_kilo', name: 'Kilo', projectId: 'kilo', role: 'manage' }),
+        ],
+        server: [
+          server('bravo', { name: 'Bravo' }),
+          server('charlie', { name: 'Charlie', readOnly: true, graceUntil: GRACE + 86_400 }),
+          server('india', { name: 'India', readOnly: true, graceUntil: GRACE }),
+          // Shared with the caller as a manager: its owner downgraded.
+          server('kilo', {
+            name: 'Kilo',
+            role: 'manage',
+            owner: { ownerType: 'user', ownerId: 'them' },
+            readOnly: true,
+            graceUntil: GRACE - 86_400,
+          }),
+        ],
+        reportedLimit: 1,
+        ...over,
+      }),
+    )
+
+  it('says a read-only project is read-only, and until when', () => {
+    expect(byKey(over(), 'project_charlie').lifecycle).toEqual({
+      state: 'read-only',
+      until: GRACE + 86_400,
+    })
+    expect(byKey(over(), 'project_bravo').lifecycle).toBeUndefined()
+  })
+
+  it('opens a read-only project non-editable, for the owner and for everyone it is shared with', () => {
+    // The validator refuses every write to it; the page must not invite one.
+    expect(byKey(over(), 'project_charlie').editable).toBe(false)
+    expect(byKey(over(), 'project_india').editable).toBe(false)
+    expect(byKey(over(), 'project_kilo').editable).toBe(false)
+    expect(byKey(over(), 'project_bravo').editable).toBe(true)
+  })
+
+  it('names the earliest grace end among the owner’s own read-only projects, and how many', () => {
+    // Kilo's earlier deadline is its owner's, not the caller's.
+    const model = over()
+    expect(model.readOnlyCount).toBe(2)
+    expect(model.graceUntil).toBe(GRACE)
+  })
+
+  it('offers the owner "keep this one active" on a read-only project, whatever the count says', () => {
+    // The server decides whether a writable slot is free: it counts only its own projects, and
+    // its refusal is explained on the page, so the page does not guess.
+    expect(byKey(over(), 'project_charlie').actions.keepActive).toEqual(ok)
+    expect(byKey(over(), 'project_bravo').actions.keepActive).toEqual(na)
+  })
+
+  it('offers "make read-only" on a writable project only while the owner is over the limit', () => {
+    expect(byKey(over(), 'project_bravo').actions.makeReadOnly).toEqual(ok)
+    expect(byKey(over(), 'project_charlie').actions.makeReadOnly).toEqual(na)
+    // Within the limit nothing is read-only, and the server would answer 409.
+    const within = projectsModel(
+      input({
+        local: [local({ dbName: 'project_bravo', name: 'Bravo', projectId: 'bravo' })],
+        server: [server('bravo', { name: 'Bravo' })],
+        reportedLimit: 3,
+      }),
+    )
+    expect(byKey(within, 'project_bravo').actions.makeReadOnly).toEqual(na)
+  })
+
+  it('offers neither to a manager: which projects stay writable is the owner’s choice', () => {
+    const kilo = byKey(over(), 'project_kilo')
+    expect(kilo.actions.keepActive).toEqual(na)
+    expect(kilo.actions.makeReadOnly).toEqual(na)
+    expect(kilo.lifecycle).toEqual({ state: 'read-only', until: GRACE - 86_400 })
+  })
+
+  it('needs this session’s list and a connection, like every server action', () => {
+    const offline = over({ online: false, serverStale: true })
+    expect(byKey(offline, 'project_charlie').actions.keepActive).toEqual(no('offline'))
+    expect(byKey(offline, 'project_bravo').actions.makeReadOnly).toEqual(no('offline'))
+    const stale = over({ serverStale: true })
+    expect(byKey(stale, 'project_charlie').actions.keepActive).toEqual(no('stale'))
+  })
+
+  it('refuses "keep this one active" on a plan with no synchronized projects', () => {
+    expect(byKey(over({ plan: 'free' }), 'project_charlie').actions.keepActive).toEqual(no('plan'))
+  })
+
+  it('reads the facts from a stale list too: a cached read-only project still opens read-only', () => {
+    const stale = over({ serverStale: true, online: false })
+    expect(byKey(stale, 'project_charlie').editable).toBe(false)
+    expect(byKey(stale, 'project_charlie').lifecycle).toEqual({
+      state: 'read-only',
+      until: GRACE + 86_400,
+    })
+  })
+
+  it('still counts read-only projects: they are active, and the server counts them', () => {
+    expect(over().ownedCount).toBe(3)
+    expect(over().overLimit).toBe(true)
+  })
+
+  it('says a project the grace archived was archived by the plan, and when it is deleted', () => {
+    const model = projectsModel(
+      input({
+        local: [local({ dbName: 'project_delta', name: 'Delta', projectId: 'delta' })],
+        server: [
+          server('delta', {
+            name: 'Delta',
+            archived: true,
+            autoArchived: true,
+            archivedAt: 1_790_000_000,
+            deleteAfter: DELETE,
+          }),
+        ],
+      }),
+    )
+    expect(byKey(model, 'project_delta').lifecycle).toEqual({
+      state: 'auto-archived',
+      deleteAfter: DELETE,
+    })
+  })
+
+  it('lists an auto-archived project with no copy here, so it does not vanish unexplained', () => {
+    const model = projectsModel(
+      input({
+        local: [],
+        server: [
+          server('golf', { name: 'Golf', archived: true, autoArchived: true, deleteAfter: DELETE }),
+          // The owner's own archive with no copy stays off the page, as before.
+          server('hotel', { name: 'Hotel', archived: true }),
+        ],
+      }),
+    )
+    expect(model.owned.map((row) => row.name)).toEqual(['Golf'])
+    const golf = byKey(model, 'project_golf')
+    expect(golf).toMatchObject({ location: 'server', archived: true, editable: false })
+    expect(golf.lifecycle).toEqual({ state: 'auto-archived', deleteAfter: DELETE })
+    // Nothing to open, rename or remove: an upgrade brings it back.
+    expect(Object.values(golf.actions).every((action) => action.reason === 'not-applicable')).toBe(
+      true,
+    )
+    // Not counted, and never handed to replication.
+    expect(model.ownedCount).toBe(0)
+  })
+
+  it('leaves the owner’s own archive as it was: no lifecycle', () => {
+    expect(byKey(projectsModel(input()), 'project_delta').lifecycle).toBeUndefined()
   })
 })

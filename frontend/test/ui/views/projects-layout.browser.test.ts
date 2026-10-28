@@ -291,6 +291,37 @@ describe('a member row at 360px (#281)', () => {
     expect(open.height).toBeGreaterThanOrEqual(24)
   })
 
+  it('keeps a read-only row on one line, its mark an icon at this width (#211, #284)', async () => {
+    // The worst case: a synchronized row carries three tags (location, sync, read-only).
+    const view = await pageAt(
+      WIDTH,
+      memberInput({
+        server: [project({ readOnly: true, graceUntil: 1_793_016_000 })],
+      }),
+    )
+
+    const row = find(view, '[data-row="project_p1"]')
+    const name = find(row, '[data-name]')
+    const mark = find(row, '[data-lifecycle]')
+    expect(onOneLine(name, mark), 'the read-only mark left the line').toBe(true)
+    expect(onOneLine(name, find(row, '[data-open]')), 'Open left the line').toBe(true)
+    expect(onOneLine(name, find(row, '[data-actions-trigger]')), 'the menu left the line').toBe(
+      true,
+    )
+    expectNoHorizontalOverflow(row)
+    // The words are clipped like the other tags'; the icon carries the state.
+    expect(rect(find(mark, '.app-tag-words')).width).toBeLessThanOrEqual(1)
+    expect(mark.querySelector('wa-icon[name="lock"]')).not.toBeNull()
+    // Same shape as every other slot, so the count still reads at a glance.
+    expect(Math.abs(rect(row).height - rect(find(view, '[data-slot-empty]')).height)).toBeLessThan(
+      1,
+    )
+    // The mark is a target a finger or a keyboard can reach for the explanation (WCAG 2.2 AA).
+    expect(mark.getAttribute('tabindex')).toBe('0')
+    expect(rect(mark).width).toBeGreaterThanOrEqual(24)
+    expect(rect(mark).height).toBeGreaterThanOrEqual(24)
+  })
+
   it('lays out a "Shared with me" row the same way', async () => {
     const view = await pageAt(
       WIDTH,

@@ -7,8 +7,9 @@
  *
  * **What is confirmed, and how.** Promoting and downloading put data in a second place and lose
  * nothing, so they run at once; so does putting a removed project back on the server, which undoes
- * a removal and loses nothing either. Every removal asks first, saying what is lost and what is
- * kept; deleting a project from this device — the one act that may destroy data that is nowhere
+ * a removal and loses nothing either; and so do the owner's two read-only-grace choices (#284),
+ * which only move a writable slot from one project to another. Every removal asks first, saying
+ * what is lost and what is kept; deleting a project from this device — the one act that may destroy data that is nowhere
  * else — is confirmed by typing its name.
  *
  * @module
@@ -30,6 +31,9 @@ const MENU_ACTIONS: readonly MenuAction[] = [
   'promote',
   'download',
   'restore',
+  // The owner's swap during the read-only grace (#284): safe, reversible, so above the removals.
+  'keepActive',
+  'makeReadOnly',
   'export',
   'removeLocal',
   'deleteLocal',
@@ -37,7 +41,10 @@ const MENU_ACTIONS: readonly MenuAction[] = [
 ]
 
 /** The actions that ask before they run. */
-export type ConfirmedAction = Exclude<MenuAction, 'promote' | 'download' | 'restore' | 'export'>
+export type ConfirmedAction = Exclude<
+  MenuAction,
+  'promote' | 'download' | 'restore' | 'export' | 'keepActive' | 'makeReadOnly'
+>
 
 /** Whether an action asks before it runs. */
 export function needsConfirmation(action: MenuAction): action is ConfirmedAction {
@@ -115,7 +122,12 @@ export function renderActionsMenu(
                     html`<span slot="details" class="app-empty" data-export-warning>
                       ${msg('Contains the setup codes. Keep it safe.')}
                     </span>`
-                  : nothing
+                  : action === 'makeReadOnly'
+                    ? // What the lock is for, said where it is chosen: it frees a writable slot.
+                      html`<span slot="details" class="app-empty">
+                        ${msg('Frees its slot for another project')}
+                      </span>`
+                    : nothing
             }
           </wa-dropdown-item>
         `

@@ -98,6 +98,9 @@ let actionAnswer: () => Promise<void>
 /** How the fake synchronized creation ends: resolving by default, or as a test says. */
 let createSyncedAnswer: () => Promise<void>
 
+/** What the fake API's `update` throws, if anything; nothing by default. */
+let updateFails: unknown
+
 /** Project actions that record what they were asked and answer with {@link actionAnswer}. */
 const actions: ProjectActions = {
   createSynced: async (_input, request: NewProject) => {
@@ -147,6 +150,7 @@ beforeEach(() => {
   }
   actionAnswer = async () => {}
   createSyncedAnswer = async () => {}
+  updateFails = undefined
   createAnswer = () => project({ projectId: 'p-new', dbName: 'project_p-new', name: 'Neu' })
   localStorage.removeItem(CURRENT_PROJECT_KEY)
 })
@@ -165,6 +169,7 @@ const api: ProjectsApi = {
   },
   update: async (projectId, patch) => {
     recorded.updated.push([projectId, patch])
+    if (updateFails !== undefined) throw updateFails
     return project({
       projectId,
       ...(patch.name === undefined ? {} : { name: patch.name }),
@@ -1287,5 +1292,208 @@ describe('the actions menu', () => {
 
     const removed = await member({ local: [synced], server: [project({ archived: true })] })
     expect(text(item(removed, 'project_p1', 'restore'))).toContain('Wieder auf den Server stellen')
+  })
+})
+
+describe('the read-only grace after a downgrade (#211, #284)', () => {
+  // Noon UTC, so the date is the same in every time zone a test browser might run in.
+  const GRACE = 1_793_016_000 // 2026-10-26
+  const DELETE = 1_797_768_000 // 2026-12-20
+
+  /** Over a member limit of one: Beta kept writable, Gamma read-only, both downloaded. */
+  const overInput = (over: Partial<ProjectsInput> = {}): Partial<ProjectsInput> => ({
+    plan: 'member',
+    reportedLimit: 1,
+    local: [
+      entry({ dbName: 'project_p1', name: 'Beta', projectId: 'p1' }),
+      entry({ dbName: 'project_p2', name: 'Gamma', projectId: 'p2' }),
+    ],
+    server: [
+      project(),
+      project({
+        projectId: 'p2',
+        dbName: 'project_p2',
+        name: 'Gamma',
+        readOnly: true,
+        graceUntil: GRACE,
+      }),
+    ],
+    syncStates: () => 'idle',
+    ...over,
+  })
+
+  const item = (view: ProjectsView, key: string, action: string) =>
+    view.querySelector<HTMLElement & { disabled: boolean }>(
+      `[data-row="${key}"] [data-action="${action}"]`,
+    )
+
+  async function choose(view: ProjectsView, key: string, action: string): Promise<void> {
+    const found = item(view, key, action)
+    if (found === null) throw new Error(`no ${action} on ${key}`)
+    found.click()
+    await view.updateComplete
+  }
+
+  it('marks a read-only row, and says why, until when and how to restore it', async () => {
+    const view = await page(overInput())
+
+    const tag = find(view, '[data-row="project_p2"] [data-lifecycle="read-only"]')
+    expect(text(tag)).toContain('Read-only')
+    expect(tag.querySelector('wa-icon[name="lock"]')).not.toBeNull()
+    const tip = text(find(view, '[data-row="project_p2"] [data-lifecycle-tip]'))
+    expect(tip).toContain('over your plan’s project limit')
+    expect(tip).toContain('Oct 26, 2026')
+    expect(tip).toContain('Upgrade')
+    // The writable row carries no mark.
+    expect(view.querySelector('[data-row="project_p1"] [data-lifecycle]')).toBeNull()
+  })
+
+  it('says page-wide which projects are read-only, until when, and both ways out', async () => {
+    const view = await page(overInput())
+
+    const callout = text(find(view, '[data-grace]'))
+    expect(callout).toContain('read-only until Oct 26, 2026')
+    expect(callout).toContain('Upgrade')
+    // Instead of the plain over-limit sentence, which says everything stays usable.
+    expect(view.querySelector('[data-over-limit]')).toBeNull()
+  })
+
+  it('marks an auto-archived row with its deletion date and the upgrade that restores it', async () => {
+    const view = await page(
+      overInput({
+        local: [],
+        server: [
+          project({
+            projectId: 'p3',
+            dbName: 'project_p3',
+            name: 'Delta',
+            archived: true,
+            autoArchived: true,
+            deleteAfter: DELETE,
+          }),
+        ],
+        reportedLimit: 3,
+      }),
+    )
+
+    const tag = find(view, '[data-row="project_p3"] [data-lifecycle="auto-archived"]')
+    expect(text(tag)).toContain('Archived by plan')
+    const tip = text(find(view, '[data-row="project_p3"] [data-lifecycle-tip]'))
+    expect(tip).toContain('Dec 20, 2026')
+    expect(tip).toContain('Upgrading brings it back')
+    // Nothing to open or act on: the row explains, an upgrade restores.
+    expect(view.querySelector('[data-row="project_p3"] [data-open]')).toBeNull()
+    expect(view.querySelector('[data-row="project_p3"] [data-actions]')).toBeNull()
+  })
+
+  it('leaves the owner’s own archive as it was', async () => {
+    const view = await page({
+      plan: 'member',
+      reportedLimit: 3,
+      local: [entry({ dbName: 'project_p1', name: 'Beta', projectId: 'p1' })],
+      server: [project({ archived: true })],
+    })
+
+    expect(view.querySelector('[data-lifecycle]')).toBeNull()
+    expect(view.querySelector('[data-grace]')).toBeNull()
+    expect(text(item(view, 'project_p1', 'restore'))).toContain('Put back on the server')
+  })
+
+  it('keeps a read-only project active from its menu, then reads the list again', async () => {
+    const view = await page(overInput())
+
+    await choose(view, 'project_p2', 'keepActive')
+    await settled(view)
+
+    expect(recorded.updated).toEqual([['p2', { readOnly: false }]])
+    expect(recorded.refreshed).toBe(1)
+    expect(view.querySelector('[data-error]')).toBeNull()
+  })
+
+  it('explains the swap when no writable slot is free, and still reads the list again', async () => {
+    updateFails = new ProjectUpdateError('project-limit-reached')
+    const view = await page(overInput())
+
+    await choose(view, 'project_p2', 'keepActive')
+    await settled(view)
+
+    const said = text(find(view, '[data-error]'))
+    expect(said).toContain('Make read-only')
+    expect(said).toContain('Remove from server')
+    expect(recorded.refreshed).toBe(1)
+  })
+
+  it('makes a writable project read-only, freeing its slot, only while over the limit', async () => {
+    const view = await page(overInput())
+
+    expect(item(view, 'project_p2', 'makeReadOnly')).toBeNull()
+    await choose(view, 'project_p1', 'makeReadOnly')
+    await settled(view)
+    expect(recorded.updated).toEqual([['p1', { readOnly: true }]])
+    expect(recorded.refreshed).toBe(1)
+
+    // Within the limit: nothing is read-only, and the server would refuse it (409).
+    const within = await page({
+      plan: 'member',
+      reportedLimit: 3,
+      local: [entry({ dbName: 'project_p1', name: 'Beta', projectId: 'p1' })],
+      server: [project()],
+    })
+    expect(item(within, 'project_p1', 'makeReadOnly')).toBeNull()
+    expect(item(within, 'project_p1', 'keepActive')).toBeNull()
+  })
+
+  it('offers a manager neither choice, but still says the project is read-only', async () => {
+    const view = await page({
+      plan: 'member',
+      reportedLimit: 3,
+      local: [entry({ dbName: 'project_p4', name: 'Theirs', projectId: 'p4', role: 'manage' })],
+      server: [
+        project({
+          projectId: 'p4',
+          dbName: 'project_p4',
+          name: 'Theirs',
+          role: 'manage',
+          owner: { ownerType: 'user', ownerId: 'them' },
+          readOnly: true,
+          graceUntil: GRACE,
+        }),
+      ],
+    })
+
+    expect(item(view, 'project_p4', 'keepActive')).toBeNull()
+    expect(item(view, 'project_p4', 'makeReadOnly')).toBeNull()
+    expect(text(find(view, '[data-row="project_p4"] [data-lifecycle-tip]'))).toContain(
+      'Only the owner',
+    )
+  })
+
+  it('opens a read-only project non-editable', async () => {
+    const view = await page(overInput())
+
+    await click(view, '[data-row="project_p2"] [data-open]')
+
+    expect(currentProjectDatabaseName()).toBe('project_p2')
+    expect(projectIsEditable()).toBe(false)
+  })
+
+  it('marks a read-only project in the pro table and the free card too', async () => {
+    const pro = await page(overInput({ plan: 'pro', reportedLimit: 1 }))
+    expect(pro.querySelector('[data-row="project_p2"] [data-lifecycle="read-only"]')).not.toBeNull()
+
+    const free = await page(overInput({ plan: 'free' }))
+    expect(
+      free.querySelector('[data-row="project_p2"] [data-lifecycle="read-only"]'),
+    ).not.toBeNull()
+    // The free card offers no sync controls (C-R14); its upgrade hint covers them.
+    expect(item(free, 'project_p2', 'keepActive')).toBeNull()
+  })
+
+  it('speaks German', async () => {
+    await activateLocale('de')
+    const view = await page(overInput())
+
+    expect(text(find(view, '[data-row="project_p2"] [data-lifecycle-tip]'))).toContain('26.10.2026')
+    expect(text(item(view, 'project_p2', 'keepActive'))).toContain('Dieses Projekt aktiv halten')
   })
 })

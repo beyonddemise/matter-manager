@@ -1447,6 +1447,86 @@
   <source>Repeat the password to export.</source>
   <target>Wiederholen Sie das Passwort, um zu exportieren.</target>
 </trans-unit>
+<trans-unit id="sdcab34b206d8b523">
+  <source>Frees its slot for another project</source>
+  <target>Gibt seinen Platz für ein anderes Projekt frei</target>
+</trans-unit>
+<trans-unit id="s1d3cb0cc3c16de6a">
+  <source>Only the owner can choose this</source>
+  <target>Nur der Eigentümer kann das wählen</target>
+</trans-unit>
+<trans-unit id="s773dfa44ec43dd62">
+  <source>Keep this one active</source>
+  <target>Dieses Projekt aktiv halten</target>
+</trans-unit>
+<trans-unit id="s539fc031f05944c2">
+  <source>Make read-only</source>
+  <target>Schreibschutz setzen</target>
+</trans-unit>
+<trans-unit id="s3f837eaeeece44bb">
+  <source>Archived by plan</source>
+  <target>Durch Tarif archiviert</target>
+</trans-unit>
+<trans-unit id="s8d49994584fb9323">
+  <source>Read-only: this project is over your plan’s project limit.</source>
+  <target>Nur lesbar: Dieses Projekt liegt über dem Projektlimit Ihres Tarifs.</target>
+</trans-unit>
+<trans-unit id="sbc1cfa6c7460384c">
+  <source>Read-only: this project is over its owner’s plan limit.</source>
+  <target>Nur lesbar: Dieses Projekt liegt über dem Tariflimit seines Eigentümers.</target>
+</trans-unit>
+<trans-unit id="s6d468ceb366416f1">
+  <source>On <x id="0" equiv-text="${dateText(until)}"/> it is archived, and 90 days later deleted.</source>
+  <target>Am <x id="0" equiv-text="${dateText(until)}"/> wird es archiviert und 90 Tage später gelöscht.</target>
+</trans-unit>
+<trans-unit id="s1b256b93b6c14c2f">
+  <source>Upgrade to keep it, or make another project read-only and choose “<x id="0" equiv-text="${actionText('keepActive')}"/>” here.</source>
+  <target>Wechseln Sie auf einen höheren Tarif, um es zu behalten, oder setzen Sie bei einem anderen Projekt den Schreibschutz und wählen Sie hier „<x id="0" equiv-text="${actionText('keepActive')}"/>“.</target>
+</trans-unit>
+<trans-unit id="s102057f14725341c">
+  <source>Only the owner can make it writable again.</source>
+  <target>Nur der Eigentümer kann es wieder beschreibbar machen.</target>
+</trans-unit>
+<trans-unit id="sa074aecceec4862d">
+  <source>Archived: this project was over your plan’s project limit when its read-only period ended.</source>
+  <target>Archiviert: Dieses Projekt lag über dem Projektlimit Ihres Tarifs, als seine Schreibschutzfrist endete.</target>
+</trans-unit>
+<trans-unit id="s04a1d7df2287f4ee">
+  <source>Archived: this project was over its owner’s plan limit.</source>
+  <target>Archiviert: Dieses Projekt lag über dem Tariflimit seines Eigentümers.</target>
+</trans-unit>
+<trans-unit id="s45bd381222907687">
+  <source>The server deletes it on <x id="0" equiv-text="${dateText(at)}"/>.</source>
+  <target>Der Server löscht es am <x id="0" equiv-text="${dateText(at)}"/>.</target>
+</trans-unit>
+<trans-unit id="s3dc3c2cd803595d9">
+  <source>Upgrading brings it back.</source>
+  <target>Ein Tarifwechsel nach oben stellt es wieder her.</target>
+</trans-unit>
+<trans-unit id="s6297d95e0264e6db">
+  <source>Only the owner can bring it back, by upgrading.</source>
+  <target>Nur der Eigentümer kann es wiederherstellen, durch einen Tarifwechsel nach oben.</target>
+</trans-unit>
+<trans-unit id="s9ebb5c8c71996fb6">
+  <source>Projects your plan allows: <x id="0" equiv-text="${limit}"/>. Projects you own: <x id="1" equiv-text="${owned}"/>.</source>
+  <target>Projekte, die Ihr Tarif erlaubt: <x id="0" equiv-text="${limit}"/>. Projekte, die Ihnen gehören: <x id="1" equiv-text="${owned}"/>.</target>
+</trans-unit>
+<trans-unit id="s7935a54dc55bda4e">
+  <source>Those over the limit are read-only, then archived, and deleted 90 days later.</source>
+  <target>Die Projekte über dem Limit sind nur lesbar, werden dann archiviert und 90 Tage später gelöscht.</target>
+</trans-unit>
+<trans-unit id="saf31c4fe103c796c">
+  <source>Those over the limit are read-only until <x id="0" equiv-text="${dateText(until)}"/>, then archived, and deleted 90 days later.</source>
+  <target>Die Projekte über dem Limit sind bis zum <x id="0" equiv-text="${dateText(until)}"/> nur lesbar, werden dann archiviert und 90 Tage später gelöscht.</target>
+</trans-unit>
+<trans-unit id="s5c115da81177f4a5">
+  <source>Upgrade to keep them all, or choose which stay writable from each project’s menu.</source>
+  <target>Wechseln Sie auf einen höheren Tarif, um alle zu behalten, oder wählen Sie im Menü jedes Projekts, welche beschreibbar bleiben.</target>
+</trans-unit>
+<trans-unit id="s3a77330865da10bd">
+  <source>No writable project is free on your plan. Choose “<x id="0" equiv-text="${actionText('makeReadOnly')}"/>” or “<x id="1" equiv-text="${actionText('removeServer')}"/>” on another project first, then try again.</source>
+  <target>Ihr Tarif hat keinen freien Platz für ein beschreibbares Projekt. Wählen Sie zuerst bei einem anderen Projekt „<x id="0" equiv-text="${actionText('makeReadOnly')}"/>“ oder „<x id="1" equiv-text="${actionText('removeServer')}"/>“ und versuchen Sie es dann erneut.</target>
+</trans-unit>
 </body>
 </file>
 </xliff>

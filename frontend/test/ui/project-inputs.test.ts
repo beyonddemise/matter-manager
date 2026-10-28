@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { type LocalCache, localCache } from '../../src/data/index.js'
+import { type LocalCache, localCache, type ServerProject } from '../../src/data/index.js'
 import { fetchProjectList, readProjectFacts } from '../../src/ui/project-inputs.js'
 import type { Project } from '../../src/ui/projects.js'
 import { memoryDatabase } from '../data/support/memory-database.js'
@@ -103,6 +103,8 @@ describe('the server list', () => {
         client: 'Acme',
         role: 'owner',
         archived: false,
+        readOnly: false,
+        autoArchived: false,
       },
       {
         projectId: 'p2',
@@ -111,6 +113,8 @@ describe('the server list', () => {
         client: 'Acme',
         role: 'owner',
         archived: true,
+        readOnly: false,
+        autoArchived: false,
       },
     ])
   })
@@ -149,6 +153,68 @@ describe('the server list', () => {
 
     const [remembered] = (await readProjectFacts(cache, undefined, false)).server ?? []
     expect(remembered !== undefined && 'client' in remembered).toBe(false)
+  })
+})
+
+describe('the read-only grace lifecycle in the remembered list (#211, #284)', () => {
+  it('is remembered, so an offline page still says read-only, until when, and when deleted', async () => {
+    await fetchProjectList(
+      async () => [
+        project({ readOnly: true, autoArchived: false, graceUntil: 1_793_000_000 }),
+        project({
+          projectId: 'p2',
+          dbName: 'project_p2',
+          archived: true,
+          readOnly: false,
+          autoArchived: true,
+          deleteAfter: 1_797_776_000,
+        }),
+      ],
+      cache,
+      () => FETCHED,
+    )
+
+    const [locked, archived] = (await readProjectFacts(cache, undefined, false)).server ?? []
+    expect(locked).toMatchObject({ readOnly: true, autoArchived: false, graceUntil: 1_793_000_000 })
+    expect(archived).toMatchObject({
+      readOnly: false,
+      autoArchived: true,
+      deleteAfter: 1_797_776_000,
+    })
+  })
+
+  it('reads a list cached by an older build, without the fields, as writable', async () => {
+    // What an older build wrote: no lifecycle at all.
+    await cache.writeProjects(
+      [{ projectId: 'p1', dbName: 'project_p1', name: 'Alt', role: 'owner', archived: false }],
+      FETCHED,
+    )
+
+    const [remembered] = (await readProjectFacts(cache, undefined, false)).server ?? []
+    expect(remembered?.readOnly).toBe(false)
+    expect(remembered?.autoArchived).toBe(false)
+    expect(remembered !== undefined && 'graceUntil' in remembered).toBe(false)
+  })
+
+  it('reads garbage another build cached as the contract allows', async () => {
+    await cache.writeProjects(
+      [
+        {
+          projectId: 'p1',
+          dbName: 'project_p1',
+          name: 'Alt',
+          role: 'owner',
+          archived: false,
+          readOnly: 'yes',
+          graceUntil: 'soon',
+        } as unknown as ServerProject,
+      ],
+      FETCHED,
+    )
+
+    const [remembered] = (await readProjectFacts(cache, undefined, false)).server ?? []
+    expect(remembered?.readOnly).toBe(false)
+    expect(remembered !== undefined && 'graceUntil' in remembered).toBe(false)
   })
 })
 
