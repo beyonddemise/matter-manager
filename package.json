@@ -29,6 +29,6 @@
     "verify": "npm run check:deps && npm run check:npmrc && npm run check:node && npm run check:dependabot && npm run check:couchdb-ini && npm run test:scripts && npm run check && npm --prefix frontend run verify"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.15"
+    "@biomejs/biome": "^2.6.3"
   }
 }
