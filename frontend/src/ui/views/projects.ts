@@ -23,6 +23,7 @@ import {
   type CurrentTarget,
   ProjectActionError,
   type ProjectActions,
+  PUSH_TIMEOUT_MS,
   projectActions,
 } from '../project-actions.js'
 import {
@@ -328,11 +329,16 @@ export class ProjectsView extends LitElement {
    * The owner's choice during the read-only grace (#284): keep a read-only project active
    * (`readOnly: false`), or give a writable one's slot up (`readOnly: true`).
    *
-   * Nothing on this device changes, so it is a plain `PATCH`, like a rename. The list is read
-   * again afterwards **whether or not it worked**: a swap changes other rows' state too (the
-   * server lifts locks once the owner is within the limit), a refusal may mean the page's list
-   * is out of date, and the open project's editability follows the list. A refused "keep this
-   * one active" for want of a slot is explained as the swap that frees one.
+   * Nothing on this device changes, so it is a plain `PATCH`, like a rename — except that a
+   * lock is **preceded by a push** of this device's copy: once locked the validator refuses
+   * every write, so a change that had not left the copy by then never would. A push that fails
+   * or times out refuses the lock (`unpushed`, the removals' own refusal) and nothing is sent.
+   * Lifting a lock loses nothing, so it pushes nothing; a server-only row has no copy to push.
+   *
+   * The list is read again afterwards **whether or not it worked**: a swap changes other rows'
+   * state too (the server lifts locks once the owner is within the limit), a refusal may mean
+   * the page's list is out of date, and the open project's editability follows the list. A
+   * refused "keep this one active" for want of a slot is explained as the swap that frees one.
    */
   private setReadOnly(row: Row, readOnly: boolean): void {
     const { projectId } = row
@@ -340,6 +346,16 @@ export class ProjectsView extends LitElement {
     void this.run(
       async () => {
         try {
+          if (readOnly && row.location === 'synced') {
+            // Offline the push cannot succeed: say so, rather than "not everything uploaded".
+            if (!this.input.online) throw new ProjectUpdateError('offline')
+            const sync = this.sync ?? NO_SYNC
+            try {
+              await sync.pushNow(projectId, { signal: AbortSignal.timeout(PUSH_TIMEOUT_MS) })
+            } catch (error) {
+              throw new ProjectActionError('unpushed', { cause: error })
+            }
+          }
           await updateProject(
             { api: this.api ?? projects(), online: () => this.input.online },
             projectId,

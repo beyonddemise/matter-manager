@@ -85,6 +85,8 @@ interface Recorded {
   /** Every synchronized creation the page handed to the actions (#326). */
   readonly syncedCreates: NewProject[]
   refreshed: number
+  /** Pushes and patches, in the order they happened, as `push:<id>` and `patch:<id>`. */
+  readonly sequence: string[]
 }
 
 let recorded: Recorded
@@ -100,6 +102,9 @@ let createSyncedAnswer: () => Promise<void>
 
 /** What the fake API's `update` throws, if anything; nothing by default. */
 let updateFails: unknown
+
+/** What the fake replication's `pushNow` throws, if anything; nothing by default. */
+let pushFails: unknown
 
 /** Project actions that record what they were asked and answer with {@link actionAnswer}. */
 const actions: ProjectActions = {
@@ -147,7 +152,9 @@ beforeEach(() => {
     acted: [],
     syncedCreates: [],
     refreshed: 0,
+    sequence: [],
   }
+  pushFails = undefined
   actionAnswer = async () => {}
   createSyncedAnswer = async () => {}
   updateFails = undefined
@@ -169,6 +176,7 @@ const api: ProjectsApi = {
   },
   update: async (projectId, patch) => {
     recorded.updated.push([projectId, patch])
+    recorded.sequence.push(`patch:${projectId}`)
     if (updateFails !== undefined) throw updateFails
     return project({
       projectId,
@@ -193,7 +201,15 @@ async function page(input: Partial<ProjectsInput> = {}): Promise<ProjectsView> {
     <projects-view
       .input=${full}
       .api=${api}
-      .sync=${{ set: (projects: readonly SyncableProject[]) => recorded.synced.push(projects) }}
+      .sync=${{
+        set: (projects: readonly SyncableProject[]) => recorded.synced.push(projects),
+        pushNow: async (projectId: string) => {
+          recorded.sequence.push(`push:${projectId}`)
+          if (pushFails !== undefined) throw pushFails
+        },
+        suspend: () => {},
+        resume: () => {},
+      }}
       .localProjects=${{
         create: async (request: { name: string; client?: string }) => {
           recorded.localCreated.push(request)
@@ -1460,6 +1476,38 @@ describe('the read-only grace after a downgrade (#211, #284)', () => {
     })
     expect(item(within, 'project_p1', 'makeReadOnly')).toBeNull()
     expect(item(within, 'project_p1', 'keepActive')).toBeNull()
+  })
+
+  it('pushes this copy before making it read-only, then sends the lock', async () => {
+    // Once locked the validator refuses every write, so what never left this copy never would.
+    const view = await page(overInput())
+
+    await choose(view, 'project_p1', 'makeReadOnly')
+    await settled(view)
+
+    expect(recorded.sequence).toEqual(['push:p1', 'patch:p1'])
+    expect(view.querySelector('[data-error]')).toBeNull()
+  })
+
+  it('locks nothing when the push fails, and says the changes were not uploaded', async () => {
+    pushFails = new Error('the push timed out')
+    const view = await page(overInput())
+
+    await choose(view, 'project_p1', 'makeReadOnly')
+    await settled(view)
+
+    expect(recorded.sequence).toEqual(['push:p1'])
+    expect(recorded.updated).toEqual([])
+    expect(text(find(view, '[data-error]'))).toContain('Not everything could be uploaded')
+  })
+
+  it('keeps a project active without a push: lifting a lock loses nothing', async () => {
+    const view = await page(overInput())
+
+    await choose(view, 'project_p2', 'keepActive')
+    await settled(view)
+
+    expect(recorded.sequence).toEqual(['patch:p2'])
   })
 
   it('offers a manager neither choice, but still says the project is read-only', async () => {
