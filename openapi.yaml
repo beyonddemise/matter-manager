@@ -948,6 +948,13 @@ paths:
         The plans `POST /billing/checkout` accepts: those the deployment has a Stripe price for,
         in plan order. A 404 (no billing configured) means nothing is for sale here.
       responses:
+        '404':
+          description: |
+            Billing is not configured on this deployment (no `STRIPE_*` set): the route group is
+            absent, as every unconfigured feature is.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '200':
           description: The plans on sale
           content:
@@ -983,6 +990,13 @@ paths:
                   enum: [member, pro]
                   description: One of the plans `GET /billing` lists.
       responses:
+        '404':
+          description: |
+            Billing is not configured on this deployment (no `STRIPE_*` set): the route group is
+            absent, as every unconfigured feature is.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '200':
           description: The Checkout page to send the browser to
           content:
@@ -1031,6 +1045,13 @@ paths:
         account page. Whatever is changed there reaches `plan` through the webhook. Takes no
         body. Rate-limited per account, sharing the checkout budget.
       responses:
+        '404':
+          description: |
+            Billing is not configured on this deployment (no `STRIPE_*` set): the route group is
+            absent, as every unconfigured feature is.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '200':
           description: The portal page to send the browser to
           content:
@@ -1092,6 +1113,13 @@ paths:
               type: object
               description: A Stripe event object (`id`, `type`, `data.object`, ...).
       responses:
+        '404':
+          description: |
+            Billing is not configured on this deployment (no `STRIPE_*` set): the route group is
+            absent, as every unconfigured feature is.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '204': { description: "Handled now, handled before, or of a kind that changes no plan" }
         '400':
           description: |
