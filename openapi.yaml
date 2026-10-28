@@ -635,6 +635,9 @@ paths:
         having the field quietly dropped. CouchDB's `_admin` is not accepted — see the `admin` tag for why that
         role is excluded rather than merely unnecessary. See ADR 0009 — what a plan then permits
         is decided by the policy table, never by a comparison against a tier.
+
+        A `plan` change is a plan switch for the caller's own projects, exactly as `PUT /customer`
+        is for the named account's (#57).
       requestBody:
         # Not `required`, because the handler does not require one: every field is optional, so
         # an empty body is a PATCH that changes nothing and is answered 200 with the profile as
@@ -662,6 +665,14 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '503': { $ref: '#/components/responses/EntitlementsUnavailable' }
+        '500':
+          description: |
+            The plan was saved, but the account's projects could not yet be brought in line with
+            it (#57): locked as read-only after a downgrade, or unlocked and restored after an
+            upgrade. Repeating the same request finishes the job; every step of it is idempotent.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         # `NotAnOperator` rather than `#/components/responses/Forbidden`, because the shared one
         # says only "authenticated but not permitted" - which leaves `reason`, the field a
         # client actually branches on, undescribed. See that schema for why it is spelled out
@@ -800,6 +811,17 @@ paths:
 
         What a plan then permits is decided by the policy table, never by a comparison against a
         tier (ADR 0009).
+
+        **A plan switch adjusts the account's projects (#57).** When the account then owns more
+        active (non-archived) projects than the plan allows - every one of them, on a plan without
+        synchronized projects - the excess become read-only for a 30-day grace (`readOnly`,
+        `graceUntil` on `ProjectSummary`): the N most recently changed stay writable until the
+        owner chooses otherwise (`PATCH /projects/{projectId}` `readOnly`). A project still
+        read-only when its grace ends is archived (`autoArchived`) and, like any archive,
+        hard-deleted 90 days later. A switch that raises the limit lifts the locks within it and
+        brings back projects the grace archived, most recently changed first while there is room;
+        never one the owner archived. Sending the plan the account already has repeats the
+        adjustment and changes nothing that is already in line.
       requestBody:
         required: true
         content:
@@ -826,6 +848,14 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '503': { $ref: '#/components/responses/EntitlementsUnavailable' }
+        '500':
+          description: |
+            The plan was saved, but the account's projects could not yet be brought in line with
+            it (#57): locked as read-only after a downgrade, or unlocked and restored after an
+            upgrade. Repeating the same request finishes the job; every step of it is idempotent.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         # The same refusal `PATCH /profile` gives, by the same role check, carrying the same
         # `reason` - so the same schema. The shared `Forbidden` response was used here until the
         # contract had a way to say which refusal this is, and it left an operator tool's one
@@ -1015,16 +1045,27 @@ paths:
     patch:
       operationId: updateProject
       tags: [projects]
-      summary: Change a project's name, address or archived state
+      summary: Change a project's name, address, archived or read-only state
       description: |
         A settings change, not a permission change. Requires `owner` or `manage` — the role
         that may decide who has access may certainly correct a name, or put the project away.
 
-        All three fields are optional and independent, so a client may send any one alone.
+        All fields are optional and independent, so a client may send any one alone.
         `address` may be `null`, which removes it; that is spelled as a value rather than as a
         missing field, so that a body which simply forgot the address does not erase one.
         `archived` has no such spelling because it has no third state: absent leaves it alone,
         and `true` or `false` sets it.
+
+        `readOnly` is the owner's choice of which projects stay writable during the read-only
+        grace after a downgrade (#57), and only the owner may send it. `false` makes a read-only
+        project writable when the owner's plan has a writable slot free; `true` makes a writable
+        one read-only, which is allowed only while the owner has more active projects than the
+        plan allows - the first half of a swap - and runs until the earliest deadline already
+        running among the owner's read-only projects, so swapping never extends the grace. It
+        cannot be combined with `archived` in one request, and an archived project has no
+        read-only state to change. Archiving a read-only project ends its grace and makes the
+        archive the owner's own: an upgrade will not bring it back. Once archiving leaves the
+        owner within the plan's limit, their other read-only projects become writable.
 
         Answers 404 rather than 403 to a caller who is not a participant, for the reason the
         member operations do: a 403 would confirm that a project with this id exists, which is
@@ -1053,6 +1094,12 @@ paths:
                     Put the project away, or bring it back. A state rather than an event, so
                     it can be undone — a project that could be archived and not unarchived
                     would be deleted with extra steps.
+                readOnly:
+                  type: boolean
+                  description: |
+                    The owner's choice during the read-only grace (#57): `false` keeps this
+                    project writable (taking one of the plan's writable slots), `true` gives its
+                    slot up so another project can take it. Owner only.
       responses:
         '200':
           description: The project as it now stands
@@ -1070,21 +1117,32 @@ paths:
         '503': { $ref: '#/components/responses/EntitlementsUnavailable' }
         '403':
           description: |
-            Refused, for one of three reasons a client branches on. `not-a-manager`: the caller
-            is a participant without the role to change settings. `plan-no-sync` and
-            `project-limit-reached`: the caller may change settings, but **unarchiving** a
-            project makes it active again, and the OWNER's plan (not the caller's: the owner
-            pays, a manager may unarchive) has no synchronized projects or no room left among
-            its projects that are not archived. Without that check an owner could archive,
-            create a replacement and unarchive, and walk past the limit. Nothing is written.
+            Refused, for one of four reasons a client branches on. `not-a-manager`: the caller
+            is a participant without the role to change settings. `not-the-owner`: the caller
+            sent `readOnly` and is not the owner. `plan-no-sync` and `project-limit-reached`:
+            the caller may change settings, but **unarchiving** a project makes it active again,
+            and the OWNER's plan (not the caller's: the owner pays, a manager may unarchive) has
+            no synchronized projects or no room left among its projects that are not archived.
+            Without that check an owner could archive, create a replacement and unarchive, and
+            walk past the limit. The same two answer `readOnly: false` when the plan has no
+            writable slot left among the owner's active projects. Nothing is written.
           content:
             application/problem+json:
               schema:
                 oneOf:
                   - $ref: '#/components/schemas/NotAManager'
+                  - $ref: '#/components/schemas/NotTheOwner'
                   - $ref: '#/components/schemas/PlanHasNoSync'
                   - $ref: '#/components/schemas/ProjectLimitReached'
         '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: |
+            Either somebody else changed the project at the same time and this service gave up
+            retrying, or `readOnly` does not apply: the project is archived, or `true` was sent
+            while the owner is within the plan's limit. Nothing is written.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         # The owner's plan or project count could not be read while unarchiving. Scrubbed, as
         # `POST /projects`'s 500 is.
         '500':
@@ -1657,7 +1715,7 @@ components:
 
     ProjectSummary:
       type: object
-      required: [projectId, dbName, name, role, owner, archived]
+      required: [projectId, dbName, name, role, owner, archived, readOnly, autoArchived]
       properties:
         projectId: { type: string, format: uuid }
         dbName: { type: string, description: 'CouchDB database to replicate, e.g. project_<uuid>' }
@@ -1700,6 +1758,34 @@ components:
             Always present, even for projects created before this field existed: the registry
             view emits `doc.archived === true`, so an absent field reads as `false` rather
             than as null. No migration of stored pointers was needed or performed.
+        deleteAfter:
+          type: integer
+          description: |
+            When the scheduled server job (#26) may hard-delete the project, in seconds since the
+            epoch: `archivedAt` plus 90 days. The job runs daily, so the deletion happens at its
+            first run from this moment on. Present exactly when `archived` is and `archivedAt`
+            is; the machine-readable form of the 90 days `archived` describes, for a client
+            telling the user by when to bring the project back.
+        readOnly:
+          type: boolean
+          description: |
+            Over its owner's plan limit after a downgrade (#57), for every participant: the
+            project is still listed, read and synced, and CouchDB refuses every write to it -
+            deletions included - until the owner upgrades or keeps it as one of the projects
+            that stay writable (`PATCH /projects/{projectId}`). Always present; never `true` on
+            an archived project.
+        graceUntil:
+          type: integer
+          description: |
+            When the read-only grace ends, in seconds since the epoch: a project still read-only
+            then is archived by a scheduled server job (`autoArchived`), and hard-deleted 90
+            days after that. Present exactly when `readOnly` is `true`.
+        autoArchived:
+          type: boolean
+          description: |
+            Archived because its read-only grace ended, rather than by a person (#57): a plan
+            switch that makes room brings it back, which it never does for an archive somebody
+            chose. Always present; only ever `true` on an archived project.
 
     Member:
       type: object
@@ -1813,6 +1899,25 @@ components:
         reason:
           type: string
           const: not-a-manager
+          description: >-
+            Pinned, so a handler that renamed it or stopped sending it fails the contract check
+            rather than silently becoming a refusal no client recognises.
+
+    NotTheOwner:
+      type: object
+      description: |
+        Choosing whether a project stays writable during the read-only grace (#57) was refused:
+        that is the owner's choice, because it decides which of the owner's projects the plan's
+        writable slots go to. A manager may still rename, archive or unarchive the project.
+      required: [title, status, reason]
+      properties:
+        type: { type: string, format: uri }
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: string }
+        reason:
+          type: string
+          const: not-the-owner
           description: >-
             Pinned, so a handler that renamed it or stopped sending it fails the contract check
             rather than silently becoming a refusal no client recognises.
