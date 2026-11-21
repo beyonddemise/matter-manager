@@ -1169,6 +1169,34 @@ describe('reviewing before saving', () => {
     expect((await devices())[0]?.payload).toBe(aqaraPayload())
   })
 
+  it('re-checks the steps when Save refreshes for a code decoded after it opened', async () => {
+    // Reached with the setup code still empty and an image decoding: Scan is flagged. When the
+    // decode lands and Save refreshes the summary, the verdicts must follow it - a card saying
+    // the code is missing beside a valid code would send the person to fix what already works.
+    const element = await form()
+    fillAll(element)
+    fill(element, 'credential', '')
+    const decoded = deferred<readonly string[]>()
+    element.decodeImage = () => decoded.promise
+    await chooseFile(element, pngFile())
+    await toReview(element)
+    expect(flagged(element, 'scan')).toBe(true)
+    expect(reviewOf(element, 'scan').dataset.status).toBe('problem')
+
+    decoded.resolve([aqaraPayload()])
+    await waitUntil(
+      () => fieldValue(element, 'credential') === aqaraPayload(),
+      'the decoded code never reached the field',
+    )
+    dispatchSubmit(element)
+    await waitUntil(() => changedNotice(element), 'Save never refreshed')
+
+    expect(flagged(element, 'scan')).toBe(false)
+    expect(completed(element, 'scan')).toBe(true)
+    expect(reviewOf(element, 'scan').dataset.status).toBe('complete')
+    expect(reviewOf(element, 'scan').querySelector('[data-review-problem]')).toBeNull()
+  })
+
   it('saves only from Review', async () => {
     const element = await form()
     fillAll(element)

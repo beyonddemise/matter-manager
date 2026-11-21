@@ -472,6 +472,19 @@ export class AddDeviceView extends DeviceFormView {
     this.checked = { ...this.checked, [step]: outcome }
   }
 
+  /**
+   * Puts a summary on the Save step, with every step checked against the same controls.
+   *
+   * The one way a summary reaches the screen - on arriving and when Save refreshes it - so
+   * the cards and the stepper cannot judge different values. Every step, including any jumped
+   * over or changed since it was left: a code an image decoded after Save opened would
+   * otherwise sit beside a card still saying the code is missing.
+   */
+  private showReview(summary: Reviewed): void {
+    for (const step of ['scan', 'place', 'name'] as const) this.checkStep(step)
+    this.reviewed = summary
+  }
+
   /** The problem the last check of `step` found, if it found one. */
   private problemOn(step: AddStep): DraftError | undefined {
     const outcome = this.checked[step]
@@ -498,18 +511,13 @@ export class AddDeviceView extends DeviceFormView {
   private onStepChange(event: WaStepChangeEvent): void {
     const left = event.detail.previousName as AddStep | null
     this.step = event.detail.name as AddStep
-    const toCheck: readonly AddStep[] =
-      this.step === 'review'
-        ? ['scan', 'place', 'name']
-        : left === null || left === 'review'
-          ? []
-          : [left]
-    for (const step of toCheck) this.checkStep(step)
-    this.error = this.problemOn(this.step)
     if (this.step === 'review') {
-      this.reviewed = this.snapshotForReview()
+      this.showReview(this.snapshotForReview())
       this.reviewChanged = false
+    } else if (left !== null && left !== 'review') {
+      this.checkStep(left)
     }
+    this.error = this.problemOn(this.step)
     void this.focusStep(this.step)
   }
 
@@ -675,7 +683,7 @@ export class AddDeviceView extends DeviceFormView {
       if (this.step !== 'review' || this.reviewed !== pressedOn) return
       const now = this.snapshotForReview()
       if (pressedOn === undefined || !sameReview(now, pressedOn)) {
-        this.reviewed = now
+        this.showReview(now)
         this.reviewChanged = true
         return
       }
