@@ -5,7 +5,7 @@
   "type": "module",
   "description": "The browser application: Matter codec, offline catalogue and Lit SPA. Installs and tests on its own.",
   "engines": {
-    "node": ">=24"
+    "node": ">=26"
   },
   "scripts": {
     "dev": "vite",
