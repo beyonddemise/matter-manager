@@ -3,12 +3,8 @@
 import '@awesome.me/webawesome-pro/dist/components/step/step.js'
 import '@awesome.me/webawesome-pro/dist/components/stepper/stepper.js'
 // Types only: the side-effect imports above are what register the elements.
-import type WaStep from '@awesome.me/webawesome-pro/dist/components/step/step.js'
 import type WaStepper from '@awesome.me/webawesome-pro/dist/components/stepper/stepper.js'
-import type {
-  WaBeforeStepChangeEvent,
-  WaStepChangeEvent,
-} from '@awesome.me/webawesome-pro/dist/events/events.js'
+import type { WaStepChangeEvent } from '@awesome.me/webawesome-pro/dist/events/events.js'
 import { msg } from '@lit/localize'
 import { html, type TemplateResult } from 'lit'
 import {
@@ -26,11 +22,11 @@ import {
 } from '../../domain/index.js'
 import { BACKFILL_WANTED, type CatalogApi } from '../catalog.js'
 import { catalog } from '../composition.js'
-import { imageMessage } from '../i18n/problems.js'
+import { imageMessage, problemMessage } from '../i18n/problems.js'
 import { codesFromImage, type ImageProblem, ImageScanError } from '../scan/image.js'
 import { cameraSource, type ScanSource } from '../scan/source.js'
 import { accessToken } from '../tokens.js'
-import { type ReviewSummary, renderReview } from './add-device-review.js'
+import { type ReviewSummary, renderReview, type StepStatus } from './add-device-review.js'
 import { DeviceFormView, fieldValue } from './device-form.js'
 import './scan-dialog.js'
 
@@ -72,9 +68,6 @@ function sameReview(a: Reviewed, b: Reviewed): boolean {
 /** The four steps of adding a device, by their `<wa-step name>` (#349). */
 export type AddStep = 'scan' | 'place' | 'name' | 'review'
 
-/** The steps in the order the stepper shows them: what "forward" means for a jump. */
-const STEPS: readonly AddStep[] = ['scan', 'place', 'name', 'review']
-
 /**
  * The step that owns each field a new device's draft can fail on: where a message about that
  * field has to be shown, so that it sits beside a control the person can see.
@@ -87,11 +80,11 @@ export const STEP_OF: Readonly<Record<'credential' | 'installedAt' | 'room' | 'n
 }
 
 /**
- * What each step checks before it may be left forward: its own fields, and only those.
+ * What earns each step its checkmark: its own fields, and only those.
  *
  * Derived from {@link STEP_OF} rather than written out a second time, so a field cannot be
- * shown on one step and checked on another. Review checks nothing of its own; Save runs the
- * whole plan.
+ * shown on one step and checked on another. The last step checks nothing of its own; Save
+ * runs the whole plan.
  */
 const CHECKS: Readonly<Record<AddStep, readonly DraftField[]>> = {
   scan: fieldsOf('scan'),
@@ -153,6 +146,7 @@ export class AddDeviceView extends DeviceFormView {
     step: { state: true },
     reviewed: { state: true },
     reviewChanged: { state: true },
+    checked: { state: true },
   }
 
   /**
@@ -177,6 +171,13 @@ export class AddDeviceView extends DeviceFormView {
    * summary instead of saving, and has to say so. Cleared each time Review is entered afresh.
    */
   declare reviewChanged: boolean
+
+  /**
+   * What each step's check found when the person last left it: `true` for a pass, the problem
+   * otherwise; absent for a step not yet left. The stepper draws its checkmarks and warnings
+   * from this, and a step shows its problem again when the person comes back to it.
+   */
+  declare checked: Readonly<Partial<Record<AddStep, DraftError | true>>>
 
   /** Bound by a test to a camera that is not one; the real one otherwise. */
   declare scanSource?: ScanSource
@@ -227,6 +228,7 @@ export class AddDeviceView extends DeviceFormView {
     this.step = 'scan'
     this.reviewed = undefined
     this.reviewChanged = false
+    this.checked = {}
   }
 
   protected override firstUpdated(): void {
@@ -445,106 +447,77 @@ export class AddDeviceView extends DeviceFormView {
     return { ...this.fields(), credential: fieldValue(this, '[data-field="credential"]') }
   }
 
-  /**
-   * The stepper, once rendered. Under `linear`, its `next()` and `goTo()` silently do nothing
-   * for a locked step: every step after the first one not `completed`.
-   */
+  /** The stepper, once rendered. */
   private stepper(): WaStepper | null {
     return this.querySelector('wa-stepper')
   }
 
-  /** The `<wa-step>` for a step. */
-  private stepElement(step: AddStep): WaStep | null {
-    return this.querySelector<WaStep>(`wa-step[name="${step}"]`)
-  }
-
   /**
-   * Checks one step's own fields, and says whether they pass.
+   * Checks a step's own fields as the person leaves it, and records what it found.
    *
-   * The same readers `planNewDevice` runs (`checkDraftFields`), so a step cannot accept what
-   * Save would refuse. A failure shows the existing error and hint and takes the step's
-   * checkmark away, because under `linear` that checkmark is what lets later steps be reached;
-   * a pass clears an error that was about this step.
+   * Validation without a gate (#349): every step is checked, and none refuses the person on
+   * the way out - they move between steps freely, in any order. The same readers
+   * `planNewDevice` runs (`checkDraftFields`), so a checkmark never promises what Save would
+   * refuse. The message itself waits for the person's return: shown now, it would name a
+   * control that is about to be hidden. Until then the stepper flags the step.
    */
-  private checkStep(step: AddStep): boolean {
+  private checkStep(step: AddStep): void {
+    let outcome: DraftError | true = true
     try {
       checkDraftFields(this.draft(), CHECKS[step])
     } catch (problem) {
       if (!(problem instanceof DraftError)) throw problem
-      this.error = problem
-      const element = this.stepElement(step)
-      if (element) element.completed = false
-      return false
+      outcome = problem
     }
-    if (this.error !== undefined && stepOf(this.error.field) === step) this.error = undefined
-    return true
+    this.checked = { ...this.checked, [step]: outcome }
   }
 
   /**
-   * Next: checks the step on screen and, if it passes, moves to the one after it.
+   * Puts a summary on the Save step, with every step checked against the same controls.
    *
-   * `completed` is set **before** `next()`, and that order is load-bearing: the stepper never
-   * sets it itself, and under `linear` the step after an incomplete one is locked, so `next()`
-   * would silently do nothing.
+   * The one way a summary reaches the screen - on arriving and when Save refreshes it - so
+   * the cards and the stepper cannot judge different values. Every step, including any jumped
+   * over or changed since it was left: a code an image decoded after Save opened would
+   * otherwise sit beside a card still saying the code is missing.
    */
-  private advance(): void {
-    const step = this.step
-    if (!this.checkStep(step)) return
-    const element = this.stepElement(step)
-    if (element) element.completed = true
-    this.stepper()?.next()
+  private showReview(summary: Reviewed): void {
+    for (const step of ['scan', 'place', 'name'] as const) this.checkStep(step)
+    this.reviewed = summary
+  }
+
+  /** The problem the last check of `step` found, if it found one. */
+  private problemOn(step: AddStep): DraftError | undefined {
+    const outcome = this.checked[step]
+    return outcome instanceof DraftError ? outcome : undefined
   }
 
   /**
-   * Moves to a step, if the stepper lets it: one not yet reached stays locked.
-   *
-   * Public for Review's "Edit" links and for a save-time error that has to be shown on the step
-   * that owns its field.
+   * Moves to a step. Public for the last step's "Edit" links and for a save-time error that
+   * has to be shown on the step that owns its field.
    */
   goToStep(step: AddStep): void {
     this.stepper()?.goTo(step)
   }
 
   /**
-   * Refuses a jump forward - a click on a later step - over any step that no longer passes, and
-   * stops on the first such step instead.
+   * Checks the step being left, and shows the panel for the step the stepper moved to.
    *
-   * Every step from the one being left up to the target is checked, not only the one being
-   * left: a step passed earlier can have been emptied since - Review's Edit, clear the room,
-   * Back to Scan it, then a click on Review - and its checkmark, which unlocks the later steps,
-   * would otherwise carry the person past it to a Review showing the gap. The jump then goes to
-   * the failing step, so its message sits beside its control; `checkStep` has already set the
-   * error, which `onStepChange` keeps because that step owns it. That nested `goTo` is itself a
-   * forward jump, and the steps before the failing one pass, so it is allowed.
-   *
-   * Going back is always allowed and never takes a checkmark away: Review's "Edit" would
-   * otherwise lock every step after the one edited and make the person walk them all again.
-   */
-  private onBeforeStepChange(event: WaBeforeStepChangeEvent): void {
-    const from = event.detail.previousName as AddStep | null
-    const to = event.detail.name as AddStep
-    if (from === null || STEPS.indexOf(to) <= STEPS.indexOf(from)) return
-    const failing = STEPS.slice(STEPS.indexOf(from), STEPS.indexOf(to)).find(
-      (step) => !this.checkStep(step),
-    )
-    if (failing === undefined) return
-    event.preventDefault()
-    if (failing !== from) this.goToStep(failing)
-  }
-
-  /**
-   * Shows the panel for the step the stepper moved to.
-   *
-   * An error about a field on another step goes: it names a control the person can no longer
-   * see (the spec's third anti-goal). One about this step's own fields stays beside them.
+   * The error on screen is always the new step's own, if it has one: an error about a field on
+   * another step would name a control the person can no longer see (the spec's third
+   * anti-goal). The last step has no fields of its own, so it is never flagged itself;
+   * arriving on it checks every other step, including any jumped over, so its cards and the
+   * stepper give one verdict on everything about to be saved.
    */
   private onStepChange(event: WaStepChangeEvent): void {
+    const left = event.detail.previousName as AddStep | null
     this.step = event.detail.name as AddStep
-    if (this.error !== undefined && stepOf(this.error.field) !== this.step) this.error = undefined
     if (this.step === 'review') {
-      this.reviewed = this.snapshotForReview()
+      this.showReview(this.snapshotForReview())
       this.reviewChanged = false
+    } else if (left !== null && left !== 'review') {
+      this.checkStep(left)
     }
+    this.error = this.problemOn(this.step)
     void this.focusStep(this.step)
   }
 
@@ -618,6 +591,16 @@ export class AddDeviceView extends DeviceFormView {
       : ''
   }
 
+  /** Each step's verdict for its Review card, the problem put into the person's language. */
+  private reviewStatus(): StepStatus {
+    return Object.fromEntries(
+      Object.entries(this.checked).map(([step, outcome]) => [
+        step,
+        outcome === true ? true : problemMessage(outcome.problem),
+      ]),
+    )
+  }
+
   /** Review, once it has been entered; nothing before, as there is nothing yet to summarise. */
   private renderReviewPanel(): TemplateResult | '' {
     const reviewed = this.reviewed
@@ -629,7 +612,7 @@ export class AddDeviceView extends DeviceFormView {
              plain visually-hidden utility, which shows content on focus: the stepper already
              names the step on screen, and a heading appearing on every entry would shift the
              cards. Not in the tab order; only focusStep puts focus here. -->
-        <h2 class="wa-visually-hidden-force" tabindex="-1" data-review-heading>${msg('Review')}</h2>
+        <h2 class="wa-visually-hidden-force" tabindex="-1" data-review-heading>${msg('Save')}</h2>
         <!-- Always in the tree, so that the callout is announced when it appears. -->
         <div role="status">
           ${
@@ -645,6 +628,7 @@ export class AddDeviceView extends DeviceFormView {
         </div>
         ${renderReview(
           reviewed.summary,
+          this.reviewStatus(),
           (step) => this.goToStep(step),
           this.reviewCatalogLines(reviewed.code),
         )}
@@ -654,10 +638,10 @@ export class AddDeviceView extends DeviceFormView {
 
   private async onSubmit(event: Event): Promise<void> {
     event.preventDefault()
-    // Enter in a field on steps 1-3 means Next. Saving from Scan it would store a device whose
+    // Enter in a field on steps 1-3 means Next. Saving from Scan would store a device whose
     // place and name the person never saw on Review.
     if (this.step !== 'review') {
-      this.advance()
+      this.stepper()?.next()
       return
     }
     if (this.saving) return
@@ -699,7 +683,7 @@ export class AddDeviceView extends DeviceFormView {
       if (this.step !== 'review' || this.reviewed !== pressedOn) return
       const now = this.snapshotForReview()
       if (pressedOn === undefined || !sameReview(now, pressedOn)) {
-        this.reviewed = now
+        this.showReview(now)
         this.reviewChanged = true
         return
       }
@@ -723,14 +707,14 @@ export class AddDeviceView extends DeviceFormView {
       } catch (problem) {
         if (problem instanceof DraftError) {
           // Shown on the step that owns the field, beside its control, not above a summary that
-          // has no control in it. The error is set first because `onStepChange` keeps exactly
-          // the error the new step owns; the checkmark goes because that step no longer passes.
-          this.error = problem
+          // has no control in it. Recorded as that step's problem first, because `onStepChange`
+          // shows exactly the problem the new step has - and the stepper then flags it too.
           const step = stepOf(problem.field)
           if (step !== undefined) {
-            const element = this.stepElement(step)
-            if (element) element.completed = false
+            this.checked = { ...this.checked, [step]: problem }
             this.goToStep(step)
+          } else {
+            this.error = problem
           }
           return
         }
@@ -809,6 +793,32 @@ export class AddDeviceView extends DeviceFormView {
     `
   }
 
+  /**
+   * One step in the stepper, drawn from {@link checked}: a checkmark once it passed, a warning
+   * once it did not. The warning is a shape in the marker as well as a colour, and is named for
+   * assistive technology (WCAG 2.2 1.4.1) - in the marker rather than as a description under the
+   * label, which wrapped to three lines per step on a phone.
+   */
+  private renderStep(step: AddStep, label: string): TemplateResult {
+    const outcome = this.checked[step]
+    const problem = outcome instanceof DraftError
+    return html`
+      <wa-step name=${step} ?completed=${outcome === true} variant=${problem ? 'danger' : 'brand'}>
+        ${label}
+        ${
+          problem
+            ? html`<wa-icon
+                slot="icon"
+                name="triangle-exclamation"
+                label=${msg('Check this step')}
+                data-step-problem
+              ></wa-icon>`
+            : ''
+        }
+      </wa-step>
+    `
+  }
+
   override render() {
     return html`
       <form class="wa-stack wa-gap-l app-form" @submit=${this.onSubmit} novalidate>
@@ -817,17 +827,21 @@ export class AddDeviceView extends DeviceFormView {
 
         <wa-stepper
           active="scan"
-          orientation="auto"
-          linear
+          orientation="horizontal"
           clickable
           label=${msg('Add a device')}
-          @wa-before-step-change=${this.onBeforeStepChange}
           @wa-step-change=${this.onStepChange}
         >
-          <wa-step name="scan">${msg('Scan it')}</wa-step>
-          <wa-step name="place">${msg('Place it')}</wa-step>
-          <wa-step name="name">${msg('Name it')}</wa-step>
-          <wa-step name="review">${msg('Review')}</wa-step>
+          ${this.renderStep('scan', msg('Scan'))}
+          ${this.renderStep('place', msg('Place'))}
+          ${this.renderStep(
+            'name',
+            msg('Name', {
+              id: 'add-device.step.name',
+              desc: 'Step label, a verb: give the device its name',
+            }),
+          )}
+          <wa-step name="review">${msg('Save')}</wa-step>
         </wa-stepper>
 
         ${this.renderError()}

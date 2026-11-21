@@ -9,7 +9,8 @@
     /* eslint-disable @typescript-eslint/no-explicit-any */
 
     export const templates = {
-      's00cc69de9754e891': `Projektübergabe`,
+      'add-device.step.name': `Benennen`,
+'s00cc69de9754e891': `Projektübergabe`,
 's012da7dfcc47a657': `Diese Projekte haben möglicherweise Änderungen, die nicht auf dem Server sind. Wenn Sie sich abmelden, werden sie von diesem Gerät entfernt.`,
 's01924e0434d0960b': str`${0} auswählen`,
 's033f47026d02c003': `Geben Sie den Projektnamen genau ein, um es zu löschen`,
@@ -37,6 +38,7 @@
 's12d6dde9b30c3093': `Schließen`,
 's132197f83a0f9c6e': `Mit Passkey anmelden`,
 's137e47769946f4df': str`Sie stehen auf der Warteliste für ${0} (seit ${1}).`,
+'s13b3f5afa0862d1c': `Platzieren`,
 's14f88880ab0ab6c8': `Dies konnte nicht gelesen werden. Vergleichen Sie es mit dem Aufdruck auf dem Gerät.`,
 's15e62319b0a3a08a': `BLE`,
 's16cec9411ef91f44': `Seit dem Öffnen von „Prüfen“ hat sich etwas geändert. Bitte prüfen und erneut speichern.`,
@@ -58,6 +60,7 @@
 's1ff2c360b99eb683': `Schreibweisen zusammenführen`,
 's201d0cfc22e51141': `Passkey umbenannt.`,
 's211581895248b54f': `Die Projekte auf diesem Gerät konnten nicht geprüft werden.`,
+'s21ea0624b6865748': `Scannen`,
 's21ef3efa969c9e81': `Zum dunklen Erscheinungsbild wechseln`,
 's21fe63f6e181184e': `Alles, was dieses Konto in diesem Browser abgelegt hat, wird entfernt.`,
 's23a287d243fa6683': `Alle Geräte in diesem Raum erhalten diesen Namen.`,
@@ -74,7 +77,6 @@
 's2d21e03305254dd8': str`„${0}“ wird mit allem, was es enthält, von diesem Gerät gelöscht. Das lässt sich nicht rückgängig machen.`,
 's2d254be190431538': `Geben Sie den Einrichtungscode ein, der auf dem Gerät oder seiner Verpackung steht.`,
 's2d7d8669a523601c': `Vom Server entfernen?`,
-'s2eef7b2323e9e2af': `Benennen`,
 's2fe37ddee0cfb7e8': `Ihr Tarif hat kein Projektlimit.`,
 's3008e7051bd90a59': `Zu diesem Gerät wurde noch nichts erfasst.`,
 's325e0024caf0aa2d': `Teilenummer`,
@@ -143,7 +145,6 @@
 's59160968bc6310cb': `Diese Seite konnte nicht geladen werden. Prüfen Sie Ihre Verbindung und laden Sie dann neu.`,
 's597bb77e9ecf2134': `QR-Payload`,
 's5a16cd0c7f4bfd03': `Name des neuen Projekts`,
-'s5a25655d1aaa6a29': `Platzieren`,
 's5aec541cd0a38006': `Die Anmeldung per E-Mail ist noch nicht verfügbar.`,
 's5b53408a9117f6bd': `Name, Raum, Seriennummer oder Produkt`,
 's5c115da81177f4a5': `Wechseln Sie auf einen höheren Tarif, um alle zu behalten, oder wählen Sie im Menü jedes Projekts, welche beschreibbar bleiben.`,
@@ -189,7 +190,6 @@
 's75bfec52c10b0a16': `Im Netzwerk`,
 's7608573759aa7525': `Testhersteller`,
 's773dfa44ec43dd62': `Dieses Projekt aktiv halten`,
-'s77617635b59619d5': `Scannen`,
 's7935a54dc55bda4e': `Die Projekte über dem Limit sind nur lesbar, werden dann archiviert und 90 Tage später gelöscht.`,
 's7a90628d47e6474f': `Dies ist kein Matter-Einrichtungscode, den diese Version lesen kann.`,
 's7aa73a226fe11914': `Zurück zu den Geräten`,
@@ -340,6 +340,7 @@
 'sdbab4f1561d03328': `Speichern im Browser-Speicher nicht möglich. Alle Eingaben sind noch vorhanden – bitte erneut versuchen. Falls es weiterhin fehlschlägt, ist der Speicherplatz des Browsers womöglich erschöpft.`,
 'sdc673e73b5c13aea': `Löschen`,
 'sdcab34b206d8b523': `Gibt seinen Platz für ein anderes Projekt frei`,
+'sdcda09c20b09b522': `Vollständig`,
 'sde1942690d2f775d': `Dieses Passwort öffnet die Datei nicht.`,
 'sde1f02481331134c': `Produkt`,
 'sdee220ca2f329ba6': `Name des Passkeys`,
@@ -387,6 +388,7 @@
 'sf78bc12f7d5ef1f9': `Die Warteliste ist nicht erreichbar. Bitte versuchen Sie es erneut.`,
 'sf78c048617264a07': `Diese Seite hat keine Berechtigung, eine Kamera zu verwenden. Erlauben Sie den Kamerazugriff für diese Seite in Ihrem Browser, oder geben Sie den Code ein.`,
 'sf79de50470de29c9': `Dieses Projekt ist zu groß, um es als eine Datei zu exportieren. Es wurde nichts heruntergeladen.`,
+'sf80c83f83ecaeb11': `Diesen Schritt prüfen`,
 'sf8113792b44d84dc': `Ein Gerät braucht einen Namen; darüber finden Sie es später wieder.`,
 'sf9ec6fbd6124932c': str`Projekte, die Ihr Tarif umfasst: ${0}.`,
 'sfabdf1d04838350b': `Ohne Raum`,
@@ -395,7 +397,6 @@
 'sfbc4d1db0bbe6a4e': `Nicht enthalten`,
 'sfbd747a1d61ef2ed': `Dieses Projekt ist nicht mehr auf dem Server`,
 'sfc2d9e54d89a7a0b': `Geht das Passwort verloren, lässt sich die Datei nicht mehr öffnen. Niemand kann es wiederherstellen: weder Matter Manager noch der Server noch Ihre anderen Geräte.`,
-'sfc53e352afbca881': `Prüfen`,
 'sfd7b1a72cf854ff4': `Excel exportieren`,
     };
   

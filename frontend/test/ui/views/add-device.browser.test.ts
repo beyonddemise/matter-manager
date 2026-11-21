@@ -572,6 +572,15 @@ function completed(element: HTMLElement, step: string): boolean {
   return element.querySelector(`wa-step[name="${step}"]`)?.hasAttribute('completed') ?? false
 }
 
+/** Whether the stepper marks a step as failing its check: a warning in its marker. */
+function flagged(element: HTMLElement, step: string): boolean {
+  const found = element.querySelector(`wa-step[name="${step}"]`)
+  return (
+    found?.getAttribute('variant') === 'danger' &&
+    found.querySelector('[data-step-problem]') !== null
+  )
+}
+
 /** What a control's hint says now: its own help, or the message about it. */
 function hintOf(element: HTMLElement, field: string): string | undefined {
   return (element.querySelector(`[data-field="${field}"]`) as { hint?: string } | null)?.hint
@@ -606,19 +615,18 @@ function fillAll(element: HTMLElement): void {
 }
 
 describe('the steps', () => {
-  it('shows Scan it, Place it, Name it and Review, starting on Scan it', async () => {
+  it('shows Scan, Place, Name and Save, starting on Scan', async () => {
     const element = await form()
     await settle(element)
 
     const labels = [...element.querySelectorAll('wa-step')].map((step) => step.textContent?.trim())
-    expect(labels).toEqual(['Scan it', 'Place it', 'Name it', 'Review'])
+    expect(labels).toEqual(['Scan', 'Place', 'Name', 'Save'])
     expect(activeStep(element)).toBe('scan')
     expect(visible(element, '[data-step-panel="scan"]')).toBe(true)
     for (const step of ['place', 'name', 'review']) {
       expect(visible(element, `[data-step-panel="${step}"]`), step).toBe(false)
     }
   })
-
   it('offers Next and Cancel on Scan it, and no Back', async () => {
     const element = await form()
     await settle(element)
@@ -652,18 +660,27 @@ describe('the steps', () => {
     expect(panelOf(element, 'name')).toBe('name')
   })
 
-  it('refuses Next with an empty setup code and says why', async () => {
+  it('moves on from Scan with an empty setup code, flags it, and says why on return', async () => {
+    // Validation without a gate: the step is checked as it is left, but never holds the
+    // person on it. The message waits for their return - shown on Place, it would name a
+    // control that is not on screen.
     const element = await form()
 
     await next(element)
 
+    expect(activeStep(element)).toBe('place')
+    expect(flagged(element, 'scan')).toBe(true)
+    expect(completed(element, 'scan')).toBe(false)
+    expect(element.querySelector('[data-error]')).toBeNull()
+
+    ;(element.querySelector('[data-back]') as HTMLElement).click()
+    await settle(element)
+
     expect(activeStep(element)).toBe('scan')
     expect(errorText(element)).toBeTruthy()
     expect(hintOf(element, 'credential')).toBe(errorText(element))
-    expect(completed(element, 'scan')).toBe(false)
   })
-
-  it('refuses Next on Place it without a room', async () => {
+  it('moves on from Place without a room, and flags it', async () => {
     const element = await form()
     fill(element, 'credential', PAYLOAD)
     await next(element)
@@ -671,13 +688,11 @@ describe('the steps', () => {
 
     await next(element)
 
-    expect(activeStep(element)).toBe('place')
-    expect(errorText(element)).toBeTruthy()
-    expect(hintOf(element, 'room')).toBe(errorText(element))
-    expect(completed(element, 'place')).toBe(false)
+    expect(activeStep(element)).toBe('name')
+    expect(flagged(element, 'place')).toBe(true)
+    expect(completed(element, 'scan')).toBe(true)
   })
-
-  it('refuses Next on Name it without a name', async () => {
+  it('moves on from Name without a name, and its Save card says why', async () => {
     const element = await form()
     fill(element, 'credential', PAYLOAD)
     typeRoom(element, 'Kitchen')
@@ -687,12 +702,15 @@ describe('the steps', () => {
 
     await next(element)
 
-    expect(activeStep(element)).toBe('name')
-    expect(errorText(element)).toBeTruthy()
-    expect(hintOf(element, 'name')).toBe(errorText(element))
-    expect(completed(element, 'name')).toBe(false)
+    expect(activeStep(element)).toBe('review')
+    expect(flagged(element, 'name')).toBe(true)
+    expect(reviewOf(element, 'name').dataset.status).toBe('problem')
+    expect(
+      reviewOf(element, 'name').querySelector('[data-review-problem]')?.textContent?.trim(),
+    ).toBeTruthy()
+    expect(reviewOf(element, 'scan').dataset.status).toBe('complete')
+    expect(reviewOf(element, 'place').dataset.status).toBe('complete')
   })
-
   it('keeps every value across Back and Next', async () => {
     const element = await form()
     fillAll(element)
@@ -715,24 +733,19 @@ describe('the steps', () => {
     expect(fields.map((field) => fieldValue(element, field))).toEqual(before)
   })
 
-  it('drops a message about a step once the person goes back from it', async () => {
-    // A message left on screen would name a control on a panel that is now hidden.
+  it('takes the flag away once the step is fixed and left again', async () => {
     const element = await form()
-    fill(element, 'credential', PAYLOAD)
-    typeRoom(element, 'Kitchen')
     await next(element)
-    await next(element)
-    await next(element)
-    expect(activeStep(element)).toBe('name')
-    expect(errorText(element)).toBeTruthy()
+    expect(flagged(element, 'scan')).toBe(true)
 
     ;(element.querySelector('[data-back]') as HTMLElement).click()
     await settle(element)
+    fill(element, 'credential', PAYLOAD)
+    await next(element)
 
-    expect(activeStep(element)).toBe('place')
-    expect(element.querySelector('[data-error]')).toBeNull()
+    expect(flagged(element, 'scan')).toBe(false)
+    expect(completed(element, 'scan')).toBe(true)
   })
-
   it('keeps every checkmark when going back', async () => {
     // Clearing them would lock every later step and make Review's "Edit" a walk through all of
     // them again.
@@ -764,50 +777,41 @@ describe('the steps', () => {
     expect(visible(element, '[data-step-panel="review"]')).toBe(true)
   })
 
-  it('refuses a jump forward from an earlier step made invalid', async () => {
+  it('jumps forward from a step made invalid, and flags it on Save', async () => {
     const element = await form()
     fillAll(element)
-    await next(element)
-    await next(element)
-    await next(element)
-    expect(activeStep(element)).toBe('review')
+    await toReview(element)
 
     element.goToStep('scan')
     await settle(element)
-    expect(activeStep(element)).toBe('scan')
     fill(element, 'credential', '')
     ;(element.querySelector('wa-step[name="review"]') as HTMLElement).click()
     await settle(element)
 
-    expect(activeStep(element)).toBe('scan')
-    expect(hintOf(element, 'credential')).toBe(errorText(element))
-    expect(completed(element, 'scan')).toBe(false)
+    expect(activeStep(element)).toBe('review')
+    expect(flagged(element, 'scan')).toBe(true)
+    expect(reviewOf(element, 'scan').dataset.status).toBe('problem')
   })
-
-  it('refuses a jump forward over a step made invalid since it was passed', async () => {
-    // The step being left still passes; the one jumped over does not. Landing on Review would
-    // show an empty room under a checkmark, so the jump stops on Place it, beside the room.
+  it('flags a step jumped over that was emptied since it was passed', async () => {
+    // Arriving on Save checks every step, not only the one left, so a step emptied after an
+    // Edit and then jumped over cannot keep the checkmark it earned earlier.
     const element = await form()
     fillAll(element)
     await toReview(element)
 
     await edit(element, 'place')
-    expect(activeStep(element)).toBe('place')
     typeRoom(element, '')
     ;(element.querySelector('[data-back]') as HTMLElement).click()
     await settle(element)
     expect(activeStep(element)).toBe('scan')
     ;(element.querySelector('wa-step[name="review"]') as HTMLElement).click()
     await settle(element)
-    await settle(element)
 
-    expect(activeStep(element)).toBe('place')
-    expect(errorText(element)).toBeTruthy()
-    expect(hintOf(element, 'room')).toBe(errorText(element))
-    expect(completed(element, 'place')).toBe(false)
+    expect(activeStep(element)).toBe('review')
+    expect(flagged(element, 'place')).toBe(true)
+    expect(reviewOf(element, 'place').dataset.status).toBe('problem')
     expect(await devices()).toHaveLength(0)
   })
-
   it('advances on a real Enter in the setup-code field', async () => {
     // A pressed key, not a dispatched `submit`: `wa-input` turns Enter into a click on the
     // form's first submit button, so this only works if Next is one.
@@ -916,12 +920,12 @@ describe('the steps', () => {
     await toReview(element)
     await element.updateComplete
 
-    // Review's own heading, not the first card's: focus there would announce "Scan it".
+    // The step's own heading, not the first card's: focus there would announce "Scan".
     const heading = document.activeElement as HTMLElement | null
     expect(heading?.tagName).toBe('H2')
     expect(element.querySelector('[data-step-panel="review"]')?.contains(heading)).toBe(true)
     expect(heading?.closest('[data-review]')).toBeNull()
-    expect(heading?.textContent?.trim()).toBe('Review')
+    expect(heading?.textContent?.trim()).toBe('Save')
   })
 
   it('lands a save-time problem on its step with focus on the control in error', async () => {
@@ -950,15 +954,19 @@ describe('the steps', () => {
     expect(element.contains(document.activeElement)).toBe(false)
   })
 
-  it('lays the steps out to stack on a phone', async () => {
+  it('lays the steps out in a row at every width', async () => {
     const element = await form()
-    expect(stepper(element).orientation).toBe('auto')
+    expect(stepper(element).orientation).toBe('horizontal')
   })
-
-  it('lets the person go back by clicking a step, but never past one not yet done', async () => {
+  it('goes to any step clicked, reached or not', async () => {
     const element = await form()
-    expect(stepper(element).hasAttribute('linear')).toBe(true)
-    expect(stepper(element).hasAttribute('clickable')).toBe(true)
+    expect(stepper(element).hasAttribute('linear')).toBe(false)
+
+    ;(element.querySelector('wa-step[name="name"]') as HTMLElement).click()
+    await settle(element)
+
+    expect(activeStep(element)).toBe('name')
+    expect(visible(element, '[data-step-panel="name"]')).toBe(true)
   })
 })
 
@@ -1161,6 +1169,34 @@ describe('reviewing before saving', () => {
     expect((await devices())[0]?.payload).toBe(aqaraPayload())
   })
 
+  it('re-checks the steps when Save refreshes for a code decoded after it opened', async () => {
+    // Reached with the setup code still empty and an image decoding: Scan is flagged. When the
+    // decode lands and Save refreshes the summary, the verdicts must follow it - a card saying
+    // the code is missing beside a valid code would send the person to fix what already works.
+    const element = await form()
+    fillAll(element)
+    fill(element, 'credential', '')
+    const decoded = deferred<readonly string[]>()
+    element.decodeImage = () => decoded.promise
+    await chooseFile(element, pngFile())
+    await toReview(element)
+    expect(flagged(element, 'scan')).toBe(true)
+    expect(reviewOf(element, 'scan').dataset.status).toBe('problem')
+
+    decoded.resolve([aqaraPayload()])
+    await waitUntil(
+      () => fieldValue(element, 'credential') === aqaraPayload(),
+      'the decoded code never reached the field',
+    )
+    dispatchSubmit(element)
+    await waitUntil(() => changedNotice(element), 'Save never refreshed')
+
+    expect(flagged(element, 'scan')).toBe(false)
+    expect(completed(element, 'scan')).toBe(true)
+    expect(reviewOf(element, 'scan').dataset.status).toBe('complete')
+    expect(reviewOf(element, 'scan').querySelector('[data-review-problem]')).toBeNull()
+  })
+
   it('saves only from Review', async () => {
     const element = await form()
     fillAll(element)
@@ -1241,7 +1277,10 @@ describe('the mandatory fields', () => {
     try {
       const element = await form()
       const labels = [...element.querySelectorAll('wa-step')].map((s) => s.textContent?.trim())
-      expect(labels).toEqual(['Scannen', 'Platzieren', 'Benennen', 'Prüfen'])
+      expect(labels).toEqual(['Scannen', 'Platzieren', 'Benennen', 'Speichern'])
+      // The step is the verb; the field it holds keeps the noun. One English word, two German
+      // ones - which is why the step label carries an id of its own.
+      expect(element.querySelector('[data-field="name"]')?.getAttribute('label')).toBe('Name')
       expect(element.querySelector('[data-next]')?.textContent?.trim()).toBe('Weiter')
       fillAll(element)
       await next(element)

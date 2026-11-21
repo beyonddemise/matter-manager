@@ -22,6 +22,16 @@ input[type="file"][hidden] {
   color: var(--wa-color-brand-on-quiet);
 }
 
+/* A Review card's verdict on its step, matching the stepper's checkmark and warning. The
+   on-quiet tokens are the text-strength shades, readable on a card in both schemes. */
+.app-step-complete {
+  color: var(--wa-color-success-on-quiet);
+}
+
+.app-step-problem {
+  color: var(--wa-color-danger-on-quiet);
+}
+
 .app-header {
   padding: var(--wa-space-s) var(--wa-space-m);
 }

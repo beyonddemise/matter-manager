@@ -20,10 +20,10 @@ buttons — one on the form, one inside the scan dialog (`scan-dialog.ts`). One 
 
   | # | Step (`name`) | Label | Contents |
   |---|---|---|---|
-  | 1 | `scan` | Scan it | Setup code, Scan *or* Upload (see below), catalogue lookup status, Serial number, Installed |
-  | 2 | `place` | Place it | Room, Spot |
-  | 3 | `name` | Name it | Name |
-  | 4 | `review` | Review | Read-only summary of 1–3, catalogue names when known, an "Edit" per section, **Save device** |
+  | 1 | `scan` | Scan | Setup code, Scan *or* Upload (see below), catalogue lookup status, Serial number, Installed |
+  | 2 | `place` | Place | Room, Spot |
+  | 3 | `name` | Name | Name |
+  | 4 | `review` | Save | Read-only summary of 1–3, catalogue names when known, an "Edit" per section, **Save device** |
 
 - Exactly one upload control is visible at any time.
 - Every behaviour the current form has survives: debounced catalogue lookup, room matching on
@@ -60,7 +60,7 @@ buttons — one on the form, one inside the scan dialog (`scan-dialog.ts`). One 
 ```html
 <form novalidate>
   <h1>Add a device</h1>
-  <wa-stepper active="scan" orientation="auto" linear clickable label="Add a device">
+  <wa-stepper active="scan" orientation="horizontal" clickable label="Add a device">
     <wa-step name="scan">Scan it</wa-step>
     <wa-step name="place">Place it</wa-step>
     <wa-step name="name">Name it</wa-step>
@@ -77,8 +77,8 @@ buttons — one on the form, one inside the scan dialog (`scan-dialog.ts`). One 
 </form>
 ```
 
-- `orientation="auto"` stacks the steps on a phone; `linear` + `clickable` lets the person jump
-  back to any completed step and never forward past an incomplete one.
+- `orientation="horizontal"` keeps the steps in one row; `clickable` without `linear` lets the
+  person go to any step (see below).
 - The panel that is shown is driven by a reactive `step` property mirrored from
   `wa-step-change`; the panels are always in the tree so their controls keep their values and
   `planNewDevice` can still read every control on submit.
@@ -87,22 +87,29 @@ buttons — one on the form, one inside the scan dialog (`scan-dialog.ts`). One 
 - **Back** is absent on step 1; **Next** on steps 1–3; **Save device** only on Review.
   **Cancel** on every step.
 - Enter in a field on steps 1–3 means *Next*, not submit: the form's submit handler advances
-  unless the active step is Review.
+  unless the active step is Save.
 
-### Moving forward: per-step checks
+### Moving between steps: checks without a gate
 
-The stepper never sets `completed` itself, and under `linear` every step after the first
-incomplete one is *locked*: `next()` and `goTo()` silently do nothing (official docs,
-webawesome.com/docs/components/stepper). So **Next** checks the active step, sets its
-`<wa-step completed>`, and only then calls `next()`. A click on a later, already-reachable step
-goes through `wa-before-step-change`, which checks every step from the one being left up to
-the target: a step passed earlier can have been emptied since (Edit a step, clear it, go Back,
-click Review). At the first that fails, the change is cancelled and the form goes to that step
-instead, so its message sits beside its control.
+*Revised after the first review on #351 (owner's direction): the vertical stepper took too much
+space, and validation held people on a step.*
 
-Unlike the docs' example, going *back* does not clear `completed`: Review's "Edit" would
-otherwise lock every later step and force the person through them all again. A step loses
-`completed` only when it fails its check.
+The stepper is `orientation="horizontal"` at every width and `clickable` without `linear`, so
+Next, Back and a click on any step always move - reached or not. Validation still runs on every
+step, but it never refuses the move:
+
+- **Leaving a step** checks its own fields. A pass gives it a checkmark (`completed`); a failure
+  marks it `variant="danger"` with a warning icon in its marker, labelled "Check this step" for
+  assistive technology (WCAG 2.2 1.4.1: shape and words, not colour alone). The message itself is
+  not shown then: it would name a control on a panel about to be hidden.
+- **Returning to a flagged step** shows its message beside the control, through the existing
+  `renderError()` / `messageFor()`.
+- **Arriving on Save** checks every step, including any jumped over or emptied since, so the
+  stepper and the Save cards give one verdict on everything about to be stored.
+- A step loses its flag only when it passes on being left again.
+
+What each step found is held in one reactive record (`checked`), and the stepper renders from it
+rather than being set imperatively.
 
 Each step checks only its own fields with the validators `planNewDevice` already uses, so there
 is still one definition of "valid". The view does not call those validators: `domain/index.ts`
@@ -116,9 +123,8 @@ the same `DraftError` `planNewDevice` would:
 | place | `readRoomPath` |
 | name | `readName` |
 
-A failure sets `this.error` (the existing `DraftError`), which renders through the existing
-`renderError()` / `messageFor()` hints. The step is marked `completed` once it passes, and
-loses `completed` if a field in it changes and fails again.
+A failure is recorded as that step's `DraftError` and shown, on return, through the existing
+`renderError()` / `messageFor()` hints.
 
 Room *matching* (`matchRoom`) and the re-read of rooms stay where they are: at save.
 
@@ -129,9 +135,11 @@ navigates to `#/devices`. If `planNewDevice` throws a `DraftError` anyway (a roo
 renamed, a value changed and not re-checked), the stepper `goTo()`s the step that owns
 `error.field`, so the message is next to the control it is about.
 
-### Review
+### Review (the Save step)
 
-A read-only summary, one block per step, each with an "Edit" link that calls `goTo()`:
+A read-only summary, one block per step, each with an "Edit" link that calls `goTo()`. Each card
+carries its step's verdict: a check icon when it passed, or a warning icon and the problem itself
+in a danger callout when it did not.
 
 - Scan it — setup code (as typed), serial (if any), installed date (locale-formatted with
   `<wa-format-date>`), manufacturer / product when the lookup has answered (`renderCatalogLines`).
