@@ -561,6 +561,19 @@ function errorText(element: HTMLElement): string | undefined {
   return element.querySelector('[data-error]')?.textContent?.trim()
 }
 
+/** Whether something is actually on screen, not merely in the tree. */
+function visible(element: HTMLElement, selector: string): boolean {
+  return element.querySelector(selector)?.checkVisibility() ?? false
+}
+
+/** Presses Next until Review, from a form whose every field is valid. */
+async function toReview(element: AddDeviceView): Promise<void> {
+  await next(element)
+  await next(element)
+  await next(element)
+  expect(activeStep(element)).toBe('review')
+}
+
 /** Fills every field validly, so that each step's Next is accepted. */
 function fillAll(element: HTMLElement): void {
   fill(element, 'credential', PAYLOAD)
@@ -579,8 +592,32 @@ describe('the steps', () => {
     const labels = [...element.querySelectorAll('wa-step')].map((step) => step.textContent?.trim())
     expect(labels).toEqual(['Scan it', 'Place it', 'Name it', 'Review'])
     expect(activeStep(element)).toBe('scan')
-    expect(element.querySelector('[data-step-panel="scan"]')?.hasAttribute('hidden')).toBe(false)
-    expect(element.querySelector('[data-step-panel="place"]')?.hasAttribute('hidden')).toBe(true)
+    expect(visible(element, '[data-step-panel="scan"]')).toBe(true)
+    for (const step of ['place', 'name', 'review']) {
+      expect(visible(element, `[data-step-panel="${step}"]`), step).toBe(false)
+    }
+  })
+
+  it('offers Next and Cancel on Scan it, and no Back', async () => {
+    const element = await form()
+    await settle(element)
+
+    expect(element.querySelector('[data-back]')).toBeNull()
+    expect(element.querySelector('[data-next]')).not.toBeNull()
+    expect(element.querySelector('[data-save]')).toBeNull()
+    expect(element.querySelector('wa-button[href="#/devices"]')).not.toBeNull()
+  })
+
+  it('offers Back, Save and Cancel on Review, and no Next', async () => {
+    const element = await form()
+    fillAll(element)
+    await toReview(element)
+
+    expect(visible(element, '[data-step-panel="review"]')).toBe(true)
+    expect(element.querySelector('[data-back]')).not.toBeNull()
+    expect(element.querySelector('[data-next]')).toBeNull()
+    expect(element.querySelector('[data-save]')).not.toBeNull()
+    expect(element.querySelector('wa-button[href="#/devices"]')).not.toBeNull()
   })
 
   it('puts each control on its step', async () => {
@@ -657,6 +694,55 @@ describe('the steps', () => {
     expect(fields.map((field) => fieldValue(element, field))).toEqual(before)
   })
 
+  it('drops a message about a step once the person goes back from it', async () => {
+    // A message left on screen would name a control on a panel that is now hidden.
+    const element = await form()
+    fill(element, 'credential', PAYLOAD)
+    typeRoom(element, 'Kitchen')
+    await next(element)
+    await next(element)
+    await next(element)
+    expect(activeStep(element)).toBe('name')
+    expect(errorText(element)).toBeTruthy()
+
+    ;(element.querySelector('[data-back]') as HTMLElement).click()
+    await settle(element)
+
+    expect(activeStep(element)).toBe('place')
+    expect(element.querySelector('[data-error]')).toBeNull()
+  })
+
+  it('keeps every checkmark when going back', async () => {
+    // Clearing them would lock every later step and make Review's "Edit" a walk through all of
+    // them again.
+    const element = await form()
+    fillAll(element)
+    await toReview(element)
+
+    ;(element.querySelector('[data-back]') as HTMLElement).click()
+    await settle(element)
+
+    expect(activeStep(element)).toBe('name')
+    expect(completed(element, 'scan')).toBe(true)
+    expect(completed(element, 'place')).toBe(true)
+    expect(completed(element, 'name')).toBe(true)
+  })
+
+  it('allows a jump forward from a step that still passes', async () => {
+    const element = await form()
+    fillAll(element)
+    await toReview(element)
+
+    element.goToStep('scan')
+    await settle(element)
+    expect(activeStep(element)).toBe('scan')
+    ;(element.querySelector('wa-step[name="review"]') as HTMLElement).click()
+    await settle(element)
+
+    expect(activeStep(element)).toBe('review')
+    expect(visible(element, '[data-step-panel="review"]')).toBe(true)
+  })
+
   it('refuses a jump forward from an earlier step made invalid', async () => {
     const element = await form()
     fillAll(element)
@@ -690,7 +776,7 @@ describe('the steps', () => {
     expect(await devices()).toHaveLength(0)
   })
 
-  it('advances once when Enter picks a room', async () => {
+  it('picks a room on Enter in the room field, and never leaves Place it', async () => {
     // Observed against the real component, not assumed: `wa-combobox` takes every Enter for
     // itself (preventDefault and stopPropagation in its keydown handler). The first one picks
     // the highlighted "Create" option, and a second one, with the list closed, opens the list
@@ -724,6 +810,12 @@ describe('the steps', () => {
   it('lays the steps out to stack on a phone', async () => {
     const element = await form()
     expect(stepper(element).orientation).toBe('auto')
+  })
+
+  it('lets the person go back by clicking a step, but never past one not yet done', async () => {
+    const element = await form()
+    expect(stepper(element).hasAttribute('linear')).toBe(true)
+    expect(stepper(element).hasAttribute('clickable')).toBe(true)
   })
 })
 

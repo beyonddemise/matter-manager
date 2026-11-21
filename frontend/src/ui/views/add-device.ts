@@ -2,6 +2,13 @@
 // `device-form.ts`: they travel in this view's lazy chunk rather than in the entry chunk.
 import '@awesome.me/webawesome-pro/dist/components/step/step.js'
 import '@awesome.me/webawesome-pro/dist/components/stepper/stepper.js'
+// Types only: the side-effect imports above are what register the elements.
+import type WaStep from '@awesome.me/webawesome-pro/dist/components/step/step.js'
+import type WaStepper from '@awesome.me/webawesome-pro/dist/components/stepper/stepper.js'
+import type {
+  WaBeforeStepChangeEvent,
+  WaStepChangeEvent,
+} from '@awesome.me/webawesome-pro/dist/events/events.js'
 import { msg } from '@lit/localize'
 import { html, type TemplateResult } from 'lit'
 import {
@@ -90,26 +97,6 @@ function stepOf(field: DraftField): AddStep | undefined {
 }
 
 /**
- * The parts of `<wa-stepper>` this view uses. Its API is documented upstream
- * (webawesome.com/docs/components/stepper); `next()` and `goTo()` silently do nothing for a
- * step that is locked, which under `linear` is every step after the first one not `completed`.
- */
-interface Stepper extends HTMLElement {
-  active: string
-  next(): void
-  previous(): void
-  goTo(name: string): void
-}
-
-/** The part of `<wa-step>` this view writes: the checkmark that also unlocks the next step. */
-interface Step extends HTMLElement {
-  completed: boolean
-}
-
-/** What `wa-before-step-change` and `wa-step-change` carry. */
-type StepChange = CustomEvent<{ name: string; previousName: string | null }>
-
-/**
  * The add-a-device form.
  *
  * One field takes the setup code in either form it comes in — an `MT:` payload or a manual
@@ -144,8 +131,7 @@ export class AddDeviceView extends DeviceFormView {
 
   /**
    * The step on screen, mirrored from the stepper's `wa-step-change`. Decides which panel is
-   * shown and which buttons are offered; the stepper itself stays the authority on where the
-   * person is (see {@link currentStep}).
+   * shown, which buttons are offered, and which step Next and Enter check.
    */
   declare step: AddStep
 
@@ -410,25 +396,17 @@ export class AddDeviceView extends DeviceFormView {
     return { ...this.fields(), credential: fieldValue(this, '[data-field="credential"]') }
   }
 
-  /** The stepper, once rendered. */
-  private stepper(): Stepper | null {
-    return this.querySelector('[data-stepper]') as Stepper | null
+  /**
+   * The stepper, once rendered. Under `linear`, its `next()` and `goTo()` silently do nothing
+   * for a locked step: every step after the first one not `completed`.
+   */
+  private stepper(): WaStepper | null {
+    return this.querySelector('wa-stepper')
   }
 
   /** The `<wa-step>` for a step. */
-  private stepElement(step: AddStep): Step | null {
-    return this.querySelector(`wa-step[name="${step}"]`) as Step | null
-  }
-
-  /**
-   * Where the person is, read from the stepper rather than from {@link step}.
-   *
-   * `step` follows `wa-step-change`, which the stepper sends only after it has rendered; two
-   * quick Enters land in between, and the second one must check the step the person is on
-   * now, not the one they just left.
-   */
-  private currentStep(): AddStep {
-    return (this.stepper()?.active as AddStep | undefined) ?? this.step
+  private stepElement(step: AddStep): WaStep | null {
+    return this.querySelector<WaStep>(`wa-step[name="${step}"]`)
   }
 
   /**
@@ -461,7 +439,7 @@ export class AddDeviceView extends DeviceFormView {
    * would silently do nothing.
    */
   private async advance(): Promise<void> {
-    const step = this.currentStep()
+    const step = this.step
     if (!this.checkStep(step)) return
     const element = this.stepElement(step)
     if (element) element.completed = true
@@ -486,7 +464,7 @@ export class AddDeviceView extends DeviceFormView {
    * Only the step being left is checked; the steps jumped over passed when they were left, and
    * Save checks everything once more regardless.
    */
-  private onBeforeStepChange(event: StepChange): void {
+  private onBeforeStepChange(event: WaBeforeStepChangeEvent): void {
     const from = event.detail.previousName as AddStep | null
     const to = event.detail.name as AddStep
     if (from === null || STEPS.indexOf(to) <= STEPS.indexOf(from)) return
@@ -499,7 +477,7 @@ export class AddDeviceView extends DeviceFormView {
    * An error about a field on another step goes: it names a control the person can no longer
    * see (the spec's third anti-goal). One about this step's own fields stays beside them.
    */
-  private onStepChange(event: StepChange): void {
+  private onStepChange(event: WaStepChangeEvent): void {
     this.step = event.detail.name as AddStep
     if (this.error !== undefined && stepOf(this.error.field) !== this.step) this.error = undefined
   }
@@ -508,7 +486,7 @@ export class AddDeviceView extends DeviceFormView {
     event.preventDefault()
     // Enter in a field on steps 1-3 means Next. Saving from Scan it would store a device whose
     // place and name the person never saw on Review.
-    if (this.currentStep() !== 'review') {
+    if (this.step !== 'review') {
       await this.advance()
       return
     }
@@ -597,8 +575,11 @@ export class AddDeviceView extends DeviceFormView {
         ${this.renderError()}
 
         <!-- Every panel stays in the tree; only the active one is shown. The values live in the
-             controls, so a hidden panel keeps what was typed and Save still reads it. -->
-        <section data-step-panel="scan" class="wa-stack wa-gap-l" ?hidden=${this.step !== 'scan'}>
+             controls, so a hidden panel keeps what was typed and Save still reads it. The
+             layout class sits on an inner div: on the section itself its display would outrank
+             the browser's own [hidden] rule and show every panel at once. -->
+        <section data-step-panel=\"scan\" ?hidden=${this.step !== 'scan'}>
+          <div class=\"wa-stack wa-gap-l\">
           <div class="wa-stack wa-gap-2xs">
             <wa-input
               data-field="credential"
@@ -677,23 +658,24 @@ export class AddDeviceView extends DeviceFormView {
 
           ${this.renderSerialField()}
           ${this.renderInstalledField()}
+          </div>
         </section>
 
-        <section data-step-panel="place" class="wa-stack wa-gap-l" ?hidden=${this.step !== 'place'}>
+        <section data-step-panel=\"place\" ?hidden=${this.step !== 'place'}>
+          <div class=\"wa-stack wa-gap-l\">
           ${this.renderPlaceFields()}
+          </div>
         </section>
 
-        <section data-step-panel="name" class="wa-stack wa-gap-l" ?hidden=${this.step !== 'name'}>
+        <section data-step-panel=\"name\" ?hidden=${this.step !== 'name'}>
+          <div class=\"wa-stack wa-gap-l\">
           ${this.renderNameField()}
+          </div>
         </section>
 
         <!-- The read-only summary of steps 1-3 lands here later in #349; until then Review
              offers only Save, in the buttons below. -->
-        <section
-          data-step-panel="review"
-          class="wa-stack wa-gap-l"
-          ?hidden=${this.step !== 'review'}
-        ></section>
+        <section data-step-panel="review" ?hidden=${this.step !== 'review'}></section>
 
         <div class="wa-cluster wa-gap-s">
           ${
