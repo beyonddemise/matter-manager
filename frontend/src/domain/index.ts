@@ -65,8 +65,10 @@ export {
 // Only the types and the error reach the entry point. `readName`, `matchRoom` and the rest
 // are how `planNewDevice` and `planDeviceEdit` agree with each other, not an API for callers:
 // a view that validated a name itself would be a second answer to a question `core` already
-// answers, which is the whole failure this module was extracted to prevent.
-export { type DeviceDraft, planNewDevice } from './documents/new-device.js'
+// answers, which is the whole failure this module was extracted to prevent. The one exception
+// is `checkDraftFields`: a stepped form must refuse a step early, and it does so by asking the
+// domain (it runs the same readers), not by validating in the view.
+export { checkDraftFields, type DeviceDraft, planNewDevice } from './documents/new-device.js'
 export {
   isProjectDocument,
   PROJECT_DOCUMENT_ID,

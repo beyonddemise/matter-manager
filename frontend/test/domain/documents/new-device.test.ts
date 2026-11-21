@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import type { CatalogLookup } from '../../../src/domain/catalog/types.js'
-import type { DraftClock, DraftError } from '../../../src/domain/documents/draft.js'
-import { type DeviceDraft, planNewDevice } from '../../../src/domain/documents/new-device.js'
+import type { DraftClock, DraftError, DraftField } from '../../../src/domain/documents/draft.js'
+import {
+  checkDraftFields,
+  type DeviceDraft,
+  planNewDevice,
+} from '../../../src/domain/documents/new-device.js'
 
 /** The verified reference device; see `matter/credential.test.ts`. */
 const PAYLOAD = 'MT:Y.K9042C00KA0648G00'
@@ -215,6 +219,56 @@ describe('refusing a draft', () => {
       message = (error as Error).message
     }
     expect(message).not.toContain('34970112331')
+  })
+})
+
+/** The error `run` throws, so a test can compare two callers' answers. */
+const thrownBy = (run: () => unknown): DraftError => {
+  try {
+    run()
+  } catch (error) {
+    return error as DraftError
+  }
+  return expect.unreachable('expected a DraftError')
+}
+
+describe('checkDraftFields', () => {
+  it('ignores fields it was not asked about', () => {
+    expect(() => checkDraftFields(draft({ name: '' }), ['credential', 'installedAt'])).not.toThrow()
+  })
+
+  it('reports the field it was asked about', () => {
+    const error = thrownBy(() => checkDraftFields(draft({ name: '' }), ['name']))
+    expect(error.field).toBe('name')
+    expect(error.problem).toBe('nameEmpty')
+  })
+
+  it('wraps a bad setup code as planNewDevice does', () => {
+    const bad = draft({ credential: 'MT:nonsense' })
+    const planned = thrownBy(() => planNewDevice(bad, [], clock('a')))
+    const checked = thrownBy(() => checkDraftFields(bad, ['credential']))
+    expect(checked.field).toBe('credential')
+    expect(checked.problem).toBe(planned.problem)
+  })
+
+  it('reports the first problem in form order whatever order it is asked in', () => {
+    const bad = draft({ credential: 'kitchen lamp', name: '', installedAt: 'nope' })
+    expect(thrownBy(() => checkDraftFields(bad, ['name', 'installedAt', 'credential'])).field).toBe(
+      'credential',
+    )
+  })
+
+  const badDrafts: ReadonlyArray<readonly [DraftField, DeviceDraft]> = [
+    ['credential', draft({ credential: 'kitchen lamp' })],
+    ['installedAt', draft({ installedAt: '2026-02-31' })],
+    ['room', draft({ room: '' })],
+    ['name', draft({ name: '  ' })],
+  ]
+  it.each(badDrafts)('agrees with planNewDevice on %s', (field, bad) => {
+    const planned = thrownBy(() => planNewDevice(bad, [], clock('a')))
+    const checked = thrownBy(() => checkDraftFields(bad, [field]))
+    expect(checked.field).toBe(planned.field)
+    expect(checked.problem).toBe(planned.problem)
   })
 })
 
