@@ -834,6 +834,11 @@ async function edit(element: AddDeviceView, step: string): Promise<void> {
   await settle(element)
 }
 
+/** Whether Review says that something changed behind it. */
+function changedNotice(element: HTMLElement): boolean {
+  return element.querySelector('[data-review-changed]') !== null
+}
+
 describe('reviewing before saving', () => {
   it('shows what will be saved', async () => {
     const element = await form()
@@ -904,6 +909,66 @@ describe('reviewing before saving', () => {
     expect(reviewOf(element, 'name').textContent).not.toContain('Kitchen ceiling light')
   })
 
+  it('returns to Scan it from its Edit, values intact', async () => {
+    const element = await form()
+    fillAll(element)
+    await toReview(element)
+
+    await edit(element, 'scan')
+
+    expect(activeStep(element)).toBe('scan')
+    expect(fieldValue(element, 'credential')).toBe(PAYLOAD)
+    expect(fieldValue(element, 'serial')).toBe('SN-000123')
+    expect(fieldValue(element, 'installed-at')).toBe('2026-08-19')
+  })
+
+  it('refreshes Review rather than saving when a control changed behind it', async () => {
+    const element = await form()
+    fillAll(element)
+    await toReview(element)
+    expect(changedNotice(element)).toBe(false)
+
+    fill(element, 'name', 'Pantry light')
+    dispatchSubmit(element)
+    await waitUntil(() => changedNotice(element), 'Save never refreshed Review')
+
+    expect(await devices()).toHaveLength(0)
+    expect(activeStep(element)).toBe('review')
+    expect(reviewOf(element, 'name').textContent).toContain('Pantry light')
+
+    dispatchSubmit(element)
+    await waitUntil(async () => (await devices()).length === 1, 'the second Save stored nothing')
+    expect((await devices())[0]?.name).toBe('Pantry light')
+  })
+
+  it('saves a code an image decoded after Review opened only once Review has shown it', async () => {
+    // The decode can take seconds on a phone and nothing holds the person on Scan it, so the
+    // code it finds can land in the hidden field while Review shows the one typed before.
+    const element = await form()
+    fillAll(element)
+    const decoded = deferred<readonly string[]>()
+    element.decodeImage = () => decoded.promise
+    await chooseFile(element, pngFile())
+    await toReview(element)
+    expect(reviewOf(element, 'scan').textContent).toContain(PAYLOAD)
+
+    decoded.resolve([aqaraPayload()])
+    await waitUntil(
+      () => fieldValue(element, 'credential') === aqaraPayload(),
+      'the decoded code never reached the field',
+    )
+    dispatchSubmit(element)
+    await waitUntil(() => changedNotice(element), 'Save never refreshed Review')
+
+    expect(await devices()).toHaveLength(0)
+    expect(reviewOf(element, 'scan').textContent).toContain(aqaraPayload())
+    expect(reviewOf(element, 'scan').textContent).not.toContain(PAYLOAD)
+
+    dispatchSubmit(element)
+    await waitUntil(async () => (await devices()).length === 1, 'the second Save stored nothing')
+    expect((await devices())[0]?.payload).toBe(aqaraPayload())
+  })
+
   it('saves only from Review', async () => {
     const element = await form()
     fillAll(element)
@@ -927,6 +992,12 @@ describe('reviewing before saving', () => {
     await toReview(element)
 
     typeRoom(element, '/')
+    // The first Save sees the room differ from what Review shows, and shows it instead.
+    dispatchSubmit(element)
+    await waitUntil(() => changedNotice(element), 'Save never refreshed Review')
+    expect(activeStep(element)).toBe('review')
+    expect(reviewOf(element, 'place').textContent).toContain('/')
+    // The second is planned, and `planNewDevice` refuses the room.
     dispatchSubmit(element)
     await waitUntil(() => activeStep(element) === 'place', 'Save never went to Place it')
     await settle(element)

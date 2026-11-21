@@ -63,6 +63,12 @@ interface Reviewed {
   readonly code: string | undefined
 }
 
+/** Whether two snapshots would show the person the same thing. */
+function sameReview(a: Reviewed, b: Reviewed): boolean {
+  const keys = Object.keys(a.summary) as (keyof ReviewSummary)[]
+  return a.code === b.code && keys.every((key) => a.summary[key] === b.summary[key])
+}
+
 /** The four steps of adding a device, by their `<wa-step name>` (#349). */
 export type AddStep = 'scan' | 'place' | 'name' | 'review'
 
@@ -138,6 +144,7 @@ export class AddDeviceView extends DeviceFormView {
     lookupState: { state: true },
     step: { state: true },
     reviewed: { state: true },
+    reviewChanged: { state: true },
   }
 
   /**
@@ -156,6 +163,12 @@ export class AddDeviceView extends DeviceFormView {
    * Review is the one moment that is guaranteed to be after every edit, so it is the one read.
    */
   declare reviewed: Reviewed | undefined
+
+  /**
+   * Whether the last Save found the controls no longer matching {@link reviewed}, refreshed the
+   * summary instead of saving, and has to say so. Cleared each time Review is entered afresh.
+   */
+  declare reviewChanged: boolean
 
   /** Bound by a test to a camera that is not one; the real one otherwise. */
   declare scanSource?: ScanSource
@@ -201,6 +214,7 @@ export class AddDeviceView extends DeviceFormView {
     this.lookupState = IDLE
     this.step = 'scan'
     this.reviewed = undefined
+    this.reviewChanged = false
   }
 
   protected override firstUpdated(): void {
@@ -504,18 +518,30 @@ export class AddDeviceView extends DeviceFormView {
     this.step = event.detail.name as AddStep
     if (this.error !== undefined && stepOf(this.error.field) !== this.step) this.error = undefined
     if (this.step === 'review') {
-      const draft = this.draft()
-      this.reviewed = {
-        summary: {
-          credential: draft.credential,
-          serial: draft.serial ?? '',
-          installedAt: draft.installedAt,
-          room: draft.room,
-          spot: draft.spot ?? '',
-          name: draft.name,
-        },
-        code: this.lookupCode(),
-      }
+      this.reviewed = this.snapshotForReview()
+      this.reviewChanged = false
+    }
+  }
+
+  /**
+   * What Review would show if it were entered now, read from the controls.
+   *
+   * The one place a summary is built, for both moments that need one: entering Review, and
+   * Save checking that the controls still say what Review shows. Two builders could drift, and
+   * a field missing from one would be a change Save never noticed.
+   */
+  private snapshotForReview(): Reviewed {
+    const draft = this.draft()
+    return {
+      summary: {
+        credential: draft.credential,
+        serial: draft.serial ?? '',
+        installedAt: draft.installedAt,
+        room: draft.room,
+        spot: draft.spot ?? '',
+        name: draft.name,
+      },
+      code: this.lookupCode(),
     }
   }
 
@@ -533,13 +559,29 @@ export class AddDeviceView extends DeviceFormView {
   /** Review, once it has been entered; nothing before, as there is nothing yet to summarise. */
   private renderReviewPanel(): TemplateResult | '' {
     const reviewed = this.reviewed
-    return reviewed === undefined
-      ? ''
-      : renderReview(
+    if (reviewed === undefined) return ''
+    return html`
+      <div class="wa-stack wa-gap-m">
+        <!-- Always in the tree, so that the callout is announced when it appears. -->
+        <div role="status">
+          ${
+            this.reviewChanged
+              ? html`
+                  <wa-callout variant="neutral" data-review-changed>
+                    <wa-icon slot="icon" name="circle-info"></wa-icon>
+                    ${msg('Something changed since you opened Review. Check it, then save again.')}
+                  </wa-callout>
+                `
+              : ''
+          }
+        </div>
+        ${renderReview(
           reviewed.summary,
           (step) => this.goToStep(step),
           this.reviewCatalogLines(reviewed.code),
-        )
+        )}
+      </div>
+    `
   }
 
   private async onSubmit(event: Event): Promise<void> {
@@ -571,6 +613,19 @@ export class AddDeviceView extends DeviceFormView {
       // device under since this form was opened.
       const rooms = await this.readRooms()
       this.rooms = rooms
+
+      // Save stores only what Review shows. A control can change behind it - an image still
+      // decoding when the person pressed Next writes its code into the hidden field, and a
+      // test or script can set any control - and planning from the live controls would then
+      // store a code, or catalogue names, the person never saw. So the summary is rebuilt and,
+      // if it differs, shown instead of saved. Checked after the last wait, so nothing can
+      // change between this comparison and the plan below, which runs synchronously.
+      const now = this.snapshotForReview()
+      if (this.reviewed === undefined || !sameReview(now, this.reviewed)) {
+        this.reviewed = now
+        this.reviewChanged = true
+        return
+      }
 
       let creation: ReturnType<typeof planNewDevice>
       try {
