@@ -115,12 +115,20 @@ function pngFile(): File {
  * handler keeps this a test of the wiring as well as of the handler.
  */
 async function chooseFile(element: AddDeviceView, file: File): Promise<void> {
-  await waitUntil(() => element.querySelector('[data-upload]') !== null, 'no upload control')
-  const input = element.querySelector('input[type="file"]') as HTMLInputElement
+  await waitUntil(() => formUpload(element) !== null, 'no upload control on the form')
+  const input = element.querySelector('[data-upload-input]') as HTMLInputElement
   const transfer = new DataTransfer()
   transfer.items.add(file)
   input.files = transfer.files
   input.dispatchEvent(new Event('change', { bubbles: true }))
+}
+
+/**
+ * The form's own upload control, not the scan dialog's: the dialog renders into the light DOM
+ * too, and its footer has a `[data-upload]` of its own that is always in the tree.
+ */
+function formUpload(element: HTMLElement): Element | null {
+  return element.querySelector('[data-step-panel="scan"] [data-upload]')
 }
 
 function neverAvailable(): ScanSource {
@@ -461,6 +469,13 @@ describe('the room', () => {
 
     fill(element, 'credential', PAYLOAD)
     fill(element, 'name', 'Hall sensor')
+    // On Place it with the combobox not focused. Entering the step focuses it, and a
+    // single-select combobox restores the selected option's label on blur, so a change of mind
+    // typed while it had focus would be undone by the component - before this form ever read
+    // it - when the next step takes focus. The state pinned here is the one that reaches the
+    // form's own read: a stale selection and different typed text.
+    await next(element)
+    ;(document.activeElement as HTMLElement | null)?.blur()
     selectRoom(element, 'Ground Floor/Kitchen')
     await element.updateComplete
     typeRoom(element, 'Ground Floor/Hall')
@@ -807,6 +822,38 @@ describe('the steps', () => {
     expect(await devices()).toHaveLength(0)
   })
 
+  it('moves focus into the new step', async () => {
+    // WCAG 2.2 AA (PRODUCT.md): after Next, keyboard and screen-reader users start on the new
+    // step's first control rather than on a button below a panel that has just been replaced.
+    const element = await form()
+    fill(element, 'credential', PAYLOAD)
+    await next(element)
+    await element.updateComplete
+
+    const place = element.querySelector('[data-step-panel="place"]')
+    expect(place?.contains(document.activeElement)).toBe(true)
+    expect(document.activeElement).toBe(element.querySelector('[data-field="room"]'))
+  })
+
+  it('moves focus to the first heading on Review', async () => {
+    const element = await form()
+    fillAll(element)
+    await toReview(element)
+    await element.updateComplete
+
+    expect(document.activeElement).toBe(
+      element.querySelector('[data-step-panel="review"] [data-review] h2'),
+    )
+  })
+
+  it('leaves focus alone when the form first opens', async () => {
+    // Only a step *change* moves focus. Opening the form must not jump into a field, which
+    // would scroll a phone and open its keyboard before the person has read the page.
+    const element = await form()
+    await settle(element)
+    expect(element.contains(document.activeElement)).toBe(false)
+  })
+
   it('lays the steps out to stack on a phone', async () => {
     const element = await form()
     expect(stepper(element).orientation).toBe('auto')
@@ -1070,6 +1117,27 @@ describe('a write storage refuses', () => {
   })
 })
 
+describe('a refreshed Review, then a write storage refuses', () => {
+  it('drops the "something changed" notice once Save gets past the comparison', async () => {
+    // The notice is about the last Save; a later one that matched what Review shows, and then
+    // failed in storage, must show the storage error alone rather than both side by side.
+    const element = await form(refusingWrites())
+    fillAll(element)
+    await toReview(element)
+
+    fill(element, 'name', 'Pantry light')
+    dispatchSubmit(element)
+    await waitUntil(() => changedNotice(element), 'Save never refreshed Review')
+
+    dispatchSubmit(element)
+    await waitUntil(
+      () => element.querySelector('[data-save-failed]') !== null,
+      'the refused write was never reported',
+    )
+    expect(changedNotice(element)).toBe(false)
+  })
+})
+
 describe('a project locked on this device', () => {
   it('says the device cannot be filed until the key arrives, and keeps what was typed', async () => {
     const encrypted = await lockedDatabase()
@@ -1137,7 +1205,41 @@ describe('filling the setup code from a picture', () => {
     await element.updateComplete
 
     expect(element.querySelector('[data-scan]')).toBeNull()
-    expect(element.querySelector('[data-upload]')).not.toBeNull()
+    expect(formUpload(element)).not.toBeNull()
+  })
+
+  it('offers Scan and no form upload when this browser can scan', async () => {
+    // One control, not two side by side: where the camera works, uploading is the scan
+    // dialog's fallback for a label the camera cannot read, and it stays there.
+    const element = await form(database.repositories, scanningSource(PAYLOAD))
+    await waitUntil(() => element.scanChecked, 'the scan check never finished')
+    await element.updateComplete
+
+    expect(element.querySelector('[data-scan]')).not.toBeNull()
+    expect(formUpload(element)).toBeNull()
+
+    ;(element.querySelector('[data-scan]') as HTMLElement).click()
+    await element.updateComplete
+    expect(element.querySelector('[data-scan-dialog] [data-upload]')).not.toBeNull()
+  })
+
+  it('offers neither until the camera check finishes', async () => {
+    // A button that swaps from Upload to Scan under the thumb, as the check lands on a phone,
+    // is worse than a moment with neither. The field itself does not wait.
+    const answer = deferred<boolean>()
+    const source: ScanSource = { ...scanningSource(PAYLOAD), available: () => answer.promise }
+    const element = await form(database.repositories, source)
+    await element.updateComplete
+
+    expect(element.scanChecked).toBe(false)
+    expect(element.querySelector('[data-scan]')).toBeNull()
+    expect(formUpload(element)).toBeNull()
+    fill(element, 'credential', PAYLOAD)
+    expect(fieldValue(element, 'credential')).toBe(PAYLOAD)
+
+    answer.resolve(true)
+    await waitUntil(() => element.querySelector('[data-scan]') !== null, 'Scan never appeared')
+    expect(formUpload(element)).toBeNull()
   })
 
   it('puts a code read from a picture into the setup-code field', async () => {
@@ -1189,6 +1291,25 @@ describe('filling the setup code with the camera', () => {
     ;(element.querySelector('[data-scan]') as HTMLElement).click()
 
     await waitUntil(() => fieldValue(element, 'credential') === PAYLOAD, 'the code never arrived')
+  })
+
+  it('fills the setup code from a scan finished after going back', async () => {
+    // Back from Place it to Scan it, then the camera: the code lands in the field the person
+    // is looking at, and Scan it keeps the checkmark that lets the later steps be reached.
+    const element = await form(database.repositories, scanningSource(PAYLOAD))
+    fill(element, 'credential', SHORT_CODE)
+    await next(element)
+    expect(activeStep(element)).toBe('place')
+
+    element.goToStep('scan')
+    await settle(element)
+    expect(activeStep(element)).toBe('scan')
+    await waitUntil(() => element.querySelector('[data-scan]') !== null, 'no scan control')
+    ;(element.querySelector('[data-scan]') as HTMLElement).click()
+
+    await waitUntil(() => fieldValue(element, 'credential') === PAYLOAD, 'the code never arrived')
+    await settle(element)
+    expect(completed(element, 'scan')).toBe(true)
   })
 
   it('files a device from a scanned code without anything else being typed into that field', async () => {

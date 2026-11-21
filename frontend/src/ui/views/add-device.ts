@@ -172,14 +172,18 @@ export class AddDeviceView extends DeviceFormView {
 
   /** Bound by a test to a camera that is not one; the real one otherwise. */
   declare scanSource?: ScanSource
-  /** Whether this browser can scan at all. Decides whether the control exists. */
+  /**
+   * Whether this browser can scan at all. Decides which one of Scan and Upload the form offers.
+   */
   declare canScan: boolean
   /**
-   * Whether the answer is in yet.
+   * Whether the answer is in yet. Until it is, the form offers neither Scan nor Upload: offering
+   * Upload first and swapping it for Scan when the answer lands would move a button out from
+   * under a thumb already on its way to it.
    *
-   * Distinct from `canScan` being false, and only a test needs the difference: without it,
-   * "the button is absent" is true before the check has finished and a test asserting it would
-   * pass against a form that was about to grow one.
+   * Distinct from `canScan` being false for that reason, and for tests: without it, "the button
+   * is absent" is true before the check has finished and a test asserting it would pass against
+   * a form that was about to grow one.
    */
   declare scanChecked: boolean
   declare scanOpen: boolean
@@ -235,7 +239,7 @@ export class AddDeviceView extends DeviceFormView {
   /**
    * Asks, once, whether scanning is possible here.
    *
-   * The answer decides whether the control is rendered at all. A disabled button that explains
+   * The answer decides whether the scan control is rendered at all. A disabled button that explains
    * itself when pressed would be worse than nothing on a desktop with no camera: it offers
    * something, takes a press, and then says no — which reads as a broken feature rather than
    * as a feature this machine cannot have.
@@ -521,6 +525,32 @@ export class AddDeviceView extends DeviceFormView {
       this.reviewed = this.snapshotForReview()
       this.reviewChanged = false
     }
+    void this.focusStep(this.step)
+  }
+
+  /**
+   * Puts focus at the start of a step that has just come on screen: its first control, or on
+   * Review - which has none - its first heading, the Scan it card's (WCAG 2.2 AA, PRODUCT.md).
+   *
+   * Without it, focus stays on Next, or on a control inside a panel that is now hidden, and a
+   * keyboard or screen-reader user has to hunt for where the new step begins. The first card's
+   * heading rather than a heading of Review's own: the stepper already names the step, and a
+   * second "Review" above the cards would say it twice on screen. Only on a change, which is
+   * all `wa-step-change` reports - the form opening on Scan it moves nothing, because jumping
+   * into a field on load scrolls a phone and opens its keyboard before the page has been read.
+   *
+   * After `updateComplete`, because the panel is unhidden, and Review's cards first rendered,
+   * by the update this step change has just requested.
+   */
+  private async focusStep(step: AddStep): Promise<void> {
+    await this.updateComplete
+    // A later change superseded this one while it waited; that change does its own focusing.
+    if (this.step !== step) return
+    const panel = this.querySelector(`[data-step-panel="${step}"]`)
+    const target = panel?.querySelector<HTMLElement>(
+      step === 'review' ? '[data-review] h2' : '[data-field]',
+    )
+    target?.focus()
   }
 
   /**
@@ -626,6 +656,9 @@ export class AddDeviceView extends DeviceFormView {
         this.reviewChanged = true
         return
       }
+      // Review now shows what is about to be saved, so a notice from an earlier refresh is no
+      // longer true - and left up, it would sit beside a storage error as if it explained it.
+      this.reviewChanged = false
 
       let creation: ReturnType<typeof planNewDevice>
       try {
@@ -674,6 +707,61 @@ export class AddDeviceView extends DeviceFormView {
     window.location.hash = '#/devices'
   }
 
+  /**
+   * Scan the code where this browser can scan, Upload an image where it cannot: the one way,
+   * besides typing, that the form offers to fill the setup code. Only called once
+   * {@link scanChecked}, so it never shows one and then swaps it for the other.
+   */
+  private renderCodeSource(): TemplateResult {
+    if (this.canScan) {
+      return html`
+        <div class="wa-cluster wa-gap-s">
+          <wa-button
+            data-scan
+            type="button"
+            appearance="outlined"
+            @click=${() => {
+              this.scanOpen = true
+            }}
+          >
+            <wa-icon slot="start" name="camera"></wa-icon>
+            ${msg('Scan the code')}
+          </wa-button>
+        </div>
+      `
+    }
+    return html`
+      <div class="wa-cluster wa-gap-s">
+        <wa-button
+          data-upload
+          type="button"
+          appearance="outlined"
+          @click=${() => {
+            ;(this.querySelector('[data-upload-input]') as HTMLInputElement | null)?.click()
+          }}
+        >
+          <wa-icon slot="start" name="image"></wa-icon>
+          ${msg('Upload an image')}
+        </wa-button>
+
+        <!-- Hidden rather than absent, and rendered with the button: the button opens it, so
+             it has to be in the tree whenever the button is. Found by its own attribute, not as
+             the first file input in the form, because the scan dialog renders into the light
+             DOM too and has one of its own. The accept attribute filters the picker and
+             enforces nothing, which is why codesFromImage still answers for a file that is not
+             an image. No backticks in this comment: it sits inside a template literal, where
+             one would end it. -->
+        <input
+          data-upload-input
+          type="file"
+          accept="image/*"
+          hidden
+          @change=${(event: Event) => void this.onUpload(event)}
+        />
+      </div>
+    `
+  }
+
   override render() {
     return html`
       <form class="wa-stack wa-gap-l app-form" @submit=${this.onSubmit} novalidate>
@@ -717,56 +805,16 @@ export class AddDeviceView extends DeviceFormView {
 
               ${this.renderLookup()}
 
-              <div class="wa-cluster wa-gap-s">
-                <!-- Absent, not disabled, when nothing here can scan. See {@link checkScanning}. -->
-                ${
-                  this.canScan
-                    ? html`
-                        <wa-button
-                          data-scan
-                          type="button"
-                          appearance="outlined"
-                          @click=${() => {
-                            this.scanOpen = true
-                          }}
-                        >
-                          <wa-icon slot="start" name="camera"></wa-icon>
-                          ${msg('Scan the code')}
-                        </wa-button>
-                      `
-                    : ''
-                }
-
-                <!-- Always rendered, unlike the camera button beside it, and that asymmetry is the
-                     feature. A machine with no camera shows no scan control at all, which is
-                     precisely the person holding a photograph of the label instead. Nothing is
-                     asked beforehand because every browser can choose a file; the only uncertainty
-                     is decoding, and that is reported when it happens rather than guessed at
-                     here - which also keeps the ZXing chunk off the page load. -->
-                <wa-button
-                  data-upload
-                  type="button"
-                  appearance="outlined"
-                  @click=${() => {
-                    ;(this.querySelector('input[type="file"]') as HTMLInputElement | null)?.click()
-                  }}
-                >
-                  <wa-icon slot="start" name="image"></wa-icon>
-                  ${msg('Upload an image')}
-                </wa-button>
-
-                <!-- Hidden rather than absent: the button above opens it, so it has to be in the
-                     tree to be opened. The accept attribute filters the picker and enforces
-                     nothing, which is why codesFromImage still answers for a file that is not an
-                     image. No backticks in this comment: it sits inside a template literal, where
-                     one would end it. -->
-                <input
-                  type="file"
-                  accept="image/*"
-                  hidden
-                  @change=${(event: Event) => void this.onUpload(event)}
-                />
-              </div>
+              <!-- One control, never both, and neither until the camera check has answered (see
+                   scanChecked). Where this browser can scan, Scan the code; uploading is then
+                   the scan dialog's own fallback, for a label the camera cannot read, and a
+                   second Upload beside Scan would be two ways in to say the same thing. Where it
+                   cannot, Upload an image, which is precisely the person with no camera holding
+                   a photograph of the label: nothing is asked beforehand because every browser
+                   can choose a file, and the only uncertainty, decoding, is reported when it
+                   happens rather than guessed at here - which also keeps the ZXing chunk off the
+                   page load. Absent rather than disabled; see checkScanning. -->
+              ${this.scanChecked ? this.renderCodeSource() : ''}
 
               ${
                 this.uploadProblem === undefined
