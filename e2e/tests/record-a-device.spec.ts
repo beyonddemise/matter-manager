@@ -1,4 +1,4 @@
-import { expect, test } from './fixtures'
+import { expect, recordDevice, test } from './fixtures'
 
 /**
  * The journey the application exists for: a code that cannot be scanned is typed, filed, and
@@ -8,9 +8,6 @@ import { expect, test } from './fixtures'
  * bundle that actually ships, a real IndexedDB, and the reload that proves the device is kept
  * rather than merely displayed.
  */
-
-/** The verified reference device; see `frontend/test/domain/matter/payload.test.ts`. */
-const PAYLOAD = 'MT:Y.K9042C00KA0648G00'
 
 /*
  * No storage clean-up between tests, deliberately. Playwright gives each test its own browser
@@ -22,29 +19,6 @@ const PAYLOAD = 'MT:Y.K9042C00KA0648G00'
  * completed *after* the test had written its device. Two of three journeys failed for a
  * clean-up that was doing nothing except racing them.
  */
-
-/**
- * Fills the add form and saves.
- *
- * Each control is a Web Awesome component, so the fillable element is the `<input>` inside its
- * shadow root rather than the host — Playwright pierces shadow DOM, and the host itself is not
- * an input and refuses `fill`. Addressed through the `data-field` attributes the views define,
- * which is the same handle the browser tests use.
- */
-async function recordDevice(
-  page: import('@playwright/test').Page,
-  name: string,
-  room: string,
-): Promise<void> {
-  await page.goto('/#/devices/new')
-  await page.locator('[data-field="credential"] input').fill(PAYLOAD)
-  await page.locator('[data-field="name"] input').fill(name)
-  // The combobox has two inputs - the one that is typed into and the one holding the chosen
-  // value. The first is the visible one.
-  await page.locator('[data-field="room"] input').first().fill(room)
-  await page.locator('[data-field="installed-at"] input').fill('2026-09-02')
-  await page.locator('form wa-button[type="submit"]').click()
-}
 
 test('the first run names its project, opens it, and records a device in it', async ({ page }) => {
   // A brand-new device lands on the projects page with one project waiting for a name: the
