@@ -65,7 +65,7 @@ export function decodeBase38(encoded: string): Uint8Array {
 
   for (let cursor = 0; cursor < encoded.length; ) {
     const remaining = encoded.length - cursor
-    const chunkLength = remaining >= 5 ? 5 : remaining
+    const chunkLength = Math.min(remaining, 5)
     const byteCount = BYTE_COUNT_PER_CHARS[chunkLength]
 
     if (byteCount === undefined) {

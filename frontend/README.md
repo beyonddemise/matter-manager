@@ -8,14 +8,14 @@ self-contained — it installs, lints, typechecks, tests and builds without the 
 
 ## The three directories
 
-| directory | what it is | may depend on |
-| --- | --- | --- |
-| `src/domain` | Pure logic: Matter codec, room paths, document drafts, conflict merge | **nothing** |
-| `src/data` | PouchDB repositories, sync manager, conflict detection | `src/domain` |
-| `src/ui` | Lit components, routing, views, PDF and QR | both |
+| directory    | what it is                                                            | may depend on |
+| ------------ | --------------------------------------------------------------------- | ------------- |
+| `src/domain` | Pure logic: Matter codec, room paths, document drafts, conflict merge | **nothing**   |
+| `src/data`   | PouchDB repositories, sync manager, conflict detection                | `src/domain`  |
+| `src/ui`     | Lit components, routing, views, PDF and QR                            | both          |
 
 They were separate npm packages until #181. The packaging was ceremony — `core` had exactly
-one consumer — but the *boundaries* are real and are enforced rather than described:
+one consumer — but the _boundaries_ are real and are enforced rather than described:
 
 - **`src/domain` depends on nothing**, and two mechanisms say so. `tsconfig.domain.json`
   typechecks it with no `lib` beyond ES2023 and no `types` at all, so `document`, `window` and
@@ -34,7 +34,7 @@ at all**, so any code depending on it could only be tested in a browser.
 
 Inverting it means `src/ui` supplies the browser build, the tests supply `pouchdb-core` plus
 `pouchdb-adapter-memory`, and those tests run in Node in milliseconds like the domain's. The
-only PouchDB name in `src/data` is the *type* `PouchDB.Database`, which is erased at compile
+only PouchDB name in `src/data` is the _type_ `PouchDB.Database`, which is erased at compile
 time — asserted by `test/data/no-pouchdb-import.test.ts`, which is what makes the `allowedDev`
 claim in `dependency-policy.json` a proof rather than a promise.
 
@@ -51,7 +51,7 @@ and the room list is derived in memory from the devices.
 conflict merge depends on (ADR 0010), and a document written without it does not fail — it
 quietly loses every future conflict. The clock is injected, so tests are deterministic.
 
-Merge *logic* itself lives in `src/domain`: deciding how two conflicting remark arrays combine
+Merge _logic_ itself lives in `src/domain`: deciding how two conflicting remark arrays combine
 is a pure function over plain data, testable exhaustively without a database. `src/data` finds
 the conflicts and applies the decision; it does not make it.
 

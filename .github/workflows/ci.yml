@@ -416,7 +416,6 @@ jobs:
           docker rm -f couch-smoke >/dev/null 2>&1 || true
           exit $fail
 
-
   # The CouchDB contract job (verify-access-model.sh, verify-jwt-model.sh) moved to the
   # backend repository's CI together with infra/ — the backend owns the CouchDB version and
   # configuration, so the gate lives where a change can originate.
