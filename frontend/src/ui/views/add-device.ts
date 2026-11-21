@@ -487,7 +487,7 @@ export class AddDeviceView extends DeviceFormView {
    * sets it itself, and under `linear` the step after an incomplete one is locked, so `next()`
    * would silently do nothing.
    */
-  private async advance(): Promise<void> {
+  private advance(): void {
     const step = this.step
     if (!this.checkStep(step)) return
     const element = this.stepElement(step)
@@ -506,18 +506,30 @@ export class AddDeviceView extends DeviceFormView {
   }
 
   /**
-   * Refuses a jump forward - a click on a later step - when the step being left fails its check.
+   * Refuses a jump forward - a click on a later step - over any step that no longer passes, and
+   * stops on the first such step instead.
+   *
+   * Every step from the one being left up to the target is checked, not only the one being
+   * left: a step passed earlier can have been emptied since - Review's Edit, clear the room,
+   * Back to Scan it, then a click on Review - and its checkmark, which unlocks the later steps,
+   * would otherwise carry the person past it to a Review showing the gap. The jump then goes to
+   * the failing step, so its message sits beside its control; `checkStep` has already set the
+   * error, which `onStepChange` keeps because that step owns it. That nested `goTo` is itself a
+   * forward jump, and the steps before the failing one pass, so it is allowed.
    *
    * Going back is always allowed and never takes a checkmark away: Review's "Edit" would
    * otherwise lock every step after the one edited and make the person walk them all again.
-   * Only the step being left is checked; the steps jumped over passed when they were left, and
-   * Save checks everything once more regardless.
    */
   private onBeforeStepChange(event: WaBeforeStepChangeEvent): void {
     const from = event.detail.previousName as AddStep | null
     const to = event.detail.name as AddStep
     if (from === null || STEPS.indexOf(to) <= STEPS.indexOf(from)) return
-    if (!this.checkStep(from)) event.preventDefault()
+    const failing = STEPS.slice(STEPS.indexOf(from), STEPS.indexOf(to)).find(
+      (step) => !this.checkStep(step),
+    )
+    if (failing === undefined) return
+    event.preventDefault()
+    if (failing !== from) this.goToStep(failing)
   }
 
   /**
@@ -560,9 +572,12 @@ export class AddDeviceView extends DeviceFormView {
     const panel = this.querySelector(`[data-step-panel="${step}"]`)
     if (panel === null) return
     const field = this.error?.field
+    // `stepOf` places only fields that have a control, so a match is a key of CONTROL_OF.
     const inError =
-      field !== undefined && field !== 'remark' && STEP_OF[field] === step
-        ? panel.querySelector<HTMLElement>(`[data-field="${CONTROL_OF[field]}"]`)
+      field !== undefined && stepOf(field) === step
+        ? panel.querySelector<HTMLElement>(
+            `[data-field="${CONTROL_OF[field as keyof typeof CONTROL_OF]}"]`,
+          )
         : null
     const target =
       inError ??
@@ -642,7 +657,7 @@ export class AddDeviceView extends DeviceFormView {
     // Enter in a field on steps 1-3 means Next. Saving from Scan it would store a device whose
     // place and name the person never saw on Review.
     if (this.step !== 'review') {
-      await this.advance()
+      this.advance()
       return
     }
     if (this.saving) return
@@ -792,7 +807,6 @@ export class AddDeviceView extends DeviceFormView {
         ${this.renderRequiredNote()}
 
         <wa-stepper
-          data-stepper
           active="scan"
           orientation="auto"
           linear
@@ -891,14 +905,11 @@ export class AddDeviceView extends DeviceFormView {
                   </wa-button>
                 `
               : html`
-                  <wa-button
-                    data-next
-                    type="button"
-                    variant="brand"
-                    @click=${() => void this.advance()}
-                  >
-                    ${msg('Next')}
-                  </wa-button>
+                  <!-- A submit button, so that Enter in a field reaches onSubmit, which advances
+                       on steps 1-3: wa-input turns Enter into a click on the form's first submit
+                       button, and with none it submits only a form with exactly one field -
+                       which this one never is, as hidden panels stay in the tree. -->
+                  <wa-button data-next type="submit" variant="brand">${msg('Next')}</wa-button>
                 `
           }
           <wa-button href="#/devices" appearance="plain">${msg('Cancel')}</wa-button>

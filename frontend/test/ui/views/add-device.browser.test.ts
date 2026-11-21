@@ -226,7 +226,13 @@ async function next(element: AddDeviceView): Promise<void> {
   await settle(element)
 }
 
-/** Dispatches `submit` on the form, which is what Enter in a field does. */
+/**
+ * Dispatches `submit` on the form: what Next and Save end in, without the click.
+ *
+ * Not a stand-in for Enter in a field. `wa-input` handles that key itself, by clicking the
+ * form's first submit button, so a real keypress is tested with `userEvent` instead - a
+ * dispatched `submit` would pass even if that button were missing.
+ */
 function dispatchSubmit(element: HTMLElement): void {
   element
     .querySelector('form')
@@ -778,6 +784,75 @@ describe('the steps', () => {
     expect(completed(element, 'scan')).toBe(false)
   })
 
+  it('refuses a jump forward over a step made invalid since it was passed', async () => {
+    // The step being left still passes; the one jumped over does not. Landing on Review would
+    // show an empty room under a checkmark, so the jump stops on Place it, beside the room.
+    const element = await form()
+    fillAll(element)
+    await toReview(element)
+
+    await edit(element, 'place')
+    expect(activeStep(element)).toBe('place')
+    typeRoom(element, '')
+    ;(element.querySelector('[data-back]') as HTMLElement).click()
+    await settle(element)
+    expect(activeStep(element)).toBe('scan')
+    ;(element.querySelector('wa-step[name="review"]') as HTMLElement).click()
+    await settle(element)
+    await settle(element)
+
+    expect(activeStep(element)).toBe('place')
+    expect(errorText(element)).toBeTruthy()
+    expect(hintOf(element, 'room')).toBe(errorText(element))
+    expect(completed(element, 'place')).toBe(false)
+    expect(await devices()).toHaveLength(0)
+  })
+
+  it('advances on a real Enter in the setup-code field', async () => {
+    // A pressed key, not a dispatched `submit`: `wa-input` turns Enter into a click on the
+    // form's first submit button, so this only works if Next is one.
+    const element = await form()
+    fillAll(element)
+    ;(element.querySelector('[data-field="credential"]') as HTMLElement).focus()
+
+    await userEvent.keyboard('{Enter}')
+    await waitUntil(() => activeStep(element) === 'place', 'Enter never advanced to Place it')
+
+    expect(await devices()).toHaveLength(0)
+  })
+
+  it('advances on a real Enter in the name field, to Review and not to a save', async () => {
+    const element = await form()
+    fillAll(element)
+    await next(element)
+    await next(element)
+    expect(activeStep(element)).toBe('name')
+    ;(element.querySelector('[data-field="name"]') as HTMLElement).focus()
+
+    await userEvent.keyboard('{Enter}')
+    await waitUntil(() => activeStep(element) === 'review', 'Enter never advanced to Review')
+    await settle(element)
+
+    expect(await devices()).toHaveLength(0)
+  })
+
+  it('saves on Review only from Save, which Enter on the button presses', async () => {
+    const element = await form()
+    fillAll(element)
+    await toReview(element)
+    await element.updateComplete
+
+    // Focus starts on Review's heading, which is no control: Enter there does nothing.
+    await userEvent.keyboard('{Enter}')
+    await settle(element)
+    expect(activeStep(element)).toBe('review')
+    expect(await devices()).toHaveLength(0)
+
+    ;(element.querySelector('[data-save]') as HTMLElement).focus()
+    await userEvent.keyboard('{Enter}')
+    await waitUntil(async () => (await devices()).length === 1, 'Save never saved')
+  })
+
   it('advances on Enter rather than saving', async () => {
     const element = await form()
     fillAll(element)
@@ -913,8 +988,8 @@ describe('reviewing before saving', () => {
     fillAll(element)
     await toReview(element)
     for (const step of ['scan', 'place', 'name']) {
-      const heading = reviewOf(element, step).querySelector('[slot="header"]')
-      expect(heading?.tagName).toBe('H3')
+      const heading = reviewOf(element, step).querySelector('[slot="header"] > h3')
+      expect(heading).not.toBeNull()
       expect(heading?.classList.contains('wa-heading-m')).toBe(true)
     }
   })

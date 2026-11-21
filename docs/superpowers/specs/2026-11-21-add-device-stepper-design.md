@@ -95,7 +95,10 @@ The stepper never sets `completed` itself, and under `linear` every step after t
 incomplete one is *locked*: `next()` and `goTo()` silently do nothing (official docs,
 webawesome.com/docs/components/stepper). So **Next** checks the active step, sets its
 `<wa-step completed>`, and only then calls `next()`. A click on a later, already-reachable step
-goes through `wa-before-step-change`, which is cancelled when the step being left is invalid.
+goes through `wa-before-step-change`, which checks every step from the one being left up to
+the target: a step passed earlier can have been emptied since (Edit a step, clear it, go Back,
+click Review). At the first that fails, the change is cancelled and the form goes to that step
+instead, so its message sits beside its control.
 
 Unlike the docs' example, going *back* does not clear `completed`: Review's "Edit" would
 otherwise lock every later step and force the person through them all again. A step loses
@@ -200,5 +203,10 @@ fields through the steps. `npm run verify` clean, coverage gate met, zero warnin
 ## Deviations from the design
 
 - Enter in the room combobox does not advance to the next step. `wa-combobox` swallows Enter
-  (it selects or opens its listbox), so the form's submit handler never sees it. Enter in the
-  other fields on steps 1-3 advances as specified; in the combobox, Next is the way forward.
+  (it selects or opens its listbox), so the form's submit handler never sees it; in the
+  combobox, Next is the way forward. Verified with a real keypress.
+- Enter in every other field on steps 1-3 advances as specified, because **Next** is a
+  `type="submit"` button. `wa-input` handles Enter by clicking the form's first submit button;
+  with none it submits only a form with exactly one field, and this form has several, since
+  hidden panels stay in the tree. Covered by real-keypress tests in the setup-code and name
+  fields, not by a dispatched `submit`, which would pass without the button.
