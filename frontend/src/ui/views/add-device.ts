@@ -30,6 +30,7 @@ import { imageMessage } from '../i18n/problems.js'
 import { codesFromImage, type ImageProblem, ImageScanError } from '../scan/image.js'
 import { cameraSource, type ScanSource } from '../scan/source.js'
 import { accessToken } from '../tokens.js'
+import { type ReviewSummary, renderReview } from './add-device-review.js'
 import { DeviceFormView, fieldValue } from './device-form.js'
 import './scan-dialog.js'
 
@@ -52,6 +53,15 @@ type LookupState =
   | { readonly kind: 'found'; readonly code: string; readonly result: CatalogLookup }
 
 const IDLE: LookupState = { kind: 'idle' }
+
+/**
+ * What Review shows: the controls' values as they were on entering it, and the setup code as the
+ * catalogue would be asked it, so that only an answer about *that* code is shown beside them.
+ */
+interface Reviewed {
+  readonly summary: ReviewSummary
+  readonly code: string | undefined
+}
 
 /** The four steps of adding a device, by their `<wa-step name>` (#349). */
 export type AddStep = 'scan' | 'place' | 'name' | 'review'
@@ -127,6 +137,7 @@ export class AddDeviceView extends DeviceFormView {
     catalog: { attribute: false },
     lookupState: { state: true },
     step: { state: true },
+    reviewed: { state: true },
   }
 
   /**
@@ -134,6 +145,17 @@ export class AddDeviceView extends DeviceFormView {
    * shown, which buttons are offered, and which step Next and Enter check.
    */
   declare step: AddStep
+
+  /**
+   * Review's summary, read from the controls each time Review is entered; `undefined` before
+   * it first is.
+   *
+   * A snapshot taken on the step change rather than a read in `render`, because typing into a
+   * control re-renders nothing: a read in `render` would show whatever the controls held at the
+   * last unrelated re-render, which is a value the person may since have changed. Entering
+   * Review is the one moment that is guaranteed to be after every edit, so it is the one read.
+   */
+  declare reviewed: Reviewed | undefined
 
   /** Bound by a test to a camera that is not one; the real one otherwise. */
   declare scanSource?: ScanSource
@@ -178,6 +200,7 @@ export class AddDeviceView extends DeviceFormView {
     this.uploadProblem = undefined
     this.lookupState = IDLE
     this.step = 'scan'
+    this.reviewed = undefined
   }
 
   protected override firstUpdated(): void {
@@ -480,6 +503,43 @@ export class AddDeviceView extends DeviceFormView {
   private onStepChange(event: WaStepChangeEvent): void {
     this.step = event.detail.name as AddStep
     if (this.error !== undefined && stepOf(this.error.field) !== this.step) this.error = undefined
+    if (this.step === 'review') {
+      const draft = this.draft()
+      this.reviewed = {
+        summary: {
+          credential: draft.credential,
+          serial: draft.serial ?? '',
+          installedAt: draft.installedAt,
+          room: draft.room,
+          spot: draft.spot ?? '',
+          name: draft.name,
+        },
+        code: this.lookupCode(),
+      }
+    }
+  }
+
+  /**
+   * Review's manufacturer and product: live, unlike the rest of the summary, because the lookup
+   * may answer while Review is on screen - but only an answer about the code being reviewed.
+   */
+  private reviewCatalogLines(code: string | undefined): TemplateResult | '' {
+    const state = this.lookupState
+    return state.kind === 'found' && state.code === code
+      ? this.renderCatalogLines(catalogNames(state.result))
+      : ''
+  }
+
+  /** Review, once it has been entered; nothing before, as there is nothing yet to summarise. */
+  private renderReviewPanel(): TemplateResult | '' {
+    const reviewed = this.reviewed
+    return reviewed === undefined
+      ? ''
+      : renderReview(
+          reviewed.summary,
+          (step) => this.goToStep(step),
+          this.reviewCatalogLines(reviewed.code),
+        )
   }
 
   private async onSubmit(event: Event): Promise<void> {
@@ -527,7 +587,16 @@ export class AddDeviceView extends DeviceFormView {
         )
       } catch (problem) {
         if (problem instanceof DraftError) {
+          // Shown on the step that owns the field, beside its control, not above a summary that
+          // has no control in it. The error is set first because `onStepChange` keeps exactly
+          // the error the new step owns; the checkmark goes because that step no longer passes.
           this.error = problem
+          const step = stepOf(problem.field)
+          if (step !== undefined) {
+            const element = this.stepElement(step)
+            if (element) element.completed = false
+            this.goToStep(step)
+          }
           return
         }
         // Anything else is a bug rather than a statement about the form, and swallowing it
@@ -578,104 +647,100 @@ export class AddDeviceView extends DeviceFormView {
              controls, so a hidden panel keeps what was typed and Save still reads it. The
              layout class sits on an inner div: on the section itself its display would outrank
              the browser's own [hidden] rule and show every panel at once. -->
-        <section data-step-panel=\"scan\" ?hidden=${this.step !== 'scan'}>
-          <div class=\"wa-stack wa-gap-l\">
-          <div class="wa-stack wa-gap-2xs">
-            <wa-input
-              data-field="credential"
-              required
-              label=${msg('Setup code')}
-              hint=${this.messageFor('credential') ?? msg('The MT: code from the QR label, or the numeric pairing code beneath it.')}
-              autocomplete="off"
-              spellcheck="false"
-              @input=${() => this.scheduleLookup()}
-            ></wa-input>
+        <section data-step-panel="scan" ?hidden=${this.step !== 'scan'}>
+          <div class="wa-stack wa-gap-l">
+            <div class="wa-stack wa-gap-2xs">
+              <wa-input
+                data-field="credential"
+                required
+                label=${msg('Setup code')}
+                hint=${this.messageFor('credential') ?? msg('The MT: code from the QR label, or the numeric pairing code beneath it.')}
+                autocomplete="off"
+                spellcheck="false"
+                @input=${() => this.scheduleLookup()}
+              ></wa-input>
 
-            ${this.renderLookup()}
+              ${this.renderLookup()}
 
-            <div class="wa-cluster wa-gap-s">
-              <!-- Absent, not disabled, when nothing here can scan. See {@link checkScanning}. -->
+              <div class="wa-cluster wa-gap-s">
+                <!-- Absent, not disabled, when nothing here can scan. See {@link checkScanning}. -->
+                ${
+                  this.canScan
+                    ? html`
+                        <wa-button
+                          data-scan
+                          type="button"
+                          appearance="outlined"
+                          @click=${() => {
+                            this.scanOpen = true
+                          }}
+                        >
+                          <wa-icon slot="start" name="camera"></wa-icon>
+                          ${msg('Scan the code')}
+                        </wa-button>
+                      `
+                    : ''
+                }
+
+                <!-- Always rendered, unlike the camera button beside it, and that asymmetry is the
+                     feature. A machine with no camera shows no scan control at all, which is
+                     precisely the person holding a photograph of the label instead. Nothing is
+                     asked beforehand because every browser can choose a file; the only uncertainty
+                     is decoding, and that is reported when it happens rather than guessed at
+                     here - which also keeps the ZXing chunk off the page load. -->
+                <wa-button
+                  data-upload
+                  type="button"
+                  appearance="outlined"
+                  @click=${() => {
+                    ;(this.querySelector('input[type="file"]') as HTMLInputElement | null)?.click()
+                  }}
+                >
+                  <wa-icon slot="start" name="image"></wa-icon>
+                  ${msg('Upload an image')}
+                </wa-button>
+
+                <!-- Hidden rather than absent: the button above opens it, so it has to be in the
+                     tree to be opened. The accept attribute filters the picker and enforces
+                     nothing, which is why codesFromImage still answers for a file that is not an
+                     image. No backticks in this comment: it sits inside a template literal, where
+                     one would end it. -->
+                <input
+                  type="file"
+                  accept="image/*"
+                  hidden
+                  @change=${(event: Event) => void this.onUpload(event)}
+                />
+              </div>
+
               ${
-                this.canScan
-                  ? html`
-                      <wa-button
-                        data-scan
-                        type="button"
-                        appearance="outlined"
-                        @click=${() => {
-                          this.scanOpen = true
-                        }}
-                      >
-                        <wa-icon slot="start" name="camera"></wa-icon>
-                        ${msg('Scan the code')}
-                      </wa-button>
+                this.uploadProblem === undefined
+                  ? ''
+                  : html`
+                      <wa-callout variant="neutral" data-upload-problem>
+                        <wa-icon slot="icon" name="circle-info"></wa-icon>
+                        ${imageMessage(this.uploadProblem)}
+                      </wa-callout>
                     `
-                  : ''
               }
-
-              <!-- Always rendered, unlike the camera button beside it, and that asymmetry is the
-                   feature. A machine with no camera shows no scan control at all, which is
-                   precisely the person holding a photograph of the label instead. Nothing is
-                   asked beforehand because every browser can choose a file; the only uncertainty
-                   is decoding, and that is reported when it happens rather than guessed at
-                   here - which also keeps the ZXing chunk off the page load. -->
-              <wa-button
-                data-upload
-                type="button"
-                appearance="outlined"
-                @click=${() => {
-                  ;(this.querySelector('input[type="file"]') as HTMLInputElement | null)?.click()
-                }}
-              >
-                <wa-icon slot="start" name="image"></wa-icon>
-                ${msg('Upload an image')}
-              </wa-button>
-
-              <!-- Hidden rather than absent: the button above opens it, so it has to be in the
-                   tree to be opened. The accept attribute filters the picker and enforces
-                   nothing, which is why codesFromImage still answers for a file that is not an
-                   image. No backticks in this comment: it sits inside a template literal, where
-                   one would end it. -->
-              <input
-                type="file"
-                accept="image/*"
-                hidden
-                @change=${(event: Event) => void this.onUpload(event)}
-              />
             </div>
 
-            ${
-              this.uploadProblem === undefined
-                ? ''
-                : html`
-                    <wa-callout variant="neutral" data-upload-problem>
-                      <wa-icon slot="icon" name="circle-info"></wa-icon>
-                      ${imageMessage(this.uploadProblem)}
-                    </wa-callout>
-                  `
-            }
-          </div>
-
-          ${this.renderSerialField()}
-          ${this.renderInstalledField()}
+            ${this.renderSerialField()}
+            ${this.renderInstalledField()}
           </div>
         </section>
 
-        <section data-step-panel=\"place\" ?hidden=${this.step !== 'place'}>
-          <div class=\"wa-stack wa-gap-l\">
-          ${this.renderPlaceFields()}
-          </div>
+        <section data-step-panel="place" ?hidden=${this.step !== 'place'}>
+          <div class="wa-stack wa-gap-l">${this.renderPlaceFields()}</div>
         </section>
 
-        <section data-step-panel=\"name\" ?hidden=${this.step !== 'name'}>
-          <div class=\"wa-stack wa-gap-l\">
-          ${this.renderNameField()}
-          </div>
+        <section data-step-panel="name" ?hidden=${this.step !== 'name'}>
+          <div class="wa-stack wa-gap-l">${this.renderNameField()}</div>
         </section>
 
-        <!-- The read-only summary of steps 1-3 lands here later in #349; until then Review
-             offers only Save, in the buttons below. -->
-        <section data-step-panel="review" ?hidden=${this.step !== 'review'}></section>
+        <section data-step-panel="review" ?hidden=${this.step !== 'review'}>
+          ${this.renderReviewPanel()}
+        </section>
 
         <div class="wa-cluster wa-gap-s">
           ${

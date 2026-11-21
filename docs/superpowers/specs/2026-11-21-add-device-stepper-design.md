@@ -185,5 +185,7 @@ fields through the steps. `npm run verify` clean, coverage gate met, zero warnin
 ## Left to the builder
 
 - Exact copy of step descriptions (`slot="description"`), if any are used.
-- Whether the Review blocks are `wa-card`s or a definition list inside one card.
+- Whether the Review blocks are `wa-card`s or a definition list inside one card. Decided (Task 3):
+  one `wa-card` per step, its `<h2>` in the header slot and Edit in `header-actions`, the values
+  a `dl.app-facts` like the catalogue lines - so each block reads as the step it returns to.
 - Where the stepper's Pro imports live, following the existing registration module.

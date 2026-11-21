@@ -819,6 +819,125 @@ describe('the steps', () => {
   })
 })
 
+/** Review's summary block for a step, which must exist. */
+function reviewOf(element: HTMLElement, step: string): HTMLElement {
+  const block = element.querySelector<HTMLElement>(`[data-review="${step}"]`)
+  if (block === null) throw new Error(`no review block for "${step}"`)
+  return block
+}
+
+/** Presses a review block's Edit, the way a person does. */
+async function edit(element: AddDeviceView, step: string): Promise<void> {
+  const button = reviewOf(element, step).querySelector<HTMLElement>('[data-edit]')
+  if (button === null) throw new Error(`no Edit in the review block for "${step}"`)
+  button.click()
+  await settle(element)
+}
+
+describe('reviewing before saving', () => {
+  it('shows what will be saved', async () => {
+    const element = await form()
+    fill(element, 'credential', PAYLOAD)
+    fill(element, 'serial', 'SN-1')
+    fill(element, 'installed-at', '2026-08-19')
+    typeRoom(element, 'Ground Floor/Kitchen')
+    fill(element, 'spot', 'ceiling')
+    fill(element, 'name', 'Kitchen light')
+
+    await toReview(element)
+
+    expect(visible(element, '[data-review="scan"]')).toBe(true)
+    expect(reviewOf(element, 'scan').textContent).toContain(PAYLOAD)
+    expect(reviewOf(element, 'scan').textContent).toContain('SN-1')
+    expect(reviewOf(element, 'place').textContent).toContain('Ground Floor/Kitchen')
+    expect(reviewOf(element, 'place').textContent).toContain('ceiling')
+    expect(reviewOf(element, 'name').textContent).toContain('Kitchen light')
+    // Locale-formatted by the component rather than shown as the ISO string the control holds.
+    const date = reviewOf(element, 'scan').querySelector('wa-format-date') as
+      | (HTMLElement & { updateComplete: Promise<unknown> })
+      | null
+    expect(customElements.get('wa-format-date')).toBeDefined()
+    expect(date?.getAttribute('date')).toContain('2026-08-19')
+    await date?.updateComplete
+    expect(date?.shadowRoot?.textContent).toContain('2026')
+    expect(date?.shadowRoot?.textContent).toContain('19')
+  })
+
+  it('shows the manufacturer once the lookup has answered', async () => {
+    const { api } = fakeCatalog(found)
+    const element = await form(database.repositories, neverAvailable(), { api })
+    typeCode(element, aqaraPayload())
+    typeRoom(element, 'Hall')
+    fill(element, 'name', 'Front door sensor')
+
+    await toReview(element)
+
+    await waitUntil(
+      () => reviewOf(element, 'scan').querySelector('[data-catalog-manufacturer]') !== null,
+      'Review never showed the manufacturer',
+    )
+    expect(reviewOf(element, 'scan').textContent).toContain('Aqara Home')
+    expect(reviewOf(element, 'scan').textContent).toContain('Aqara Door and Window Sensor P2')
+  })
+
+  it('returns to the step from Edit, values intact, and back to Review with Next', async () => {
+    const element = await form()
+    fillAll(element)
+    await toReview(element)
+
+    await edit(element, 'place')
+    expect(activeStep(element)).toBe('place')
+    expect(fieldValue(element, 'spot')).toBe('ceiling, north end')
+    await next(element)
+    await next(element)
+    expect(activeStep(element)).toBe('review')
+
+    await edit(element, 'name')
+    expect(activeStep(element)).toBe('name')
+    expect(fieldValue(element, 'name')).toBe('Kitchen ceiling light')
+    fill(element, 'name', 'Pantry light')
+    await next(element)
+
+    expect(activeStep(element)).toBe('review')
+    // Read from the controls on entering Review, so the change shows rather than the old name.
+    expect(reviewOf(element, 'name').textContent).toContain('Pantry light')
+    expect(reviewOf(element, 'name').textContent).not.toContain('Kitchen ceiling light')
+  })
+
+  it('saves only from Review', async () => {
+    const element = await form()
+    fillAll(element)
+    await settle(element)
+
+    for (const step of ['scan', 'place', 'name']) {
+      expect(activeStep(element)).toBe(step)
+      expect(element.querySelector('[data-save]'), step).toBeNull()
+      await next(element)
+    }
+    expect(activeStep(element)).toBe('review')
+    expect(element.querySelector('[data-save]')).not.toBeNull()
+  })
+
+  it('lands a save-time room problem on Place it', async () => {
+    // A value changed after its step passed and never checked again - here the room control,
+    // hidden on Review - reaches `planNewDevice` on Save. Its message has to appear beside the
+    // room, which means on Place it, not above a summary with no room control in it.
+    const element = await form()
+    fillAll(element)
+    await toReview(element)
+
+    typeRoom(element, '/')
+    dispatchSubmit(element)
+    await waitUntil(() => activeStep(element) === 'place', 'Save never went to Place it')
+    await settle(element)
+
+    expect(errorText(element)).toBeTruthy()
+    expect(hintOf(element, 'room')).toBe(errorText(element))
+    expect(completed(element, 'place')).toBe(false)
+    expect(await devices()).toHaveLength(0)
+  })
+})
+
 /** The `data-field` of every control marked `required`, sorted. */
 const requiredFields = (element: HTMLElement): (string | null)[] =>
   [...element.querySelectorAll('[data-field][required]')]
