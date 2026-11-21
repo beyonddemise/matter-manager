@@ -441,8 +441,24 @@ export abstract class DeviceFormView extends LitElement {
     return html`<p class="app-empty" data-required-note>${msg('Fields marked * are required.')}</p>`
   }
 
-  /** The five controls both forms have, in the order both forms show them. */
+  /**
+   * The five controls both forms have, in the order both forms show them.
+   *
+   * Composed from the four pieces below rather than written out, so the edit form keeps one page
+   * while the add form deals the same controls out across its steps (#349): one definition of
+   * each control, whichever way it is laid out.
+   */
   protected renderFields(): TemplateResult {
+    return html`
+      ${this.renderNameField()}
+      ${this.renderPlaceFields()}
+      ${this.renderSerialField()}
+      ${this.renderInstalledField()}
+    `
+  }
+
+  /** The device's name. */
+  protected renderNameField(): TemplateResult {
     return html`
       <wa-input
         data-field="name"
@@ -450,7 +466,12 @@ export abstract class DeviceFormView extends LitElement {
         label=${msg('Name')}
         hint=${this.messageFor('name') ?? msg('What you would call it out loud: "kitchen ceiling light".')}
       ></wa-input>
+    `
+  }
 
+  /** Where it is: the room, and the spot within it. Together, because a spot means nothing alone. */
+  protected renderPlaceFields(): TemplateResult {
+    return html`
       <wa-combobox
         data-field="room"
         allow-create
@@ -467,9 +488,17 @@ export abstract class DeviceFormView extends LitElement {
         label=${msg('Spot')}
         hint=${msg('Where in the room, if that helps: "ceiling, north end".')}
       ></wa-input>
+    `
+  }
 
-      <wa-input data-field="serial" label=${msg('Serial number')}></wa-input>
+  /** The serial number, which is optional and printed on the same label as the setup code. */
+  protected renderSerialField(): TemplateResult {
+    return html`<wa-input data-field="serial" label=${msg('Serial number')}></wa-input>`
+  }
 
+  /** The installation date. */
+  protected renderInstalledField(): TemplateResult {
+    return html`
       <wa-input
         data-field="installed-at"
         type="date"

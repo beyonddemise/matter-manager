@@ -31,6 +31,7 @@ const EXPECTED: ReadonlyArray<
   ['DraftError', 'function'],
   ['DRAFT_PROBLEMS', 'object'],
   ['planNewDevice', 'function'],
+  ['checkDraftFields', 'function'],
   ['planDeviceEdit', 'function'],
   ['setDeviceDisabled', 'function'],
   ['addRemark', 'function'],

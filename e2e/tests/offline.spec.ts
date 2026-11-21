@@ -1,4 +1,4 @@
-import { expect, test } from './fixtures'
+import { expect, recordDevice, test } from './fixtures'
 
 /**
  * Offline behaviour, which is what ADR 0002 makes this application for.
@@ -8,21 +8,6 @@ import { expect, test } from './fixtures'
  * network switched off — which is the promise, and which depends on the service worker, the
  * bundle and real storage all being right at once.
  */
-
-const PAYLOAD = 'MT:Y.K9042C00KA0648G00'
-
-async function recordDevice(
-  page: import('@playwright/test').Page,
-  name: string,
-  room: string,
-): Promise<void> {
-  await page.goto('/#/devices/new')
-  await page.locator('[data-field="credential"] input').fill(PAYLOAD)
-  await page.locator('[data-field="name"] input').fill(name)
-  await page.locator('[data-field="room"] input').first().fill(room)
-  await page.locator('[data-field="installed-at"] input').fill('2026-09-02')
-  await page.locator('form wa-button[type="submit"]').click()
-}
 
 test('a device can be recorded with no connectivity at all', async ({ page, context }) => {
   // The scenario the product exists for: somebody in a basement, in front of a device, with a

@@ -151,9 +151,10 @@ describe('a picture that carried no code speaks the interface language', () => {
     element.decodeImage = async () => {
       throw new ImageScanError('no-code')
     }
-    await element.updateComplete
-
-    const input = element.querySelector('input[type="file"]') as HTMLInputElement
+    // The form's own picker, which appears once the camera check has answered; the scan
+    // dialog's, always in the tree, would report into the dialog instead.
+    await waitUntil(() => element.querySelector('[data-upload-input]') !== null, 'no upload')
+    const input = element.querySelector('[data-upload-input]') as HTMLInputElement
     const transfer = new DataTransfer()
     transfer.items.add(new File([new Uint8Array([0])], 'etikett.png', { type: 'image/png' }))
     input.files = transfer.files

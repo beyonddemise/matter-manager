@@ -1,0 +1,212 @@
+# Adding a device in steps — design
+
+Date: 2026-11-21
+Issue: [#349](https://github.com/beyonddemise/matter-manager/issues/349)
+Status: approved
+Builds on: [Adding a device](2026-08-26-add-device-design.md), [QR decode and DCL catalogue](2026-10-05-qr-decode-and-dcl-catalogue-design.md)
+
+## Why
+
+The add form is one long column of seven controls and three buttons. On a phone it runs past
+the fixed footer, and nothing about it says what the job is: *read the label, decide where the
+thing lives, give it a name, check it.* The form should teach that sequence instead of hiding it.
+
+A second, smaller defect: on a device with a camera the person sees **two** "Upload an image"
+buttons — one on the form, one inside the scan dialog (`scan-dialog.ts`). One is enough.
+
+## Goals
+
+- The add flow is four steps, shown with Web Awesome Pro's `<wa-stepper>` / `<wa-step>`:
+
+  | # | Step (`name`) | Label | Contents |
+  |---|---|---|---|
+  | 1 | `scan` | Scan it | Setup code, Scan *or* Upload (see below), catalogue lookup status, Serial number, Installed |
+  | 2 | `place` | Place it | Room, Spot |
+  | 3 | `name` | Name it | Name |
+  | 4 | `review` | Review | Read-only summary of 1–3, catalogue names when known, an "Edit" per section, **Save device** |
+
+- Exactly one upload control is visible at any time.
+- Every behaviour the current form has survives: debounced catalogue lookup, room matching on
+  save, the project-switch guard, the double-submit guard, the storage-refusal path, backfill.
+
+## Non-goals
+
+- The edit form (`edit-device.ts`) stays a single page. Editing is usually one field; four
+  screens to rename a device is worse.
+- No change to validation rules, the stored document, or `planNewDevice`.
+- No per-step URL. The route stays `#/devices/new`; browser Back leaves the form.
+
+## Anti-goals (would be a failure even if it works)
+
+- A typed value lost by moving between steps.
+- A device saved with a value the person never saw on Review.
+- An error at save time that names a field the person cannot see.
+
+## Approaches considered
+
+1. **One view, four panels, inactive panels hidden — chosen.** `AddDeviceView` keeps owning
+   every control. A `<wa-stepper>` sits above four panels; only the panel matching `active` is
+   shown, the others carry `hidden`. Values stay in the controls, exactly as today.
+2. **One component per step, state lifted into properties.** Rejected: it reverses the
+   deliberate "values are imperative so a re-render cannot revert them" design
+   (`add-device.ts` `onScan`, `firstUpdated`), and rewrites well-tested code for no user gain.
+3. **One route per step** (`#/devices/new/place` …). Rejected: Back would walk steps rather than
+   leave the form, the lazy-view table and its tests change, and nothing asked for deep links.
+
+## Design
+
+### Structure
+
+```html
+<form novalidate>
+  <h1>Add a device</h1>
+  <wa-stepper active="scan" orientation="auto" linear clickable label="Add a device">
+    <wa-step name="scan">Scan it</wa-step>
+    <wa-step name="place">Place it</wa-step>
+    <wa-step name="name">Name it</wa-step>
+    <wa-step name="review">Review</wa-step>
+  </wa-stepper>
+
+  <section data-step-panel="scan">…</section>          <!-- hidden unless active -->
+  <section data-step-panel="place" hidden>…</section>
+  <section data-step-panel="name" hidden>…</section>
+  <section data-step-panel="review" hidden>…</section>
+
+  <div class="wa-cluster">Back · Next | Save device · Cancel</div>
+  <scan-dialog>…</scan-dialog>
+</form>
+```
+
+- `orientation="auto"` stacks the steps on a phone; `linear` + `clickable` lets the person jump
+  back to any completed step and never forward past an incomplete one.
+- The panel that is shown is driven by a reactive `step` property mirrored from
+  `wa-step-change`; the panels are always in the tree so their controls keep their values and
+  `planNewDevice` can still read every control on submit.
+- Each panel's first heading/control receives focus on step change, so keyboard and screen
+  reader users land in the new step (the stepper itself announces the position).
+- **Back** is absent on step 1; **Next** on steps 1–3; **Save device** only on Review.
+  **Cancel** on every step.
+- Enter in a field on steps 1–3 means *Next*, not submit: the form's submit handler advances
+  unless the active step is Review.
+
+### Moving forward: per-step checks
+
+The stepper never sets `completed` itself, and under `linear` every step after the first
+incomplete one is *locked*: `next()` and `goTo()` silently do nothing (official docs,
+webawesome.com/docs/components/stepper). So **Next** checks the active step, sets its
+`<wa-step completed>`, and only then calls `next()`. A click on a later, already-reachable step
+goes through `wa-before-step-change`, which checks every step from the one being left up to
+the target: a step passed earlier can have been emptied since (Edit a step, clear it, go Back,
+click Review). At the first that fails, the change is cancelled and the form goes to that step
+instead, so its message sits beside its control.
+
+Unlike the docs' example, going *back* does not clear `completed`: Review's "Edit" would
+otherwise lock every later step and force the person through them all again. A step loses
+`completed` only when it fails its check.
+
+Each step checks only its own fields with the validators `planNewDevice` already uses, so there
+is still one definition of "valid". The view does not call those validators: `domain/index.ts`
+deliberately keeps `readName` and the others off the entry point. A new domain function,
+`checkDraftFields(draft, fields)`, runs the same readers for just the named fields and throws
+the same `DraftError` `planNewDevice` would:
+
+| Step | Checks |
+|---|---|
+| scan | `readCredential` (setup code), `readInstalledAt` |
+| place | `readRoomPath` |
+| name | `readName` |
+
+A failure sets `this.error` (the existing `DraftError`), which renders through the existing
+`renderError()` / `messageFor()` hints. The step is marked `completed` once it passes, and
+loses `completed` if a field in it changes and fails again.
+
+Room *matching* (`matchRoom`) and the re-read of rooms stay where they are: at save.
+
+### Saving
+
+Unchanged: `onSubmit` re-reads rooms, calls `planNewDevice`, writes, asks for backfill,
+navigates to `#/devices`. If `planNewDevice` throws a `DraftError` anyway (a room another tab
+renamed, a value changed and not re-checked), the stepper `goTo()`s the step that owns
+`error.field`, so the message is next to the control it is about.
+
+### Review
+
+A read-only summary, one block per step, each with an "Edit" link that calls `goTo()`:
+
+- Scan it — setup code (as typed), serial (if any), installed date (locale-formatted with
+  `<wa-format-date>`), manufacturer / product when the lookup has answered (`renderCatalogLines`).
+- Place it — room path, spot (if any).
+- Name it — name.
+
+Values are read from the controls when Review is entered, never cached elsewhere.
+
+### One upload control
+
+- On the form: **Scan the code** when `canScan`, otherwise **Upload an image**. Neither until
+  `scanChecked` (avoids a button that swaps under the thumb on a phone).
+- In the scan dialog: its existing **Upload an image** stays — it is the fallback when a camera
+  exists but cannot read the label.
+- The long comment above the form's upload button ("Always rendered … that asymmetry is the
+  feature") is rewritten to the new rule.
+
+### Shared fields
+
+`DeviceFormView.renderFields()` is split into `renderNameField()`, `renderPlaceFields()`
+(room + spot), `renderSerialField()`, `renderInstalledField()`. `renderFields()` remains and
+composes them in today's order, so `edit-device.ts` is untouched.
+
+### Strings
+
+New `msg()` strings: the four step labels, Next, Back, Edit, the Review section headings, and
+the stepper's accessible label. German translations added alongside (`check:i18n`).
+
+## Constraints
+
+- Web Awesome Pro 3.15.0 (installed) provides `wa-stepper` / `wa-step`; the project's
+  `webawesome` skill does not document them yet, so the API was read from
+  `@awesome.me/webawesome-pro/dist/custom-elements.json`. Both need importing where the other
+  Pro components are registered.
+- WCAG 2.2 AA (PRODUCT.md): focus moves into each new step; step status is not colour-only
+  (the component shows a checkmark for completed steps).
+- No custom CSS values: layout with `wa-stack` / `wa-cluster`, spacing with `wa-gap-*`.
+
+## Tests
+
+`frontend/test/ui/views/add-device.browser.test.ts` is reworked step-by-step; new cases:
+
+- Next is refused on each step with an empty required field, with the field's message shown.
+- Values survive Back / Next and a jump from Review's Edit.
+- A `DraftError` at save lands on the owning step.
+- Only one upload control: camera available → Scan on form, Upload only in dialog; no camera →
+  Upload on form.
+- Enter on steps 1–3 advances, does not save.
+- Edit form still renders every field on one page (regression).
+
+`scan-dialog.browser.test.ts` and `german-problems.browser.test.ts` are adjusted to reach the
+fields through the steps. `npm run verify` clean, coverage gate met, zero warnings.
+
+## Left to the builder
+
+- Exact copy of step descriptions (`slot="description"`), if any are used.
+- Whether the Review blocks are `wa-card`s or a definition list inside one card. Decided (Task 3):
+  one `wa-card` per step, its `<h3 class="wa-heading-m">` in the header slot (under the Review panel's
+  visually hidden `<h2>Review</h2>`, which receives focus on entering Review) and Edit in
+  `header-actions`, the values a `dl.app-facts` like the catalogue lines - so each block reads as
+  the step it returns to.
+- Where the stepper's Pro imports live, following the existing registration module.
+- Decided (Tasks 4-5): the form offers one upload control - Scan the code where the browser can
+  scan, Upload an image where it cannot - and offers neither until the camera check finishes.
+  The stepper's accessible label reuses "Add a device"; the Review card headings reuse the step
+  labels; Edit names its step for assistive technology ("Edit: Place it"). German step labels:
+  Scannen, Platzieren, Benennen, Prüfen; Next and Back are Weiter and Zurück.
+
+## Deviations from the design
+
+- Enter in the room combobox does not advance to the next step. `wa-combobox` swallows Enter
+  (it selects or opens its listbox), so the form's submit handler never sees it; in the
+  combobox, Next is the way forward. Verified with a real keypress.
+- Enter in every other field on steps 1-3 advances as specified, because **Next** is a
+  `type="submit"` button. `wa-input` handles Enter by clicking the form's first submit button;
+  with none it submits only a form with exactly one field, and this form has several, since
+  hidden panels stay in the tree. Covered by real-keypress tests in the setup-code and name
+  fields, not by a dispatched `submit`, which would pass without the button.

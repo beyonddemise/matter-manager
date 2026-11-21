@@ -24,6 +24,7 @@ import {
   type DeviceFields,
   type DraftClock,
   DraftError,
+  type DraftField,
   matchRoom,
   optionalText,
   readInstalledAt,
@@ -37,6 +38,34 @@ import type { DeviceDocument, Unsaved } from './types.js'
 export interface DeviceDraft extends DeviceFields {
   /** An `MT:` payload or a manual pairing code; see `matter/credential.ts`. */
   readonly credential: string
+}
+
+/**
+ * Reads the setup code, naming the field when it is not usable.
+ *
+ * Shared by `planNewDevice` and `checkDraftFields` so a step-by-step form and the final plan
+ * cannot disagree about what a bad code is.
+ *
+ * @throws {DraftError} on `credential` when the code does not decode.
+ */
+function credentialOf(draft: DeviceDraft): DeviceCredential {
+  try {
+    return readCredential(draft.credential)
+  } catch (cause) {
+    // Only a `PayloadError` is a statement about the input. Anything else is a bug in the
+    // codec, and relabelling it as "your code is wrong" would send the user to inspect a
+    // label that was fine - the same rule `decodePayload` applies to non-Base38 failures.
+    //
+    // Unreachable from outside by construction, and deliberately left uncovered rather than
+    // removed: no input a caller can supply makes `readCredential` throw anything else, so a
+    // mutation probe reports the rethrow as a survivor and a coverage report as a hole. Both
+    // are correct, and both are the wrong reason to delete a guard against mislabelling a bug
+    // as a user's mistake. `payload.ts` keeps the same branch for the same reason.
+    if (cause instanceof PayloadError) {
+      throw new DraftError('credential', cause.problem, cause.message, { cause })
+    }
+    throw cause
+  }
 }
 
 /**
@@ -60,24 +89,7 @@ export function planNewDevice(
   clock: DraftClock,
   catalog?: CatalogLookup,
 ): Unsaved<DeviceDocument> {
-  let credential: DeviceCredential
-  try {
-    credential = readCredential(draft.credential)
-  } catch (cause) {
-    // Only a `PayloadError` is a statement about the input. Anything else is a bug in the
-    // codec, and relabelling it as "your code is wrong" would send the user to inspect a
-    // label that was fine - the same rule `decodePayload` applies to non-Base38 failures.
-    //
-    // Unreachable from outside by construction, and deliberately left uncovered rather than
-    // removed: no input a caller can supply makes `readCredential` throw anything else, so a
-    // mutation probe reports the rethrow as a survivor and a coverage report as a hole. Both
-    // are correct, and both are the wrong reason to delete a guard against mislabelling a bug
-    // as a user's mistake. `payload.ts` keeps the same branch for the same reason.
-    if (cause instanceof PayloadError) {
-      throw new DraftError('credential', cause.problem, cause.message, { cause })
-    }
-    throw cause
-  }
+  const credential = credentialOf(draft)
 
   const name = readName(draft.name)
   const path = readRoomPath(draft.room)
@@ -128,4 +140,24 @@ export function planNewDevice(
   }
 
   return device
+}
+
+/**
+ * Checks only the listed fields of a draft, throwing the first problem found.
+ *
+ * Why: the add form asks for its fields in steps and must refuse a step without waiting for
+ * the last one. This runs the very readers `planNewDevice` uses, so the form never holds a
+ * second opinion about what is valid. Fields are checked in the order `credential`,
+ * `installedAt`, `room`, `name` whatever order they are passed in, so the same draft always
+ * reports the same first problem. Fields with no check here (`remark`) are ignored.
+ *
+ * @param draft the form's contents
+ * @param fields the fields to check
+ * @throws {DraftError} for the first unusable listed field, naming it.
+ */
+export function checkDraftFields(draft: DeviceDraft, fields: readonly DraftField[]): void {
+  if (fields.includes('credential')) credentialOf(draft)
+  if (fields.includes('installedAt')) readInstalledAt(draft.installedAt)
+  if (fields.includes('room')) readRoomPath(draft.room)
+  if (fields.includes('name')) readName(draft.name)
 }

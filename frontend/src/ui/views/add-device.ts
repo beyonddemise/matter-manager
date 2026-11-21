@@ -1,10 +1,23 @@
+// Rendered by this form and by nothing else, so imported here (#214), like the combobox in
+// `device-form.ts`: they travel in this view's lazy chunk rather than in the entry chunk.
+import '@awesome.me/webawesome-pro/dist/components/step/step.js'
+import '@awesome.me/webawesome-pro/dist/components/stepper/stepper.js'
+// Types only: the side-effect imports above are what register the elements.
+import type WaStep from '@awesome.me/webawesome-pro/dist/components/step/step.js'
+import type WaStepper from '@awesome.me/webawesome-pro/dist/components/stepper/stepper.js'
+import type {
+  WaBeforeStepChangeEvent,
+  WaStepChangeEvent,
+} from '@awesome.me/webawesome-pro/dist/events/events.js'
 import { msg } from '@lit/localize'
 import { html, type TemplateResult } from 'lit'
 import {
   type CatalogLookup,
   catalogNames,
+  checkDraftFields,
   type DeviceDraft,
   DraftError,
+  type DraftField,
   needsCatalogLookup,
   PayloadError,
   type PayloadProblem,
@@ -17,6 +30,7 @@ import { imageMessage } from '../i18n/problems.js'
 import { codesFromImage, type ImageProblem, ImageScanError } from '../scan/image.js'
 import { cameraSource, type ScanSource } from '../scan/source.js'
 import { accessToken } from '../tokens.js'
+import { type ReviewSummary, renderReview } from './add-device-review.js'
 import { DeviceFormView, fieldValue } from './device-form.js'
 import './scan-dialog.js'
 
@@ -41,6 +55,72 @@ type LookupState =
 const IDLE: LookupState = { kind: 'idle' }
 
 /**
+ * What Review shows: the controls' values as they were on entering it, and the setup code as the
+ * catalogue would be asked it, so that only an answer about *that* code is shown beside them.
+ */
+interface Reviewed {
+  readonly summary: ReviewSummary
+  readonly code: string | undefined
+}
+
+/** Whether two snapshots would show the person the same thing. */
+function sameReview(a: Reviewed, b: Reviewed): boolean {
+  const keys = Object.keys(a.summary) as (keyof ReviewSummary)[]
+  return a.code === b.code && keys.every((key) => a.summary[key] === b.summary[key])
+}
+
+/** The four steps of adding a device, by their `<wa-step name>` (#349). */
+export type AddStep = 'scan' | 'place' | 'name' | 'review'
+
+/** The steps in the order the stepper shows them: what "forward" means for a jump. */
+const STEPS: readonly AddStep[] = ['scan', 'place', 'name', 'review']
+
+/**
+ * The step that owns each field a new device's draft can fail on: where a message about that
+ * field has to be shown, so that it sits beside a control the person can see.
+ */
+export const STEP_OF: Readonly<Record<'credential' | 'installedAt' | 'room' | 'name', AddStep>> = {
+  credential: 'scan',
+  installedAt: 'scan',
+  room: 'place',
+  name: 'name',
+}
+
+/**
+ * What each step checks before it may be left forward: its own fields, and only those.
+ *
+ * Derived from {@link STEP_OF} rather than written out a second time, so a field cannot be
+ * shown on one step and checked on another. Review checks nothing of its own; Save runs the
+ * whole plan.
+ */
+const CHECKS: Readonly<Record<AddStep, readonly DraftField[]>> = {
+  scan: fieldsOf('scan'),
+  place: fieldsOf('place'),
+  name: fieldsOf('name'),
+  review: [],
+}
+
+/** The fields {@link STEP_OF} places on `step`. A declaration, so {@link CHECKS} can call it. */
+function fieldsOf(step: AddStep): readonly DraftField[] {
+  return (Object.keys(STEP_OF) as (keyof typeof STEP_OF)[]).filter(
+    (field) => STEP_OF[field] === step,
+  )
+}
+
+/** The `data-field` of the control for each field {@link STEP_OF} places on a step. */
+const CONTROL_OF: Readonly<Record<keyof typeof STEP_OF, string>> = {
+  credential: 'credential',
+  installedAt: 'installed-at',
+  room: 'room',
+  name: 'name',
+}
+
+/** The step a field's message belongs on, or `undefined` for a field this form never has. */
+function stepOf(field: DraftField): AddStep | undefined {
+  return field === 'remark' ? undefined : STEP_OF[field]
+}
+
+/**
  * The add-a-device form.
  *
  * One field takes the setup code in either form it comes in — an `MT:` payload or a manual
@@ -53,7 +133,12 @@ const IDLE: LookupState = { kind: 'idle' }
  * shape rather than of remembering to return early.
  *
  * Everything shared with the edit form lives in {@link DeviceFormView}; what is here is the
- * setup code, the date default, and what happens on save.
+ * setup code, the date default, the steps, and what happens on save.
+ *
+ * The form is four steps (#349) - Scan it, Place it, Name it, Review - because that is the job:
+ * read the label, decide where the thing lives, name it, check it. All four panels stay in the
+ * tree and only the active one is shown, so the controls keep their values across steps and
+ * `planNewDevice` still reads every control on Save, exactly as on the one-page form.
  */
 export class AddDeviceView extends DeviceFormView {
   static override properties = {
@@ -65,18 +150,48 @@ export class AddDeviceView extends DeviceFormView {
     uploadProblem: { state: true },
     catalog: { attribute: false },
     lookupState: { state: true },
+    step: { state: true },
+    reviewed: { state: true },
+    reviewChanged: { state: true },
   }
+
+  /**
+   * The step on screen, mirrored from the stepper's `wa-step-change`. Decides which panel is
+   * shown, which buttons are offered, and which step Next and Enter check.
+   */
+  declare step: AddStep
+
+  /**
+   * Review's summary, read from the controls each time Review is entered; `undefined` before
+   * it first is.
+   *
+   * A snapshot taken on the step change rather than a read in `render`, because typing into a
+   * control re-renders nothing: a read in `render` would show whatever the controls held at the
+   * last unrelated re-render, which is a value the person may since have changed. Entering
+   * Review is the one moment that is guaranteed to be after every edit, so it is the one read.
+   */
+  declare reviewed: Reviewed | undefined
+
+  /**
+   * Whether the last Save found the controls no longer matching {@link reviewed}, refreshed the
+   * summary instead of saving, and has to say so. Cleared each time Review is entered afresh.
+   */
+  declare reviewChanged: boolean
 
   /** Bound by a test to a camera that is not one; the real one otherwise. */
   declare scanSource?: ScanSource
-  /** Whether this browser can scan at all. Decides whether the control exists. */
+  /**
+   * Whether this browser can scan at all. Decides which one of Scan and Upload the form offers.
+   */
   declare canScan: boolean
   /**
-   * Whether the answer is in yet.
+   * Whether the answer is in yet. Until it is, the form offers neither Scan nor Upload: offering
+   * Upload first and swapping it for Scan when the answer lands would move a button out from
+   * under a thumb already on its way to it.
    *
-   * Distinct from `canScan` being false, and only a test needs the difference: without it,
-   * "the button is absent" is true before the check has finished and a test asserting it would
-   * pass against a form that was about to grow one.
+   * Distinct from `canScan` being false for that reason, and for tests: without it, "the button
+   * is absent" is true before the check has finished and a test asserting it would pass against
+   * a form that was about to grow one.
    */
   declare scanChecked: boolean
   declare scanOpen: boolean
@@ -109,6 +224,9 @@ export class AddDeviceView extends DeviceFormView {
     this.scanOpen = false
     this.uploadProblem = undefined
     this.lookupState = IDLE
+    this.step = 'scan'
+    this.reviewed = undefined
+    this.reviewChanged = false
   }
 
   protected override firstUpdated(): void {
@@ -129,7 +247,7 @@ export class AddDeviceView extends DeviceFormView {
   /**
    * Asks, once, whether scanning is possible here.
    *
-   * The answer decides whether the control is rendered at all. A disabled button that explains
+   * The answer decides whether the scan control is rendered at all. A disabled button that explains
    * itself when pressed would be worse than nothing on a desktop with no camera: it offers
    * something, takes a press, and then says no — which reads as a broken feature rather than
    * as a feature this machine cannot have.
@@ -327,8 +445,221 @@ export class AddDeviceView extends DeviceFormView {
     return { ...this.fields(), credential: fieldValue(this, '[data-field="credential"]') }
   }
 
+  /**
+   * The stepper, once rendered. Under `linear`, its `next()` and `goTo()` silently do nothing
+   * for a locked step: every step after the first one not `completed`.
+   */
+  private stepper(): WaStepper | null {
+    return this.querySelector('wa-stepper')
+  }
+
+  /** The `<wa-step>` for a step. */
+  private stepElement(step: AddStep): WaStep | null {
+    return this.querySelector<WaStep>(`wa-step[name="${step}"]`)
+  }
+
+  /**
+   * Checks one step's own fields, and says whether they pass.
+   *
+   * The same readers `planNewDevice` runs (`checkDraftFields`), so a step cannot accept what
+   * Save would refuse. A failure shows the existing error and hint and takes the step's
+   * checkmark away, because under `linear` that checkmark is what lets later steps be reached;
+   * a pass clears an error that was about this step.
+   */
+  private checkStep(step: AddStep): boolean {
+    try {
+      checkDraftFields(this.draft(), CHECKS[step])
+    } catch (problem) {
+      if (!(problem instanceof DraftError)) throw problem
+      this.error = problem
+      const element = this.stepElement(step)
+      if (element) element.completed = false
+      return false
+    }
+    if (this.error !== undefined && stepOf(this.error.field) === step) this.error = undefined
+    return true
+  }
+
+  /**
+   * Next: checks the step on screen and, if it passes, moves to the one after it.
+   *
+   * `completed` is set **before** `next()`, and that order is load-bearing: the stepper never
+   * sets it itself, and under `linear` the step after an incomplete one is locked, so `next()`
+   * would silently do nothing.
+   */
+  private advance(): void {
+    const step = this.step
+    if (!this.checkStep(step)) return
+    const element = this.stepElement(step)
+    if (element) element.completed = true
+    this.stepper()?.next()
+  }
+
+  /**
+   * Moves to a step, if the stepper lets it: one not yet reached stays locked.
+   *
+   * Public for Review's "Edit" links and for a save-time error that has to be shown on the step
+   * that owns its field.
+   */
+  goToStep(step: AddStep): void {
+    this.stepper()?.goTo(step)
+  }
+
+  /**
+   * Refuses a jump forward - a click on a later step - over any step that no longer passes, and
+   * stops on the first such step instead.
+   *
+   * Every step from the one being left up to the target is checked, not only the one being
+   * left: a step passed earlier can have been emptied since - Review's Edit, clear the room,
+   * Back to Scan it, then a click on Review - and its checkmark, which unlocks the later steps,
+   * would otherwise carry the person past it to a Review showing the gap. The jump then goes to
+   * the failing step, so its message sits beside its control; `checkStep` has already set the
+   * error, which `onStepChange` keeps because that step owns it. That nested `goTo` is itself a
+   * forward jump, and the steps before the failing one pass, so it is allowed.
+   *
+   * Going back is always allowed and never takes a checkmark away: Review's "Edit" would
+   * otherwise lock every step after the one edited and make the person walk them all again.
+   */
+  private onBeforeStepChange(event: WaBeforeStepChangeEvent): void {
+    const from = event.detail.previousName as AddStep | null
+    const to = event.detail.name as AddStep
+    if (from === null || STEPS.indexOf(to) <= STEPS.indexOf(from)) return
+    const failing = STEPS.slice(STEPS.indexOf(from), STEPS.indexOf(to)).find(
+      (step) => !this.checkStep(step),
+    )
+    if (failing === undefined) return
+    event.preventDefault()
+    if (failing !== from) this.goToStep(failing)
+  }
+
+  /**
+   * Shows the panel for the step the stepper moved to.
+   *
+   * An error about a field on another step goes: it names a control the person can no longer
+   * see (the spec's third anti-goal). One about this step's own fields stays beside them.
+   */
+  private onStepChange(event: WaStepChangeEvent): void {
+    this.step = event.detail.name as AddStep
+    if (this.error !== undefined && stepOf(this.error.field) !== this.step) this.error = undefined
+    if (this.step === 'review') {
+      this.reviewed = this.snapshotForReview()
+      this.reviewChanged = false
+    }
+    void this.focusStep(this.step)
+  }
+
+  /**
+   * Puts focus where a step that has just come on screen begins (WCAG 2.2 AA, PRODUCT.md): the
+   * control an error on this step is about, else the step's first control, else - on Review,
+   * which has no control of its own - Review's heading.
+   *
+   * Without it, focus stays on Next, or on a control inside a panel that is now hidden, and a
+   * keyboard or screen-reader user has to hunt for where the new step begins. The control in
+   * error first because a save-time refusal lands here to be fixed, and starting on another
+   * control would make the person find the one the message names. Review's own heading rather
+   * than its first card's: focus on "Scan it" would announce step 1's name on entering step 4,
+   * and the stepper announces nothing when focus is moved elsewhere. Only on a change, which is
+   * all `wa-step-change` reports - the form opening on Scan it moves nothing, because jumping
+   * into a field on load scrolls a phone and opens its keyboard before the page has been read.
+   *
+   * After `updateComplete`, because the panel is unhidden, and Review first rendered, by the
+   * update this step change has just requested.
+   */
+  private async focusStep(step: AddStep): Promise<void> {
+    await this.updateComplete
+    // A later change superseded this one while it waited; that change does its own focusing.
+    if (this.step !== step) return
+    const panel = this.querySelector(`[data-step-panel="${step}"]`)
+    if (panel === null) return
+    const field = this.error?.field
+    // `stepOf` places only fields that have a control, so a match is a key of CONTROL_OF.
+    const inError =
+      field !== undefined && stepOf(field) === step
+        ? panel.querySelector<HTMLElement>(
+            `[data-field="${CONTROL_OF[field as keyof typeof CONTROL_OF]}"]`,
+          )
+        : null
+    const target =
+      inError ??
+      panel.querySelector<HTMLElement>(step === 'review' ? '[data-review-heading]' : '[data-field]')
+    target?.focus()
+  }
+
+  /**
+   * What Review would show if it were entered now, read from the controls.
+   *
+   * The one place a summary is built, for both moments that need one: entering Review, and
+   * Save checking that the controls still say what Review shows. Two builders could drift, and
+   * a field missing from one would be a change Save never noticed.
+   */
+  private snapshotForReview(): Reviewed {
+    const draft = this.draft()
+    return {
+      summary: {
+        credential: draft.credential,
+        serial: draft.serial ?? '',
+        installedAt: draft.installedAt,
+        room: draft.room,
+        spot: draft.spot ?? '',
+        name: draft.name,
+      },
+      code: this.lookupCode(),
+    }
+  }
+
+  /**
+   * Review's manufacturer and product: live, unlike the rest of the summary, because the lookup
+   * may answer while Review is on screen - but only an answer about the code being reviewed.
+   */
+  private reviewCatalogLines(code: string | undefined): TemplateResult | '' {
+    const state = this.lookupState
+    return state.kind === 'found' && state.code === code
+      ? this.renderCatalogLines(catalogNames(state.result))
+      : ''
+  }
+
+  /** Review, once it has been entered; nothing before, as there is nothing yet to summarise. */
+  private renderReviewPanel(): TemplateResult | '' {
+    const reviewed = this.reviewed
+    if (reviewed === undefined) return ''
+    return html`
+      <div class="wa-stack wa-gap-m">
+        <!-- Where focus lands on entering Review (see focusStep), so that a screen reader says
+             Review rather than the first card's step name. Hidden even while focused, unlike the
+             plain visually-hidden utility, which shows content on focus: the stepper already
+             names the step on screen, and a heading appearing on every entry would shift the
+             cards. Not in the tab order; only focusStep puts focus here. -->
+        <h2 class="wa-visually-hidden-force" tabindex="-1" data-review-heading>${msg('Review')}</h2>
+        <!-- Always in the tree, so that the callout is announced when it appears. -->
+        <div role="status">
+          ${
+            this.reviewChanged
+              ? html`
+                  <wa-callout variant="neutral" data-review-changed>
+                    <wa-icon slot="icon" name="circle-info"></wa-icon>
+                    ${msg('Something changed since you opened Review. Check it, then save again.')}
+                  </wa-callout>
+                `
+              : ''
+          }
+        </div>
+        ${renderReview(
+          reviewed.summary,
+          (step) => this.goToStep(step),
+          this.reviewCatalogLines(reviewed.code),
+        )}
+      </div>
+    `
+  }
+
   private async onSubmit(event: Event): Promise<void> {
     event.preventDefault()
+    // Enter in a field on steps 1-3 means Next. Saving from Scan it would store a device whose
+    // place and name the person never saw on Review.
+    if (this.step !== 'review') {
+      this.advance()
+      return
+    }
     if (this.saving) return
     // Set before the first `await`, not after the planning: two quick clicks would otherwise
     // both get past the guard while the room read below was still in flight.
@@ -336,6 +667,10 @@ export class AddDeviceView extends DeviceFormView {
     // Before the first wait: a project switch during it must not write this device into the
     // next project (see `projectSnapshot`).
     const since = this.projectSnapshot()
+    // The summary this press of Save was made against. Steps stay usable while the rooms are
+    // read, and Edit then Next back to Review replaces `reviewed`; comparing against the
+    // replacement would save the edit with no press of Save after it.
+    const pressedOn = this.reviewed
 
     try {
       // Re-read the rooms rather than planning against `this.rooms`.
@@ -350,6 +685,27 @@ export class AddDeviceView extends DeviceFormView {
       // device under since this form was opened.
       const rooms = await this.readRooms()
       this.rooms = rooms
+
+      // Save stores only what Review shows. A control can change behind it - an image still
+      // decoding when the person pressed Next writes its code into the hidden field, and a
+      // test or script can set any control - and planning from the live controls would then
+      // store a code, or catalogue names, the person never saw. So the summary is rebuilt and,
+      // if it differs, shown instead of saved. Checked after the last wait, so nothing can
+      // change between this comparison and the plan below, which runs synchronously.
+      //
+      // The person left Review while the rooms were read: that press of Save is dropped, not
+      // carried over to whatever Review shows now. They are on the step they chose, or back on
+      // a Review they have not yet confirmed, and the next Save starts afresh.
+      if (this.step !== 'review' || this.reviewed !== pressedOn) return
+      const now = this.snapshotForReview()
+      if (pressedOn === undefined || !sameReview(now, pressedOn)) {
+        this.reviewed = now
+        this.reviewChanged = true
+        return
+      }
+      // Review now shows what is about to be saved, so a notice from an earlier refresh is no
+      // longer true - and left up, it would sit beside a storage error as if it explained it.
+      this.reviewChanged = false
 
       let creation: ReturnType<typeof planNewDevice>
       try {
@@ -366,7 +722,16 @@ export class AddDeviceView extends DeviceFormView {
         )
       } catch (problem) {
         if (problem instanceof DraftError) {
+          // Shown on the step that owns the field, beside its control, not above a summary that
+          // has no control in it. The error is set first because `onStepChange` keeps exactly
+          // the error the new step owns; the checkmark goes because that step no longer passes.
           this.error = problem
+          const step = stepOf(problem.field)
+          if (step !== undefined) {
+            const element = this.stepElement(step)
+            if (element) element.completed = false
+            this.goToStep(step)
+          }
           return
         }
         // Anything else is a bug rather than a statement about the form, and swallowing it
@@ -389,96 +754,173 @@ export class AddDeviceView extends DeviceFormView {
     window.location.hash = '#/devices'
   }
 
+  /**
+   * Scan the code where this browser can scan, Upload an image where it cannot: the one way,
+   * besides typing, that the form offers to fill the setup code. Only called once
+   * {@link scanChecked}, so it never shows one and then swaps it for the other.
+   */
+  private renderCodeSource(): TemplateResult {
+    if (this.canScan) {
+      return html`
+        <div class="wa-cluster wa-gap-s">
+          <wa-button
+            data-scan
+            type="button"
+            appearance="outlined"
+            @click=${() => {
+              this.scanOpen = true
+            }}
+          >
+            <wa-icon slot="start" name="camera"></wa-icon>
+            ${msg('Scan the code')}
+          </wa-button>
+        </div>
+      `
+    }
+    return html`
+      <div class="wa-cluster wa-gap-s">
+        <wa-button
+          data-upload
+          type="button"
+          appearance="outlined"
+          @click=${() => {
+            ;(this.querySelector('[data-upload-input]') as HTMLInputElement | null)?.click()
+          }}
+        >
+          <wa-icon slot="start" name="image"></wa-icon>
+          ${msg('Upload an image')}
+        </wa-button>
+
+        <!-- Hidden rather than absent, and rendered with the button: the button opens it, so
+             it has to be in the tree whenever the button is. Found by its own attribute, not as
+             the first file input in the form, because the scan dialog renders into the light
+             DOM too and has one of its own. The accept attribute filters the picker and
+             enforces nothing, which is why codesFromImage still answers for a file that is not
+             an image. No backticks in this comment: it sits inside a template literal, where
+             one would end it. -->
+        <input
+          data-upload-input
+          type="file"
+          accept="image/*"
+          hidden
+          @change=${(event: Event) => void this.onUpload(event)}
+        />
+      </div>
+    `
+  }
+
   override render() {
     return html`
       <form class="wa-stack wa-gap-l app-form" @submit=${this.onSubmit} novalidate>
         <h1>${msg('Add a device')}</h1>
         ${this.renderRequiredNote()}
 
+        <wa-stepper
+          active="scan"
+          orientation="auto"
+          linear
+          clickable
+          label=${msg('Add a device')}
+          @wa-before-step-change=${this.onBeforeStepChange}
+          @wa-step-change=${this.onStepChange}
+        >
+          <wa-step name="scan">${msg('Scan it')}</wa-step>
+          <wa-step name="place">${msg('Place it')}</wa-step>
+          <wa-step name="name">${msg('Name it')}</wa-step>
+          <wa-step name="review">${msg('Review')}</wa-step>
+        </wa-stepper>
+
         ${this.renderError()}
 
-        <div class="wa-stack wa-gap-2xs">
-          <wa-input
-            data-field="credential"
-            required
-            label=${msg('Setup code')}
-            hint=${this.messageFor('credential') ?? msg('The MT: code from the QR label, or the numeric pairing code beneath it.')}
-            autocomplete="off"
-            spellcheck="false"
-            @input=${() => this.scheduleLookup()}
-          ></wa-input>
+        <!-- Every panel stays in the tree; only the active one is shown. The values live in the
+             controls, so a hidden panel keeps what was typed and Save still reads it. The
+             layout class sits on an inner div: on the section itself its display would outrank
+             the browser's own [hidden] rule and show every panel at once. -->
+        <section data-step-panel="scan" ?hidden=${this.step !== 'scan'}>
+          <div class="wa-stack wa-gap-l">
+            <div class="wa-stack wa-gap-2xs">
+              <wa-input
+                data-field="credential"
+                required
+                label=${msg('Setup code')}
+                hint=${this.messageFor('credential') ?? msg('The MT: code from the QR label, or the numeric pairing code beneath it.')}
+                autocomplete="off"
+                spellcheck="false"
+                @input=${() => this.scheduleLookup()}
+              ></wa-input>
 
-          ${this.renderLookup()}
+              ${this.renderLookup()}
 
-          <div class="wa-cluster wa-gap-s">
-            <!-- Absent, not disabled, when nothing here can scan. See {@link checkScanning}. -->
-            ${
-              this.canScan
-                ? html`
-                    <wa-button
-                      data-scan
-                      type="button"
-                      appearance="outlined"
-                      @click=${() => {
-                        this.scanOpen = true
-                      }}
-                    >
-                      <wa-icon slot="start" name="camera"></wa-icon>
-                      ${msg('Scan the code')}
-                    </wa-button>
-                  `
-                : ''
-            }
+              <!-- One control, never both, and neither until the camera check has answered (see
+                   scanChecked). Where this browser can scan, Scan the code; uploading is then
+                   the scan dialog's own fallback, for a label the camera cannot read, and a
+                   second Upload beside Scan would be two ways in to say the same thing. Where it
+                   cannot, Upload an image, which is precisely the person with no camera holding
+                   a photograph of the label: nothing is asked beforehand because every browser
+                   can choose a file, and the only uncertainty, decoding, is reported when it
+                   happens rather than guessed at here - which also keeps the ZXing chunk off the
+                   page load. Absent rather than disabled; see checkScanning. -->
+              ${this.scanChecked ? this.renderCodeSource() : ''}
 
-            <!-- Always rendered, unlike the camera button beside it, and that asymmetry is the
-                 feature. A machine with no camera shows no scan control at all, which is
-                 precisely the person holding a photograph of the label instead. Nothing is
-                 asked beforehand because every browser can choose a file; the only uncertainty
-                 is decoding, and that is reported when it happens rather than guessed at
-                 here - which also keeps the ZXing chunk off the page load. -->
-            <wa-button
-              data-upload
-              type="button"
-              appearance="outlined"
-              @click=${() => {
-                ;(this.querySelector('input[type="file"]') as HTMLInputElement | null)?.click()
-              }}
-            >
-              <wa-icon slot="start" name="image"></wa-icon>
-              ${msg('Upload an image')}
-            </wa-button>
+              ${
+                this.uploadProblem === undefined
+                  ? ''
+                  : html`
+                      <wa-callout variant="neutral" data-upload-problem>
+                        <wa-icon slot="icon" name="circle-info"></wa-icon>
+                        ${imageMessage(this.uploadProblem)}
+                      </wa-callout>
+                    `
+              }
+            </div>
 
-            <!-- Hidden rather than absent: the button above opens it, so it has to be in the
-                 tree to be opened. The accept attribute filters the picker and enforces
-                 nothing, which is why codesFromImage still answers for a file that is not an
-                 image. No backticks in this comment: it sits inside a template literal, where
-                 one would end it. -->
-            <input
-              type="file"
-              accept="image/*"
-              hidden
-              @change=${(event: Event) => void this.onUpload(event)}
-            />
+            ${this.renderSerialField()}
+            ${this.renderInstalledField()}
           </div>
+        </section>
 
-          ${
-            this.uploadProblem === undefined
-              ? ''
-              : html`
-                  <wa-callout variant="neutral" data-upload-problem>
-                    <wa-icon slot="icon" name="circle-info"></wa-icon>
-                    ${imageMessage(this.uploadProblem)}
-                  </wa-callout>
-                `
-          }
-        </div>
+        <section data-step-panel="place" ?hidden=${this.step !== 'place'}>
+          <div class="wa-stack wa-gap-l">${this.renderPlaceFields()}</div>
+        </section>
 
-        ${this.renderFields()}
+        <section data-step-panel="name" ?hidden=${this.step !== 'name'}>
+          <div class="wa-stack wa-gap-l">${this.renderNameField()}</div>
+        </section>
+
+        <section data-step-panel="review" ?hidden=${this.step !== 'review'}>
+          ${this.renderReviewPanel()}
+        </section>
 
         <div class="wa-cluster wa-gap-s">
-          <wa-button type="submit" variant="brand" ?disabled=${this.saving}>
-            ${msg('Save device')}
-          </wa-button>
+          ${
+            this.step === 'scan'
+              ? ''
+              : html`
+                  <wa-button
+                    data-back
+                    type="button"
+                    appearance="outlined"
+                    @click=${() => this.stepper()?.previous()}
+                  >
+                    ${msg('Back')}
+                  </wa-button>
+                `
+          }
+          ${
+            this.step === 'review'
+              ? html`
+                  <wa-button data-save type="submit" variant="brand" ?disabled=${this.saving}>
+                    ${msg('Save device')}
+                  </wa-button>
+                `
+              : html`
+                  <!-- A submit button, so that Enter in a field reaches onSubmit, which advances
+                       on steps 1-3: wa-input turns Enter into a click on the form's first submit
+                       button, and with none it submits only a form with exactly one field -
+                       which this one never is, as hidden panels stay in the tree. -->
+                  <wa-button data-next type="submit" variant="brand">${msg('Next')}</wa-button>
+                `
+          }
           <wa-button href="#/devices" appearance="plain">${msg('Cancel')}</wa-button>
         </div>
 
