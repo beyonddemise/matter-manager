@@ -1095,6 +1095,44 @@ describe('reviewing before saving', () => {
     expect((await devices())[0]?.name).toBe('Pantry light')
   })
 
+  it('drops a save still waiting on the rooms once the person leaves Review', async () => {
+    // Save waits for the room re-read, and nothing holds the person on Review meanwhile. Edit,
+    // a change, and Next back to Review build a new summary; were the waiting save to compare
+    // against that, it would store the edit without the person pressing Save again.
+    const rooms = deferred<void>()
+    let holdRooms = false
+    const real = database.repositories
+    const element = await form({
+      ...real,
+      devices: {
+        ...real.devices,
+        list: async () => {
+          if (holdRooms) await rooms.promise
+          return real.devices.list()
+        },
+      },
+    })
+    fillAll(element)
+    await toReview(element)
+
+    holdRooms = true
+    dispatchSubmit(element)
+    await edit(element, 'name')
+    fill(element, 'name', 'Pantry light')
+    await next(element)
+    expect(activeStep(element)).toBe('review')
+    rooms.resolve()
+    const save = element.querySelector('[data-save]') as HTMLButtonElement
+    await waitUntil(() => !save.disabled, 'the waiting save never finished')
+
+    expect(await devices()).toHaveLength(0)
+    expect(activeStep(element)).toBe('review')
+
+    dispatchSubmit(element)
+    await waitUntil(async () => (await devices()).length === 1, 'the new Save stored nothing')
+    expect((await devices())[0]?.name).toBe('Pantry light')
+  })
+
   it('saves a code an image decoded after Review opened only once Review has shown it', async () => {
     // The decode can take seconds on a phone and nothing holds the person on Scan it, so the
     // code it finds can land in the hidden field while Review shows the one typed before.

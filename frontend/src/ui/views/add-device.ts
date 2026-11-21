@@ -667,6 +667,10 @@ export class AddDeviceView extends DeviceFormView {
     // Before the first wait: a project switch during it must not write this device into the
     // next project (see `projectSnapshot`).
     const since = this.projectSnapshot()
+    // The summary this press of Save was made against. Steps stay usable while the rooms are
+    // read, and Edit then Next back to Review replaces `reviewed`; comparing against the
+    // replacement would save the edit with no press of Save after it.
+    const pressedOn = this.reviewed
 
     try {
       // Re-read the rooms rather than planning against `this.rooms`.
@@ -688,8 +692,13 @@ export class AddDeviceView extends DeviceFormView {
       // store a code, or catalogue names, the person never saw. So the summary is rebuilt and,
       // if it differs, shown instead of saved. Checked after the last wait, so nothing can
       // change between this comparison and the plan below, which runs synchronously.
+      //
+      // The person left Review while the rooms were read: that press of Save is dropped, not
+      // carried over to whatever Review shows now. They are on the step they chose, or back on
+      // a Review they have not yet confirmed, and the next Save starts afresh.
+      if (this.step !== 'review' || this.reviewed !== pressedOn) return
       const now = this.snapshotForReview()
-      if (this.reviewed === undefined || !sameReview(now, this.reviewed)) {
+      if (pressedOn === undefined || !sameReview(now, pressedOn)) {
         this.reviewed = now
         this.reviewChanged = true
         return
