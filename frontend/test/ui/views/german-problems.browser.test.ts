@@ -50,7 +50,10 @@ async function form(): Promise<AddDeviceView> {
   return element
 }
 
-/** Types a setup code and submits, then waits for the callout. */
+/**
+ * Types a setup code, leaves Scan with Next, and comes back with Back: Scan is checked as it is
+ * left, and its message is shown on the return, beside the setup code.
+ */
 async function submitCredential(element: AddDeviceView, credential: string): Promise<void> {
   const set = (selector: string, value: string): void => {
     const control = element.querySelector(selector) as { value?: string } | null
@@ -61,6 +64,8 @@ async function submitCredential(element: AddDeviceView, credential: string): Pro
   set('[data-field="room"]', 'Erdgeschoss/Küche')
   set('[data-field="installed-at"]', '2026-08-30')
   element.querySelector('form')?.dispatchEvent(new Event('submit', { cancelable: true }))
+  await waitUntil(() => element.querySelector('[data-back]') !== null, 'Next never left Scan')
+  ;(element.querySelector('[data-back]') as HTMLElement).click()
   await waitUntil(() => element.querySelector('[data-error]') !== null)
   await element.updateComplete
 }

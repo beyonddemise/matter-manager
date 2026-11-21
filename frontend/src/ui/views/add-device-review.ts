@@ -19,6 +19,12 @@ export interface ReviewSummary {
   readonly name: string
 }
 
+/**
+ * What a step's check found, for its card: `true` when it passed, the message (already
+ * translated) when it did not, absent when it has not been checked.
+ */
+export type StepStatus = Readonly<Partial<Record<AddStep, true | string>>>
+
 /** One label and its value, as the device page and the catalogue lines show a fact. */
 function fact(label: string, value: TemplateResult | string, key: string): TemplateResult {
   return html`
@@ -58,19 +64,31 @@ function installed(value: string): TemplateResult | string {
  *
  * Edit names its step for assistive technology - three buttons all called "Edit" are
  * indistinguishable in a list of controls (WCAG 2.2 2.4.6) - while showing only the short word.
+ * A step that passed carries a check before its heading, one that failed the problem itself,
+ * as the stepper marks them: shape and words as well as colour (WCAG 2.2 1.4.1).
  */
 function block(
   step: AddStep,
   heading: string,
   onEdit: (step: AddStep) => void,
+  status: true | string | undefined,
   content: TemplateResult,
 ): TemplateResult {
   return html`
-    <wa-card data-review=${step}>
-      <!-- The heading is wrapped, and alone in its wrapper, because the native styles give a
-           heading with a following sibling a bottom margin: slotted directly, beside Edit, it
-           sat above Edit's centre line and made the header taller than its content. -->
-      <div slot="header"><h3 class="wa-heading-m">${heading}</h3></div>
+    <wa-card data-review=${step} data-status=${status === true ? 'complete' : status === undefined ? 'unchecked' : 'problem'}>
+      <!-- The heading is the wrapper's last child because the native styles give a heading with
+           a following sibling a bottom margin: beside a sibling, it sat above Edit's centre line
+           and made the header taller than its content. -->
+      <div slot="header" class="wa-cluster wa-gap-xs wa-align-items-center">
+        ${
+          status === true
+            ? html`<wa-icon name="circle-check" class="app-step-complete" label=${msg('Complete')}></wa-icon>`
+            : status === undefined
+              ? ''
+              : html`<wa-icon name="triangle-exclamation" class="app-step-problem" label=${msg('Check this step')}></wa-icon>`
+        }
+        <h3 class="wa-heading-m">${heading}</h3>
+      </div>
       <wa-button
         slot="header-actions"
         data-edit
@@ -81,7 +99,19 @@ function block(
       >
         ${msg('Edit')}<span class="wa-visually-hidden">: ${heading}</span>
       </wa-button>
-      ${content}
+      <div class="wa-stack wa-gap-m">
+        ${
+          typeof status === 'string'
+            ? html`
+                <wa-callout variant="danger" data-review-problem>
+                  <wa-icon slot="icon" name="triangle-exclamation"></wa-icon>
+                  ${status}
+                </wa-callout>
+              `
+            : ''
+        }
+        ${content}
+      </div>
     </wa-card>
   `
 }
@@ -92,10 +122,12 @@ function block(
  * A pure function of what it is given so that the form decides *when* values are read (on
  * entering Review) and this decides only how they look. `catalogLines` is the form's own
  * manufacturer / product rendering, passed in rather than rebuilt, so Review and Scan it can
- * never disagree about what the catalogue said; `''` when it has not answered.
+ * never disagree about what the catalogue said; `''` when it has not answered. `status` is
+ * what each step's check found, so a card shows the same verdict as its step in the stepper.
  */
 export function renderReview(
   summary: ReviewSummary,
+  status: StepStatus,
   onEdit: (step: AddStep) => void,
   catalogLines: TemplateResult | '',
 ): TemplateResult {
@@ -103,8 +135,9 @@ export function renderReview(
     <div class="wa-stack wa-gap-m">
       ${block(
         'scan',
-        msg('Scan it'),
+        msg('Scan'),
         onEdit,
+        status.scan,
         html`
           <div class="wa-stack wa-gap-m">
             <dl class="wa-cluster wa-gap-l app-facts">
@@ -118,8 +151,9 @@ export function renderReview(
       )}
       ${block(
         'place',
-        msg('Place it'),
+        msg('Place'),
         onEdit,
+        status.place,
         html`
           <dl class="wa-cluster wa-gap-l app-facts">
             ${fact(msg('Room'), summary.room, 'room')}
@@ -129,8 +163,12 @@ export function renderReview(
       )}
       ${block(
         'name',
-        msg('Name it'),
+        msg('Name', {
+          id: 'add-device.step.name',
+          desc: 'Step label, a verb: give the device its name',
+        }),
         onEdit,
+        status.name,
         html`
           <dl class="wa-cluster wa-gap-l app-facts">
             ${fact(msg('Name'), summary.name, 'name')}

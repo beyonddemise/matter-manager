@@ -1535,22 +1535,6 @@
   <source>Upgrade to keep them all.</source>
   <target>Wechseln Sie auf einen höheren Tarif, um alle zu behalten.</target>
 </trans-unit>
-<trans-unit id="s77617635b59619d5">
-  <source>Scan it</source>
-  <target>Scannen</target>
-</trans-unit>
-<trans-unit id="s5a25655d1aaa6a29">
-  <source>Place it</source>
-  <target>Platzieren</target>
-</trans-unit>
-<trans-unit id="s2eef7b2323e9e2af">
-  <source>Name it</source>
-  <target>Benennen</target>
-</trans-unit>
-<trans-unit id="sfc53e352afbca881">
-  <source>Review</source>
-  <target>Prüfen</target>
-</trans-unit>
 <trans-unit id="s16cec9411ef91f44">
   <source>Something changed since you opened Review. Check it, then save again.</source>
   <target>Seit dem Öffnen von „Prüfen“ hat sich etwas geändert. Bitte prüfen und erneut speichern.</target>
@@ -1558,6 +1542,27 @@
 <trans-unit id="s0fbf6dc6a1966408">
   <source>Next</source>
   <target>Weiter</target>
+</trans-unit>
+<trans-unit id="s21ea0624b6865748">
+  <source>Scan</source>
+  <target>Scannen</target>
+</trans-unit>
+<trans-unit id="s13b3f5afa0862d1c">
+  <source>Place</source>
+  <target>Platzieren</target>
+</trans-unit>
+<trans-unit id="add-device.step.name">
+  <source>Name</source>
+  <note from="lit-localize">Step label, a verb: give the device its name</note>
+  <target>Benennen</target>
+</trans-unit>
+<trans-unit id="sdcda09c20b09b522">
+  <source>Complete</source>
+  <target>Vollständig</target>
+</trans-unit>
+<trans-unit id="sf80c83f83ecaeb11">
+  <source>Check this step</source>
+  <target>Diesen Schritt prüfen</target>
 </trans-unit>
 </body>
 </file>
