@@ -107,6 +107,14 @@ function fieldsOf(step: AddStep): readonly DraftField[] {
   )
 }
 
+/** The `data-field` of the control for each field {@link STEP_OF} places on a step. */
+const CONTROL_OF: Readonly<Record<keyof typeof STEP_OF, string>> = {
+  credential: 'credential',
+  installedAt: 'installed-at',
+  room: 'room',
+  name: 'name',
+}
+
 /** The step a field's message belongs on, or `undefined` for a field this form never has. */
 function stepOf(field: DraftField): AddStep | undefined {
   return field === 'remark' ? undefined : STEP_OF[field]
@@ -529,27 +537,36 @@ export class AddDeviceView extends DeviceFormView {
   }
 
   /**
-   * Puts focus at the start of a step that has just come on screen: its first control, or on
-   * Review - which has none - its first heading, the Scan it card's (WCAG 2.2 AA, PRODUCT.md).
+   * Puts focus where a step that has just come on screen begins (WCAG 2.2 AA, PRODUCT.md): the
+   * control an error on this step is about, else the step's first control, else - on Review,
+   * which has no control of its own - Review's heading.
    *
    * Without it, focus stays on Next, or on a control inside a panel that is now hidden, and a
-   * keyboard or screen-reader user has to hunt for where the new step begins. The first card's
-   * heading rather than a heading of Review's own: the stepper already names the step, and a
-   * second "Review" above the cards would say it twice on screen. Only on a change, which is
+   * keyboard or screen-reader user has to hunt for where the new step begins. The control in
+   * error first because a save-time refusal lands here to be fixed, and starting on another
+   * control would make the person find the one the message names. Review's own heading rather
+   * than its first card's: focus on "Scan it" would announce step 1's name on entering step 4,
+   * and the stepper announces nothing when focus is moved elsewhere. Only on a change, which is
    * all `wa-step-change` reports - the form opening on Scan it moves nothing, because jumping
    * into a field on load scrolls a phone and opens its keyboard before the page has been read.
    *
-   * After `updateComplete`, because the panel is unhidden, and Review's cards first rendered,
-   * by the update this step change has just requested.
+   * After `updateComplete`, because the panel is unhidden, and Review first rendered, by the
+   * update this step change has just requested.
    */
   private async focusStep(step: AddStep): Promise<void> {
     await this.updateComplete
     // A later change superseded this one while it waited; that change does its own focusing.
     if (this.step !== step) return
     const panel = this.querySelector(`[data-step-panel="${step}"]`)
-    const target = panel?.querySelector<HTMLElement>(
-      step === 'review' ? '[data-review] h2' : '[data-field]',
-    )
+    if (panel === null) return
+    const field = this.error?.field
+    const inError =
+      field !== undefined && field !== 'remark' && STEP_OF[field] === step
+        ? panel.querySelector<HTMLElement>(`[data-field="${CONTROL_OF[field]}"]`)
+        : null
+    const target =
+      inError ??
+      panel.querySelector<HTMLElement>(step === 'review' ? '[data-review-heading]' : '[data-field]')
     target?.focus()
   }
 
@@ -592,6 +609,12 @@ export class AddDeviceView extends DeviceFormView {
     if (reviewed === undefined) return ''
     return html`
       <div class="wa-stack wa-gap-m">
+        <!-- Where focus lands on entering Review (see focusStep), so that a screen reader says
+             Review rather than the first card's step name. Hidden even while focused, unlike the
+             plain visually-hidden utility, which shows content on focus: the stepper already
+             names the step on screen, and a heading appearing on every entry would shift the
+             cards. Not in the tab order; only focusStep puts focus here. -->
+        <h2 class="wa-visually-hidden-force" tabindex="-1" data-review-heading>${msg('Review')}</h2>
         <!-- Always in the tree, so that the callout is announced when it appears. -->
         <div role="status">
           ${

@@ -58,8 +58,6 @@ function installed(value: string): TemplateResult | string {
  *
  * Edit names its step for assistive technology - three buttons all called "Edit" are
  * indistinguishable in a list of controls (WCAG 2.2 2.4.6) - while showing only the short word.
- * The heading takes focus without joining the tab order (`tabindex="-1"`): entering Review
- * focuses the first one, as Review has no control of its own to start on.
  */
 function block(
   step: AddStep,
@@ -69,7 +67,7 @@ function block(
 ): TemplateResult {
   return html`
     <wa-card data-review=${step}>
-      <h2 slot="header" tabindex="-1">${heading}</h2>
+      <h2 slot="header">${heading}</h2>
       <wa-button
         slot="header-actions"
         data-edit

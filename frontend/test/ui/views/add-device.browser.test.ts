@@ -841,9 +841,30 @@ describe('the steps', () => {
     await toReview(element)
     await element.updateComplete
 
-    expect(document.activeElement).toBe(
-      element.querySelector('[data-step-panel="review"] [data-review] h2'),
-    )
+    // Review's own heading, not the first card's: focus there would announce "Scan it".
+    const heading = document.activeElement as HTMLElement | null
+    expect(heading?.tagName).toBe('H2')
+    expect(element.querySelector('[data-step-panel="review"]')?.contains(heading)).toBe(true)
+    expect(heading?.closest('[data-review]')).toBeNull()
+    expect(heading?.textContent?.trim()).toBe('Review')
+  })
+
+  it('lands a save-time problem on its step with focus on the control in error', async () => {
+    // The installation date sits second on Scan it; focus on the setup code above it would
+    // make the person find the control the message is about.
+    const element = await form()
+    fillAll(element)
+    await toReview(element)
+
+    fill(element, 'installed-at', '2026-02-31')
+    dispatchSubmit(element)
+    await waitUntil(() => changedNotice(element), 'Save never refreshed Review')
+    dispatchSubmit(element)
+    await waitUntil(() => activeStep(element) === 'scan', 'Save never went to Scan it')
+    await settle(element)
+
+    expect(hintOf(element, 'installed-at')).toBe(errorText(element))
+    expect(document.activeElement).toBe(element.querySelector('[data-field="installed-at"]'))
   })
 
   it('leaves focus alone when the form first opens', async () => {
