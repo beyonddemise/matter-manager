@@ -236,6 +236,19 @@ describe('opening the edit form', () => {
   })
 })
 
+describe('one page, not steps', () => {
+  it('still shows every field on one page', async () => {
+    // Editing is usually one field; four screens to rename a device would be worse (#349).
+    await seed()
+    const element = await form()
+
+    expect(element.querySelector('wa-stepper')).toBeNull()
+    for (const field of ['name', 'room', 'spot', 'serial', 'installed-at']) {
+      expect(element.querySelector(`[data-field="${field}"]`), field).not.toBeNull()
+    }
+  })
+})
+
 describe('saving an edit', () => {
   it('renames the device and leaves its code alone', async () => {
     await seed()

@@ -7,6 +7,7 @@ import '@awesome.me/webawesome-pro/dist/components/input/input.js'
 import '@awesome.me/webawesome-pro/dist/components/option/option.js'
 import { fixture, html, waitUntil } from '@open-wc/testing-helpers'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { userEvent } from 'vitest/browser'
 import type { ProjectRepositories } from '../../../src/data/index.js'
 import type { DeviceDocument, Unsaved } from '../../../src/domain/index.js'
 import { BACKFILL_WANTED, type CatalogApi, type LookupOutcome } from '../../../src/ui/catalog.js'
@@ -183,10 +184,65 @@ function selectRoom(element: HTMLElement, path: string): void {
   combobox.value = path
 }
 
-/** Submits the form and waits for whatever the caller says settles it. */
-async function submit(element: HTMLElement, settled: () => boolean | Promise<boolean>) {
-  const target = element.querySelector('form')
-  target?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+/** The form's stepper. */
+function stepper(element: HTMLElement): HTMLElement & {
+  active: string
+  orientation: string
+  updateComplete: Promise<unknown>
+} {
+  const found = element.querySelector('wa-stepper')
+  if (found === null) throw new Error('no stepper')
+  return found as never
+}
+
+/** The step the stepper has on screen, by name. */
+function activeStep(element: HTMLElement): string {
+  return stepper(element).active
+}
+
+/**
+ * Lets a step change finish: the stepper renders first and only then says `wa-step-change`,
+ * which is what the view mirrors into its panels.
+ */
+async function settle(element: AddDeviceView): Promise<void> {
+  await element.updateComplete
+  await stepper(element).updateComplete
+  await element.updateComplete
+}
+
+/** Presses Next, the way a person does. */
+async function next(element: AddDeviceView): Promise<void> {
+  const button = element.querySelector('[data-next]') as HTMLElement | null
+  if (button === null) throw new Error('no Next button on this step')
+  button.click()
+  await settle(element)
+}
+
+/** Dispatches `submit` on the form, which is what Enter in a field does. */
+function dispatchSubmit(element: HTMLElement): void {
+  element
+    .querySelector('form')
+    ?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+}
+
+/**
+ * Submits the form and waits for whatever the caller says settles it.
+ *
+ * The form is four steps, and `submit` on steps 1-3 means Next. So this walks forward, one
+ * submit per step, until it reaches Review or a step refuses (an error on screen is the
+ * refusal a test is usually waiting for), and only on Review submits once more to save. Every
+ * test written against the one-page form keeps calling this unchanged.
+ */
+async function submit(element: AddDeviceView, settled: () => boolean | Promise<boolean>) {
+  for (
+    let steps = 0;
+    steps < 4 && activeStep(element) !== 'review' && element.querySelector('[data-error]') === null;
+    steps++
+  ) {
+    dispatchSubmit(element)
+    await settle(element)
+  }
+  if (activeStep(element) === 'review') dispatchSubmit(element)
   await waitUntil(settled, 'the form never settled after submit', { timeout: 3000 })
 }
 
@@ -463,7 +519,11 @@ describe('the form itself', () => {
     fill(element, 'name', 'Kitchen ceiling light')
     typeRoom(element, 'Kitchen')
 
-    const save = element.querySelector('wa-button[type="submit"]') as HTMLElement
+    // Save lives on Review only, so the steps are walked with Next first.
+    await next(element)
+    await next(element)
+    await next(element)
+    const save = element.querySelector('[data-save]') as HTMLElement
     save.click()
 
     await waitUntil(async () => (await devices()).length === 1, 'the Save button saved nothing', {
@@ -475,6 +535,195 @@ describe('the form itself', () => {
     const element = await form()
     expect(element.shadowRoot).toBeNull()
     expect(element.querySelector('.wa-stack')).not.toBeNull()
+  })
+})
+
+/** The panel a control sits in, by its `data-step-panel`. */
+function panelOf(element: HTMLElement, field: string): string | null | undefined {
+  return element
+    .querySelector(`[data-field="${field}"]`)
+    ?.closest('[data-step-panel]')
+    ?.getAttribute('data-step-panel')
+}
+
+/** Whether a step carries the checkmark that unlocks the steps after it. */
+function completed(element: HTMLElement, step: string): boolean {
+  return element.querySelector(`wa-step[name="${step}"]`)?.hasAttribute('completed') ?? false
+}
+
+/** What a control's hint says now: its own help, or the message about it. */
+function hintOf(element: HTMLElement, field: string): string | undefined {
+  return (element.querySelector(`[data-field="${field}"]`) as { hint?: string } | null)?.hint
+}
+
+/** The message in the error callout, as the hint beside the control would repeat it. */
+function errorText(element: HTMLElement): string | undefined {
+  return element.querySelector('[data-error]')?.textContent?.trim()
+}
+
+/** Fills every field validly, so that each step's Next is accepted. */
+function fillAll(element: HTMLElement): void {
+  fill(element, 'credential', PAYLOAD)
+  fill(element, 'serial', 'SN-000123')
+  fill(element, 'installed-at', '2026-08-19')
+  typeRoom(element, 'Ground Floor/Kitchen')
+  fill(element, 'spot', 'ceiling, north end')
+  fill(element, 'name', 'Kitchen ceiling light')
+}
+
+describe('the steps', () => {
+  it('shows Scan it, Place it, Name it and Review, starting on Scan it', async () => {
+    const element = await form()
+    await settle(element)
+
+    const labels = [...element.querySelectorAll('wa-step')].map((step) => step.textContent?.trim())
+    expect(labels).toEqual(['Scan it', 'Place it', 'Name it', 'Review'])
+    expect(activeStep(element)).toBe('scan')
+    expect(element.querySelector('[data-step-panel="scan"]')?.hasAttribute('hidden')).toBe(false)
+    expect(element.querySelector('[data-step-panel="place"]')?.hasAttribute('hidden')).toBe(true)
+  })
+
+  it('puts each control on its step', async () => {
+    const element = await form()
+
+    expect(panelOf(element, 'credential')).toBe('scan')
+    expect(panelOf(element, 'serial')).toBe('scan')
+    expect(panelOf(element, 'installed-at')).toBe('scan')
+    expect(panelOf(element, 'room')).toBe('place')
+    expect(panelOf(element, 'spot')).toBe('place')
+    expect(panelOf(element, 'name')).toBe('name')
+  })
+
+  it('refuses Next with an empty setup code and says why', async () => {
+    const element = await form()
+
+    await next(element)
+
+    expect(activeStep(element)).toBe('scan')
+    expect(errorText(element)).toBeTruthy()
+    expect(hintOf(element, 'credential')).toBe(errorText(element))
+    expect(completed(element, 'scan')).toBe(false)
+  })
+
+  it('refuses Next on Place it without a room', async () => {
+    const element = await form()
+    fill(element, 'credential', PAYLOAD)
+    await next(element)
+    expect(activeStep(element)).toBe('place')
+
+    await next(element)
+
+    expect(activeStep(element)).toBe('place')
+    expect(errorText(element)).toBeTruthy()
+    expect(hintOf(element, 'room')).toBe(errorText(element))
+    expect(completed(element, 'place')).toBe(false)
+  })
+
+  it('refuses Next on Name it without a name', async () => {
+    const element = await form()
+    fill(element, 'credential', PAYLOAD)
+    typeRoom(element, 'Kitchen')
+    await next(element)
+    await next(element)
+    expect(activeStep(element)).toBe('name')
+
+    await next(element)
+
+    expect(activeStep(element)).toBe('name')
+    expect(errorText(element)).toBeTruthy()
+    expect(hintOf(element, 'name')).toBe(errorText(element))
+    expect(completed(element, 'name')).toBe(false)
+  })
+
+  it('keeps every value across Back and Next', async () => {
+    const element = await form()
+    fillAll(element)
+    const fields = ['credential', 'serial', 'installed-at', 'room', 'spot', 'name']
+    const before = fields.map((field) => fieldValue(element, field))
+    await next(element)
+    await next(element)
+    await next(element)
+    expect(activeStep(element)).toBe('review')
+
+    for (const _ of [1, 2]) {
+      ;(element.querySelector('[data-back]') as HTMLElement).click()
+      await settle(element)
+    }
+    expect(activeStep(element)).toBe('place')
+    await next(element)
+    await next(element)
+
+    expect(activeStep(element)).toBe('review')
+    expect(fields.map((field) => fieldValue(element, field))).toEqual(before)
+  })
+
+  it('refuses a jump forward from an earlier step made invalid', async () => {
+    const element = await form()
+    fillAll(element)
+    await next(element)
+    await next(element)
+    await next(element)
+    expect(activeStep(element)).toBe('review')
+
+    element.goToStep('scan')
+    await settle(element)
+    expect(activeStep(element)).toBe('scan')
+    fill(element, 'credential', '')
+    ;(element.querySelector('wa-step[name="review"]') as HTMLElement).click()
+    await settle(element)
+
+    expect(activeStep(element)).toBe('scan')
+    expect(hintOf(element, 'credential')).toBe(errorText(element))
+    expect(completed(element, 'scan')).toBe(false)
+  })
+
+  it('advances on Enter rather than saving', async () => {
+    const element = await form()
+    fillAll(element)
+    await next(element)
+    expect(activeStep(element)).toBe('place')
+
+    dispatchSubmit(element)
+    await settle(element)
+
+    expect(activeStep(element)).toBe('name')
+    expect(await devices()).toHaveLength(0)
+  })
+
+  it('advances once when Enter picks a room', async () => {
+    // Observed against the real component, not assumed: `wa-combobox` takes every Enter for
+    // itself (preventDefault and stopPropagation in its keydown handler). The first one picks
+    // the highlighted "Create" option, and a second one, with the list closed, opens the list
+    // again. Neither reaches the form, so neither advances the step, and nothing is saved:
+    // Enter in the room field never skips Place it.
+    const element = await form()
+    fill(element, 'credential', PAYLOAD)
+    await next(element)
+    expect(activeStep(element)).toBe('place')
+
+    const combobox = element.querySelector('[data-field="room"]') as HTMLElement & {
+      value?: unknown
+    }
+    combobox.focus()
+    await userEvent.keyboard('Attic')
+    await waitUntil(
+      () => combobox.querySelector('wa-option[data-create-option]:not([hidden])') !== null,
+      'the combobox never offered to create the room',
+    )
+    await userEvent.keyboard('{Enter}')
+    await waitUntil(() => combobox.value === 'Attic', 'Enter never created the room')
+    await settle(element)
+    expect(activeStep(element)).toBe('place')
+
+    await userEvent.keyboard('{Enter}')
+    await settle(element)
+    expect(activeStep(element)).toBe('place')
+    expect(await devices()).toHaveLength(0)
+  })
+
+  it('lays the steps out to stack on a phone', async () => {
+    const element = await form()
+    expect(stepper(element).orientation).toBe('auto')
   })
 })
 
@@ -1091,10 +1340,12 @@ describe('switching project while a save is planned', () => {
     typeCode(element, PAYLOAD)
     fill(element, 'name', 'Lamp')
     typeRoom(element, 'Kitchen')
+    // Saving happens on Review only; the steps in between write nothing and read no rooms.
+    await next(element)
+    await next(element)
+    await next(element)
 
-    element
-      .querySelector('form')
-      ?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    dispatchSubmit(element)
     await waitUntil(() => lists >= 2, 'the save never re-read the rooms')
     window.dispatchEvent(new CustomEvent(PROJECT_CHANGED))
     reread.resolve([])

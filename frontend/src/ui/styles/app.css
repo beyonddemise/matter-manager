@@ -18,6 +18,12 @@ input[type="file"][hidden] {
   display: none;
 }
 
+/* The add form's step panels carry wa-stack, whose display outranks the user agent's
+   [hidden] rule the same way, and would show all four steps at once (#349). */
+[data-step-panel][hidden] {
+  display: none;
+}
+
 .app-back {
   color: var(--wa-color-brand-on-quiet);
 }
