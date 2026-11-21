@@ -688,8 +688,10 @@ wa-page[view="mobile"] .app-projects-table .app-cell-actions {
      devices.
 
      Hidden by role rather than by a `.no-print` class sprinkled around: a class has to be
-     remembered on every new control, and the one nobody remembers is the one that prints. */
-  [slot="header"],
+     remembered on every new control, and the one nobody remembers is the one that prints.
+     The header only as the page's own: cards and dialogs have a header slot too, and a
+     card's header is its title, which is content. */
+  wa-page > [slot="header"],
   [slot="navigation"],
   [slot="footer"],
   [data-search],

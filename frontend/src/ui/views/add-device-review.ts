@@ -67,7 +67,10 @@ function block(
 ): TemplateResult {
   return html`
     <wa-card data-review=${step}>
-      <h3 slot="header" class="wa-heading-m">${heading}</h3>
+      <!-- The heading is wrapped, and alone in its wrapper, because the native styles give a
+           heading with a following sibling a bottom margin: slotted directly, beside Edit, it
+           sat above Edit's centre line and made the header taller than its content. -->
+      <div slot="header"><h3 class="wa-heading-m">${heading}</h3></div>
       <wa-button
         slot="header-actions"
         data-edit

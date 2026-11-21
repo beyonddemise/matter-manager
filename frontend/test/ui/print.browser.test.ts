@@ -7,6 +7,7 @@ import '@awesome.me/webawesome-pro/dist/styles/themes/glossy.css'
 import '@awesome.me/webawesome-pro/dist/styles/color/palettes/anodized.css'
 import '@awesome.me/webawesome-pro/dist/components/badge/badge.js'
 import '@awesome.me/webawesome-pro/dist/components/button/button.js'
+import '@awesome.me/webawesome-pro/dist/components/card/card.js'
 import '@awesome.me/webawesome-pro/dist/components/checkbox/checkbox.js'
 import '@awesome.me/webawesome-pro/dist/components/icon/icon.js'
 import '@awesome.me/webawesome-pro/dist/components/input/input.js'
@@ -197,6 +198,16 @@ describe('printing the shell', () => {
 
     expect(hidden(shell.querySelector('[slot="navigation"]'))).toBe(true)
     expect(hidden(shell.querySelector('[slot="header"]'))).toBe(true)
+  })
+
+  it("prints a card's header, which is its title rather than interface", async () => {
+    // Review's step cards and the plan cards title themselves through `slot="header"`; only the
+    // page's own header is the application's chrome.
+    const card = await fixture(
+      html`<wa-card><div slot="header"><h3>Place it</h3></div>Kitchen</wa-card>`,
+    )
+
+    expect(hidden(card.querySelector('[slot="header"]'))).toBe(false)
   })
 
   it('does not confine the page to one scrolling viewport', async () => {
