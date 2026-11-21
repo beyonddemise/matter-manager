@@ -186,6 +186,19 @@ fields through the steps. `npm run verify` clean, coverage gate met, zero warnin
 
 - Exact copy of step descriptions (`slot="description"`), if any are used.
 - Whether the Review blocks are `wa-card`s or a definition list inside one card. Decided (Task 3):
-  one `wa-card` per step, its `<h2>` in the header slot and Edit in `header-actions`, the values
-  a `dl.app-facts` like the catalogue lines - so each block reads as the step it returns to.
+  one `wa-card` per step, its `<h3 class="wa-heading-m">` in the header slot (under the Review panel's
+  visually hidden `<h2>Review</h2>`, which receives focus on entering Review) and Edit in
+  `header-actions`, the values a `dl.app-facts` like the catalogue lines - so each block reads as
+  the step it returns to.
 - Where the stepper's Pro imports live, following the existing registration module.
+- Decided (Tasks 4-5): the form offers one upload control - Scan the code where the browser can
+  scan, Upload an image where it cannot - and offers neither until the camera check finishes.
+  The stepper's accessible label reuses "Add a device"; the Review card headings reuse the step
+  labels; Edit names its step for assistive technology ("Edit: Place it"). German step labels:
+  Scannen, Platzieren, Benennen, Prüfen; Next and Back are Weiter and Zurück.
+
+## Deviations from the design
+
+- Enter in the room combobox does not advance to the next step. `wa-combobox` swallows Enter
+  (it selects or opens its listbox), so the form's submit handler never sees it. Enter in the
+  other fields on steps 1-3 advances as specified; in the combobox, Next is the way forward.

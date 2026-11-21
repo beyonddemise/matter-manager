@@ -908,6 +908,17 @@ function changedNotice(element: HTMLElement): boolean {
 }
 
 describe('reviewing before saving', () => {
+  it('titles each card with an h3 under the hidden Review h2', async () => {
+    const element = await form()
+    fillAll(element)
+    await toReview(element)
+    for (const step of ['scan', 'place', 'name']) {
+      const heading = reviewOf(element, step).querySelector('[slot="header"]')
+      expect(heading?.tagName).toBe('H3')
+      expect(heading?.classList.contains('wa-heading-m')).toBe(true)
+    }
+  })
+
   it('shows what will be saved', async () => {
     const element = await form()
     fill(element, 'credential', PAYLOAD)
@@ -1107,6 +1118,24 @@ describe('the mandatory fields', () => {
       expect(element.querySelector('[data-required-note]')?.textContent?.trim()).toBe(
         'Mit * markierte Felder sind Pflichtfelder.',
       )
+    } finally {
+      await activateLocale('en')
+    }
+  })
+
+  it('names the steps in German', async () => {
+    await activateLocale('de')
+    try {
+      const element = await form()
+      const labels = [...element.querySelectorAll('wa-step')].map((s) => s.textContent?.trim())
+      expect(labels).toEqual(['Scannen', 'Platzieren', 'Benennen', 'Prüfen'])
+      expect(element.querySelector('[data-next]')?.textContent?.trim()).toBe('Weiter')
+      fillAll(element)
+      await next(element)
+      expect(element.querySelector('[data-back]')?.textContent?.trim()).toBe('Zurück')
+      await next(element)
+      await next(element)
+      expect(element.querySelector('[data-edit]')?.textContent).toContain('Bearbeiten')
     } finally {
       await activateLocale('en')
     }

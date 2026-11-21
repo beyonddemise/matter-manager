@@ -67,7 +67,7 @@ function block(
 ): TemplateResult {
   return html`
     <wa-card data-review=${step}>
-      <h2 slot="header">${heading}</h2>
+      <h3 slot="header" class="wa-heading-m">${heading}</h3>
       <wa-button
         slot="header-actions"
         data-edit
