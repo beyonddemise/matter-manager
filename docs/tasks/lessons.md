@@ -1623,3 +1623,14 @@ to any generated or structured file.
   runtime tuple the compiler itself ties to the type (`PROJECT_ROLES as const` +
   `(typeof PROJECT_ROLES)[number]`), compared against YAML read by a YAML parser. The redesign
   deleted 477 lines of parser-and-fixtures and ended the finding class.
+
+## L50: `frontend` verify is not the CI job; run every step it runs
+
+- 2026-11-21, PRs #350/#351: I reported both branches green from `npm ci && npm run verify` in
+  `frontend/`, and both still failed. The Frontend job also runs **root** Biome (`npm run
+  check` at the repo root: YAML, workflows, e2e) and the **end-to-end journeys** (`npm run e2e`);
+  `verify` runs neither. Root Biome 2.6 had started formatting YAML; the journeys still filled
+  the one-page add form the stepper replaced.
+- **Rule:** before saying a branch will pass CI, run the step list from
+  `.github/workflows/ci.yml`, every `run:` line in its working directory, not a script that
+  covers part of it. A UI change that alters a flow the journeys walk needs `npm run e2e`.
