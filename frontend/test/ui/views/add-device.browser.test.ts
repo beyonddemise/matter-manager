@@ -78,6 +78,22 @@ async function form(
   )) as AddDeviceView
 }
 
+/**
+ * Builds the form with a camera check that gives up after 50 ms rather than the real wait, so
+ * a test of the timeout does not sit through it. Bound in the template because the check
+ * starts in `firstUpdated`: assigning after `fixture` returns would be too late.
+ */
+async function formTimingOut(scanSource: ScanSource): Promise<AddDeviceView> {
+  await customElements.whenDefined('wa-input')
+  return (await fixture(
+    html`<add-device-view
+      .repositories=${database.repositories}
+      .scanSource=${scanSource}
+      .scanCheckTimeoutMs=${50}
+    ></add-device-view>`,
+  )) as AddDeviceView
+}
+
 /** Types into the setup-code field the way a keyboard does: value, then an `input` event. */
 function typeCode(element: HTMLElement, code: string): void {
   fill(element, 'credential', code)
@@ -1482,6 +1498,35 @@ describe('filling the setup code from a picture', () => {
     answer.resolve(true)
     await waitUntil(() => element.querySelector('[data-scan]') !== null, 'Scan never appeared')
     expect(formUpload(element)).toBeNull()
+  })
+
+  it('falls back to Upload when the camera check never answers (#352)', async () => {
+    // A probe that hangs - the ZXing chunk stalled on a bad connection, a camera API that
+    // never settles - would otherwise leave the form with no way to read the label at all.
+    const never: ScanSource = { ...scanningSource(PAYLOAD), available: () => new Promise(() => {}) }
+    const element = await formTimingOut(never)
+    await element.updateComplete
+    expect(formUpload(element)).toBeNull()
+
+    await waitUntil(() => formUpload(element) !== null, 'Upload never appeared after the timeout')
+    expect(element.querySelector('[data-scan]')).toBeNull()
+  })
+
+  it('keeps Upload once shown, even if the camera check answers yes later', async () => {
+    // The promise the wait for the check makes: no button swapped out from under a thumb
+    // already on its way to it.
+    const answer = deferred<boolean>()
+    const late: ScanSource = { ...scanningSource(PAYLOAD), available: () => answer.promise }
+    const element = await formTimingOut(late)
+    await waitUntil(() => formUpload(element) !== null, 'Upload never appeared after the timeout')
+
+    answer.resolve(true)
+    await answer.promise
+    await element.updateComplete
+
+    expect(element.canScan).toBe(false)
+    expect(element.querySelector('[data-scan]')).toBeNull()
+    expect(formUpload(element)).not.toBeNull()
   })
 
   it('puts a code read from a picture into the setup-code field', async () => {

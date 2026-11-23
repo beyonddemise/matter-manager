@@ -42,6 +42,13 @@ function today(): string {
 /** How long typing must pause before the code is looked up (spec §Adding a device). */
 export const LOOKUP_DEBOUNCE_MS = 300
 
+/**
+ * How long the camera check may take before the add form gives up and offers Upload (#352).
+ * Long enough for the ZXing decoder to download on a slow phone connection, short enough that
+ * someone holding a label is not left looking at a form with no way to read it.
+ */
+export const SCAN_CHECK_TIMEOUT_MS = 5000
+
 /** Where the background lookup stands, and for which code. */
 type LookupState =
   | { readonly kind: 'idle' }
@@ -200,6 +207,11 @@ export class AddDeviceView extends DeviceFormView {
   declare uploadProblem: ImageProblem | PayloadProblem | undefined
   /** Bound by a test to a decoder that is not one; the real one otherwise. */
   decodeImage: (file: Blob) => Promise<readonly string[]> = codesFromImage
+  /**
+   * How long the camera check may take before the form offers Upload instead. A plain field,
+   * like {@link decodeImage}: a test binds a shorter one, nothing renders from it.
+   */
+  scanCheckTimeoutMs: number = SCAN_CHECK_TIMEOUT_MS
   /** Bound by a test to a fake; the real API otherwise. */
   declare catalog?: CatalogApi
   /** Where the background lookup stands. Never read by anything that saves except `onSubmit`. */
@@ -255,12 +267,25 @@ export class AddDeviceView extends DeviceFormView {
    * as a feature this machine cannot have.
    */
   private async checkScanning(): Promise<void> {
+    // Raced against a timeout, which counts as "cannot scan" (#352). The check can hang: on the
+    // fallback path it downloads the ZXing decoder, and a stalled download would leave the form
+    // offering neither Scan nor Upload, with no way at all to read the label. Upload needs no
+    // camera, so it is the safe answer to give in the meantime.
+    //
+    // Awaited once, so an answer arriving after the timeout is ignored rather than swapping
+    // Upload for Scan under a thumb already on its way to it. `Promise.race` also handles a
+    // late rejection, which would otherwise surface as an unhandled one.
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const timedOut = new Promise<false>((resolve) => {
+      timer = setTimeout(() => resolve(false), this.scanCheckTimeoutMs)
+    })
     try {
-      this.canScan = await this.source().available()
+      this.canScan = await Promise.race([this.source().available(), timedOut])
     } catch {
       // A source that cannot even say whether it works is one to leave alone.
       this.canScan = false
     } finally {
+      clearTimeout(timer)
       this.scanChecked = true
     }
   }
@@ -865,8 +890,8 @@ export class AddDeviceView extends DeviceFormView {
 
               ${this.renderLookup()}
 
-              <!-- One control, never both, and neither until the camera check has answered (see
-                   scanChecked). Where this browser can scan, Scan the code; uploading is then
+              <!-- One control, never both, and neither until the camera check has answered or
+                   timed out (see scanChecked, checkScanning). Where this browser can scan, Scan the code; uploading is then
                    the scan dialog's own fallback, for a label the camera cannot read, and a
                    second Upload beside Scan would be two ways in to say the same thing. Where it
                    cannot, Upload an image, which is precisely the person with no camera holding
