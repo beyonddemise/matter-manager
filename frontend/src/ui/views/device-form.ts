@@ -281,31 +281,26 @@ export abstract class DeviceFormView extends LitElement {
   }
 
   /**
-   * The room the user settled on.
+   * The room the user settled on: the text in the room field, which is what they can see.
    *
-   * `value` is the selected option; `inputValue` is what is currently typed. Taking the typed
-   * text is deliberate rather than defensive: someone who types "Bathroom" and presses Save has
-   * said which room they mean, and refusing them because they did not also pick "Create
-   * Bathroom" from a list would be the application being pedantic about its own widget.
+   * `inputValue`, never `value`. Taking the typed text is deliberate rather than defensive:
+   * someone who types "Bathroom" and presses Save has said which room they mean, and refusing
+   * them because they did not also pick "Create Bathroom" from a list would be the application
+   * being pedantic about its own widget.
    *
-   * The typed text wins whenever it **differs** from the selection, and that condition is the
-   * load-bearing part. Selecting an option syncs `inputValue` to that option's label, but
-   * typing afterwards leaves `value` on the stale selection - verified against the component,
-   * not assumed. So `selected === '' ? typed : selected` silently files the device in the room
-   * the user changed their mind about, which on the edit form is a move that does not move.
-   * When the two agree, `selected` is preferred because it is the option's normalised path.
+   * `value` can disagree with the text in both directions - verified against the component,
+   * not assumed. Typing over a pick leaves `value` on the stale option until blur. And with
+   * `allow-custom-value` (#355), a typed room becomes a custom `value` that clearing the field
+   * does not remove: the component's `selectionChanged` drops only values matching an option.
+   * Reading `value` in either state files the device in a room the field no longer shows.
    *
-   * This rests on options rendering the path as both their value and their label, which
-   * {@link renderFields} does.
+   * Nothing is lost by ignoring `value`: every way an option gets selected (a click, Enter, the
+   * edit form's prefill) copies its label into `inputValue`, and options render the path as both
+   * their value and their label, which {@link renderPlaceFields} does.
    */
   protected roomValue(): string {
-    const combobox = this.querySelector('[data-field="room"]') as {
-      value?: unknown
-      inputValue?: unknown
-    } | null
-    const selected = typeof combobox?.value === 'string' ? combobox.value : ''
-    const typed = typeof combobox?.inputValue === 'string' ? combobox.inputValue : ''
-    return typed !== '' && typed !== selected ? typed : selected
+    const combobox = this.querySelector('[data-field="room"]') as { inputValue?: unknown } | null
+    return typeof combobox?.inputValue === 'string' ? combobox.inputValue : ''
   }
 
   /** The five shared controls, read back exactly as the DOM reports them. */
@@ -469,12 +464,20 @@ export abstract class DeviceFormView extends LitElement {
     `
   }
 
-  /** Where it is: the room, and the spot within it. Together, because a spot means nothing alone. */
+  /**
+   * Where it is: the room, and the spot within it. Together, because a spot means nothing alone.
+   *
+   * `allow-custom-value` is what lets a typed room survive leaving the field. Without it a
+   * single-select combobox puts the picked option's label back on blur, so typing over an
+   * earlier pick and tabbing away undid the change before {@link roomValue} could read it
+   * (#355). `allow-create` stays for the explicit "Create *X*" option.
+   */
   protected renderPlaceFields(): TemplateResult {
     return html`
       <wa-combobox
         data-field="room"
         allow-create
+        allow-custom-value
         required
         label=${msg('Room')}
         hint=${this.messageFor('room') ?? msg('Pick a room, or type a new one to create it. Use "/" for floors: "Ground Floor/Kitchen".')}
