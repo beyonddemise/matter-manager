@@ -280,8 +280,13 @@ per layout. Instead:
   touches either timestamp. Otherwise a placement save made on a replica that still had the old
   room would carry a newer `updatedAt` than an offline rename, win the merge, and silently move
   the plan back to the old room. `placements` is a union by device id, and each entry, including a
-  `removed` tombstone, is last-write-wins by `at`. Ties go to the larger `(updatedAt, _rev)`,
-  as the catalogue block does. Losing revisions are deleted.
+  `removed` tombstone, is last-write-wins by `at`. **A tie is broken by the entry itself,**
+  never by the head that carries it: a merged head keeps the `updatedAt` of its newest input,
+  so a key taken from the head would change under an unrelated merge, and two replicas could
+  keep different positions for one device. A tombstone beats a placement at the same `at`;
+  between two placements, the larger `x`, then the larger `y`, wins. `room` and `title` ties
+  likewise go to the larger value by code-point order. Every rule depends only on the values
+  compared, so the merge is commutative and associative. Losing revisions are deleted.
 - **Drawing:** `plan.svg` cannot conflict. A `woven.svg` conflict is a conflict between two
   derived values. The watcher keeps CouchDB's winner, deletes the losers and, if the winner's
   `wovenFrom` is stale, regenerates as above. Drawings are not pulled live, so a server-side
@@ -576,7 +581,7 @@ Both are built as a `Blob` and downloaded through an object URL, as the existing
 | Layer | What | Where |
 |---|---|---|
 | Domain (node) | Head validation: every malformed field dropped, a valid head unchanged | `test/domain/layouts/head.test.ts` |
-| Domain | Placement merge: union, last-write-wins per entry, tombstone beats an older placement, deterministic ties, idempotent and commutative. A room renamed offline on one replica survives a later placement save on another replica that still had the old room (`roomAt` decides, not `updatedAt`); the same for `title` | `test/domain/sync/merge.test.ts` |
+| Domain | Placement merge: union, last-write-wins per entry, tombstone beats an older placement, idempotent and commutative. Two placements with equal `at` merged in both orders, with an unrelated head merged in between, end at the same position. A room renamed offline on one replica survives a later placement save on another replica that still had the old room (`roomAt` decides, not `updatedAt`); the same for `title` | `test/domain/sync/merge.test.ts` |
 | Domain | `WovenDevice` projection: a device with every field set yields exactly the allowed fields | `test/domain/layouts/project.test.ts` |
 | Domain | `roomsOf` with heads; `renameRoom` plans head writes for the subtree and nothing outside it; retry after a partial rename | `test/domain/rooms/*.test.ts` |
 | Data (node, memory PouchDB) | Layout repository: create drawing then head, rollback on head failure, refused when locked; on-demand pull by `doc_ids`; local drawing deleted when the head's deletion arrives | `test/data/layouts.test.ts` |
