@@ -379,6 +379,9 @@ export class AddDeviceView extends DeviceFormView implements LeaveGuard {
     // Only now is the form what the draft holds, on the step it opens on: editing and saving
     // wait for this (`draftLoading`), not merely for the read.
     this.draftOpened = true
+    // Read locked: a key that arrived while the form was opening fired its notice before there
+    // was a draft to re-read, so the re-read happens now (CodeRabbit on #369).
+    if (isLockedDocument(found)) void this.refreshLockedDraft()
   }
 
   /**
@@ -531,11 +534,13 @@ export class AddDeviceView extends DeviceFormView implements LeaveGuard {
         return false
       }
       this.rooms = rooms
+      // Discard may have released the form during that read: what it holds is not to be kept.
+      if (this.released) return false
       // What is planned, and so what the baseline becomes once it is stored. Read after the last
       // wait before planning; anything typed during the write below stays unsaved input.
       const input = this.values()
       // One uuid for every attempt, so a retry after a conflict cannot file a second document.
-      const uuid = crypto.randomUUID()
+      const uuid = this.newDocumentUuid()
       const answer = this.answerForSave()
       const plan = (stored: DraftDeviceDocument | undefined): Unsaved<DraftDeviceDocument> =>
         planDraftDevice(
@@ -556,6 +561,7 @@ export class AddDeviceView extends DeviceFormView implements LeaveGuard {
       const saved = await this.writeRetrying(plan, since)
       if (saved === undefined || !isDraftDevice(saved)) return false
       this.stored = saved
+      this.deletedElsewhere = false
       this.baseline = input
       return true
     } finally {
@@ -597,9 +603,12 @@ export class AddDeviceView extends DeviceFormView implements LeaveGuard {
     plan: (stored: DraftDeviceDocument | undefined) => Unsaved<StoredDevice>,
     since: number,
   ): Promise<StoredDevice | undefined> {
+    // Released (Discard, a project switch) means nothing more is written, retry or not.
+    if (this.released) return undefined
     const first = await this.writeSaved(plan(this.stored), since)
     if (first !== undefined || !this.lastWriteConflicted || this.stored === undefined) return first
     if ((await this.rereadStored(since)) !== 'draft') return undefined
+    if (this.released) return undefined
     const second = await this.writeSaved(plan(this.stored), since)
     if (second === undefined && this.lastWriteConflicted) {
       await this.rereadStored(since)
@@ -607,6 +616,16 @@ export class AddDeviceView extends DeviceFormView implements LeaveGuard {
         this.saveFailed = 'changed'
     }
     return second
+  }
+
+  /**
+   * The uuid a save files a new document under: the reopened draft's own when it was deleted
+   * elsewhere, so the document comes back where its address (`#/devices/<uuid>/finish`) and the
+   * form's history entries already point, and a reload opens it rather than "Draft not found";
+   * a fresh one for a new device. Used only when there is no stored draft to update.
+   */
+  private newDocumentUuid(): string {
+    return this.draftId === '' ? crypto.randomUUID() : this.draftId
   }
 
   /**
@@ -1115,7 +1134,7 @@ export class AddDeviceView extends DeviceFormView implements LeaveGuard {
       this.dismissReviewChanged()
 
       // One uuid for every attempt, so a retry after a conflict cannot file a second device.
-      const uuid = crypto.randomUUID()
+      const uuid = this.newDocumentUuid()
       const clock = { uuid: () => uuid, now: () => new Date().toISOString() }
       // Whatever has arrived by now. Submit never waits for a lookup: saving offline, or
       // before the answer, is the normal case, and backfill fills the names in later.
@@ -1151,6 +1170,7 @@ export class AddDeviceView extends DeviceFormView implements LeaveGuard {
       // contain the device would be the application saying it saved something it did not.
       const saved = await this.writeRetrying(plan, since)
       if (saved === undefined) return
+      this.deletedElsewhere = false
       this.askForBackfill(saved)
     } finally {
       this.saving = false

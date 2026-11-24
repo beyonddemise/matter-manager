@@ -724,3 +724,137 @@ describe('a draft that moved on elsewhere while open (review of #369)', () => {
     expect(stored[0]).toMatchObject({ status: 'draft', name: 'Hall sensor', payload: PAYLOAD })
   })
 })
+
+describe('late CodeRabbit findings on #369', () => {
+  it('stores nothing when Discard releases the form while Save as draft reads the rooms', async () => {
+    const real = database.repositories
+    let release: () => void = () => {}
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let reads = 0
+    const element = await newForm({
+      ...real,
+      devices: {
+        ...real.devices,
+        list: async () => {
+          // The form's own first read passes; the one Save as draft makes is held.
+          if (reads++ > 0) await held
+          return real.devices.list()
+        },
+      },
+    })
+    fill(element, 'name', 'Hall sensor')
+
+    element.querySelector<HTMLElement>('[data-save-draft]')?.click()
+    await waitUntil(() => reads === 2, 'the save never read the rooms')
+    // The shell, following a Discard elsewhere.
+    element.release()
+    release()
+    await saved(element)
+
+    expect(await devices()).toEqual([])
+  })
+
+  it('re-reads a draft read locked once it is open, so a key that arrived meanwhile counts', async () => {
+    const locked = await lockedDatabase()
+    try {
+      await locked.unlocked.devices.save({
+        _id: `device:${UUID}`,
+        type: 'device',
+        status: 'draft',
+        name: 'Hall sensor',
+        manualCode: '34970112332',
+        addedAt: '2026-11-24T09:00:00.000Z',
+        disabled: false,
+        remarks: [],
+      } as Unsaved<StoredDevice>)
+      let release: () => void = () => {}
+      const held = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      const real = locked.unlockable
+      let read = false
+      const element = await finishForm(UUID, {
+        ...real,
+        devices: {
+          ...real.devices,
+          get: async (id) => {
+            const found = await real.devices.get(id)
+            read = true
+            return found
+          },
+          list: async () => {
+            await held
+            return real.devices.list()
+          },
+        },
+      })
+      // The draft has been read locked; the key arrives, and its notice fires, while the form
+      // is still opening (its room read held).
+      await waitUntil(() => read, 'the draft was never read')
+      locked.unlock()
+      window.dispatchEvent(new CustomEvent(PROJECT_DATA_CHANGED))
+      release()
+
+      await waitUntil(
+        () => shown(element, 'credential') === '34970112332',
+        'the code never came back',
+      )
+    } finally {
+      fixtureCleanup()
+      await locked.destroy()
+    }
+  })
+})
+
+describe('after the draft changed hands elsewhere (delta review of #369)', () => {
+  it('saves a draft deleted elsewhere again under its own id, so its address still opens it', async () => {
+    const first = await storeDraft()
+    const element = await finishForm()
+    await waitUntil(() => element.querySelector('form')?.inert === false)
+    await database.repositories.devices.remove(first)
+    fill(element, 'serial', 'SN-mine')
+
+    await press(element, '[data-save-draft]')
+    await saved(element)
+    expect(element.deletedElsewhere).toBe(true)
+
+    await press(element, '[data-save-draft]')
+    await saved(element)
+
+    // The notice does not outlive the save that answered it.
+    expect(element.deletedElsewhere).toBe(false)
+    const stored = await devices()
+    expect(stored).toHaveLength(1)
+    expect(stored[0]).toMatchObject({ _id: `device:${UUID}`, status: 'draft', serial: 'SN-mine' })
+    // Under the same id, so the address the form was on still names it: reopening it (as a
+    // reload of that address does) finds the draft, not "Draft not found".
+    fixtureCleanup()
+    const reopened = await finishForm()
+    await waitUntil(() => reopened.stored !== undefined, 'the saved draft did not reopen')
+    expect(reopened.querySelector('[data-draft-missing]')).toBeNull()
+  })
+
+  it('writes nothing when the retry finds the draft finished elsewhere, and says so', async () => {
+    const first = await storeDraft()
+    const element = await finishForm()
+    await waitUntil(() => element.querySelector('form')?.inert === false)
+    const { updatedAt: _stamp, status: _status, ...rest } = first as DraftDeviceDocument
+    const finished = await database.repositories.devices.save({
+      ...rest,
+      room: 'Hall',
+      manualCode: '34970112332',
+      installedAt: '2026-11-24',
+    } as Unsaved<StoredDevice>)
+    fill(element, 'serial', 'SN-mine')
+
+    await press(element, '[data-save-draft]')
+    await saved(element)
+
+    expect(element.querySelector('[data-finished-elsewhere]')).not.toBeNull()
+    expect(element.querySelector('[data-save-failed], [data-save-changed]')).toBeNull()
+    expect(await devices()).toEqual([finished])
+    expect(shown(element, 'serial')).toBe('SN-mine')
+  })
+})
