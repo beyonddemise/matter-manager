@@ -31,6 +31,7 @@ decision to be wrong. That is the part people need eighteen months later.
 | [0020](0020-project-limits-from-the-published-matrix.md) | Project limits come from the published matrix; accounts keep theirs | Accepted (amends 0009) |
 | [0021](0021-room-is-a-device-property.md) | A room is a property of the device | Accepted (supersedes 0006's storage, amends 0010) |
 | [0022](0022-field-encryption-with-key-escrow.md) | Setup codes are encrypted per project, with the key escrowed on the server | Accepted (amends 0005) |
+| [0023](0023-layouts-inline-svg-drawings-on-demand.md) | Layouts: inline SVG behind a sanitiser, drawings fetched on demand | Proposed (amends 0013, 0021, 0022) |
 
 ## Writing one
 
