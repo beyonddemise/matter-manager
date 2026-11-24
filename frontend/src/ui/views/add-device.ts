@@ -135,6 +135,7 @@ export class AddDeviceView extends DeviceFormView implements LeaveGuard {
     stored: { state: true },
     draftMissing: { state: true },
     finishedElsewhere: { state: true },
+    draftOpened: { state: true },
     scanSource: { attribute: false },
     canScan: { state: true },
     scanChecked: { state: true },
@@ -198,6 +199,12 @@ export class AddDeviceView extends DeviceFormView implements LeaveGuard {
    * more, keeps what was typed, and offers the way to the device.
    */
   declare finishedElsewhere: string | undefined
+  /**
+   * Whether a reopened draft has been put into the form: its values in the controls, its room
+   * selected, the form on its first unfinished step. Until then the form is inert and saves
+   * nothing. Unused for a new device.
+   */
+  declare draftOpened: boolean
 
   /** Bound by a test to a camera that is not one; the real one otherwise. */
   declare scanSource?: ScanSource
@@ -295,6 +302,7 @@ export class AddDeviceView extends DeviceFormView implements LeaveGuard {
     this.stored = undefined
     this.draftMissing = false
     this.finishedElsewhere = undefined
+    this.draftOpened = false
   }
 
   protected override firstUpdated(): void {
@@ -330,7 +338,9 @@ export class AddDeviceView extends DeviceFormView implements LeaveGuard {
       // way there is no draft here to finish. Not logged: a draft can hold a setup code.
       found = undefined
     }
-    if (since !== this.projectSnapshot() || this.released || !this.isConnected) return
+    const obsolete = (): boolean =>
+      since !== this.projectSnapshot() || this.released || !this.isConnected
+    if (obsolete()) return
     if (found !== undefined && !isDraftDevice(found)) {
       // Finished meanwhile - on another phone, or in another tab. Its page is where it is now.
       window.location.replace(`#/devices/${uuidOf(found._id) ?? ''}`)
@@ -351,10 +361,17 @@ export class AddDeviceView extends DeviceFormView implements LeaveGuard {
     this.setControlValue('[data-field="installed-at"]', values.installedAt)
     if (values.room !== '') {
       this.createdRoom = values.room
-      await this.selectRoom(values.room)
+      // `selectRoom`'s wait, inlined so the form's lifetime is checked after it too: left during
+      // it, the form must not take the room, ask the catalogue or move its steps.
+      await this.updateComplete
+      if (obsolete()) return
+      this.setControlValue('[data-field="room"]', values.room)
     }
     this.scheduleLookup()
     this.openAtFirstProblem()
+    // Only now is the form what the draft holds, on the step it opens on: editing and saving
+    // wait for this (`draftLoading`), not merely for the read.
+    this.draftOpened = true
   }
 
   /**
@@ -616,7 +633,7 @@ export class AddDeviceView extends DeviceFormView implements LeaveGuard {
    * new-device path and file a second document beside the draft (review of #369).
    */
   private draftLoading(): boolean {
-    return this.draftId !== '' && this.stored === undefined
+    return this.draftId !== '' && !this.draftOpened
   }
 
   /** The Save as draft button: saves, then leaves for the list as Save device does. */

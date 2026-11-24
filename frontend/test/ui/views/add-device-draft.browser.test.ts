@@ -375,6 +375,8 @@ describe('reopening a draft', () => {
         },
       },
     })
+    // Inert, so nobody can type into controls the prefill is about to overwrite.
+    expect(element.querySelector('form')?.inert).toBe(true)
     fill(element, 'serial', 'SN-early')
 
     await press(element, '[data-save-draft]')
@@ -382,7 +384,50 @@ describe('reopening a draft', () => {
     expect(await devices()).toHaveLength(1)
 
     release()
-    await waitUntil(() => element.stored !== undefined, 'the draft never loaded')
+    // Usable only once the draft is in the form and the form is on its first unfinished step.
+    await waitUntil(() => element.querySelector('form')?.inert === false, 'never became usable')
+    expect(element.stored).not.toBeUndefined()
+    expect(shown(element, 'serial')).toBe('')
+  })
+
+  it('does nothing with a read that lands after the form was left (CodeRabbit on #369)', async () => {
+    // A device finished elsewhere: a live form would replace the address with its page.
+    await database.repositories.devices.save({
+      _id: `device:${UUID}`,
+      type: 'device',
+      name: 'Hall sensor',
+      room: 'Hall',
+      manualCode: '34970112332',
+      installedAt: '2026-11-20',
+      addedAt: '2026-11-24T09:00:00.000Z',
+      disabled: false,
+      remarks: [],
+    })
+    const real = database.repositories
+    let release: () => void = () => {}
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let read = false
+    const element = await finishForm(UUID, {
+      ...real,
+      devices: {
+        ...real.devices,
+        get: async (id) => {
+          await held
+          read = true
+          return real.devices.get(id)
+        },
+      },
+    })
+    const address = location.hash
+
+    element.remove()
+    release()
+    await waitUntil(() => read, 'the read never landed')
+    await new Promise((resolve) => setTimeout(resolve, 50))
+
+    expect(location.hash).toBe(address)
   })
 
   it('says so when there is no such draft', async () => {
