@@ -48,12 +48,15 @@ ADR 0013 admits only when the platform is genuinely insufficient.
    unfiltered. A client fetches a drawing by `doc_ids` when a layout is opened, or all of a
    project's drawings on request, and keeps it.
 5. **Placements merge like remarks** (ADR 0010): a union by device, last-write-wins per entry,
-   with removal tombstones. `woven.svg` is derived. A writer regenerates it at save, and lazily
+   with removal tombstones. `room` and `title` are last-write-wins by their own timestamps, so
+   a placement save cannot undo an offline rename. `woven.svg` is derived. A writer regenerates it at save, and lazily
    when its input hash (`wovenFrom`) is stale. It is never rewritten because a device changed,
    and a conflict over it is resolved by regenerating.
 6. **The woven copy carries only non-secret identity**: the device UUID, name, room, type, draft
    status, position, and a `#/devices/<uuid>` link built by one validating function. Never a
    setup code. It is built through DOM APIs and `XMLSerializer`, never by string concatenation.
+   **A stored woven copy is never trusted:** the sanitiser removes any device group, and every
+   view or download weaves again in memory from the sanitised plan, the head and live devices.
 7. **Plans render inline, sanitised by DOMPurify, in a dedicated shadow root** (amends 0013:
    DOMPurify joins the accepted dependencies, lazily loaded with the layout view). A plan is
    sanitised at import and again at every render, because a replicated drawing is untrusted.
