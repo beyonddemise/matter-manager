@@ -606,7 +606,9 @@ export class AddDeviceView extends DeviceFormView implements LeaveGuard {
     // Released (Discard, a project switch) means nothing more is written, retry or not.
     if (this.released) return undefined
     const first = await this.writeSaved(plan(this.stored), since)
-    if (first !== undefined || !this.lastWriteConflicted || this.stored === undefined) return first
+    if (first !== undefined || !this.lastWriteConflicted || this.draftDocumentId() === undefined) {
+      return first
+    }
     if ((await this.rereadStored(since)) !== 'draft') return undefined
     if (this.released) return undefined
     const second = await this.writeSaved(plan(this.stored), since)
@@ -631,7 +633,8 @@ export class AddDeviceView extends DeviceFormView implements LeaveGuard {
   /**
    * Reads the draft again after a conflict, and says what became of it:
    *
-   * - `'draft'`: still a draft; {@link stored} is now the fresh revision.
+   * - `'draft'`: a draft, perhaps filed again by another form after a deletion; {@link stored}
+   *   is now the fresh revision.
    * - `'finished'`: completed elsewhere; the form says so, links to it, and saves no more.
    * - `'deleted'`: deleted elsewhere. Retrying against it would conflict forever, and Discard
    *   would lose what was typed (often a code just scanned). So the form says so, forgets the
@@ -639,11 +642,14 @@ export class AddDeviceView extends DeviceFormView implements LeaveGuard {
    * - `'unknown'`: the read failed or is obsolete; the refusal already on screen stands.
    */
   private async rereadStored(since: number): Promise<'draft' | 'finished' | 'deleted' | 'unknown'> {
-    const held = this.stored
-    if (held === undefined || since !== this.projectSnapshot()) return 'unknown'
+    // By the draft's id, kept even after `stored` was forgotten for a deletion: another form
+    // may have filed the draft again under it meanwhile (CodeRabbit on #369), and a save
+    // without its revision then conflicts until the form adopts it.
+    const id = this.draftDocumentId()
+    if (id === undefined || since !== this.projectSnapshot()) return 'unknown'
     let fresh: StoredDevice | undefined
     try {
-      fresh = await this.repos().devices.get(held._id)
+      fresh = await this.repos().devices.get(id)
     } catch {
       return 'unknown'
     }
@@ -660,7 +666,18 @@ export class AddDeviceView extends DeviceFormView implements LeaveGuard {
       return 'finished'
     }
     this.stored = fresh
+    this.deletedElsewhere = false
     return 'draft'
+  }
+
+  /**
+   * The id of the draft this form is about: the stored one's, or - once `stored` was forgotten
+   * because the draft was deleted - the id it will be filed under again. `undefined` for a new
+   * device never saved, which has nothing to conflict with.
+   */
+  private draftDocumentId(): string | undefined {
+    if (this.stored !== undefined) return this.stored._id
+    return this.draftId === '' ? undefined : documentId('device', this.draftId)
   }
 
   /**
@@ -683,6 +700,11 @@ export class AddDeviceView extends DeviceFormView implements LeaveGuard {
     } catch {
       return
     }
+    // Several re-reads can be in flight (opening, then each data change), and they land in any
+    // order. Only one that finds the form still holding the draft it set out from may act: once
+    // another read has replaced it, this one is older news, and applying it would put an older
+    // code into the baseline and the stored draft (CodeRabbit on #369).
+    if (this.stored !== held) return
     if (since !== this.projectSnapshot() || this.released || fresh === undefined) return
     if (!isDraftDevice(fresh)) {
       this.finishedElsewhere = fresh._id

@@ -858,3 +858,102 @@ describe('after the draft changed hands elsewhere (delta review of #369)', () =>
     expect(shown(element, 'serial')).toBe('SN-mine')
   })
 })
+
+describe('two forms on a draft deleted elsewhere (CodeRabbit on #369)', () => {
+  it('the second form adopts the draft the first recreated, instead of conflicting forever', async () => {
+    const first = await storeDraft()
+    const a = await finishForm()
+    const b = await finishForm()
+    await waitUntil(
+      () => a.querySelector('form')?.inert === false && b.querySelector('form')?.inert === false,
+    )
+    await database.repositories.devices.remove(first)
+    fill(a, 'serial', 'SN-a')
+    fill(b, 'spot', 'by the door')
+
+    // Both learn it was deleted.
+    await press(a, '[data-save-draft]')
+    await saved(a)
+    await press(b, '[data-save-draft]')
+    await saved(b)
+    expect(a.deletedElsewhere && b.deletedElsewhere).toBe(true)
+
+    // A files it again under its id; B's save, made without a revision, then conflicts.
+    await press(a, '[data-save-draft]')
+    await saved(a)
+    await press(b, '[data-save-draft]')
+    await saved(b)
+
+    expect(b.querySelector('[data-save-failed], [data-save-changed]')).toBeNull()
+    expect(b.deletedElsewhere).toBe(false)
+    const stored = await devices()
+    expect(stored).toHaveLength(1)
+    expect(stored[0]).toMatchObject({ _id: `device:${UUID}`, status: 'draft', spot: 'by the door' })
+  })
+})
+
+describe('overlapping re-reads of a locked draft (CodeRabbit on #369)', () => {
+  it('lets an older read that lands last change nothing', async () => {
+    const locked = await lockedDatabase()
+    try {
+      const save = (manualCode: string, _rev?: string) =>
+        locked.unlocked.devices.save({
+          _id: `device:${UUID}`,
+          ...(_rev === undefined ? {} : { _rev }),
+          type: 'device',
+          status: 'draft',
+          name: 'Hall sensor',
+          manualCode,
+          addedAt: '2026-11-24T09:00:00.000Z',
+          disabled: false,
+          remarks: [],
+        } as Unsaved<StoredDevice>)
+      const old = await save('34970112332')
+      const real = locked.unlockable
+      let holdNext = false
+      let release: () => void = () => {}
+      const held = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      let heldRead = false
+      const element = await finishForm(UUID, {
+        ...real,
+        devices: {
+          ...real.devices,
+          get: async (id) => {
+            const found = await real.devices.get(id)
+            if (holdNext) {
+              holdNext = false
+              heldRead = true
+              await held
+            }
+            return found
+          },
+        },
+      })
+      await waitUntil(() => element.querySelector('form')?.inert === false)
+      locked.unlock()
+
+      // The first re-read reads the old code and is held; the draft then changes elsewhere,
+      // and a second re-read reads the new code and lands first.
+      holdNext = true
+      window.dispatchEvent(new CustomEvent(PROJECT_DATA_CHANGED))
+      await waitUntil(() => heldRead, 'the first re-read never happened')
+      await save('749701123365521327687', old._rev)
+      window.dispatchEvent(new CustomEvent(PROJECT_DATA_CHANGED))
+      await waitUntil(
+        () => element.stored?.manualCode === '749701123365521327687',
+        'the newer read never landed',
+      )
+
+      release()
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      expect(element.stored?.manualCode).toBe('749701123365521327687')
+      expect(shown(element, 'credential')).toBe('749701123365521327687')
+      expect(element.holdsInput()).toBe(false)
+    } finally {
+      fixtureCleanup()
+      await locked.destroy()
+    }
+  })
+})
