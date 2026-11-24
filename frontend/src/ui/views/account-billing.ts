@@ -19,25 +19,16 @@
 import { msg, str } from '@lit/localize'
 import { html, nothing, type TemplateResult } from 'lit'
 import { type Plan, plansForSale } from '../../domain/plan.js'
-import { type Billing, canCharge, grantsPlan, type SessionOutcome } from '../billing.js'
+import {
+  type Billing,
+  canCharge,
+  checkoutReturnText,
+  grantsPlan,
+  type SessionOutcome,
+} from '../billing.js'
 import { getLocale } from '../i18n/localization.js'
 import type { SessionState } from '../session.js'
-
-/**
- * Each plan's public name, a table so no plan is named by comparison (ADR 0009). The `member`
- * tier is marketed as "Home" (see `MARKETING_TIERS` in `domain/plan.ts`); the internal tier name
- * never reaches the reader.
- */
-const PLAN_NAMES: Readonly<Record<Plan, () => string>> = {
-  free: () => msg('Free'),
-  member: () => msg('Home'),
-  pro: () => msg('Pro'),
-}
-
-/** A plan's public name in the current language. */
-export function planName(plan: Plan): string {
-  return PLAN_NAMES[plan]()
-}
+import { planName } from '../upgrade-dialog.js'
 
 /** Why the last Checkout or portal request did not send the browser to Stripe. */
 export type BillingProblem =
@@ -118,10 +109,12 @@ function knownAccount(session: SessionState | undefined): boolean {
 function dates(billing: Billing): TemplateResult | typeof nothing {
   const end = billing.currentPeriodEnd
   if (end === undefined) return nothing
+  // First: Stripe keeps `cancelAtPeriodEnd` on a subscription that has already ended, whose
+  // "ends on" would name a day in the past.
+  if (!grantsPlan(billing)) return nothing
   const date = day(end)
   if (billing.cancelAtPeriodEnd)
     return html`<p data-billing-ends>${msg(str`Your subscription ends on ${date}.`)}</p>`
-  if (!grantsPlan(billing)) return nothing
   return html`<p data-billing-next>${msg(str`Next billing date: ${date}`)}</p>`
 }
 
@@ -142,9 +135,9 @@ function returnNote(how: 'success' | 'cancel'): TemplateResult {
   return how === 'success'
     ? html`<wa-callout variant="success" data-checkout-return>
         <wa-icon slot="icon" name="circle-check"></wa-icon>
-        ${msg('Thank you. Your plan changes as soon as Stripe confirms the payment, usually within a minute.')}
+        ${checkoutReturnText(how)}
       </wa-callout>`
-    : html`<p data-checkout-return>${msg('Checkout was cancelled. Nothing was charged.')}</p>`
+    : html`<p data-checkout-return>${checkoutReturnText(how)}</p>`
 }
 
 /**

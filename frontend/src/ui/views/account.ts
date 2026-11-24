@@ -10,11 +10,10 @@ import type { CredentialsLike } from '../passkey-signin.js'
 import type { PlanMatrix } from '../plans.js'
 import type { SessionState } from '../session.js'
 import type { Passkey, SignInMethods, SignInMethodsApi } from '../sign-in-methods.js'
-import { renderPlanComparison } from '../upgrade-dialog.js'
+import { planName, renderPlanComparison } from '../upgrade-dialog.js'
 import {
   type BillingPending,
   type BillingProblem,
-  planName,
   problemOf,
   renderBilling,
 } from './account-billing.js'
@@ -171,6 +170,22 @@ export class AccountView extends LitElement {
     // A view that arrives already signed-in is read by `willUpdate`, so it is not read twice.
     if (this.session !== 'signed-in') void this.refresh()
     this.loadPlanMatrix()
+    window.addEventListener('pageshow', this.onPageShow)
+  }
+
+  override disconnectedCallback(): void {
+    window.removeEventListener('pageshow', this.onPageShow)
+    super.disconnectedCallback()
+  }
+
+  /**
+   * Back from Stripe without finishing: the browser may restore this page from its back/forward
+   * cache exactly as it was left, with the request that redirected still marked pending, which
+   * would leave every billing button disabled until a reload. A restored page is no longer
+   * leaving, so the buttons come back.
+   */
+  private onPageShow = (event: PageTransitionEvent): void => {
+    if (event.persisted) this.billingPending = undefined
   }
 
   /** The one matrix load in flight, so a retry can never race the load it retries. */

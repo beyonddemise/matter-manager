@@ -218,6 +218,33 @@ describe('an account with a subscription', () => {
     expect(el.querySelector('[data-billing-next]')).toBeNull()
   })
 
+  it('names no past end date for a subscription that has already ended', async () => {
+    // Stripe keeps `cancelAtPeriodEnd` set after the period it ended in.
+    const { el } = await account({
+      plan: 'free',
+      offer: ['pro'],
+      billing: {
+        status: 'canceled',
+        currentPeriodEnd: '2026-10-24T12:00:00Z',
+        cancelAtPeriodEnd: true,
+      },
+    })
+    expect(el.querySelector('[data-billing-ends]')).toBeNull()
+    expect(el.querySelector('[data-billing-next]')).toBeNull()
+  })
+
+  it('gives the buttons back when Back restores the page from the bfcache', async () => {
+    const { el, redirect } = await account({ plan: 'member', offer: ['pro'], billing: ACTIVE })
+    ;(el.querySelector('[data-manage-billing]') as HTMLElement).click()
+    await waitUntil(() => redirect.mock.calls.length === 1, 'never redirected')
+    await el.updateComplete
+    expect(el.querySelector('[data-manage-billing]')?.hasAttribute('disabled')).toBe(true)
+
+    window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }))
+    await el.updateComplete
+    expect(el.querySelector('[data-manage-billing]')?.hasAttribute('disabled')).toBe(false)
+  })
+
   it('shows no portal on a deployment that no longer sells anything', async () => {
     const { el } = await account({ plan: 'pro', offer: [], billing: ACTIVE })
     expect(el.querySelector('[data-manage-billing]')).toBeNull()

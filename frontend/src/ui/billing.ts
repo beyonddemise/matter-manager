@@ -20,6 +20,7 @@
  * @module
  */
 
+import { msg } from '@lit/localize'
 import type { LocalCache } from '../data/index.js'
 import { isWaitlistPlan, type Plan } from '../domain/plan.js'
 import { accessToken } from './tokens.js'
@@ -98,6 +99,19 @@ export function canCharge(billing: Billing | undefined): boolean {
 /** Whether the subscription grants the plan; see {@link GRANTS}. */
 export function grantsPlan(billing: Billing): boolean {
   return GRANTS[billing.status]
+}
+
+/**
+ * What coming back from Checkout says: on the account page, and in the shell's live region,
+ * which is how a screen reader hears it — the note itself arrives with the page. One `msg()`
+ * for both. Not a promise of the plan: Stripe's webhook grants it.
+ */
+export function checkoutReturnText(how: 'success' | 'cancel'): string {
+  return how === 'success'
+    ? msg(
+        'Thank you. Your plan changes as soon as Stripe confirms the payment, usually within a minute.',
+      )
+    : msg('Checkout was cancelled. Nothing was charged.')
 }
 
 /** What `GET /billing` came to. */

@@ -5,6 +5,7 @@ import type { AuthMethods, AuthMethodsApi } from './auth-methods.js'
 import {
   type BillingActions,
   type BillingApi,
+  checkoutReturnText,
   resolveBillingOffer,
   type SessionOutcome,
 } from './billing.js'
@@ -483,6 +484,12 @@ export class AppShell extends LitElement implements ViewHost {
     )
     this.hash = clean
     this.checkoutReturn = how
+    // Said in the live region too, after the render that puts the region on the page: the note
+    // arrives with the page, and content a live region already holds when it appears is not
+    // announced (WCAG 4.1.3).
+    void this.updateComplete.then(() => {
+      this.announcement = checkoutReturnText(how)
+    })
     if (how === 'success') this.checkoutFollowOwed = true
     if (this.session === 'signed-in') this.followCheckout()
   }

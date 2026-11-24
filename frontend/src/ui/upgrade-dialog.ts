@@ -46,7 +46,7 @@ const PLAN_NAMES: Readonly<Record<Plan, () => string>> = {
 }
 
 /** A plan's name in the current language. */
-function planName(plan: Plan): string {
+export function planName(plan: Plan): string {
   return PLAN_NAMES[plan]()
 }
 

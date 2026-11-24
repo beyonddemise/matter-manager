@@ -2913,6 +2913,11 @@ describe('billing through Stripe (#263, phase 2)', () => {
       'no return note',
     )
     expect(window.location.hash).toBe('#/account')
+    // The note arrives with the page, so the shell's live region is what speaks it.
+    await waitUntil(
+      () => text(element.querySelector('[data-status-announcement]')).startsWith('Thank you.'),
+      'the return was never announced',
+    )
     await waitUntil(
       () => account(element)?.querySelector('[data-billing-next]') !== null,
       'the profile was not reread after Checkout',
