@@ -21,9 +21,10 @@
 
 import { CATALOG_FIELD_KEYS, isHttpsUrl } from '../catalog/copy.js'
 import { DraftError } from '../documents/draft.js'
+import { planDraftDevice } from '../documents/draft-device.js'
 import { documentTypeOf, uuidOf } from '../documents/ids.js'
 import { planNewDevice } from '../documents/new-device.js'
-import type { CatalogSource, DeviceDocument, Unsaved } from '../documents/types.js'
+import type { CatalogSource, DeviceDocument, StoredDevice, Unsaved } from '../documents/types.js'
 import { isValidRoomPath } from '../rooms/path.js'
 import type { Remark } from '../sync/merge.js'
 import { decodeUtf8, encodeUtf8 } from '../text/utf8.js'
@@ -36,7 +37,19 @@ export const ARCHIVE_FORMAT = 'matter-manager-project'
  * The shape this build writes and reads. An archive from a newer build is refused by name
  * rather than imported partially: a field it relies on would silently be dropped.
  */
-export const ARCHIVE_VERSION = 1
+export const ARCHIVE_VERSION = 2
+
+/**
+ * The version an archive is written as: the lowest that can read it.
+ *
+ * Version 2 added drafts (#358). An archive with none is still a version 1 archive, and is
+ * written as one, so an older build can still restore it. An archive with a draft is version 2,
+ * so an older build refuses it as newer rather than refusing one draft as "no setup code" or,
+ * worse, importing a draft that happens to hold every field as a complete device.
+ */
+function versionFor(devices: readonly StoredDevice[]): number {
+  return devices.some((device) => device.status === 'draft') ? 2 : 1
+}
 
 /** The room a device is filed under when the archive gives it none that is usable. */
 export const IMPORTED_ROOM = 'Imported'
@@ -84,7 +97,7 @@ export interface ArchivedProject {
 /** What an import produces: everything to write, nothing written. */
 export interface ImportedProject {
   readonly project: ArchivedProject
-  readonly devices: readonly Unsaved<DeviceDocument>[]
+  readonly devices: readonly Unsaved<StoredDevice>[]
   /** How many devices had no usable room and were filed under {@link IMPORTED_ROOM}. */
   readonly refiled: number
 }
@@ -110,13 +123,13 @@ const file = (name: string, value: unknown): ZipEntry => ({
  */
 export function projectArchiveEntries(
   project: ArchivedProject,
-  devices: readonly DeviceDocument[],
+  devices: readonly StoredDevice[],
   exportedAt: string,
 ): ZipEntry[] {
   return [
     file(MANIFEST, {
       format: ARCHIVE_FORMAT,
-      version: ARCHIVE_VERSION,
+      version: versionFor(devices),
       exportedAt,
       devices: devices.length,
     }),
@@ -243,7 +256,7 @@ function remarksOf(value: unknown): readonly Remark[] | undefined {
  * @throws {ArchiveError} `badDevice`, naming the file, when it does not hold together
  */
 function readDevice(entry: ZipEntry): {
-  readonly device: Unsaved<DeviceDocument>
+  readonly device: Unsaved<StoredDevice>
   readonly refiled: boolean
 } {
   const refuse = (why: string, cause?: unknown): never => {
@@ -271,6 +284,38 @@ function readDevice(entry: ZipEntry): {
   const payload = text(value.payload)
   const manualCode = text(value.manualCode)
   const credential = payload ?? manualCode
+  if (value.status !== undefined && value.status !== 'draft') return refuse('an unknown status.')
+  // A draft is rebuilt through the draft planner (#358): every value it has checked as a
+  // device's would be, nothing required but one value. Its setup code, when it has one, is
+  // derived again exactly as a device's is.
+  if (value.status === 'draft') {
+    let draft: Unsaved<StoredDevice>
+    try {
+      draft = planDraftDevice(
+        {
+          credential: credential ?? '',
+          name: typeof value.name === 'string' ? value.name : '',
+          room: typeof value.room === 'string' ? value.room : '',
+          installedAt: typeof value.installedAt === 'string' ? value.installedAt : '',
+          ...(typeof value.spot === 'string' ? { spot: value.spot } : {}),
+          ...(typeof value.serial === 'string' ? { serial: value.serial } : {}),
+        },
+        [],
+        { uuid: () => uuid, now: () => addedAt },
+      )
+    } catch (cause) {
+      if (cause instanceof DraftError) return refuse(`${cause.field} is not usable.`, cause)
+      throw cause
+    }
+    if (payload !== undefined && manualCode !== undefined && draft.manualCode !== manualCode) {
+      return refuse('the payload and the manual code are different codes.')
+    }
+    // Not disabled: a draft has never been in service.
+    // A catalogue block only for a code that names its product: one beside no code, or a short
+    // code, would describe a product this draft cannot be shown to be (CodeRabbit on #369).
+    const block = draft.vendorId === undefined ? {} : catalogBlock(value)
+    return { device: { ...draft, remarks, ...block }, refiled: false }
+  }
   if (credential === undefined) return refuse('no setup code.')
 
   const room =
@@ -351,7 +396,7 @@ export function readProjectArchive(entries: readonly ZipEntry[]): ImportedProjec
   }
   const client = text(project.client)
 
-  const devices: Unsaved<DeviceDocument>[] = []
+  const devices: Unsaved<StoredDevice>[] = []
   const seen = new Set<string>()
   let refiled = 0
   for (const entry of entries) {

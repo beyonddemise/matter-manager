@@ -6,16 +6,27 @@ import '@awesome.me/webawesome-pro/dist/components/stepper/stepper.js'
 import type { WaStepChangeEvent } from '@awesome.me/webawesome-pro/dist/events/events.js'
 import { msg } from '@lit/localize'
 import { html, type TemplateResult } from 'lit'
+import { isLockedDocument } from '../../data/index.js'
 import {
   type CatalogLookup,
   catalogNames,
   type DeviceDraft,
+  type DraftDeviceDocument,
   DraftError,
+  documentId,
+  draftFormOf,
+  isDraftDevice,
   needsCatalogLookup,
   PayloadError,
   type PayloadProblem,
+  planDraftDevice,
+  planFinishedDevice,
   planNewDevice,
+  type Room,
   readCredential,
+  type StoredDevice,
+  type Unsaved,
+  uuidOf,
 } from '../../domain/index.js'
 import { BACKFILL_WANTED, type CatalogApi } from '../catalog.js'
 import { catalog } from '../composition.js'
@@ -27,7 +38,7 @@ import { accessToken } from '../tokens.js'
 import { type ReviewSummary, renderReview, type StepStatus } from './add-device-review.js'
 import { type AddStep, type StepChecks, StepNavigation, stepOf } from './add-device-steps.js'
 import { DeviceFormView, fieldValue } from './device-form.js'
-import type { LeaveDialog } from './leave-dialog.js'
+import type { DraftOption, LeaveDialog } from './leave-dialog.js'
 import './leave-dialog.js'
 import './scan-dialog.js'
 
@@ -73,6 +84,15 @@ interface Reviewed {
   readonly code: string | undefined
 }
 
+/** The form's controls as plain text, absent optional values as empty ones. */
+type FormValues = Required<DeviceDraft>
+
+/** Whether two sets of values are the same input, so leaving would lose nothing. */
+function sameValues(a: FormValues, b: FormValues): boolean {
+  const keys = Object.keys(a) as (keyof FormValues)[]
+  return keys.every((key) => a[key].trim() === b[key].trim())
+}
+
 /** Whether two snapshots would show the person the same thing. */
 function sameReview(a: Reviewed, b: Reviewed): boolean {
   const keys = Object.keys(a.summary) as (keyof ReviewSummary)[]
@@ -102,10 +122,21 @@ function sameReview(a: Reviewed, b: Reviewed): boolean {
  * Each step is also an entry in the browser's history (#356), so Back moves one step back with
  * everything kept; leaving the form any other way while it holds input asks first, through the
  * shell's {@link LeaveGuard}.
+ *
+ * What it holds can be saved as a **draft** at any step (#358), and a draft reopens here
+ * (`#/devices/<uuid>/finish`, {@link draftId}) prefilled, on the first step that does not pass.
+ * Saving a draft again updates it; Save device finishes it through `planFinishedDevice`, the
+ * full checks of a new device.
  */
 export class AddDeviceView extends DeviceFormView implements LeaveGuard {
   static override properties = {
     ...DeviceFormView.properties,
+    draftId: { attribute: 'draft-id' },
+    stored: { state: true },
+    draftMissing: { state: true },
+    finishedElsewhere: { state: true },
+    draftOpened: { state: true },
+    deletedElsewhere: { state: true },
     scanSource: { attribute: false },
     canScan: { state: true },
     scanChecked: { state: true },
@@ -148,6 +179,38 @@ export class AddDeviceView extends DeviceFormView implements LeaveGuard {
    * from this, and a step shows its problem again when the person comes back to it.
    */
   declare checked: StepChecks
+
+  /**
+   * The uuid of the draft being finished, from `#/devices/<uuid>/finish`; `''` for a new
+   * device. Read once, when the form opens: the shell keys the element by it, so a different
+   * draft is a different form (`app-shell.ts`).
+   */
+  declare draftId: string
+  /**
+   * The draft as last read or saved (#358), or `undefined` for a device that has never been
+   * saved. Its id and revision are what make a second Save as draft an update of the same
+   * document, and what Save device finishes.
+   */
+  declare stored: DraftDeviceDocument | undefined
+  /** Whether {@link draftId} names no draft: gone, or never one. */
+  declare draftMissing: boolean
+  /**
+   * The id of the device this form's draft became elsewhere (another phone, another tab) while
+   * it was open, once a refused write or a re-read found it complete. The form then saves no
+   * more, keeps what was typed, and offers the way to the device.
+   */
+  declare finishedElsewhere: string | undefined
+  /**
+   * Whether a reopened draft has been put into the form: its values in the controls, its room
+   * selected, the form on its first unfinished step. Until then the form is inert and saves
+   * nothing. Unused for a new device.
+   */
+  declare draftOpened: boolean
+  /**
+   * Whether this form's draft was deleted elsewhere while it was open. The form then forgets the
+   * draft, says so, and its next save files what is typed as a new draft or device.
+   */
+  declare deletedElsewhere: boolean
 
   /** Bound by a test to a camera that is not one; the real one otherwise. */
   declare scanSource?: ScanSource
@@ -207,8 +270,18 @@ export class AddDeviceView extends DeviceFormView implements LeaveGuard {
     },
   })
 
-  /** The date the form opened with, so that a date left as it was is not input to lose. */
-  private openedOn = ''
+  /**
+   * What the form opened with: empty controls and today's date for a new device, the draft's
+   * values for a reopened one. Leaving loses something only when the controls differ from it.
+   */
+  private baseline: FormValues = {
+    credential: '',
+    name: '',
+    room: '',
+    spot: '',
+    serial: '',
+    installedAt: '',
+  }
   /**
    * Whether nothing here may hold the person back any more: the device was saved, the person
    * chose Discard, or a project switch abandoned the form.
@@ -231,16 +304,100 @@ export class AddDeviceView extends DeviceFormView implements LeaveGuard {
     this.reviewed = undefined
     this.reviewChanged = false
     this.checked = {}
+    this.draftId = ''
+    this.stored = undefined
+    this.draftMissing = false
+    this.finishedElsewhere = undefined
+    this.draftOpened = false
+    this.deletedElsewhere = false
   }
 
   protected override firstUpdated(): void {
     // The date is set once, imperatively, rather than bound in the template: a bound `value`
     // would be rewritten on every re-render, so the first validation error would silently
     // undo whatever date the user had chosen.
-    this.openedOn = today()
-    this.setControlValue('[data-field="installed-at"]', this.openedOn)
-    void this.loadRooms()
+    this.baseline = { ...this.baseline, installedAt: today() }
+    this.setControlValue('[data-field="installed-at"]', this.baseline.installedAt)
     void this.checkScanning()
+    if (this.draftId === '') {
+      void this.loadRooms()
+      return
+    }
+    void this.openDraft()
+  }
+
+  /**
+   * Reopens the draft {@link draftId} names (#358): its values into the controls, then the first
+   * step that does not pass, so the person lands where something is left to do.
+   *
+   * The rooms are read first: the combobox accepts a room only once its option exists.
+   */
+  private async openDraft(): Promise<void> {
+    // Before the wait: a project switch, or the person leaving, during it makes this read
+    // obsolete, and it must then redirect nothing and fill nothing (CodeRabbit on #369).
+    const since = this.projectSnapshot()
+    let found: StoredDevice | undefined
+    try {
+      const id = documentId('device', this.draftId)
+      ;[found] = await Promise.all([this.repos().devices.get(id), this.loadRooms()])
+    } catch {
+      // An id this application would never write, or storage that could not be read: either
+      // way there is no draft here to finish. Not logged: a draft can hold a setup code.
+      found = undefined
+    }
+    const obsolete = (): boolean =>
+      since !== this.projectSnapshot() || this.released || !this.isConnected
+    if (obsolete()) return
+    if (found !== undefined && !isDraftDevice(found)) {
+      // Finished meanwhile - on another phone, or in another tab. Its page is where it is now.
+      window.location.replace(`#/devices/${uuidOf(found._id) ?? ''}`)
+      return
+    }
+    if (found === undefined) {
+      this.draftMissing = true
+      return
+    }
+    this.stored = found
+    const values = draftFormOf(found)
+    this.baseline = values
+    this.setControlValue('[data-field="credential"]', values.credential)
+    this.setControlValue('[data-field="name"]', values.name)
+    this.setControlValue('[data-field="spot"]', values.spot)
+    this.setControlValue('[data-field="serial"]', values.serial)
+    // A draft without a date gets none, rather than today: the person had not chosen one.
+    this.setControlValue('[data-field="installed-at"]', values.installedAt)
+    if (values.room !== '') {
+      this.createdRoom = values.room
+      // `selectRoom`'s wait, inlined so the form's lifetime is checked after it too: left during
+      // it, the form must not take the room, ask the catalogue or move its steps.
+      await this.updateComplete
+      if (obsolete()) return
+      this.setControlValue('[data-field="room"]', values.room)
+    }
+    this.scheduleLookup()
+    this.openAtFirstProblem()
+    // Only now is the form what the draft holds, on the step it opens on: editing and saving
+    // wait for this (`draftLoading`), not merely for the read.
+    this.draftOpened = true
+    // Read locked: a key that arrived while the form was opening fired its notice before there
+    // was a draft to re-read, so the re-read happens now (CodeRabbit on #369).
+    if (isLockedDocument(found)) void this.refreshLockedDraft()
+  }
+
+  /**
+   * Goes to the first step whose check fails, or to Save when none does, with every step before
+   * it marked as checked. A problem on Scan it - where the form already is - is shown at once.
+   */
+  private openAtFirstProblem(): void {
+    const steps = ['scan', 'place', 'name'] as const
+    for (const step of steps) this.steps.check(step)
+    const first = steps.find((step) => this.checked[step] !== true)
+    if (first === 'scan') {
+      const outcome = this.checked.scan
+      this.error = outcome instanceof DraftError ? outcome : undefined
+      return
+    }
+    this.goToStep(first ?? 'review')
   }
 
   private resolvedSource: ScanSource | undefined
@@ -296,15 +453,20 @@ export class AddDeviceView extends DeviceFormView implements LeaveGuard {
   }
 
   /**
-   * Whether leaving now would lose what the person entered: any field with something in it, or
-   * a date changed from the one the form opened with. Being on a later step is not input: an
-   * empty form on Review loses nothing.
+   * Whether leaving now would lose what the person entered: any field changed from what the form
+   * opened with - empty controls and today's date for a new device, the draft's own values for a
+   * reopened draft (#358). Being on a later step is not input: an empty form on Review loses
+   * nothing, and neither does a draft opened and left untouched.
    */
   holdsInput(): boolean {
     if (this.released) return false
+    return !sameValues(this.values(), this.baseline)
+  }
+
+  /** The controls' values, absent optional ones as empty, for comparing with the baseline. */
+  private values(): FormValues {
     const draft = this.draft()
-    const typed = [draft.credential, draft.serial, draft.room, draft.spot, draft.name]
-    return typed.some((value) => (value ?? '').trim() !== '') || draft.installedAt !== this.openedOn
+    return { ...draft, spot: draft.spot ?? '', serial: draft.serial ?? '' }
   }
 
   /**
@@ -313,12 +475,277 @@ export class AddDeviceView extends DeviceFormView implements LeaveGuard {
    * still shows would save nothing and guard nothing. The shell calls {@link release} once it
    * actually leaves.
    *
-   * Drafts (#358) answer here: a `'draft'` choice will save the draft, then resolve `true`.
+   * Save as draft (#358) is answered here, so the shell still only hears "leave" or "stay":
+   * leave once the draft is stored, stay if storage refused it - the form then says why, and
+   * nothing the person typed is gone.
    */
   async confirmLeave(): Promise<boolean> {
     const dialog = this.querySelector<LeaveDialog>('leave-dialog')
     if (dialog === null) return true
-    return (await dialog.ask()) === 'discard'
+    dialog.discardLabel = this.stored === undefined ? undefined : msg('Discard changes')
+    const choice = await dialog.ask(this.draftOption())
+    // Leaves only when what is on screen is what was stored: an edit made while the draft was
+    // being written is still unsaved, so the form stays and keeps guarding it.
+    if (choice === 'draft') return (await this.saveDraft()) && !this.holdsInput()
+    return choice === 'discard'
+  }
+
+  /**
+   * Whether what is entered can be kept as a draft, asked of the draft planner itself so the
+   * dialog never offers a save the planner would refuse. Planned against the rooms already
+   * read, which only decides a room's spelling, never whether the draft is valid.
+   */
+  private draftOption(): DraftOption {
+    try {
+      planDraftDevice(this.draft(), this.knownRoomPaths(), {
+        uuid: () => 'planned',
+        now: () => new Date().toISOString(),
+      })
+      return 'offer'
+    } catch (problem) {
+      if (!(problem instanceof DraftError)) throw problem
+      return { refused: problemMessage(problem.problem) }
+    }
+  }
+
+  /**
+   * Saves what the form holds as a draft (#358) and says whether it was stored.
+   *
+   * Every step, any time: the draft planner needs one value and checks only what is present. A
+   * refusal is shown on the step that owns the field, as Save's is. Planned against a fresh read
+   * of the rooms, for the reason {@link onSubmit} gives; the project snapshot is taken before
+   * that read, so a switch during it writes nothing into the next project.
+   *
+   * The stored draft is kept ({@link stored}), so a second save is an update of the same
+   * document, not a second draft.
+   */
+  private async saveDraft(): Promise<boolean> {
+    if (this.saving || this.released || !this.mayWrite()) return false
+    this.saving = true
+    const since = this.projectSnapshot()
+    try {
+      let rooms: readonly Room[]
+      try {
+        rooms = await this.readRooms()
+      } catch {
+        // Said, not thrown: a rejection here would leave the leave question unsettled, and the
+        // person would not learn that nothing was kept. Not logged: the form holds a code.
+        this.saveFailed = 'storage'
+        return false
+      }
+      this.rooms = rooms
+      // Discard may have released the form during that read: what it holds is not to be kept.
+      if (this.released) return false
+      // What is planned, and so what the baseline becomes once it is stored. Read after the last
+      // wait before planning; anything typed during the write below stays unsaved input.
+      const input = this.values()
+      // One uuid for every attempt, so a retry after a conflict cannot file a second document.
+      const uuid = this.newDocumentUuid()
+      const answer = this.answerForSave()
+      const plan = (stored: DraftDeviceDocument | undefined): Unsaved<DraftDeviceDocument> =>
+        planDraftDevice(
+          input,
+          this.knownRoomPaths(rooms),
+          { uuid: () => uuid, now: () => new Date().toISOString() },
+          answer,
+          stored,
+        )
+      try {
+        plan(this.stored)
+      } catch (problem) {
+        if (!(problem instanceof DraftError)) throw problem
+        this.showProblem(problem)
+        return false
+      }
+      this.error = undefined
+      const saved = await this.writeRetrying(plan, since)
+      if (saved === undefined || !isDraftDevice(saved)) return false
+      this.stored = saved
+      this.deletedElsewhere = false
+      this.baseline = input
+      return true
+    } finally {
+      this.saving = false
+    }
+  }
+
+  /**
+   * Whether a save may be planned now, and if not, says why:
+   *
+   * - the draft this form opened on is still being read: saving would take the new-device path
+   *   and file a second document beside it (review of #369);
+   * - it was finished elsewhere: saving would write over a complete device;
+   * - it was read while the project was locked: it carries no setup code, so a save planned from
+   *   it would store the draft without the code it has (the repository's stale-locked guard
+   *   cannot see this, because the planners build a fresh document). It is re-read when the
+   *   project's data changes ({@link projectDataChanged}).
+   */
+  private mayWrite(): boolean {
+    if (this.draftLoading() || this.finishedElsewhere !== undefined) return false
+    if (this.stored !== undefined && isLockedDocument(this.stored)) {
+      this.saveFailed = 'locked'
+      return false
+    }
+    return true
+  }
+
+  /**
+   * Writes a planned save, and when it is refused as a conflict - the draft moved on elsewhere:
+   * a teammate's remark, a catalogue backfill - reads the draft again and writes once more,
+   * planned against the fresh copy so its remarks and catalogue block are kept (review of #369).
+   *
+   * `plan` is called with the draft in hand each time, so a retry is the same input on the new
+   * revision. A second conflict is said as `changed`: the draft has been re-read, so the next
+   * press goes through. A draft finished or deleted elsewhere is said on screen instead
+   * ({@link rereadStored}); nothing is written then.
+   */
+  private async writeRetrying(
+    plan: (stored: DraftDeviceDocument | undefined) => Unsaved<StoredDevice>,
+    since: number,
+  ): Promise<StoredDevice | undefined> {
+    // Released (Discard, a project switch) means nothing more is written, retry or not.
+    if (this.released) return undefined
+    const first = await this.writeSaved(plan(this.stored), since)
+    if (first !== undefined || !this.lastWriteConflicted || this.draftDocumentId() === undefined) {
+      return first
+    }
+    if ((await this.rereadStored(since)) !== 'draft') return undefined
+    if (this.released) return undefined
+    const second = await this.writeSaved(plan(this.stored), since)
+    if (second === undefined && this.lastWriteConflicted) {
+      await this.rereadStored(since)
+      if (this.finishedElsewhere === undefined && !this.deletedElsewhere)
+        this.saveFailed = 'changed'
+    }
+    return second
+  }
+
+  /**
+   * The uuid a save files a new document under: the reopened draft's own when it was deleted
+   * elsewhere, so the document comes back where its address (`#/devices/<uuid>/finish`) and the
+   * form's history entries already point, and a reload opens it rather than "Draft not found";
+   * a fresh one for a new device. Used only when there is no stored draft to update.
+   */
+  private newDocumentUuid(): string {
+    return this.draftId === '' ? crypto.randomUUID() : this.draftId
+  }
+
+  /**
+   * Reads the draft again after a conflict, and says what became of it:
+   *
+   * - `'draft'`: a draft, perhaps filed again by another form after a deletion; {@link stored}
+   *   is now the fresh revision.
+   * - `'finished'`: completed elsewhere; the form says so, links to it, and saves no more.
+   * - `'deleted'`: deleted elsewhere. Retrying against it would conflict forever, and Discard
+   *   would lose what was typed (often a code just scanned). So the form says so, forgets the
+   *   draft, and the next save files the input as a new draft or device.
+   * - `'unknown'`: the read failed or is obsolete; the refusal already on screen stands.
+   */
+  private async rereadStored(since: number): Promise<'draft' | 'finished' | 'deleted' | 'unknown'> {
+    // By the draft's id, kept even after `stored` was forgotten for a deletion: another form
+    // may have filed the draft again under it meanwhile (CodeRabbit on #369), and a save
+    // without its revision then conflicts until the form adopts it.
+    const id = this.draftDocumentId()
+    if (id === undefined || since !== this.projectSnapshot()) return 'unknown'
+    let fresh: StoredDevice | undefined
+    try {
+      fresh = await this.repos().devices.get(id)
+    } catch {
+      return 'unknown'
+    }
+    if (since !== this.projectSnapshot()) return 'unknown'
+    if (fresh === undefined) {
+      this.stored = undefined
+      this.deletedElsewhere = true
+      this.saveFailed = false
+      return 'deleted'
+    }
+    if (!isDraftDevice(fresh)) {
+      this.finishedElsewhere = fresh._id
+      this.saveFailed = false
+      return 'finished'
+    }
+    this.stored = fresh
+    this.deletedElsewhere = false
+    return 'draft'
+  }
+
+  /**
+   * The id of the draft this form is about: the stored one's, or - once `stored` was forgotten
+   * because the draft was deleted - the id it will be filed under again. `undefined` for a new
+   * device never saved, which has nothing to conflict with.
+   */
+  private draftDocumentId(): string | undefined {
+    if (this.stored !== undefined) return this.stored._id
+    return this.draftId === '' ? undefined : documentId('device', this.draftId)
+  }
+
+  /**
+   * Replication brought documents, perhaps the project's key (#303). A draft held from a locked
+   * read is read again; once it reads unlocked, its setup code goes into an empty code field, so
+   * a save made from here on keeps the code the draft already had.
+   */
+  protected override projectDataChanged(): void {
+    super.projectDataChanged()
+    void this.refreshLockedDraft()
+  }
+
+  private async refreshLockedDraft(): Promise<void> {
+    const held = this.stored
+    if (held === undefined || !isLockedDocument(held)) return
+    const since = this.projectSnapshot()
+    let fresh: StoredDevice | undefined
+    try {
+      fresh = await this.repos().devices.get(held._id)
+    } catch {
+      return
+    }
+    // Several re-reads can be in flight (opening, then each data change), and they land in any
+    // order. Only one that finds the form still holding the draft it set out from may act: once
+    // another read has replaced it, this one is older news, and applying it would put an older
+    // code into the baseline and the stored draft (CodeRabbit on #369).
+    if (this.stored !== held) return
+    if (since !== this.projectSnapshot() || this.released || fresh === undefined) return
+    if (!isDraftDevice(fresh)) {
+      this.finishedElsewhere = fresh._id
+      return
+    }
+    if (isLockedDocument(fresh)) return
+    const code = draftFormOf(fresh).credential
+    if (fieldValue(this, '[data-field="credential"]').trim() === '') {
+      this.setControlValue('[data-field="credential"]', code)
+    }
+    this.baseline = { ...this.baseline, credential: code }
+    this.stored = fresh
+  }
+
+  /**
+   * Whether the draft this form was opened on has not been read yet. Saving then would take the
+   * new-device path and file a second document beside the draft (review of #369).
+   */
+  private draftLoading(): boolean {
+    return this.draftId !== '' && !this.draftOpened
+  }
+
+  /** The Save as draft button: saves, then leaves for the list as Save device does. */
+  private async onSaveDraft(): Promise<void> {
+    if ((await this.saveDraft()) && !this.holdsInput()) this.releaseAndLeave()
+  }
+
+  /**
+   * Shows a planner's refusal beside its control, on the step that owns the field, and flags
+   * that step. Recorded first, because the step change shows exactly the problem the new step
+   * has (`StepNavigation.onStepChange`).
+   */
+  private showProblem(problem: DraftError): void {
+    const step = stepOf(problem.field)
+    if (step === undefined) {
+      this.error = problem
+      return
+    }
+    this.checked = { ...this.checked, [step]: problem }
+    if (step === this.step) this.error = problem
+    else this.goToStep(step)
   }
 
   /** Lets the input go, as the shell leaves the form: nothing asks, nothing saves, from here. */
@@ -681,7 +1108,7 @@ export class AddDeviceView extends DeviceFormView implements LeaveGuard {
     // Released: saved, discarded or abandoned, and on its way out. The form stays on screen until
     // its history traversal lands, and a Save in that moment would file the device twice, or
     // file it after the person chose Discard (CodeRabbit on #368).
-    if (this.saving || this.released) return
+    if (this.saving || this.released || !this.mayWrite()) return
     // Set before the first `await`, not after the planning: two quick clicks would otherwise
     // both get past the guard while the room read below was still in flight.
     this.saving = true
@@ -728,32 +1155,28 @@ export class AddDeviceView extends DeviceFormView implements LeaveGuard {
       // longer true - and left up, it would sit beside a storage error as if it explained it.
       this.dismissReviewChanged()
 
-      let creation: ReturnType<typeof planNewDevice>
+      // One uuid for every attempt, so a retry after a conflict cannot file a second device.
+      const uuid = this.newDocumentUuid()
+      const clock = { uuid: () => uuid, now: () => new Date().toISOString() }
+      // Whatever has arrived by now. Submit never waits for a lookup: saving offline, or
+      // before the answer, is the normal case, and backfill fills the names in later.
+      const answer = this.answerForSave()
+      const paths = this.knownRoomPaths(rooms)
+      const input = this.draft()
+      // A draft is finished, not added (#358): the same checks, on the draft's own document,
+      // so finishing updates it rather than filing a second device beside it. Called again on
+      // a retry, with the draft read afresh.
+      const plan = (stored: DraftDeviceDocument | undefined) =>
+        stored === undefined
+          ? planNewDevice(input, paths, clock, answer)
+          : planFinishedDevice(input, paths, clock, stored, answer)
       try {
-        creation = planNewDevice(
-          this.draft(),
-          this.knownRoomPaths(rooms),
-          {
-            uuid: () => crypto.randomUUID(),
-            now: () => new Date().toISOString(),
-          },
-          // Whatever has arrived by now. Submit never waits for a lookup: saving offline, or
-          // before the answer, is the normal case, and backfill fills the names in later.
-          this.answerForSave(),
-        )
+        plan(this.stored)
       } catch (problem) {
         if (problem instanceof DraftError) {
           // Shown on the step that owns the field, beside its control, not above a summary that
-          // has no control in it. Recorded as that step's problem first, because the step change
-          // (`StepNavigation.onStepChange`) shows exactly the problem the new step has - and the
-          // stepper then flags it too.
-          const step = stepOf(problem.field)
-          if (step !== undefined) {
-            this.checked = { ...this.checked, [step]: problem }
-            this.goToStep(step)
-          } else {
-            this.error = problem
-          }
+          // has no control in it; the stepper flags it too.
+          this.showProblem(problem)
           return
         }
         // Anything else is a bug rather than a statement about the form, and swallowing it
@@ -767,8 +1190,10 @@ export class AddDeviceView extends DeviceFormView implements LeaveGuard {
 
       // Stay on the form when storage refuses the write: navigating to a list that does not
       // contain the device would be the application saying it saved something it did not.
-      if (!(await this.write(creation, since))) return
-      this.askForBackfill(creation)
+      const saved = await this.writeRetrying(plan, since)
+      if (saved === undefined) return
+      this.deletedElsewhere = false
+      this.askForBackfill(saved)
     } finally {
       this.saving = false
     }
@@ -860,10 +1285,61 @@ export class AddDeviceView extends DeviceFormView implements LeaveGuard {
   }
 
   override render() {
+    if (this.draftMissing) {
+      return html`
+        <div class="wa-stack wa-gap-l">
+          <h1>${msg('Draft not found')}</h1>
+          <p class="app-empty" data-draft-missing>
+            ${msg('There is no draft with that address in this catalogue. It may have been deleted.')}
+          </p>
+          <a class="app-back" href="#/devices">${msg('Back to devices')}</a>
+        </div>
+      `
+    }
     return html`
-      <form class="wa-stack wa-gap-l app-form" @submit=${this.onSubmit} novalidate>
-        <h1>${msg('Add a device')}</h1>
+      <!-- Inert while a reopened draft is read: typing then would be overwritten by the prefill,
+           and a save would file a second document (CodeRabbit on #369). -->
+      <form
+        class="wa-stack wa-gap-l app-form"
+        @submit=${this.onSubmit}
+        novalidate
+        ?inert=${this.draftLoading()}
+        aria-busy=${this.draftLoading() ? 'true' : 'false'}
+      >
+        <h1>${this.draftId === '' ? msg('Add a device') : msg('Finish a draft')}</h1>
         ${this.renderRequiredNote()}
+        ${
+          this.finishedElsewhere === undefined
+            ? ''
+            : html`
+                <wa-callout variant="warning" data-finished-elsewhere>
+                  <wa-icon slot="icon" name="circle-info"></wa-icon>
+                  <div class="wa-stack wa-gap-2xs">
+                    <span>
+                      ${msg('This draft was finished somewhere else, so it is not saved from here. What you entered is still on this form.')}
+                    </span>
+                    <a href="#/devices/${uuidOf(this.finishedElsewhere) ?? ''}">
+                      ${msg('Open the finished device')}
+                    </a>
+                  </div>
+                </wa-callout>
+              `
+        }
+        ${
+          // Inside a status region, so the news is announced where the save was pressed.
+          html`<div role="status">
+            ${
+              this.deletedElsewhere
+                ? html`
+                    <wa-callout variant="warning" data-deleted-elsewhere>
+                      <wa-icon slot="icon" name="circle-info"></wa-icon>
+                      ${msg('This draft was deleted somewhere else. What you entered is still here: save again to keep it as a new draft, or finish it as a new device.')}
+                    </wa-callout>
+                  `
+                : ''
+            }
+          </div>`
+        }
 
         <wa-stepper
           active="scan"
@@ -975,6 +1451,17 @@ export class AddDeviceView extends DeviceFormView implements LeaveGuard {
                   <wa-button data-next type="submit" variant="brand">${msg('Next')}</wa-button>
                 `
           }
+          <!-- On every step (#358): a draft needs one value, so there is no step too early to
+               keep what is there. A plain button, not a submit: Enter in a field is Next. -->
+          <wa-button
+            data-save-draft
+            type="button"
+            appearance="outlined"
+            ?disabled=${this.saving}
+            @click=${() => void this.onSaveDraft()}
+          >
+            ${msg('Save as draft')}
+          </wa-button>
           <wa-button href="#/devices" appearance="plain">${msg('Cancel')}</wa-button>
         </div>
 
@@ -995,3 +1482,12 @@ export class AddDeviceView extends DeviceFormView implements LeaveGuard {
 }
 
 customElements.define('add-device-view', AddDeviceView)
+
+/**
+ * The add form, opened on a draft to finish it (#358): `#/devices/<uuid>/finish`, with the
+ * draft's uuid in `draft-id`. A name of its own because every routed view `x` renders `<x-view>`
+ * (`views.browser.test.ts`); the behaviour is all {@link AddDeviceView}'s.
+ */
+export class FinishDeviceView extends AddDeviceView {}
+
+customElements.define('finish-device-view', FinishDeviceView)

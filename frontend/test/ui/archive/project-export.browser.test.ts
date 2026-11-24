@@ -6,7 +6,7 @@ import {
   readProjectArchive,
 } from '../../../src/domain/archive/project-archive.js'
 import { readZip, writeZip, type ZipEntry, ZipError } from '../../../src/domain/archive/zip.js'
-import type { DeviceDocument } from '../../../src/domain/index.js'
+import type { DeviceDocument, StoredDevice } from '../../../src/domain/index.js'
 import { streamCodecs } from '../../../src/ui/archive/codec.js'
 import {
   type ExportDependencies,
@@ -72,7 +72,7 @@ const PLUG = '6ba7b811-9dad-11d1-80b4-00c04fd430c8'
 /** Fake dependencies that record what was asked and what was offered for download. */
 function fakes(
   stored: { name: string; client?: string } | undefined,
-  devices: readonly DeviceDocument[] = [device(LAMP), device(PLUG, { room: 'Hall' })],
+  devices: readonly StoredDevice[] = [device(LAMP), device(PLUG, { room: 'Hall' })],
 ) {
   const asked: string[] = []
   const downloads: { bytes: Uint8Array; filename: string }[] = []
@@ -164,6 +164,33 @@ describe('exporting a project', () => {
       expect(each).not.toHaveProperty('_rev')
       expect(each).not.toHaveProperty('updatedAt')
     }
+  })
+
+  it('offers a zip with a draft that the import reads back as the same draft (#358)', async () => {
+    // L46: a backup the importer refuses is a silent failure, so a draft must round-trip.
+    const draft: StoredDevice = {
+      _id: 'device:half-done',
+      _rev: '1-a',
+      updatedAt: '2026-11-24T08:00:00.000Z',
+      type: 'device',
+      status: 'draft',
+      name: 'Fan',
+      manualCode: '34970112332',
+      addedAt: '2026-11-24T08:00:00.000Z',
+      disabled: false,
+      remarks: [],
+    }
+    const { deps, downloads } = fakes({ name: 'Hillside' }, [device(LAMP), draft])
+
+    await exportProject(row, deps)
+
+    const { devices } = readProjectArchive(await offered(downloads))
+    expect(devices.find((each) => each._id === 'device:half-done')).toMatchObject({
+      status: 'draft',
+      name: 'Fan',
+      manualCode: '34970112332',
+    })
+    expect(devices.find((each) => each._id === `device:${LAMP}`)).not.toHaveProperty('status')
   })
 
   it('stamps the manifest with the moment of the export', async () => {

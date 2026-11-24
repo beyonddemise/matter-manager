@@ -13,13 +13,14 @@ import {
 } from '../../data/index.js'
 import {
   addRemark,
-  type DeviceDocument,
   DraftError,
   documentId,
+  isDraftDevice,
   isHttpsUrl,
   manufacturerName,
   type Remark,
   remarksNewestFirst,
+  type StoredDevice,
   setDeviceDisabled,
   type Unsaved,
   uuidOf,
@@ -31,6 +32,7 @@ import { codePendingDetail, codePendingTitle, lockedProjectMessage } from '../i1
 import { currentAuthor } from '../identity.js'
 import { qrSvg } from '../qr/render.js'
 import { fieldValue } from './device-form.js'
+import { draftTag, finishAddress, shownName } from './draft-marker.js'
 import { roomBreadcrumb } from './room-breadcrumb.js'
 
 /**
@@ -128,7 +130,7 @@ export class DeviceView extends LitElement {
   declare uuid: string
   /** Bound by a test to a database of its own; resolved to the real one otherwise. */
   declare repositories?: ProjectRepositories
-  declare device: DeviceDocument | undefined
+  declare device: StoredDevice | undefined
   declare loaded: boolean
   /**
    * The device could not be read.
@@ -358,7 +360,7 @@ export class DeviceView extends LitElement {
    * rendering, and it is also actionable — the manual code below it still commissions the
    * device, which is what a manual code is for.
    */
-  private renderCode(device: DeviceDocument): TemplateResult {
+  private renderCode(device: StoredDevice): TemplateResult {
     // Locked on this device (#303): the read carries neither code, so one calm statement stands
     // in for both, in the same neutral callout as the no-QR case below. Not that case's
     // sentence — this device may well have a QR — and never a blank code that reads like one.
@@ -370,6 +372,17 @@ export class DeviceView extends LitElement {
             <strong>${codePendingTitle()}</strong>
             <span>${codePendingDetail()}</span>
           </div>
+        </wa-callout>
+      `
+    }
+    // A draft saved before its label was read has no code at all (#358): neither a QR nor a
+    // pairing code, which is a different fact from "filed from a pairing code".
+    const manualCode = device.manualCode
+    if (manualCode === undefined) {
+      return html`
+        <wa-callout variant="neutral" data-no-code>
+          <wa-icon slot="icon" name="circle-info"></wa-icon>
+          ${msg('This draft has no setup code yet. Finish it to add one.')}
         </wa-callout>
       `
     }
@@ -408,9 +421,9 @@ export class DeviceView extends LitElement {
             <!-- Digits exactly as stored, ungrouped. Printed labels group them differently
                  depending on the manufacturer, and inventing a grouping here would teach a
                  reader a format that does not match the sticker in their hand. -->
-            <code class="app-pairing-code" data-manual-code>${device.manualCode}</code>
+            <code class="app-pairing-code" data-manual-code>${manualCode}</code>
             <wa-copy-button
-              value=${device.manualCode}
+              value=${manualCode}
               copy-label=${msg('Copy the pairing code')}
             ></wa-copy-button>
           </div>
@@ -437,7 +450,9 @@ export class DeviceView extends LitElement {
    */
   private async onToggleDisabled(): Promise<void> {
     const device = this.device
-    if (device === undefined || this.busy) return
+    // A draft has never been in service, so it offers no Disable (#358); this is the type's
+    // half of that, since `setDeviceDisabled` takes only a complete device.
+    if (device === undefined || this.busy || isDraftDevice(device)) return
     this.busy = true
     const token = this.request
     // What the user asked for, decided from what they saw: a retry on a fresh copy applies the
@@ -445,7 +460,10 @@ export class DeviceView extends LitElement {
     const disabled = !device.disabled
     try {
       const saved = await this.saveFresh(device, (current) =>
-        setDeviceDisabled(current, disabled, () => new Date().toISOString()),
+        // A copy that became a draft meanwhile is left as it is: nothing to disable.
+        isDraftDevice(current)
+          ? current
+          : setDeviceDisabled(current, disabled, () => new Date().toISOString()),
       )
       if (token !== this.request) return
       this.reads += 1
@@ -485,9 +503,9 @@ export class DeviceView extends LitElement {
    * @throws whatever the save throws, or the conflict when the device has gone meanwhile
    */
   private async saveFresh(
-    device: DeviceDocument,
-    change: (current: DeviceDocument) => Unsaved<DeviceDocument>,
-  ): Promise<DeviceDocument> {
+    device: StoredDevice,
+    change: (current: StoredDevice) => Unsaved<StoredDevice>,
+  ): Promise<StoredDevice> {
     const devices = this.repos().devices
     try {
       return await devices.save(change(device))
@@ -509,7 +527,7 @@ export class DeviceView extends LitElement {
    *
    * @throws whatever the remove throws, other than a conflict resolved this way
    */
-  private async removeFresh(device: DeviceDocument): Promise<void> {
+  private async removeFresh(device: StoredDevice): Promise<void> {
     const devices = this.repos().devices
     try {
       await devices.remove(device)
@@ -558,7 +576,7 @@ export class DeviceView extends LitElement {
    * Deliberately not on the device list: a destructive control on every row is a control that
    * gets hit by accident on a phone, which is the device this application is used from.
    */
-  private renderActions(device: DeviceDocument): TemplateResult {
+  private renderActions(device: StoredDevice): TemplateResult {
     return html`
       <div class="wa-stack wa-gap-s">
         ${
@@ -581,7 +599,17 @@ export class DeviceView extends LitElement {
           // it wrong"; on a project somebody may only read, neither half is true (#55).
           !projectIsEditable()
             ? ''
-            : html`
+            : isDraftDevice(device)
+              ? // A draft is finished, not edited: the add form runs every check (#358). And
+                // it was never in service, so there is nothing to disable.
+                html`
+        <wa-button data-finish href=${finishAddress(device)} variant="brand">
+          <wa-icon slot="start" name="check"></wa-icon>
+          ${msg('Finish')}
+        </wa-button>
+        ${this.renderDeleteButton(msg('Delete draft'))}
+        `
+              : html`
         <wa-button data-edit href="#/devices/${uuidOf(device._id) ?? ''}/edit" appearance="outlined">
           <wa-icon slot="start" name="pen"></wa-icon>
           ${msg('Edit')}
@@ -592,6 +620,17 @@ export class DeviceView extends LitElement {
           ${device.disabled ? msg('Put back into service') : msg('Disable')}
         </wa-button>
 
+        ${this.renderDeleteButton(msg('Delete'))}
+        `
+        }
+        </div>
+      </div>
+    `
+  }
+
+  /** The button that opens the delete confirmation. */
+  private renderDeleteButton(label: string): TemplateResult {
+    return html`
         <wa-button
           data-delete
           variant="danger"
@@ -602,12 +641,23 @@ export class DeviceView extends LitElement {
           }}
         >
           <wa-icon slot="start" name="trash"></wa-icon>
-          ${msg('Delete')}
+          ${label}
         </wa-button>
-        `
-        }
-        </div>
-      </div>
+    `
+  }
+
+  /**
+   * What a draft is and what is left to do, above everything else on its page (#358). A
+   * callout rather than only the tag in the heading, because the next step - Finish - is
+   * the useful half.
+   */
+  private renderDraftNote(device: StoredDevice): TemplateResult | '' {
+    if (!isDraftDevice(device)) return ''
+    return html`
+      <wa-callout variant="warning" data-draft-note>
+        <wa-icon slot="icon" name="pen"></wa-icon>
+        ${msg('This device is a draft: it was saved before every required field was filled in. Finish it to add what is missing.')}
+      </wa-callout>
     `
   }
 
@@ -618,22 +668,34 @@ export class DeviceView extends LitElement {
    * sure?" is a question people learn to click past; "the setup code goes with it" is the one
    * fact that makes someone stop, and it is the reason this application exists.
    */
-  private renderDeleteDialog(device: DeviceDocument): TemplateResult {
+  private renderDeleteDialog(device: StoredDevice): TemplateResult {
     return html`
       <wa-dialog
         data-delete-dialog
-        label=${msg(str`Delete “${device.name}”?`)}
+        label=${msg(str`Delete “${shownName(device)}”?`)}
         ?open=${this.confirmingDelete}
         @wa-after-hide=${() => {
           this.confirmingDelete = false
         }}
       >
         <div class="wa-stack wa-gap-m">
-          <wa-callout variant="danger">
-            <wa-icon slot="icon" name="triangle-exclamation"></wa-icon>
-            ${msg('Deleting a device deletes its commissioning code with it. That code cannot be recovered, and without it the device can only be re-commissioned after a factory reset.')}
-          </wa-callout>
-          <p>${msg('To take it out of service but keep the code, disable it instead.')}</p>
+          ${
+            isDraftDevice(device)
+              ? // Discarding a draft is a delete like any device's, and confirmed the same way.
+                html`
+                  <wa-callout variant="danger" data-delete-draft>
+                    <wa-icon slot="icon" name="triangle-exclamation"></wa-icon>
+                    ${msg('Deleting this draft deletes everything saved in it, including its setup code if it has one. It cannot be recovered.')}
+                  </wa-callout>
+                `
+              : html`
+                  <wa-callout variant="danger">
+                    <wa-icon slot="icon" name="triangle-exclamation"></wa-icon>
+                    ${msg('Deleting a device deletes its commissioning code with it. That code cannot be recovered, and without it the device can only be re-commissioned after a factory reset.')}
+                  </wa-callout>
+                  <p>${msg('To take it out of service but keep the code, disable it instead.')}</p>
+                `
+          }
           ${
             this.failure === 'delete'
               ? html`
@@ -694,7 +756,7 @@ export class DeviceView extends LitElement {
     const author = currentAuthor()
     const id = crypto.randomUUID()
     const at = new Date().toISOString()
-    const remarked = (current: DeviceDocument) =>
+    const remarked = (current: StoredDevice) =>
       addRemark(current, text, author, { uuid: () => id, now: () => at })
 
     let updated: ReturnType<typeof addRemark>
@@ -759,7 +821,7 @@ export class DeviceView extends LitElement {
    * removes a remark, because the conflict merge unions remarks by id (ADR 0010) and is only
    * sound while an id means one fixed piece of text.
    */
-  private renderRemarks(device: DeviceDocument): TemplateResult {
+  private renderRemarks(device: StoredDevice): TemplateResult {
     const remarks = remarksNewestFirst(device.remarks)
     return html`
       <div class="wa-stack wa-gap-s">
@@ -850,14 +912,16 @@ export class DeviceView extends LitElement {
       : `0x${value.toString(16).toUpperCase().padStart(4, '0')}`
   }
 
-  private renderDetails(device: DeviceDocument): TemplateResult {
+  private renderDetails(device: StoredDevice): TemplateResult {
     return html`
       <dl class="wa-grid app-details app-facts">
         ${this.field(
           msg('Room'),
           // The breadcrumb the list headings use (#248), so a room reads the same in both.
           // `?? ''`: a device from before ADR 0021 has no `room`.
-          (device.room ?? '') === '' ? msg('Without a room') : roomBreadcrumb(device.room),
+          device.room === undefined || device.room === ''
+            ? msg('Without a room')
+            : roomBreadcrumb(device.room),
         )}
         ${this.field(msg('Spot'), device.spot)}
         ${this.field(
@@ -895,7 +959,7 @@ export class DeviceView extends LitElement {
    * These are facts, not statuses, so per DESIGN.md's One Status Vocabulary Rule they are
    * neutral, small and without an icon; icons and coloured variants are reserved for status.
    */
-  private renderPairing(device: DeviceDocument): TemplateResult | '' {
+  private renderPairing(device: StoredDevice): TemplateResult | '' {
     // Each tag written out in full: an attribute *name* cannot be a Lit binding, so a helper
     // taking `data-discovery` vs `data-flow` as a parameter would need `unsafeStatic`.
     const tags = [
@@ -940,7 +1004,7 @@ export class DeviceView extends LitElement {
    * `unsafeHTML`. `.app-catalog-text` keeps the line breaks the manufacturer wrote and wraps a
    * long unbroken string rather than widening a phone screen.
    */
-  private renderCatalog(device: DeviceDocument): TemplateResult {
+  private renderCatalog(device: StoredDevice): TemplateResult {
     const links = [
       this.link(msg('Product page'), device.productUrl, 'product'),
       this.link(msg('Support'), device.supportUrl, 'support'),
@@ -1008,10 +1072,13 @@ export class DeviceView extends LitElement {
     return html`
       <div class="wa-stack wa-gap-l">
         <div class="wa-cluster wa-gap-s">
-          <h1>${device.name}</h1>
+          <!-- The marker inside the heading, so a screen reader announces "Draft" with the name
+               on arriving (#358), not only a sighted reader seeing the tag beside it. -->
+          <h1 class="wa-cluster wa-gap-s">${shownName(device)} ${draftTag(device)}</h1>
           ${device.disabled ? html`<wa-tag variant="neutral">${msg('Disabled')}</wa-tag>` : ''}
         </div>
 
+        ${this.renderDraftNote(device)}
         ${this.renderCode(device)} ${this.renderActions(device)} ${this.renderDetails(device)}
         ${this.renderCatalog(device)} ${this.renderRemarks(device)}
 
@@ -1021,7 +1088,7 @@ export class DeviceView extends LitElement {
 
         <wa-dialog
           data-enlarged
-          label=${device.name}
+          label=${shownName(device)}
           ?open=${this.enlarged}
           @wa-after-hide=${() => {
             this.enlarged = false

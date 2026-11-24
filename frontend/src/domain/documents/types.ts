@@ -25,9 +25,15 @@ import type { Remark, RemarkBearing, Revision } from '../sync/merge.js'
  * every future conflict against a correctly stamped one. The repository owns the stamp, so
  * there is no way to forget it.
  */
-export type Unsaved<T extends Revision> = Omit<T, '_rev' | 'updatedAt'> & {
-  readonly _rev?: string
-}
+export type Unsaved<T extends Revision> =
+  // Distributive, so `Unsaved<StoredDevice>` is an unsaved device *or* an unsaved draft (#358).
+  // A plain `Omit` over a union keeps only the keys every member shares, which would drop
+  // every field a draft may lack.
+  T extends Revision
+    ? Omit<T, '_rev' | 'updatedAt'> & {
+        readonly _rev?: string
+      }
+    : never
 
 /**
  * Whether the last catalogue consultation found the product.
@@ -59,6 +65,12 @@ export interface DeviceDiscovery {
  */
 export interface DeviceDocument extends RemarkBearing {
   readonly type: 'device'
+  /**
+   * Never set on a complete device: a missing status *is* "complete" (#358), so every document
+   * written before drafts existed stays valid without a migration. `never` rather than leaving
+   * it out, so `status === 'draft'` narrows a {@link StoredDevice} to a draft and back.
+   */
+  readonly status?: never
   readonly name: string
   /**
    * The room's path, `"Ground Floor/Kitchen"` (ADR 0006), carried on the device (ADR 0021).
@@ -147,3 +159,28 @@ export interface DeviceDocument extends RemarkBearing {
    */
   readonly remarks: readonly Remark[]
 }
+
+/** The fields a complete device must have and a draft may lack (#358). */
+type DraftOptional = 'name' | 'room' | 'manualCode' | 'installedAt'
+
+/**
+ * A device saved before every required field passed (#358): a {@link DeviceDocument} with a
+ * draft status, under the same `device:` id, replicated, exported and listed like any device
+ * (the product owner's decision of 2026-11-24 on #358) and marked as a draft wherever it shows.
+ *
+ * What it does hold has passed the same readers a device's fields pass: a setup code is stored
+ * only once it decodes, so it lands in `manualCode` and `payload` and is encrypted at rest like
+ * any device's (ADR 0022). Built only by `planDraftDevice`; becomes a {@link DeviceDocument}
+ * only through `planFinishedDevice`, which runs every check `planNewDevice` runs.
+ *
+ * A separate type rather than a {@link DeviceDocument} with optional fields, so that code which
+ * needs a name, a room or a code cannot be handed a draft without first asking which one it is.
+ */
+export type DraftDeviceDocument = Omit<DeviceDocument, DraftOptional | 'status'> &
+  Partial<Pick<DeviceDocument, DraftOptional>> & {
+    /** What makes it a draft. Removed, not changed, when it is finished. */
+    readonly status: 'draft'
+  }
+
+/** What a `device:` document is once read: a complete device, or a draft of one (#358). */
+export type StoredDevice = DeviceDocument | DraftDeviceDocument

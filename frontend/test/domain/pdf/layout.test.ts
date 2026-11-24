@@ -32,7 +32,7 @@ const group = (path: string, ...names: string[]): DeviceGroup => ({
 
 /** Every device, in the order the pages present them. */
 const printed = (pages: readonly Page[]): string[] =>
-  pages.flatMap((page) => entriesOf(page).map((entry) => entry.device.name))
+  pages.flatMap((page) => entriesOf(page).map((entry) => entry.device.name ?? ''))
 
 /** How many entries fit on a page under a heading, for the geometry in use. */
 const usable = A4.height - A4.margin * 2 - A4.footerHeight

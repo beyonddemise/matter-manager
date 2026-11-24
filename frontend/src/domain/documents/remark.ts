@@ -16,7 +16,7 @@
 
 import type { Remark } from '../sync/merge.js'
 import { type DraftClock, DraftError } from './draft.js'
-import type { DeviceDocument, Unsaved } from './types.js'
+import type { StoredDevice, Unsaved } from './types.js'
 
 /**
  * Who wrote a remark.
@@ -53,11 +53,11 @@ export interface RemarkAuthor {
  * @throws {DraftError} on `remark` when the text says nothing
  */
 export function addRemark(
-  device: DeviceDocument,
+  device: StoredDevice,
   text: string,
   author: RemarkAuthor,
   clock: DraftClock,
-): Unsaved<DeviceDocument> {
+): Unsaved<StoredDevice> {
   const said = text.trim()
   if (said === '') {
     throw new DraftError(

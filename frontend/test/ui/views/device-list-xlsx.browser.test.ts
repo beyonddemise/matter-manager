@@ -7,7 +7,7 @@ import '@awesome.me/webawesome-pro/dist/components/input/input.js'
 import { fixture, html, waitUntil } from '@open-wc/testing-helpers'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { readZip, type ZipLimits } from '../../../src/domain/archive/zip.js'
-import type { DeviceDocument, Unsaved } from '../../../src/domain/index.js'
+import type { DeviceDocument, StoredDevice, Unsaved } from '../../../src/domain/index.js'
 import { streamCodecs } from '../../../src/ui/archive/codec.js'
 import { PROJECT_CHANGED } from '../../../src/ui/current-project.js'
 import { activateLocale } from '../../../src/ui/i18n/localization.js'
@@ -223,5 +223,28 @@ describe('exporting the inventory to Excel', () => {
       expect(header).toContain(expected)
     }
     expect(header).not.toContain('Room')
+  })
+})
+
+describe('drafts in the sheet (#358)', () => {
+  it('lists a draft with Draft in its Status column', async () => {
+    await database.repositories.devices.save({
+      _id: 'device:d',
+      type: 'device',
+      status: 'draft',
+      name: 'Fan',
+      addedAt: '2026-11-24T09:00:00.000Z',
+      disabled: false,
+      remarks: [],
+    } as Unsaved<StoredDevice>)
+    const { element, saved } = await listWithDownload()
+
+    ;(element.querySelector('[data-export-xlsx]') as HTMLElement).click()
+    await waitUntil(() => saved.length === 1, 'the export never finished', { timeout: 10000 })
+
+    const cells = texts(await sheetOf(saved[0]?.bytes ?? new Uint8Array()))
+    expect(cells).toContain('Status')
+    expect(cells).toContain('Fan')
+    expect(cells).toContain('Draft')
   })
 })

@@ -22,6 +22,7 @@ import { type DeviceSheetWords, deviceRows } from '../../domain/xlsx/sheet.js'
 import { writeXlsx } from '../../domain/xlsx/workbook.js'
 import { streamCodecs } from '../archive/codec.js'
 import { offerDownload } from '../pdf/download.js'
+import { draftWord } from '../views/draft-marker.js'
 
 /** The column headers and the test vendor's name, in whatever language is active right now. */
 export function xlsxWords(): DeviceSheetWords {
@@ -39,6 +40,8 @@ export function xlsxWords(): DeviceSheetWords {
       desc: 'Column header for the MT: string a device QR code encodes.',
     }),
     testVendor: msg('Test vendor'),
+    status: msg('Status', { desc: 'Spreadsheet column header: whether a device is a draft' }),
+    draft: draftWord(),
   }
 }
 

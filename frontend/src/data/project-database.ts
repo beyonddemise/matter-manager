@@ -8,7 +8,7 @@
  * @module
  */
 
-import { type DeviceDocument, documentTypeOf, mergeDevice } from '../domain/index.js'
+import { documentTypeOf, mergeDevice, type StoredDevice } from '../domain/index.js'
 import {
   type ConflictWatch,
   conflictResolver,
@@ -24,7 +24,7 @@ import {
 
 /** Everything M2 reads and writes in a project database. */
 export interface ProjectRepositories {
-  readonly devices: Repository<DeviceDocument>
+  readonly devices: Repository<StoredDevice>
   /**
    * Starts resolving conflicts as replication delivers them.
    *
@@ -58,7 +58,7 @@ export function projectRepositories(
   // the same moment share one resolution instead of racing to write two.
   const resolver = conflictResolver(database)
 
-  const devices = repository<DeviceDocument>(
+  const devices = repository<StoredDevice>(
     database,
     'device',
     now,
@@ -85,7 +85,7 @@ export function projectRepositories(
           // do (#302): resolution writes, and the locked contract refuses every write. The
           // conflict keeps replicating untouched and the first unlocked resolver merges it.
           if ((await keyStateOf(keyState))?.kind === 'locked') return undefined
-          return resolver.resolve(document as DeviceDocument, mergeDevice)
+          return resolver.resolve(document as StoredDevice, mergeDevice)
         },
         ...(onError === undefined ? {} : { onError }),
       })

@@ -9,7 +9,7 @@ import { fixture, html, waitUntil } from '@open-wc/testing-helpers'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { userEvent } from 'vitest/browser'
 import type { ProjectRepositories } from '../../../src/data/index.js'
-import type { DeviceDocument, Unsaved } from '../../../src/domain/index.js'
+import type { DeviceDocument, StoredDevice, Unsaved } from '../../../src/domain/index.js'
 import { BACKFILL_WANTED, type CatalogApi, type LookupOutcome } from '../../../src/ui/catalog.js'
 import { PROJECT_CHANGED, PROJECT_DATA_CHANGED } from '../../../src/ui/current-project.js'
 import { activateLocale } from '../../../src/ui/i18n/localization.js'
@@ -291,10 +291,10 @@ async function submit(element: AddDeviceView, settled: () => boolean | Promise<b
   await waitUntil(settled, 'the form never settled after submit', { timeout: 3000 })
 }
 
-const devices = (): Promise<DeviceDocument[]> => database.repositories.devices.list()
+const devices = (): Promise<StoredDevice[]> => database.repositories.devices.list()
 /** Each stored device's room, in id order: where the form filed what it saved. */
 const filed = async (): Promise<string[]> =>
-  (await devices()).sort((a, b) => a._id.localeCompare(b._id)).map((device) => device.room)
+  (await devices()).sort((a, b) => a._id.localeCompare(b._id)).map((device) => device.room ?? '')
 
 /**
  * A device already filed under `room`: how a room exists (ADR 0021). Its id sorts before any
@@ -2081,7 +2081,7 @@ describe('switching project while a save is planned', () => {
     // device typed under one project be written once the form resolves the next project's
     // database (#291 review).
     const real = database.repositories
-    const reread = deferred<DeviceDocument[]>()
+    const reread = deferred<StoredDevice[]>()
     let lists = 0
     let saves = 0
     const repositories: ProjectRepositories = {

@@ -13,7 +13,12 @@ import '@awesome.me/webawesome-pro/dist/components/tag/tag.js'
 import { fixture, html, waitUntil } from '@open-wc/testing-helpers'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { page, userEvent } from 'vitest/browser'
-import { type DeviceDocument, TEST_VENDOR_NAME, type Unsaved } from '../../../src/domain/index.js'
+import {
+  type DeviceDocument,
+  type StoredDevice,
+  TEST_VENDOR_NAME,
+  type Unsaved,
+} from '../../../src/domain/index.js'
 import { PROJECT_CHANGED, PROJECT_DATA_CHANGED } from '../../../src/ui/current-project.js'
 import { activateLocale } from '../../../src/ui/i18n/localization.js'
 import type { DeviceListView } from '../../../src/ui/views/device-list.js'
@@ -1198,5 +1203,68 @@ describe('when the project’s documents change', () => {
     expect((element.querySelector('[data-search]') as HTMLElement & { value?: string }).value).toBe(
       'light',
     )
+  })
+})
+
+describe('drafts in the list (#358)', () => {
+  const draft = (id: string, extra: object = {}): Unsaved<StoredDevice> =>
+    ({
+      _id: id,
+      type: 'device',
+      status: 'draft',
+      addedAt: '2026-11-24T09:00:00.000Z',
+      disabled: false,
+      remarks: [],
+      ...extra,
+    }) as Unsaved<StoredDevice>
+
+  it('lists a draft beside the devices, marked in words, with a Finish action', async () => {
+    await database.repositories.devices.save(device('device:a', 'Ceiling light', 'Kitchen'))
+    await database.repositories.devices.save(draft('device:b', { name: 'Fan', room: 'Kitchen' }))
+    const element = await list()
+
+    expect(shown(element)).toEqual(['device:a', 'device:b'])
+    const row = element.querySelector('[data-device-id="device:b"]') as HTMLElement
+    expect(row.querySelector('[data-draft-marker]')?.textContent?.trim()).toBe('Draft')
+    const finish = row.querySelector('[data-finish]') as HTMLElement
+    expect(finish.getAttribute('href')).toBe('#/devices/b/finish')
+    expect(finish.textContent).toContain('Fan')
+    const complete = element.querySelector('[data-device-id="device:a"]') as HTMLElement
+    expect(complete.querySelector('[data-draft-marker], [data-finish]')).toBeNull()
+  })
+
+  it('shows a draft without a name under a stand-in, in a group of its own', async () => {
+    await database.repositories.devices.save(draft('device:b', { serial: 'SN-1' }))
+    const element = await list()
+
+    expect(element.querySelector('[data-device-id="device:b"]')?.textContent).toContain(
+      'Untitled draft',
+    )
+  })
+
+  it('finds the drafts by searching for the word on their marker', async () => {
+    await database.repositories.devices.save(device('device:a', 'Ceiling light', 'Kitchen'))
+    await database.repositories.devices.save(draft('device:b', { name: 'Fan' }))
+    const element = await list()
+
+    await search(element, 'draft')
+    expect(shown(element)).toEqual(['device:b'])
+  })
+
+  it('prints a draft in the PDF, marked as one in text', async () => {
+    await database.repositories.devices.save(device('device:a', 'Ceiling light', 'Kitchen'))
+    await database.repositories.devices.save(draft('device:b', { name: 'Fan', room: 'Kitchen' }))
+    const saved: Uint8Array[] = []
+    const element = await list()
+    ;(element as DeviceListView & { download?: unknown }).download = (bytes: Uint8Array) =>
+      saved.push(bytes)
+
+    ;(element.querySelector('[data-export]') as HTMLElement).click()
+    await waitUntil(() => saved.length === 1, 'the export never finished', { timeout: 10000 })
+
+    const lines = await extractText(saved[0] as Uint8Array)
+    expect(lines).toContain('Draft: Fan')
+    expect(lines).toContain('No setup code yet')
+    expect(lines).toContain('Ceiling light')
   })
 })

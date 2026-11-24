@@ -14,6 +14,7 @@ import {
   type InventoryLabels,
   QR_SIZE,
 } from '../../../src/ui/pdf/inventory.js'
+import { DRAFTS } from './draft-words.js'
 import { extractPlacedText, extractText } from './text-extraction.js'
 
 /** The verified reference device; see `test/domain/matter/payload.test.ts`. */
@@ -31,6 +32,7 @@ const LABELS: InventoryLabels = {
   withoutRoom: 'Without a room',
   nothingToExport: 'There is nothing to export.',
   testVendor: 'Test vendor',
+  drafts: DRAFTS,
 }
 
 const device = (extra: Partial<DeviceDocument> = {}): DeviceDocument => ({

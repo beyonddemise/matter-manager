@@ -14,6 +14,7 @@ import type { ProjectRepositories } from '../../../src/data/index.js'
 import {
   type DeviceDocument,
   decodePayload,
+  type StoredDevice,
   TEST_VENDOR_NAME,
   type Unsaved,
 } from '../../../src/domain/index.js'
@@ -1541,5 +1542,53 @@ describe('when the project’s documents change', () => {
 
     expect(element.device?.disabled).toBe(true)
     expect(element.busy).toBe(false)
+  })
+})
+
+describe('a draft (#358)', () => {
+  const draft = (extra: object = {}): Unsaved<StoredDevice> =>
+    ({
+      _id: DEVICE_ID,
+      type: 'device',
+      status: 'draft',
+      name: 'Hall sensor',
+      addedAt: '2026-11-24T09:00:00.000Z',
+      disabled: false,
+      remarks: [],
+      ...extra,
+    }) as Unsaved<StoredDevice>
+
+  it('is marked in its heading, says what is left, and offers Finish instead of Edit', async () => {
+    await database.repositories.devices.save(draft())
+    const element = await page()
+
+    expect(element.querySelector('h1 [data-draft-marker]')?.textContent?.trim()).toBe('Draft')
+    expect(element.querySelector('[data-draft-note]')).not.toBeNull()
+    expect(element.querySelector('[data-finish]')?.getAttribute('href')).toBe(
+      `#/devices/${UUID}/finish`,
+    )
+    expect(element.querySelector('[data-edit]')).toBeNull()
+    expect(element.querySelector('[data-toggle-disabled]')).toBeNull()
+    expect(element.querySelector('[data-no-code]')).not.toBeNull()
+  })
+
+  it('shows a code the draft already has, like any device', async () => {
+    await database.repositories.devices.save(draft({ manualCode: '34970112332' }))
+    const element = await page()
+
+    expect(element.querySelector('[data-manual-code]')?.textContent).toBe('34970112332')
+  })
+
+  it('is deleted only after a confirmation that says what goes with it', async () => {
+    await database.repositories.devices.save(draft())
+    const element = await page()
+
+    click(element, '[data-delete]')
+    await element.updateComplete
+    expect(await database.repositories.devices.list()).toHaveLength(1)
+    expect(element.querySelector('[data-delete-draft]')).not.toBeNull()
+
+    click(element, '[data-confirm-delete]')
+    await waitUntil(async () => (await database.repositories.devices.list()).length === 0)
   })
 })

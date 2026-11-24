@@ -13,7 +13,7 @@
 import { manufacturerName, TEST_VENDOR_NAME } from '../catalog/copy.js'
 import { compareRoomPaths, isWithinRoom, roomPathKey } from '../rooms/path.js'
 import { foldForComparison } from '../text/fold.js'
-import type { DeviceDocument } from './types.js'
+import type { StoredDevice } from './types.js'
 
 /** One room and the devices in it, as the list renders them. */
 export interface DeviceGroup {
@@ -29,7 +29,7 @@ export interface DeviceGroup {
   /** Every spelling the devices here carry, in path order; empty for devices with no room. */
   readonly spellings: readonly string[]
   /** Never empty: a group with nothing in it is not produced. */
-  readonly devices: readonly DeviceDocument[]
+  readonly devices: readonly StoredDevice[]
 }
 
 /** How to browse. Every field is optional; the default is "everything, grouped, unsearched". */
@@ -64,6 +64,12 @@ export interface BrowseOptions {
    * also matches this term; the stored English name keeps matching too.
    */
   readonly testVendorTerm?: string
+  /**
+   * The word the interface marks a draft with, e.g. `Entwurf` (#358). A draft matches it, so
+   * searching for what the marker says finds every draft. Passed in for the reason
+   * {@link testVendorTerm} is.
+   */
+  readonly draftTerm?: string
 }
 
 /** Ordering for the default {@link BrowseOptions.compare}: folded, then by code point. */
@@ -91,8 +97,9 @@ function foldedOrder(a: string, b: string): number {
  * one: `foldForComparison` collapses every run of whitespace to a single space. That is what
  * stops a term from matching across two fields and reporting a device that contains neither.
  */
-function haystack(device: DeviceDocument, path: string, testVendorTerm?: string): string {
-  const shownTestVendor = manufacturerName(device) === TEST_VENDOR_NAME ? testVendorTerm : undefined
+function haystack(device: StoredDevice, path: string, options: BrowseOptions): string {
+  const shownTestVendor =
+    manufacturerName(device) === TEST_VENDOR_NAME ? options.testVendorTerm : undefined
   return [
     device.name,
     path,
@@ -103,6 +110,7 @@ function haystack(device: DeviceDocument, path: string, testVendorTerm?: string)
     device.vendorPreferredName,
     device.partNumber,
     shownTestVendor,
+    device.status === 'draft' ? options.draftTerm : undefined,
   ]
     .filter((value): value is string => value !== undefined && value !== '')
     .map(foldForComparison)
@@ -127,7 +135,7 @@ function haystack(device: DeviceDocument, path: string, testVendorTerm?: string)
  *   with its devices in name order
  */
 export function browseDevices(
-  devices: readonly DeviceDocument[],
+  devices: readonly StoredDevice[],
   options: BrowseOptions = {},
 ): readonly DeviceGroup[] {
   const compare = options.compare ?? foldedOrder
@@ -150,11 +158,11 @@ export function browseDevices(
     const path = device.room ?? ''
     if (room !== undefined && (path === '' || !isWithinRoom(path, room))) return false
     if (terms.length === 0) return true
-    const text = haystack(device, path, options.testVendorTerm)
+    const text = haystack(device, path, options)
     return terms.every((term) => text.includes(term))
   })
 
-  const grouped = new Map<string, DeviceDocument[]>()
+  const grouped = new Map<string, StoredDevice[]>()
   for (const device of visible) {
     const key = roomPathKey(device.room ?? '')
     const group = grouped.get(key)
@@ -164,12 +172,12 @@ export function browseDevices(
 
   const groups = [...grouped].map(([key, members]) => {
     const spellings =
-      key === '' ? [] : [...new Set(members.map((device) => device.room))].sort(byPath)
+      key === '' ? [] : [...new Set(members.map((device) => device.room ?? ''))].sort(byPath)
     return {
       key,
       path: spellings[0] ?? '',
       spellings,
-      devices: [...members].sort((a, b) => compare(a.name, b.name)),
+      devices: [...members].sort((a, b) => compare(a.name ?? '', b.name ?? '')),
     }
   })
 

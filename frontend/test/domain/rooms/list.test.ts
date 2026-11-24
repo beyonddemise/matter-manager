@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { DeviceDocument } from '../../../src/domain/index.js'
+import type { DeviceDocument, DraftDeviceDocument } from '../../../src/domain/index.js'
 import {
   documentId,
   RoomPathError,
@@ -68,11 +68,12 @@ describe('the rooms the devices are in', () => {
     ])
 
     expect(rooms).toEqual([
-      { key: roomPathKey('Attic'), spellings: ['Attic'], deviceCount: 1 },
+      { key: roomPathKey('Attic'), spellings: ['Attic'], deviceCount: 1, draftCount: 0 },
       {
         key: roomPathKey('Ground Floor/Kitchen'),
         spellings: ['Ground Floor/Kitchen'],
         deviceCount: 2,
+        draftCount: 0,
       },
     ])
   })
@@ -110,7 +111,9 @@ describe('the rooms the devices are in', () => {
     // could reach.
     const rooms = roomsOf([device('a', 'Cellar', { disabled: true })])
 
-    expect(rooms).toEqual([{ key: roomPathKey('Cellar'), spellings: ['Cellar'], deviceCount: 1 }])
+    expect(rooms).toEqual([
+      { key: roomPathKey('Cellar'), spellings: ['Cellar'], deviceCount: 1, draftCount: 0 },
+    ])
   })
 
   it('counts devices filed exactly here, not those in sub-rooms', () => {
@@ -210,7 +213,7 @@ describe('renaming a room', () => {
     ])
     const after = devices.map((one) => renamed.find((entry) => entry._id === one._id) ?? one)
     expect(roomsOf(after as DeviceDocument[])).toEqual([
-      { key: roomPathKey('Kitchen'), spellings: ['Kitchen'], deviceCount: 3 },
+      { key: roomPathKey('Kitchen'), spellings: ['Kitchen'], deviceCount: 3, draftCount: 0 },
     ])
   })
 
@@ -286,5 +289,32 @@ describe('renaming a room', () => {
 
     expect(() => renameRoom(devices, '', 'Loft')).toThrow(RoomPathError)
     expect(() => renameRoom(devices, 'Attic', 'Lo//ft')).toThrow(RoomPathError)
+  })
+})
+
+describe('drafts in rooms (#358)', () => {
+  const draft = (uuid: string, room?: string): DraftDeviceDocument => ({
+    _id: documentId('device', uuid),
+    _rev: `1-${uuid}`,
+    updatedAt: '2026-11-24T08:00:00.000Z',
+    type: 'device',
+    status: 'draft',
+    name: 'Half done',
+    ...(room === undefined ? {} : { room }),
+    addedAt: '2026-11-24T08:00:00.000Z',
+    disabled: false,
+    remarks: [],
+  })
+
+  it('a draft with a room is in it, and counted as a draft; one without is in none', () => {
+    const rooms = roomsOf([device('a', 'Hall'), draft('b', 'Hall'), draft('c')])
+    expect(rooms).toEqual([
+      { key: roomPathKey('Hall'), spellings: ['Hall'], deviceCount: 2, draftCount: 1 },
+    ])
+  })
+
+  it('renames a draft with the room, like any device in it', () => {
+    const [moved] = renameRoom([draft('b', 'Hall')], 'Hall', 'Lobby')
+    expect(moved).toMatchObject({ room: 'Lobby', status: 'draft' })
   })
 })

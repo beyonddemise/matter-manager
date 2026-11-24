@@ -8,7 +8,7 @@ import {
   readProjectArchive,
 } from '../../../src/domain/archive/project-archive.js'
 import type { ZipEntry } from '../../../src/domain/archive/zip.js'
-import type { DeviceDocument } from '../../../src/domain/index.js'
+import type { DeviceDocument, DraftDeviceDocument } from '../../../src/domain/index.js'
 
 /**
  * A project as a set of JSON files, and back.
@@ -93,7 +93,8 @@ describe('exporting', () => {
     ])
     expect(json(entries[0])).toEqual({
       format: ARCHIVE_FORMAT,
-      version: ARCHIVE_VERSION,
+      // No drafts: still a version 1 archive, which an older build can restore (#358).
+      version: 1,
       exportedAt: EXPORTED_AT,
       devices: 2,
     })
@@ -336,5 +337,81 @@ describe('refusing what is not a project archive', () => {
     const imported = readProjectArchive([...archiveOf(device('a')), entry('README.txt', 'hi')])
 
     expect(imported.devices).toHaveLength(1)
+  })
+})
+
+describe('drafts (#358)', () => {
+  const draft = (uuid: string, extra: Partial<DraftDeviceDocument> = {}): DraftDeviceDocument => ({
+    _id: `device:${uuid}`,
+    _rev: '2-abc',
+    updatedAt: '2026-11-24T08:00:00.000Z',
+    type: 'device',
+    status: 'draft',
+    addedAt: '2026-11-24T08:00:00.000Z',
+    disabled: false,
+    remarks: [],
+    ...extra,
+  })
+
+  it('writes an archive holding a draft as version 2, so an older build refuses it whole', () => {
+    const entries = projectArchiveEntries(
+      { name: 'Hillside' },
+      [draft('a', { name: 'Fan' })],
+      EXPORTED_AT,
+    )
+    expect(json(entries[0])).toMatchObject({ version: 2 })
+    expect(ARCHIVE_VERSION).toBe(2)
+  })
+
+  it('round-trips: every draft the export writes, the import reads back as the same draft', () => {
+    const stored = [
+      draft('a', { name: 'Fan' }),
+      draft('b', { serial: 'SN-1', room: 'Hall', installedAt: '2026-11-20' }),
+      draft('c', {
+        manualCode: LONG_MANUAL,
+        payload: PAYLOAD,
+        vendorId: 0xfff1,
+        productId: 0x8000,
+      }),
+      device('d'),
+    ]
+    const imported = readProjectArchive(
+      projectArchiveEntries({ name: 'Hillside' }, stored, EXPORTED_AT),
+    )
+    const byId = new Map(imported.devices.map((d) => [d._id, d]))
+
+    expect(byId.get('device:a')).toMatchObject({ status: 'draft', name: 'Fan' })
+    expect(byId.get('device:a')).not.toHaveProperty('room')
+    expect(byId.get('device:b')).toMatchObject({ status: 'draft', room: 'Hall', serial: 'SN-1' })
+    expect(byId.get('device:c')).toMatchObject({
+      status: 'draft',
+      manualCode: LONG_MANUAL,
+      payload: PAYLOAD,
+    })
+    expect(byId.get('device:d')).not.toHaveProperty('status')
+    expect(imported.refiled).toBe(0)
+  })
+
+  it('drops a catalogue block from a draft whose code names no product', () => {
+    const block = {
+      vendorName: 'Acme',
+      catalogCheckedAt: '2026-11-24T09:00:00.000Z',
+      catalogSource: 'found',
+    }
+    const imported = readProjectArchive(archiveOf({ ...draft('a', { name: 'Fan' }), ...block }))
+    expect(imported.devices[0]).not.toHaveProperty('vendorName')
+    const named = readProjectArchive(
+      archiveOf({ ...draft('b', { manualCode: LONG_MANUAL, payload: PAYLOAD }), ...block }),
+    )
+    expect(named.devices[0]).toMatchObject({ vendorName: 'Acme' })
+  })
+
+  it('refuses a draft whose setup code does not read, as it refuses a device', () => {
+    expect(problemOf(archiveOf({ ...draft('a'), manualCode: '1234' }))).toBe('badDevice')
+  })
+
+  it('refuses a draft with nothing in it, and a status it does not know', () => {
+    expect(problemOf(archiveOf(draft('a')))).toBe('badDevice')
+    expect(problemOf(archiveOf({ ...device('a'), status: 'archived' }))).toBe('badDevice')
   })
 })

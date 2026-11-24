@@ -5,12 +5,14 @@ import {
   type DeviceDocument,
   DraftError,
   documentId,
+  isDraftDevice,
   manufacturerName,
   planDeviceEdit,
   uuidOf,
 } from '../../domain/index.js'
 import { codePendingTitle } from '../i18n/problems.js'
 import { DeviceFormView } from './device-form.js'
+import { finishAddress } from './draft-marker.js'
 
 /**
  * The edit form: everything about a device except the code that identifies it.
@@ -82,6 +84,12 @@ export class EditDeviceView extends DeviceFormView {
     ])
     if (token !== this.request) return
 
+    if (device !== undefined && isDraftDevice(device)) {
+      // A draft is finished in the add form, which runs every check a new device gets (#358);
+      // this form's planner takes only a complete device. Replaced, so Back skips this address.
+      window.location.replace(finishAddress(device))
+      return
+    }
     this.device = device
     this.rooms = rooms
     this.loaded = true
@@ -104,7 +112,9 @@ export class EditDeviceView extends DeviceFormView {
     void this.repos()
       .devices.get(held._id)
       .then((fresh) => {
-        if (token === this.request && fresh !== undefined) this.device = fresh
+        if (token === this.request && fresh !== undefined && !isDraftDevice(fresh)) {
+          this.device = fresh
+        }
       })
       // A failed re-read leaves the locked copy, whose save is refused and says so: no harm,
       // and nothing to log (the document carries a setup code).
@@ -168,7 +178,7 @@ export class EditDeviceView extends DeviceFormView {
         // the same way. Re-reading makes the next attempt plan against what is actually
         // stored, and touches nothing the user typed - `fill` runs only from `load`.
         const fresh = await this.repos().devices.get(device._id)
-        if (fresh !== undefined) this.device = fresh
+        if (fresh !== undefined && !isDraftDevice(fresh)) this.device = fresh
         return
       }
     } finally {

@@ -1,5 +1,5 @@
 /**
- * The device inventory as a flat sheet: one row per device, ten columns (#295).
+ * The device inventory as a flat sheet: one row per device, eleven columns (#295, #358).
  *
  * The same division of labour as `pdf/layout.ts`: what goes in which cell is a decision over
  * plain data, so it lives here and is tested in milliseconds; `xlsx/workbook.ts` turns the rows
@@ -18,7 +18,7 @@ import { manufacturerName, TEST_VENDOR_NAME } from '../catalog/copy.js'
 import type { DeviceGroup } from '../documents/browse.js'
 
 /**
- * The words the sheet carries, in whatever language is active: the ten column headers, plus
+ * The words the sheet carries, in whatever language is active: the eleven column headers, plus
  * the test vendor's shown name. Passed in rather than looked up, because this package holds
  * no `msg()` and no ambient locale — the same seam as `InventoryLabels` in the PDF.
  */
@@ -35,6 +35,10 @@ export interface DeviceSheetWords {
   readonly payload: string
   /** The test vendors' manufacturer name, stored in English as `TEST_VENDOR_NAME`. */
   readonly testVendor: string
+  /** The eleventh column's header (#358). */
+  readonly status: string
+  /** What the status column says for a draft; a complete device's cell is empty. */
+  readonly draft: string
 }
 
 /** A Matter id as every Matter document writes it, e.g. `0x010D`. */
@@ -71,6 +75,9 @@ export function deviceRows(
     words.installed,
     words.pairingCode,
     words.payload,
+    // Last, so the ten columns before it keep the places a reader's formulas already use.
+    // Text, not a colour (#358): a filter on the column finds every draft.
+    words.status,
   ]
 
   const rows = groups.flatMap((group) =>
@@ -81,14 +88,15 @@ export function deviceRows(
       return [
         group.path,
         device.spot ?? '',
-        device.name,
+        device.name ?? '',
         hex(device.deviceTypeId),
         (vendor === TEST_VENDOR_NAME ? words.testVendor : vendor) ?? '',
         device.productName ?? '',
         device.serial ?? '',
-        device.installedAt,
-        device.manualCode,
+        device.installedAt ?? '',
+        device.manualCode ?? '',
         device.payload ?? '',
+        device.status === 'draft' ? words.draft : '',
       ]
     }),
   )

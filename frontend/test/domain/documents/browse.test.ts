@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { browseDevices } from '../../../src/domain/documents/browse.js'
-import type { DeviceDocument } from '../../../src/domain/documents/types.js'
+import type { DeviceDocument, DraftDeviceDocument } from '../../../src/domain/documents/types.js'
 
 const device = (
   name: string,
@@ -482,5 +482,38 @@ describe('filtering to a room', () => {
 
   it('is empty for a room nothing is in', () => {
     expect(browseDevices(house, { room: 'Cellar' })).toEqual([])
+  })
+})
+
+describe('drafts (#358)', () => {
+  /** A draft with only what is given: no name, room or code unless passed. */
+  const draft = (id: string, extra: Partial<DraftDeviceDocument> = {}): DraftDeviceDocument => ({
+    _id: `device:${id}`,
+    _rev: '1-a',
+    updatedAt: '2026-11-24T10:00:00.000Z',
+    type: 'device',
+    status: 'draft',
+    addedAt: '2026-11-24T08:00:00.000Z',
+    disabled: false,
+    remarks: [],
+    ...extra,
+  })
+
+  it('lists drafts beside devices, never filtering them out', () => {
+    const groups = browseDevices([
+      device('Ceiling light', KITCHEN),
+      draft('a', { name: 'Fan', room: KITCHEN }),
+      draft('b', { serial: 'SN-1' }),
+    ])
+    expect(names(groups)).toEqual([['Ceiling light', 'Fan'], [undefined]])
+    expect(paths(groups)).toEqual([KITCHEN, ''])
+  })
+
+  it('finds every draft by the word its marker shows, and only drafts', () => {
+    const devices = [device('Ceiling light', KITCHEN), draft('a', { name: 'Fan' })]
+    expect(names(browseDevices(devices, { query: 'entwurf', draftTerm: 'Entwurf' }))).toEqual([
+      ['Fan'],
+    ])
+    expect(browseDevices(devices, { query: 'entwurf' })).toEqual([])
   })
 })

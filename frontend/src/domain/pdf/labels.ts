@@ -19,7 +19,7 @@
  * @module
  */
 
-import type { DeviceDocument } from '../documents/types.js'
+import type { StoredDevice } from '../documents/types.js'
 
 /** Millimetres to PostScript points. 72 points to the inch, 25.4 millimetres to the inch. */
 export const MM = 72 / 25.4
@@ -131,7 +131,7 @@ export const LABEL_SAFE_INSET = 2 * MM
 
 /** Where a label sits on the page, and what goes on it. */
 export interface PlacedLabel {
-  readonly device: DeviceDocument
+  readonly device: StoredDevice
   readonly roomPath: string
   /** From the left edge of the sheet, to the label's left edge. */
   readonly x: number
@@ -148,7 +148,7 @@ export interface LabelPage {
 
 /** A device and the room it is in, which is what a label shows besides the code. */
 export interface LabelSubject {
-  readonly device: DeviceDocument
+  readonly device: StoredDevice
   readonly roomPath: string
 }
 

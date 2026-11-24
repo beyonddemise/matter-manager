@@ -107,6 +107,7 @@ describe('the route registry', () => {
       'add-device',
       'device',
       'edit-device',
+      'finish-device',
       'rooms',
       'account',
       'settings',

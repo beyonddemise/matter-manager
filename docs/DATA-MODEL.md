@@ -526,6 +526,60 @@ project archive with a password; see *Project export* below. Only the vendor and
 by id, and positional identity would make "the same remark twice" indistinguishable from
 "two different remarks".
 
+#### Drafts: `"status": "draft"`
+
+A device saved before every required field passed ([#358](https://github.com/beyonddemise/matter-manager/issues/358)).
+It is a `device:<uuid>` document like any other, not a type of its own, with one more field:
+
+```jsonc
+{
+  "_id": "device:6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+  "type": "device",
+  "status": "draft",                 // absent on a complete device
+  "manualCode": "enc:v1:<base64>",   // only once a code was read; encrypted like any device's
+  "serial": "SN-000123",
+  "installedAt": "2026-11-24",
+  "addedAt": "2026-11-24T08:00:00.000Z",
+  "updatedAt": "2026-11-24T08:00:00.000Z",
+  "disabled": false,
+  "remarks": []
+}
+```
+
+- **A missing `status` means complete.** Every document written before drafts existed is
+  complete as it is; nothing migrates. `"draft"` is the only value; any other is refused on import.
+- **What a draft may lack:** `name`, `room`, `manualCode` (and with it every credential field)
+  and `installedAt`. It needs at least one of the setup code, name, room, spot and serial number.
+  The date alone does not count, because the form fills it with today.
+- **What it holds is checked like a device's** (`planDraftDevice`). A setup code is stored only
+  once it decodes, so a draft never holds a half-typed code; a room path must be well formed and
+  joins an existing spelling. A draft's room is a room like any device's (ADR 0021): the Rooms
+  page counts it, and says how many of a room's devices are drafts.
+- **The setup code gets the same handling as a stored device's:** it lands in `manualCode` and
+  `payload`, so ADR 0022 encrypts it, nothing logs it, and the exports carry it under the same
+  rules.
+- **Not filtered out anywhere** (the product owner's decision of 2026-11-24 on #358). Drafts
+  replicate, and show in the device list, rooms, the search, the project archive, the Excel sheet
+  and both PDFs, each time marked in words: a "Draft" tag on screen, "Draft: <name>" on paper, a
+  Status column in the sheet. A draft never in service is never disabled.
+- **Finishing** (`planFinishedDevice`) runs every check `planNewDevice` runs, keeps the id,
+  revision, `addedAt` and remarks, and removes `status`. That planner is the only way from a
+  draft to a complete device, and nothing turns one back. That includes the conflict merge: a
+  complete revision beats a draft (see *Conflicts*). So when one replica finishes a draft while
+  another saves it again offline, the merge keeps the finished device, and the draft side's later
+  values give way. Its remarks are unioned as always. Carrying those values across would need
+  the full checks inside the merge, which holds no planner.
+- **Discarding a draft is deleting it**, confirmed on its page like any delete.
+- No server rule reads these fields: the project database's `validate_doc_update` asks only for a
+  `type`, so a draft replicates exactly as a device does.
+- **Risk: builds from before drafts.** Nothing stops an older build from receiving a draft by
+  replication, and it reads the draft as a complete device. Its PDF exports throw on a draft
+  without a name or code (`winAnsiSafe(undefined)`). Its merge is plain last-write-wins (see
+  *Conflicts*), so if it resolves a finished-versus-draft conflict first, it can keep the draft
+  and prune the finished revision, along with a setup code entered when finishing.
+  `meta:project.schemaVersion` exists but nothing enforces it. A client-version gate before sync
+  is [#373](https://github.com/beyonddemise/matter-manager/issues/373).
+
 #### Encrypted fields: `enc:v1:`
 
 `payload` and `manualCode`, and no other field, are stored as
@@ -677,6 +731,12 @@ devices/<uuid>.json    one device document each, without _rev, _conflicts, _atta
   - A payload that disagrees with its manual code refuses the import.
   - Catalogue links that are not `https:` are dropped.
   - A device without a usable `room` is filed under `Imported`.
+  - A draft (#358) goes through `planDraftDevice` instead: what it has is checked as a device's
+    would be (a code that does not decode, or a malformed room, refuses the import), and what it
+    lacks stays absent. It is not refiled.
+- **The version is the lowest that reads the archive.** An archive with no draft is written as
+  `version: 1`, so an older build still restores it; one holding a draft is `version: 2`, which
+  an older build refuses whole rather than refusing the draft or taking it for a device.
 - **The import is all or nothing.** The zip is read and checked against limits before anything
   is inflated:
   - at most 5 MB as a file and 50 MB inflated;
@@ -705,9 +765,14 @@ it.
 | Shape | Strategy |
 |---|---|
 | `remarks` | Union by `id`, sorted by `createdAt`. Nothing is discarded. |
-| Scalars (`name`, `room`, `disabled`, `spot`) | Last write wins by `updatedAt`. |
-| Catalogue block (`vendorName` … `catalogSource`) | Taken whole from the revision with the newest `catalogCheckedAt`, ties by `(updatedAt, _rev)`. |
+| Scalars (`name`, `room`, `disabled`, `spot`, `status`) | Last write wins by `updatedAt`, among the complete revisions when there is one: a complete revision beats a draft (#358). |
+| Catalogue block (`vendorName` … `catalogSource`) | Taken whole from the revision with the newest `catalogCheckedAt` among those naming the winner's product (`vendorId`, `productId`), ties by `(updatedAt, _rev)`. None when none does. |
 | `audit:*` | Cannot conflict — append-only. |
+
+The "complete beats draft" rule holds only where every replica that resolves runs a build that
+has it. A build from before drafts resolves by plain last-write-wins, and a resolution it writes
+and prunes is final (see *Drafts*, and [#373](https://github.com/beyonddemise/matter-manager/issues/373)
+for the client-version gate that would close this).
 
 Losing revisions are deleted after a successful merge, or `_conflicts` grows without bound
 and every read pays for it.

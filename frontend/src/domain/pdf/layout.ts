@@ -20,7 +20,7 @@
  */
 
 import type { DeviceGroup } from '../documents/browse.js'
-import type { DeviceDocument } from '../documents/types.js'
+import type { StoredDevice } from '../documents/types.js'
 
 /** A4 in points, and the room left around the content. */
 export interface PageGeometry {
@@ -74,7 +74,7 @@ export interface HeadingBlock {
 /** One device. */
 export interface EntryBlock {
   readonly kind: 'entry'
-  readonly device: DeviceDocument
+  readonly device: StoredDevice
   readonly roomPath: string
   readonly top: number
 }

@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { browseDevices, type DeviceGroup } from '../../../src/domain/documents/browse.js'
-import type { DeviceDocument } from '../../../src/domain/documents/types.js'
+import type {
+  DeviceDocument,
+  DraftDeviceDocument,
+  StoredDevice,
+} from '../../../src/domain/documents/types.js'
 import { type DeviceSheetWords, deviceRows } from '../../../src/domain/xlsx/sheet.js'
 
 /**
@@ -21,6 +25,8 @@ const WORDS: DeviceSheetWords = {
   pairingCode: 'Pairing code',
   payload: 'QR payload',
   testVendor: 'Testhersteller',
+  status: 'Status',
+  draft: 'Draft',
 }
 
 const device = (
@@ -42,7 +48,7 @@ const device = (
   ...extra,
 })
 
-const group = (path: string, devices: readonly DeviceDocument[]): DeviceGroup => ({
+const group = (path: string, devices: readonly StoredDevice[]): DeviceGroup => ({
   key: path.toLowerCase(),
   path,
   spellings: path === '' ? [] : [path],
@@ -64,6 +70,7 @@ describe('deviceRows', () => {
       'Installed',
       'Pairing code',
       'QR payload',
+      'Status',
     ])
   })
 
@@ -97,6 +104,7 @@ describe('deviceRows', () => {
       '2026-08-26',
       '34970112332',
       'MT:Y.K9042C00KA0648G00',
+      '', // complete: no status
     ])
   })
 
@@ -114,6 +122,7 @@ describe('deviceRows', () => {
       '2026-08-26',
       '34970112332',
       '', // filed from a manual code: no MT: payload, and none can be invented
+      '', // complete: no status
     ])
   })
 
@@ -171,6 +180,23 @@ describe('deviceRows', () => {
 
     expect(rows[1]?.[0]).toBe('')
     expect(rows[1]?.[2]).toBe('Orphan')
+  })
+
+  it('lists a draft with "Draft" in its status cell, and empty cells for what it lacks (#358)', () => {
+    const draft: DraftDeviceDocument = {
+      _id: 'device:d',
+      _rev: '1-a',
+      updatedAt: '2026-11-24T09:00:00.000Z',
+      type: 'device',
+      status: 'draft',
+      serial: 'SN-9',
+      addedAt: '2026-11-24T09:00:00.000Z',
+      disabled: false,
+      remarks: [],
+    }
+    const rows = deviceRows([group('', [draft])], WORDS)
+
+    expect(rows[1]).toEqual(['', '', '', '', '', '', 'SN-9', '', '', '', 'Draft'])
   })
 
   it('produces only the header for no devices at all', () => {

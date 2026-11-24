@@ -29,8 +29,8 @@ import { isConflict, isLockedDocument, type Repository } from '../data/index.js'
 import {
   type CatalogFields,
   catalogFields,
-  type DeviceDocument,
   needsCatalogLookup,
+  type StoredDevice,
   withCatalogBlock,
 } from '../domain/index.js'
 import type { CatalogApi } from './catalog.js'
@@ -44,7 +44,7 @@ export const BACKFILL_GAP_MS = 1000
 export interface BackfillDependencies {
   readonly lookup: CatalogApi['lookup']
   /** The open project's devices, read at the start of each run. */
-  readonly devices: () => Repository<DeviceDocument>
+  readonly devices: () => Repository<StoredDevice>
   /** Whether the open project may be written; a read-only shared project is never backfilled. */
   readonly editable: () => boolean
   readonly now: () => Date
@@ -86,7 +86,8 @@ const unusableBlock = (checkedAt: string): Partial<CatalogFields> => ({
 })
 
 /** What to send: the payload if there is one, else the digits of the manual code. */
-const codeOf = (device: DeviceDocument): string => device.payload ?? device.manualCode
+// `undefined` only for a draft with no code yet (#358), which `needsCatalogLookup` never picks.
+const codeOf = (device: StoredDevice): string | undefined => device.payload ?? device.manualCode
 
 /**
  * Writes one catalogue block into one device, on a fresh read.
@@ -95,13 +96,15 @@ const codeOf = (device: DeviceDocument): string => device.payload ?? device.manu
  * would quietly revert whatever was edited since. Checked again with `needsCatalogLookup`, so a
  * block written meanwhile by another tab or replica is not replaced by this answer.
  *
+ * @param code the code the catalogue was asked about; nothing is written unless it is still the one stored
  * @param block the catalogue fields to write, built from the time it is given
  * @throws whatever `devices.saveKeepingUpdatedAt` throws, except a 409; the caller ends the
  *   pass on it
  */
 async function fill(
-  devices: Repository<DeviceDocument>,
+  devices: Repository<StoredDevice>,
   id: string,
+  code: string,
   block: (checkedAt: string) => Partial<CatalogFields>,
   deps: BackfillDependencies,
   signal: AbortSignal,
@@ -109,7 +112,10 @@ async function fill(
   const fresh = await devices.get(id)
   if (signal.aborted || fresh === undefined) return
   const at = deps.now()
-  if (!needsCatalogLookup(fresh, at)) return
+  // The code asked about must still be the code stored: a draft's code can change while the lookup
+  // is out (#358), and a block for the old one would be stamped and never corrected. A device
+  // skipped here stays due, so a later pass asks about its new code.
+  if (!needsCatalogLookup(fresh, at) || codeOf(fresh) !== code) return
   try {
     // Keeps `updatedAt`: filling the block is not an edit, and a restamp would let this write,
     // made on a stale copy, outrank a newer rename or move in `mergeDevice` (ruling R26).
@@ -144,7 +150,9 @@ async function runOnce(deps: BackfillDependencies, signal: AbortSignal): Promise
       first = false
       if (signal.aborted) return
 
-      const outcome = await deps.lookup(codeOf(candidate), signal)
+      const code = codeOf(candidate)
+      if (code === undefined) break
+      const outcome = await deps.lookup(code, signal)
       if (signal.aborted) return
 
       if (outcome.kind === 'rate-limited') {
@@ -159,11 +167,11 @@ async function runOnce(deps: BackfillDependencies, signal: AbortSignal): Promise
       if (outcome.kind === 'unavailable' || outcome.kind === 'signed-out') return
       if (outcome.kind === 'found') {
         const { lookup } = outcome
-        await fill(devices, candidate._id, (at) => catalogFields(lookup, at), deps, signal)
+        await fill(devices, candidate._id, code, (at) => catalogFields(lookup, at), deps, signal)
       } else {
         // `unusable` (400/422): the API will never read this stored code. It is marked so that
         // `needsCatalogLookup` skips it from now on, instead of sending it on every trigger.
-        await fill(devices, candidate._id, unusableBlock, deps, signal)
+        await fill(devices, candidate._id, code, unusableBlock, deps, signal)
       }
       break
     }

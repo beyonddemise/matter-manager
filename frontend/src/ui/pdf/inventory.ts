@@ -23,6 +23,7 @@ import {
   roomPathBreadcrumb,
 } from '../../domain/index.js'
 import { shownManufacturer } from '../i18n/manufacturer.js'
+import { type DraftWords, printedName } from './draft-words.js'
 import { ExportCancelled, type InventoryProgress } from './progress.js'
 import { drawQr } from './qr.js'
 import { winAnsiSafe } from './win-ansi.js'
@@ -59,6 +60,8 @@ export interface InventoryLabels {
   readonly nothingToExport: string
   /** The test vendors' manufacturer name, stored in English as `TEST_VENDOR_NAME`. */
   readonly testVendor: string
+  /** How a draft is marked on paper (#358). */
+  readonly drafts: DraftWords
 }
 
 export interface InventoryOptions {
@@ -279,7 +282,10 @@ function drawEntry(
       borderColor: rgb(0.8, 0.82, 0.84),
       borderWidth: 0.5,
     })
-    page.drawText(winAnsiSafe(labels.noQrCode), {
+    // A draft may have no code at all yet, which is a different fact from "filed from a
+    // pairing code" and is said differently.
+    const missing = device.manualCode === undefined ? labels.drafts.noSetupCode : labels.noQrCode
+    page.drawText(winAnsiSafe(missing), {
       x: left + 8,
       y: yOf(block.top + QR_SIZE / 2),
       size: DETAIL_SIZE,
@@ -294,7 +300,7 @@ function drawEntry(
   const width = geometry.width - geometry.margin - textLeft
   let line = block.top + NAME_SIZE
 
-  page.drawText(fitToWidth(device.name, bold, NAME_SIZE, width), {
+  page.drawText(fitToWidth(printedName(device, labels.drafts), bold, NAME_SIZE, width), {
     x: textLeft,
     y: yOf(line),
     size: NAME_SIZE,
@@ -305,7 +311,7 @@ function drawEntry(
   const details = [
     productOf(block, labels),
     device.partNumber === undefined ? undefined : `${labels.partNumber}: ${device.partNumber}`,
-    `${labels.installed}: ${device.installedAt}`,
+    device.installedAt === undefined ? undefined : `${labels.installed}: ${device.installedAt}`,
     device.spot,
     device.serial,
   ].filter((value): value is string => value !== undefined && value !== '')
@@ -326,6 +332,8 @@ function drawEntry(
 
   // The pairing code last and in bold: it is the one thing on the entry that still works when
   // the QR has been rained on, and the reason a code-only device is a complete record.
+  // A draft without a code has none to print; the box where the QR goes already says so.
+  if (device.manualCode === undefined) return
   line += DETAIL_SIZE + 8
   page.drawText(winAnsiSafe(`${labels.pairingCode}: ${device.manualCode}`), {
     x: textLeft,

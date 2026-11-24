@@ -7,7 +7,12 @@ import {
   type ProjectRepositories,
   projectRepositories,
 } from '../../src/data/index.js'
-import { type DeviceDocument, documentId, type Unsaved } from '../../src/domain/index.js'
+import {
+  type DeviceDocument,
+  documentId,
+  type StoredDevice,
+  type Unsaved,
+} from '../../src/domain/index.js'
 import {
   fixedClock,
   memoryDatabase,
@@ -110,7 +115,7 @@ describe('save', () => {
     const second = await repos.devices.save({
       ...first,
       updatedAt: '1999-12-31T00:00:00.000Z',
-    } as Unsaved<DeviceDocument>)
+    } as unknown as Unsaved<DeviceDocument>)
     expect(second.updatedAt).toBe('2026-02-02T00:00:00.000Z')
   })
 
@@ -402,7 +407,7 @@ describe('the encryption seam, locked', () => {
   /** Stores one encrypted device, then reopens the same database locked. */
   async function seededLocked(): Promise<{
     locked: ProjectRepositories
-    saved: DeviceDocument
+    saved: StoredDevice
   }> {
     const writer = projectRepositories(database, fixedClock('2026-08-20T10:00:00.000Z'), unlocked())
     const saved = await writer.devices.save(lamp())

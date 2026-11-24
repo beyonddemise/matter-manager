@@ -4,16 +4,16 @@ import '@awesome.me/webawesome-pro/dist/components/combobox/combobox.js'
 import '@awesome.me/webawesome-pro/dist/components/option/option.js'
 import { msg, updateWhenLocaleChanges } from '@lit/localize'
 import { html, LitElement, type PropertyDeclarations, type TemplateResult } from 'lit'
-import { ProjectLockedError, type ProjectRepositories } from '../../data/index.js'
+import { isConflict, ProjectLockedError, type ProjectRepositories } from '../../data/index.js'
 import {
   type CatalogNames,
-  type DeviceDocument,
   type DeviceFields,
   type DraftError,
   type DraftField,
   normaliseRoomPath,
   type Room,
   roomsOf,
+  type StoredDevice,
   type Unsaved,
 } from '../../domain/index.js'
 import { PROJECT_CHANGED, PROJECT_DATA_CHANGED } from '../current-project.js'
@@ -87,10 +87,17 @@ export abstract class DeviceFormView extends LitElement {
   /**
    * Why the last write was rejected, if it was. Distinct from a rejected *field*.
    *
-   * Two reasons with two sentences: `storage` is worth retrying, `locked` (#303) is not — the
-   * project's key has not reached this browser, and every retry is refused until it has.
+   * Three reasons with three sentences: `storage` is worth retrying, `locked` (#303) is not — the
+   * project's key has not reached this browser, and every retry is refused until it has — and
+   * `changed` (#358) means the document moved on elsewhere while this form saved, so the form
+   * has read it again and the next save goes through. Only the add form sets `changed`.
    */
-  declare saveFailed: false | 'storage' | 'locked'
+  declare saveFailed: false | 'storage' | 'locked' | 'changed'
+  /**
+   * Whether the last refused write was refused as a conflict (a stale `_rev`), which the add form
+   * answers by reading the draft again and retrying once rather than as "storage" (#358).
+   */
+  protected lastWriteConflicted = false
   /**
    * Whether the existing rooms could not be read.
    *
@@ -241,20 +248,34 @@ export abstract class DeviceFormView extends LitElement {
    * @param since the {@link projectSnapshot} taken when the save began; after a switch since
    *   then nothing is written (the form has already left for the device list)
    */
-  protected async write(device: Unsaved<DeviceDocument>, since: number): Promise<boolean> {
-    if (since !== this.projectGeneration) return false
+  protected async write(device: Unsaved<StoredDevice>, since: number): Promise<boolean> {
+    return (await this.writeSaved(device, since)) !== undefined
+  }
+
+  /**
+   * {@link write}, answering the document as stored rather than whether it worked: the add form
+   * keeps a saved draft's new revision, so saving it again updates it instead of conflicting
+   * (#358). `undefined` for every refusal `write` reports as `false`.
+   */
+  protected async writeSaved(
+    device: Unsaved<StoredDevice>,
+    since: number,
+  ): Promise<StoredDevice | undefined> {
+    if (since !== this.projectGeneration) return undefined
+    this.lastWriteConflicted = false
     try {
-      await this.repos().devices.save(device)
+      const saved = await this.repos().devices.save(device)
       // Not observable today: a successful save always navigates away from the form, so
       // nothing renders this flag afterwards, and a mutation probe reports the line as a
       // survivor. It stays because it makes the flag a true statement about the last attempt
       // rather than one that happens to be true because of where the caller goes next - the
       // same reason `new-device.ts` keeps its unreachable rethrow.
       this.saveFailed = false
-      return true
+      return saved
     } catch (error) {
       this.saveFailed = error instanceof ProjectLockedError ? 'locked' : 'storage'
-      return false
+      this.lastWriteConflicted = isConflict(error)
+      return undefined
     }
   }
 
@@ -416,6 +437,15 @@ export abstract class DeviceFormView extends LitElement {
         <wa-callout variant="warning" data-save-locked>
           <wa-icon slot="icon" name="circle-info"></wa-icon>
           ${lockedProjectMessage('change')}
+        </wa-callout>
+      `
+    }
+
+    if (this.saveFailed === 'changed') {
+      return html`
+        <wa-callout variant="warning" data-save-changed>
+          <wa-icon slot="icon" name="circle-info"></wa-icon>
+          ${msg('This was changed somewhere else while you saved. Everything you entered is still here — save again.')}
         </wa-callout>
       `
     }

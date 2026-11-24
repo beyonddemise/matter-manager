@@ -1,5 +1,6 @@
 import { msg, updateWhenLocaleChanges } from '@lit/localize'
 import { html, LitElement, type PropertyValues, type TemplateResult } from 'lit'
+import { keyed } from 'lit/directives/keyed.js'
 import { DEFAULT_PLAN, type Plan, plansForSale } from '../domain/plan.js'
 import type { AuthMethods, AuthMethodsApi } from './auth-methods.js'
 import {
@@ -136,6 +137,10 @@ export const VIEWS: Readonly<
   'device-list': (_params, host) =>
     html`<device-list-view .projectName=${host.projectName()}></device-list-view>`,
   'edit-device': (params) => html`<edit-device-view uuid=${params.id ?? ''}></edit-device-view>`,
+  // Keyed by the draft, so finishing another draft is a new form rather than this one with its
+  // controls still holding the first draft's values (#358). The add form reads its draft once.
+  'finish-device': (params) =>
+    html`${keyed(params.id, html`<finish-device-view draft-id=${params.id ?? ''}></finish-device-view>`)}`,
   rooms: (_params, host) => html`<rooms-view .projectName=${host.projectName()}></rooms-view>`,
   account: (_params, host) => host.renderAccount(),
   settings: () => html`<settings-view></settings-view>`,
@@ -498,7 +503,10 @@ export class AppShell extends LitElement implements ViewHost {
       }
       return
     }
-    if (leave && link !== undefined && guard.holdsInput()) {
+    // `leave` alone decides. A check of `holdsInput` here (CodeRabbit on #368) could only
+    // swallow the click the person chose to follow - and since #358 it would: Save as draft
+    // stores the input, so the form holds nothing unsaved by the time this runs.
+    if (leave && link !== undefined) {
       guard.release()
       window.location.hash = link
     }
@@ -961,9 +969,18 @@ export class AppShell extends LitElement implements ViewHost {
     // stay set and the dialog would reopen by itself when a later request brings the button back.
     // Here rather than in `updated()`, so it lands in the same render instead of a second one.
     // Likewise when billing turns Upgrade into a link to the account page.
-    if (this.upgrading && (!offersUpgrade(this.upgradeFacts()) || this.subscribes()))
+    if (this.upgrading && (!offersUpgrade(this.upgradeFacts()) || this.subscribes())) {
+      // Closed because leaving the waitlist took Upgrade away: the dialog's own status region
+      // goes with it, so the shell's says what happened, in this render.
+      if (this.leavingWaitlist && !offersUpgrade(this.upgradeFacts())) {
+        this.announcement = leftWaitlistText()
+      }
       this.onCloseUpgrade()
+    }
   }
+
+  /** Whether a waitlist leave is waiting on the refresh that may close the dialog. */
+  private leavingWaitlist = false
 
   /**
    * Gives focus back when the upgrade dialog closes (WCAG 2.4.3), whichever way it closed: Close,
@@ -1744,7 +1761,15 @@ export class AppShell extends LitElement implements ViewHost {
       this.waitlistProblem = 'not-stored'
       return
     }
-    await this.projects.refresh(false)
+    // While leaving, the refresh below renders before it resolves, and that render can close the
+    // dialog (`willUpdate`). Set first, so the announcement arrives in that same render rather
+    // than after it: on a slow machine the dialog was gone and the region still empty (#369 CI).
+    this.leavingWaitlist = leaving
+    try {
+      await this.projects.refresh(false)
+    } finally {
+      this.leavingWaitlist = false
+    }
     if (!leaving) return
     // Leaving a request for the top plan takes the Upgrade button away (ruling R3), and
     // `willUpdate` closes the dialog with it. Its status region goes too, so the shell's own
