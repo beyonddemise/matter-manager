@@ -53,6 +53,7 @@ const NAVIGATIONS: readonly { path: string; element: string }[] = [
   { path: '#/devices/new', element: 'add-device-view' },
   { path: '#/devices/6ba7b810-9dad-11d1-80b4-00c04fd430c8', element: 'device-view' },
   { path: '#/devices/6ba7b810-9dad-11d1-80b4-00c04fd430c8/edit', element: 'edit-device-view' },
+  { path: '#/devices/6ba7b810-9dad-11d1-80b4-00c04fd430c8/finish', element: 'finish-device-view' },
   { path: '#/rooms', element: 'rooms-view' },
   { path: '#/account', element: 'account-view' },
   { path: '#/settings', element: 'settings-view' },

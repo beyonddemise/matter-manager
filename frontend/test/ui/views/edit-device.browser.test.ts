@@ -11,6 +11,7 @@ import type { ProjectRepositories } from '../../../src/data/index.js'
 import {
   CATALOG_FIELD_KEYS,
   type DeviceDocument,
+  type StoredDevice,
   TEST_VENDOR_NAME,
   type Unsaved,
 } from '../../../src/domain/index.js'
@@ -130,7 +131,7 @@ async function submit(element: HTMLElement, settled: () => boolean | Promise<boo
   await waitUntil(settled, 'the form never settled after submit', { timeout: 3000 })
 }
 
-const stored = async (): Promise<DeviceDocument> => {
+const stored = async (): Promise<StoredDevice> => {
   const device = await database.repositories.devices.get(DEVICE_ID)
   if (device === undefined) throw new Error('the device is gone')
   return device
@@ -574,8 +575,8 @@ describe('switching project while a save is planned', () => {
     // wait must not write this project's device into the next one (#291 review).
     await seed()
     const real = database.repositories
-    let release: (devices: DeviceDocument[]) => void = () => {}
-    const reread = new Promise<DeviceDocument[]>((settle) => {
+    let release: (devices: StoredDevice[]) => void = () => {}
+    const reread = new Promise<StoredDevice[]>((settle) => {
       release = settle
     })
     let lists = 0
@@ -626,5 +627,26 @@ describe('when the project’s documents change', () => {
     await element.updateComplete
 
     expect(shown(element, 'name')).toBe('Half-typed name')
+  })
+})
+
+describe('a draft (#358)', () => {
+  it('is sent to the add form to be finished, not edited here', async () => {
+    history.replaceState(null, '', `#/devices/${UUID}/edit`)
+    await database.repositories.devices.save({
+      _id: DEVICE_ID,
+      type: 'device',
+      status: 'draft',
+      name: 'Hall sensor',
+      addedAt: '2026-11-24T09:00:00.000Z',
+      disabled: false,
+      remarks: [],
+    } as Unsaved<StoredDevice>)
+    await customElements.whenDefined('wa-input')
+    await fixture(
+      html`<edit-device-view uuid=${UUID} .repositories=${database.repositories}></edit-device-view>`,
+    )
+
+    await waitUntil(() => location.hash === `#/devices/${UUID}/finish`, `at ${location.hash}`)
   })
 })

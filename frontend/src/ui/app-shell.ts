@@ -1,5 +1,6 @@
 import { msg, updateWhenLocaleChanges } from '@lit/localize'
 import { html, LitElement, type PropertyValues, type TemplateResult } from 'lit'
+import { keyed } from 'lit/directives/keyed.js'
 import { DEFAULT_PLAN, type Plan, plansForSale } from '../domain/plan.js'
 import type { AuthMethods, AuthMethodsApi } from './auth-methods.js'
 import {
@@ -136,6 +137,10 @@ export const VIEWS: Readonly<
   'device-list': (_params, host) =>
     html`<device-list-view .projectName=${host.projectName()}></device-list-view>`,
   'edit-device': (params) => html`<edit-device-view uuid=${params.id ?? ''}></edit-device-view>`,
+  // Keyed by the draft, so finishing another draft is a new form rather than this one with its
+  // controls still holding the first draft's values (#358). The add form reads its draft once.
+  'finish-device': (params) =>
+    html`${keyed(params.id, html`<finish-device-view draft-id=${params.id ?? ''}></finish-device-view>`)}`,
   rooms: (_params, host) => html`<rooms-view .projectName=${host.projectName()}></rooms-view>`,
   account: (_params, host) => host.renderAccount(),
   settings: () => html`<settings-view></settings-view>`,
@@ -498,7 +503,10 @@ export class AppShell extends LitElement implements ViewHost {
       }
       return
     }
-    if (leave && link !== undefined && guard.holdsInput()) {
+    // `leave` alone decides. A check of `holdsInput` here (CodeRabbit on #368) could only
+    // swallow the click the person chose to follow - and since #358 it would: Save as draft
+    // stores the input, so the form holds nothing unsaved by the time this runs.
+    if (leave && link !== undefined) {
       guard.release()
       window.location.hash = link
     }

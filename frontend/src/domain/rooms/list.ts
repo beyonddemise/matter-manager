@@ -14,7 +14,7 @@
  * @module
  */
 
-import type { DeviceDocument, Unsaved } from '../documents/types.js'
+import type { StoredDevice, Unsaved } from '../documents/types.js'
 import { compareRoomPaths, renameRoomPath, roomPathKey } from './path.js'
 
 /** One room, as the Rooms page lists it. */
@@ -31,6 +31,11 @@ export interface Room {
   readonly spellings: readonly [string, ...string[]]
   /** Devices filed exactly here, disabled ones included. Sub-rooms count separately. */
   readonly deviceCount: number
+  /**
+   * How many of {@link deviceCount} are drafts (#358). A draft with a room is in it like any
+   * device (ADR 0021); the Rooms page says how many, so the count is not taken for finished work.
+   */
+  readonly draftCount: number
 }
 
 /** Compares two strings by code point, returning the usual negative, zero or positive. */
@@ -48,10 +53,13 @@ const compareText = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 
  *   its locale collator so the list sorts as the device list does.
  */
 export function roomsOf(
-  devices: readonly DeviceDocument[],
+  devices: readonly StoredDevice[],
   compare: (a: string, b: string) => number = compareText,
 ): readonly Room[] {
-  const byKey = new Map<string, { spellings: Set<string>; deviceCount: number }>()
+  const byKey = new Map<
+    string,
+    { spellings: Set<string>; deviceCount: number; draftCount: number }
+  >()
   for (const device of devices) {
     // `?? ''`: a document written before ADR 0021 has `roomId` and no `room`. No repair is
     // made (ADR 0021), but it must not crash the page that lists rooms.
@@ -59,10 +67,13 @@ export function roomsOf(
     const key = roomPathKey(path)
     if (key === '') continue
     const entry = byKey.get(key)
-    if (entry === undefined) byKey.set(key, { spellings: new Set([path]), deviceCount: 1 })
-    else {
+    const draft = device.status === 'draft' ? 1 : 0
+    if (entry === undefined) {
+      byKey.set(key, { spellings: new Set([path]), deviceCount: 1, draftCount: draft })
+    } else {
       entry.spellings.add(path)
       entry.deviceCount++
+      entry.draftCount += draft
     }
   }
 
@@ -71,10 +82,11 @@ export function roomsOf(
   const byPath = (a: string, b: string): number =>
     compareRoomPaths(a, b, compare) || compareText(a, b)
   return [...byKey]
-    .map(([key, { spellings, deviceCount }]) => ({
+    .map(([key, { spellings, deviceCount, draftCount }]) => ({
       key,
       spellings: [...spellings].sort(byPath) as [string, ...string[]],
       deviceCount,
+      draftCount,
     }))
     .sort((a, b) => byPath(a.spellings[0], b.spellings[0]))
 }
@@ -98,10 +110,10 @@ export function roomsOf(
  * @throws {RoomPathError} If `from` or `to` is not a usable room path.
  */
 export function renameRoom(
-  devices: readonly DeviceDocument[],
+  devices: readonly StoredDevice[],
   from: string,
   to: string,
-): readonly Unsaved<DeviceDocument>[] {
+): readonly Unsaved<StoredDevice>[] {
   return devices.flatMap((device) => {
     const path = device.room ?? ''
     if (path === '') return []

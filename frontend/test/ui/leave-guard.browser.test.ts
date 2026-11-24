@@ -55,7 +55,7 @@ function dialogOpen(form: HTMLElement): boolean {
   return (form.querySelector('[data-leave-dialog]') as { open?: boolean } | null)?.open === true
 }
 
-async function choose(form: HTMLElement, choice: 'stay' | 'discard'): Promise<void> {
+async function choose(form: HTMLElement, choice: 'stay' | 'discard' | 'draft'): Promise<void> {
   await waitUntil(() => dialogOpen(form), 'the form never asked')
   form.querySelector<HTMLElement>(`[data-leave-${choice}]`)?.click()
 }
@@ -236,5 +236,34 @@ describe('the parts', () => {
       link.remove()
     }
     expect(heard).toEqual(['#/rooms', undefined, undefined, undefined, undefined])
+  })
+})
+
+describe('Save as draft in the question (#358)', () => {
+  it('keeps a draft and goes where Back was going', async () => {
+    const { shell, form } = await shellOnForm()
+    type(form, 'name', 'Lamp')
+
+    history.back()
+    await choose(form, 'draft')
+
+    await waitUntil(() => shell.querySelector('device-list-view') !== null, 'never left')
+    expect(location.hash).toBe('#/devices')
+    await waitUntil(
+      () => shell.querySelector('device-list-view [data-draft-marker]') !== null,
+      'the list never showed the draft',
+    )
+  })
+
+  it('follows the link it was asked for once the draft is stored', async () => {
+    // The form holds nothing unsaved by then, which a holdsInput check on the link would
+    // have taken for a reason to swallow the click (#368 review).
+    const { shell, form } = await shellOnForm()
+    type(form, 'name', 'Lamp')
+
+    shell.querySelector<HTMLAnchorElement>('nav a[href="#/rooms"]')?.click()
+    await choose(form, 'draft')
+
+    await waitUntil(() => location.hash === '#/rooms', `went to ${location.hash}`)
   })
 })

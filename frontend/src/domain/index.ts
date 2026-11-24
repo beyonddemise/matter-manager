@@ -41,6 +41,12 @@ export {
   type DraftProblem,
 } from './documents/draft.js'
 export {
+  draftFormOf,
+  isDraftDevice,
+  planDraftDevice,
+  planFinishedDevice,
+} from './documents/draft-device.js'
+export {
   planDeviceEdit,
   setDeviceDisabled,
 } from './documents/edit-device.js'
@@ -83,6 +89,8 @@ export type {
   CatalogSource,
   DeviceDiscovery,
   DeviceDocument,
+  DraftDeviceDocument,
+  StoredDevice,
   Unsaved,
 } from './documents/types.js'
 export { BASE38_ALPHABET, Base38Error, decodeBase38, encodeBase38 } from './matter/base38.js'

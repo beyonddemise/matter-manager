@@ -7,6 +7,7 @@ import {
   readName,
   readRoomPath,
 } from '../../../src/domain/documents/draft.js'
+import { planDraftDevice } from '../../../src/domain/documents/draft-device.js'
 import { type DeviceDraft, planNewDevice } from '../../../src/domain/documents/new-device.js'
 import { addRemark } from '../../../src/domain/documents/remark.js'
 import type { DeviceDocument } from '../../../src/domain/documents/types.js'
@@ -134,6 +135,9 @@ describe('the union', () => {
       draftProblemFrom(() => readInstalledAt('2026-02-31')).problem,
       draftProblemFrom(() => addRemark(device(), ' ', { sub: 'local', name: 'Ada' }, clock))
         .problem,
+      draftProblemFrom(() =>
+        planDraftDevice({ credential: '', name: '', room: '', installedAt: '' }, [], clock),
+      ).problem,
     ])
     expect([...own].sort()).toEqual([...reached].sort())
   })

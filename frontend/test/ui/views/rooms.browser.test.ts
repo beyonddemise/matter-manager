@@ -6,7 +6,12 @@ import '@awesome.me/webawesome-pro/dist/components/input/input.js'
 import { fixture, html, waitUntil } from '@open-wc/testing-helpers'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { ProjectRepositories } from '../../../src/data/index.js'
-import { type DeviceDocument, roomPathKey, type Unsaved } from '../../../src/domain/index.js'
+import {
+  type DeviceDocument,
+  roomPathKey,
+  type StoredDevice,
+  type Unsaved,
+} from '../../../src/domain/index.js'
 import { PROJECT_DATA_CHANGED } from '../../../src/ui/current-project.js'
 import { useProjectDatabase } from '../../../src/ui/db/project-database.js'
 import type { RoomsView } from '../../../src/ui/views/rooms.js'
@@ -61,7 +66,7 @@ const key = (path: string): string => roomPathKey(path)
 /** The room each device is filed under, by id: what a rename is supposed to change. */
 const filed = async (): Promise<Record<string, string>> =>
   Object.fromEntries(
-    (await database.repositories.devices.list()).map((stored) => [stored._id, stored.room]),
+    (await database.repositories.devices.list()).map((stored) => [stored._id, stored.room ?? '']),
   )
 
 /** The row of the room `path` names, by key, so any spelling finds it. */
@@ -365,5 +370,24 @@ describe('when the project’s documents change', () => {
 
     await waitUntil(() => keys(element).includes(key('Porch')), 'the new room never showed')
     expect(keys(element)).toEqual([key('Kitchen'), key('Porch')])
+  })
+})
+
+describe('drafts in a room (#358)', () => {
+  it('counts a draft in its room and says how many are drafts, in words', async () => {
+    await database.repositories.devices.save(device('device:a', 'Hall'))
+    await database.repositories.devices.save({
+      _id: 'device:b',
+      type: 'device',
+      status: 'draft',
+      room: 'Hall',
+      addedAt: '2026-11-24T09:00:00.000Z',
+      disabled: false,
+      remarks: [],
+    } as Unsaved<StoredDevice>)
+    const element = await view()
+
+    const count = row(element, 'Hall').querySelector('[data-room-count]')?.textContent
+    expect(count?.replace(/\s+/g, ' ').trim()).toBe('2 devices · 1 draft')
   })
 })

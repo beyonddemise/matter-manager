@@ -50,6 +50,8 @@ export const DRAFT_PROBLEMS = [
   'installedAtNotACalendarDate',
   /** A remark with nothing in it. */
   'remarkEmpty',
+  /** A draft with no value in it at all (#358): there is nothing to come back to. */
+  'draftEmpty',
   ...PAYLOAD_PROBLEMS,
 ] as const
 

@@ -52,6 +52,10 @@ export function problemMessage(problem: DraftProblem): string {
       return msg('The installation date must be a real calendar date.')
     case 'remarkEmpty':
       return msg('A remark needs some text; there is nothing to record yet.')
+    case 'draftEmpty':
+      return msg(
+        'A draft needs at least one value: a setup code, a room, a name, a spot or a serial number.',
+      )
 
     // The setup code, in the two forms it comes in. These are kept apart rather than collapsed
     // into "the code is wrong" because they call for different things from the reader: count

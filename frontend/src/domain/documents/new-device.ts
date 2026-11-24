@@ -16,7 +16,7 @@
  * @module
  */
 
-import { catalogFields } from '../catalog/copy.js'
+import { type CatalogFields, catalogFields } from '../catalog/copy.js'
 import type { CatalogLookup } from '../catalog/types.js'
 import { type DeviceCredential, readCredential } from '../matter/credential.js'
 import { PayloadError } from '../matter/payload.js'
@@ -48,7 +48,7 @@ export interface DeviceDraft extends DeviceFields {
  *
  * @throws {DraftError} on `credential` when the code does not decode.
  */
-function credentialOf(draft: DeviceDraft): DeviceCredential {
+export function credentialOf(draft: DeviceDraft): DeviceCredential {
   try {
     return readCredential(draft.credential)
   } catch (cause) {
@@ -98,17 +98,44 @@ export function planNewDevice(
   // Read once: `addedAt` and `catalogCheckedAt` are the same moment, and two reads of a real
   // clock can straddle a second.
   const now = clock.now()
-  const answersThisCode =
-    catalog !== undefined &&
-    catalog.vendorId === credential.vendorId &&
-    catalog.productId === credential.productId
-  const { discovery } = credential
-
   const device: Unsaved<DeviceDocument> = {
     _id: documentId('device', clock.uuid()),
     type: 'device',
     name,
     room,
+    ...credentialFields(credential),
+    ...optionalText('spot', draft.spot),
+    ...optionalText('serial', draft.serial),
+    installedAt,
+    addedAt: now,
+    disabled: false,
+    remarks: [],
+    ...catalogFor(credential, catalog, now),
+  }
+
+  return device
+}
+
+/**
+ * What a device stores of its setup code: the manual code always, the rest when the code
+ * carried it. Shared with the draft planner (#358), so a draft's code is stored, and encrypted
+ * (ADR 0022), exactly as a device's is.
+ */
+export function credentialFields(
+  credential: DeviceCredential,
+): Pick<
+  DeviceDocument,
+  | 'manualCode'
+  | 'payload'
+  | 'vendorId'
+  | 'productId'
+  | 'discriminator'
+  | 'payloadVersion'
+  | 'commissioningFlow'
+  | 'discovery'
+> {
+  const { discovery } = credential
+  return {
     manualCode: credential.manualCode,
     // Conditional spreads throughout: under `exactOptionalPropertyTypes` an explicit
     // `undefined` is not assignable to an optional field, which is the setting doing its job -
@@ -129,17 +156,24 @@ export function planNewDevice(
             onNetwork: discovery.onNetwork,
           },
         }),
-    ...optionalText('spot', draft.spot),
-    ...optionalText('serial', draft.serial),
-    installedAt,
-    addedAt: now,
-    disabled: false,
-    remarks: [],
-    // `catalog !== undefined` repeated: a boolean held in a variable does not narrow `catalog`.
-    ...(catalog !== undefined && answersThisCode ? catalogFields(catalog, now) : {}),
   }
+}
 
-  return device
+/**
+ * The catalogue block for `credential` from `catalog`, or nothing when the answer is about
+ * another code: one that landed for a code since corrected would name this device after
+ * another product.
+ */
+export function catalogFor(
+  credential: DeviceCredential,
+  catalog: CatalogLookup | undefined,
+  now: string,
+): Partial<CatalogFields> {
+  return catalog !== undefined &&
+    catalog.vendorId === credential.vendorId &&
+    catalog.productId === credential.productId
+    ? catalogFields(catalog, now)
+    : {}
 }
 
 /**

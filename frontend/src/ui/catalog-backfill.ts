@@ -29,8 +29,8 @@ import { isConflict, isLockedDocument, type Repository } from '../data/index.js'
 import {
   type CatalogFields,
   catalogFields,
-  type DeviceDocument,
   needsCatalogLookup,
+  type StoredDevice,
   withCatalogBlock,
 } from '../domain/index.js'
 import type { CatalogApi } from './catalog.js'
@@ -44,7 +44,7 @@ export const BACKFILL_GAP_MS = 1000
 export interface BackfillDependencies {
   readonly lookup: CatalogApi['lookup']
   /** The open project's devices, read at the start of each run. */
-  readonly devices: () => Repository<DeviceDocument>
+  readonly devices: () => Repository<StoredDevice>
   /** Whether the open project may be written; a read-only shared project is never backfilled. */
   readonly editable: () => boolean
   readonly now: () => Date
@@ -86,7 +86,8 @@ const unusableBlock = (checkedAt: string): Partial<CatalogFields> => ({
 })
 
 /** What to send: the payload if there is one, else the digits of the manual code. */
-const codeOf = (device: DeviceDocument): string => device.payload ?? device.manualCode
+// `undefined` only for a draft with no code yet (#358), which `needsCatalogLookup` never picks.
+const codeOf = (device: StoredDevice): string | undefined => device.payload ?? device.manualCode
 
 /**
  * Writes one catalogue block into one device, on a fresh read.
@@ -100,7 +101,7 @@ const codeOf = (device: DeviceDocument): string => device.payload ?? device.manu
  *   pass on it
  */
 async function fill(
-  devices: Repository<DeviceDocument>,
+  devices: Repository<StoredDevice>,
   id: string,
   block: (checkedAt: string) => Partial<CatalogFields>,
   deps: BackfillDependencies,
@@ -144,7 +145,9 @@ async function runOnce(deps: BackfillDependencies, signal: AbortSignal): Promise
       first = false
       if (signal.aborted) return
 
-      const outcome = await deps.lookup(codeOf(candidate), signal)
+      const code = codeOf(candidate)
+      if (code === undefined) break
+      const outcome = await deps.lookup(code, signal)
       if (signal.aborted) return
 
       if (outcome.kind === 'rate-limited') {

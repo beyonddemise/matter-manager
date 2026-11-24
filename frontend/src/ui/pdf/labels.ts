@@ -22,6 +22,7 @@ import {
   type PlacedLabel,
   roomPathBreadcrumb,
 } from '../../domain/index.js'
+import { type DraftWords, printedName } from './draft-words.js'
 import { ExportCancelled, type InventoryProgress } from './progress.js'
 import { drawQr } from './qr.js'
 import { winAnsiSafe } from './win-ansi.js'
@@ -34,6 +35,8 @@ export interface LabelOptions {
   /** What a label says instead of a QR when the device was filed from a pairing code. */
   readonly noQrCode: string
   readonly withoutRoom: string
+  /** How a draft is marked on its label (#358). */
+  readonly drafts: DraftWords
   readonly onProgress?: (progress: InventoryProgress) => void
   readonly cancelled?: () => boolean
 }
@@ -185,7 +188,7 @@ function drawLabel(
   const nameSize = 9
   const detailSize = 7
 
-  page.drawText(fitted(device.name, bold, nameSize, textWidth), {
+  page.drawText(fitted(printedName(device, options.drafts), bold, nameSize, textWidth), {
     x: textLeft,
     y: yOf(top + nameSize),
     size: nameSize,
@@ -209,20 +212,24 @@ function drawLabel(
   // at whatever size fits: a code a reader has to squint at beats one that is cut in half.
   // Digits only, so the guard is a no-op — applied anyway, so that every `drawText` in this
   // file goes through it and none can be forgotten when this changes.
-  const code = winAnsiSafe(device.manualCode)
-  let codeSize = detailSize
-  while (codeSize > 4 && regular.widthOfTextAtSize(code, codeSize) > textWidth) codeSize -= 0.25
+  // A draft may have no code yet (#358); its label then says so where the QR would be.
+  if (device.manualCode !== undefined) {
+    const code = winAnsiSafe(device.manualCode)
+    let codeSize = detailSize
+    while (codeSize > 4 && regular.widthOfTextAtSize(code, codeSize) > textWidth) codeSize -= 0.25
 
-  page.drawText(code, {
-    x: textLeft,
-    y: yOf(top + nameSize + detailSize * 2 + 7),
-    size: codeSize,
-    font: regular,
-    color: ink,
-  })
+    page.drawText(code, {
+      x: textLeft,
+      y: yOf(top + nameSize + detailSize * 2 + 7),
+      size: codeSize,
+      font: regular,
+      color: ink,
+    })
+  }
 
   if (device.payload === undefined) {
-    page.drawText(fitted(options.noQrCode, regular, 5, qrSize), {
+    const missing = device.manualCode === undefined ? options.drafts.noSetupCode : options.noQrCode
+    page.drawText(fitted(missing, regular, 5, qrSize), {
       x: left + 2,
       y: yOf(top + qrSize / 2),
       size: 5,

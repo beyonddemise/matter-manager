@@ -6,6 +6,7 @@ import {
   type InventoryLabels,
 } from '../../../src/ui/pdf/inventory.js'
 import { yieldToBrowser } from '../../../src/ui/pdf/yield.js'
+import { DRAFTS } from './draft-words.js'
 
 /**
  * Does a large export freeze the interface?
@@ -34,6 +35,7 @@ const LABELS: InventoryLabels = {
   withoutRoom: 'Without a room',
   nothingToExport: 'Nothing to export.',
   testVendor: 'Test vendor',
+  drafts: DRAFTS,
 }
 
 const devices = (count: number): DeviceDocument[] =>

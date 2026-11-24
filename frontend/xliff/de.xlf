@@ -183,8 +183,8 @@
   <target>Löschen</target>
 </trans-unit>
 <trans-unit id="s8b491ccba1cefcb0">
-  <source>Delete “<x id="0" equiv-text="${device.name}"/>”?</source>
-  <target>„<x id="0" equiv-text="${device.name}"/>“ löschen?</target>
+  <source>Delete “<x id="0" equiv-text="${shownName(device)}"/>”?</source>
+  <target>„<x id="0" equiv-text="${shownName(device)}"/>“ löschen?</target>
 </trans-unit>
 <trans-unit id="sb9dbda9514666e22">
   <source>Deleting a device deletes its commissioning code with it. That code cannot be recovered, and without it the device can only be re-commissioned after a factory reset.</source>
@@ -327,8 +327,8 @@
   <target>PDF wird erstellt: <x id="0" equiv-text="${this.exportProgress?.done ?? 0}"/> von <x id="1" equiv-text="${this.exportProgress?.total ?? 0}"/> Geräten.</target>
 </trans-unit>
 <trans-unit id="s01924e0434d0960b">
-  <source>Select <x id="0" equiv-text="${device.name}"/></source>
-  <target><x id="0" equiv-text="${device.name}"/> auswählen</target>
+  <source>Select <x id="0" equiv-text="${shownName(device)}"/></source>
+  <target><x id="0" equiv-text="${shownName(device)}"/> auswählen</target>
 </trans-unit>
 <trans-unit id="see032876f36baf10">
   <source>Export this room</source>
@@ -1623,6 +1623,89 @@
 <trans-unit id="sc00a88b90cd60661">
   <source>Discard</source>
   <target>Verwerfen</target>
+</trans-unit>
+<trans-unit id="s896eab3b64401d57">
+  <source>1 draft</source>
+  <target>1 Entwurf</target>
+</trans-unit>
+<trans-unit id="s5e73d7f1935c7c0c">
+  <source>A draft needs at least one value: a setup code, a room, a name, a spot or a serial number.</source>
+  <target>Ein Entwurf braucht mindestens einen Wert: einen Einrichtungscode, einen Raum, einen Namen, eine Stelle oder eine Seriennummer.</target>
+</trans-unit>
+<trans-unit id="s757f2b00335a8688">
+  <source>Draft: <x id="0" equiv-text="${name}"/></source>
+  <target>Entwurf: <x id="0" equiv-text="${name}"/></target>
+</trans-unit>
+<trans-unit id="s264cd9c6b80ca0fb">
+  <source>Untitled draft</source>
+  <target>Unbenannter Entwurf</target>
+</trans-unit>
+<trans-unit id="s17d78efbafb70c72">
+  <source>No setup code yet</source>
+  <target>Noch kein Einrichtungscode</target>
+</trans-unit>
+<trans-unit id="sf471ec2496f904cc">
+  <source>Discard changes</source>
+  <target>Änderungen verwerfen</target>
+</trans-unit>
+<trans-unit id="s67f54c0dd308a771">
+  <source>Draft not found</source>
+  <target>Entwurf nicht gefunden</target>
+</trans-unit>
+<trans-unit id="se1799f04f88dd5f3">
+  <source>There is no draft with that address in this catalogue. It may have been deleted.</source>
+  <target>In diesem Katalog gibt es keinen Entwurf unter dieser Adresse. Vielleicht wurde er gelöscht.</target>
+</trans-unit>
+<trans-unit id="s4c2434f286eafafa">
+  <source>Finish a draft</source>
+  <target>Entwurf fertigstellen</target>
+</trans-unit>
+<trans-unit id="s6416760c6e0f9597">
+  <source>This draft has no setup code yet. Finish it to add one.</source>
+  <target>Dieser Entwurf hat noch keinen Einrichtungscode. Stellen Sie ihn fertig, um einen hinzuzufügen.</target>
+</trans-unit>
+<trans-unit id="s4919311c389bae6d">
+  <source>Delete draft</source>
+  <target>Entwurf löschen</target>
+</trans-unit>
+<trans-unit id="sc46c45770922ff5b">
+  <source>This device is a draft: it was saved before every required field was filled in. Finish it to add what is missing.</source>
+  <target>Dieses Gerät ist ein Entwurf: Es wurde gespeichert, bevor alle Pflichtfelder ausgefüllt waren. Stellen Sie es fertig, um das Fehlende zu ergänzen.</target>
+</trans-unit>
+<trans-unit id="s2b7970982d0da615">
+  <source>Deleting this draft deletes everything saved in it, including its setup code if it has one. It cannot be recovered.</source>
+  <target>Wenn Sie diesen Entwurf löschen, wird alles gelöscht, was darin gespeichert ist, auch sein Einrichtungscode, falls er einen hat. Das lässt sich nicht rückgängig machen.</target>
+</trans-unit>
+<trans-unit id="sad59707375956ad2">
+  <source>Finish</source>
+  <target>Fertigstellen</target>
+</trans-unit>
+<trans-unit id="sb835146ad5b41cbc">
+  <source>Save it as a draft to finish it later.</source>
+  <target>Speichern Sie ihn als Entwurf, um ihn später fertigzustellen.</target>
+</trans-unit>
+<trans-unit id="se126d7cb978a39f3">
+  <source>It cannot be saved as a draft yet.</source>
+  <target>Als Entwurf lässt er sich noch nicht speichern.</target>
+</trans-unit>
+<trans-unit id="sc1e9cbf343a3131b">
+  <source>Save as draft</source>
+  <target>Als Entwurf speichern</target>
+</trans-unit>
+<trans-unit id="sa3dd844622d0d1f7">
+  <source><x id="0" equiv-text="${count}"/> drafts</source>
+  <target><x id="0" equiv-text="${count}"/> Entwürfe</target>
+  <note from="lit-localize">A count of devices saved as drafts.</note>
+</trans-unit>
+<trans-unit id="draft.marker">
+  <source>Draft</source>
+  <target>Entwurf</target>
+  <note from="lit-localize">Marks a device saved before it was complete</note>
+</trans-unit>
+<trans-unit id="sad3e3c8146fc920f">
+  <source>Status</source>
+  <target>Status</target>
+  <note from="lit-localize">Spreadsheet column header: whether a device is a draft</note>
 </trans-unit>
 </body>
 </file>

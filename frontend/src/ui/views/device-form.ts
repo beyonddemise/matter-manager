@@ -7,13 +7,13 @@ import { html, LitElement, type PropertyDeclarations, type TemplateResult } from
 import { ProjectLockedError, type ProjectRepositories } from '../../data/index.js'
 import {
   type CatalogNames,
-  type DeviceDocument,
   type DeviceFields,
   type DraftError,
   type DraftField,
   normaliseRoomPath,
   type Room,
   roomsOf,
+  type StoredDevice,
   type Unsaved,
 } from '../../domain/index.js'
 import { PROJECT_CHANGED, PROJECT_DATA_CHANGED } from '../current-project.js'
@@ -241,20 +241,32 @@ export abstract class DeviceFormView extends LitElement {
    * @param since the {@link projectSnapshot} taken when the save began; after a switch since
    *   then nothing is written (the form has already left for the device list)
    */
-  protected async write(device: Unsaved<DeviceDocument>, since: number): Promise<boolean> {
-    if (since !== this.projectGeneration) return false
+  protected async write(device: Unsaved<StoredDevice>, since: number): Promise<boolean> {
+    return (await this.writeSaved(device, since)) !== undefined
+  }
+
+  /**
+   * {@link write}, answering the document as stored rather than whether it worked: the add form
+   * keeps a saved draft's new revision, so saving it again updates it instead of conflicting
+   * (#358). `undefined` for every refusal `write` reports as `false`.
+   */
+  protected async writeSaved(
+    device: Unsaved<StoredDevice>,
+    since: number,
+  ): Promise<StoredDevice | undefined> {
+    if (since !== this.projectGeneration) return undefined
     try {
-      await this.repos().devices.save(device)
+      const saved = await this.repos().devices.save(device)
       // Not observable today: a successful save always navigates away from the form, so
       // nothing renders this flag afterwards, and a mutation probe reports the line as a
       // survivor. It stays because it makes the flag a true statement about the last attempt
       // rather than one that happens to be true because of where the caller goes next - the
       // same reason `new-device.ts` keeps its unreachable rethrow.
       this.saveFailed = false
-      return true
+      return saved
     } catch (error) {
       this.saveFailed = error instanceof ProjectLockedError ? 'locked' : 'storage'
-      return false
+      return undefined
     }
   }
 

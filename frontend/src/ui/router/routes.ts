@@ -54,6 +54,12 @@ export const ROUTES: readonly Route[] = [
     view: 'edit-device',
     load: () => import('../views/edit-device.js'),
   },
+  // A draft is finished in the add form, reopened on it (#358): the same steps, the same checks.
+  {
+    path: '/devices/:id/finish',
+    view: 'finish-device',
+    load: () => import('../views/add-device.js'),
+  },
   {
     path: '/rooms',
     view: 'rooms',

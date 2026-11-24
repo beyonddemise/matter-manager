@@ -169,10 +169,12 @@ export function catalogFields(lookup: CatalogLookup, checkedAt: string): Catalog
  * retried a day later because the DCL gains products every week.
  */
 export function needsCatalogLookup(
-  device: Pick<DeviceDocument, 'payload' | 'manualCode' | 'catalogCheckedAt' | 'catalogSource'>,
+  // `manualCode` optional: a draft may not have a code yet (#358), and then has nothing to ask.
+  device: Pick<DeviceDocument, 'payload' | 'catalogCheckedAt' | 'catalogSource'> &
+    Partial<Pick<DeviceDocument, 'manualCode'>>,
   now: Date,
 ): boolean {
-  const carriesIds = device.payload !== undefined || LONG_MANUAL_CODE.test(device.manualCode)
+  const carriesIds = device.payload !== undefined || LONG_MANUAL_CODE.test(device.manualCode ?? '')
   if (!carriesIds) return false
   if (device.catalogCheckedAt === undefined) return true
   if (device.catalogSource !== 'missing') return false

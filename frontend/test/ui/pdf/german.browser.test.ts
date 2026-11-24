@@ -21,6 +21,11 @@ const LABELS: InventoryLabels = {
   withoutRoom: 'Ohne Raum',
   nothingToExport: 'Es gibt keine Geräte zum Exportieren.',
   testVendor: 'Testhersteller',
+  drafts: {
+    marked: (name) => `Entwurf: ${name}`,
+    untitled: 'Unbenannter Entwurf',
+    noSetupCode: 'Noch kein Einrichtungscode',
+  },
 }
 
 const device = (name: string, extra: Partial<DeviceDocument> = {}): DeviceDocument => ({

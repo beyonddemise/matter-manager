@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { Repository } from '../../src/data/index.js'
-import type { DeviceDocument, Unsaved } from '../../src/domain/index.js'
+import type { DeviceDocument, StoredDevice, Unsaved } from '../../src/domain/index.js'
 import type { LookupOutcome } from '../../src/ui/catalog.js'
 import {
   abortableDelay,
@@ -79,6 +79,33 @@ describe('catalogue backfill', () => {
     const stored = await database.repositories.devices.get('device:a')
     expect(stored?.vendorName).toBe('Aqara')
     expect(stored?.catalogCheckedAt).toBe(NOW.toISOString())
+  })
+
+  it('names a draft that has a code, keeps it a draft, and never asks for one without (#358)', async () => {
+    const draft = (id: string, extra: object = {}) =>
+      ({
+        _id: `device:${id}`,
+        type: 'device',
+        status: 'draft',
+        addedAt: '2026-10-01T08:00:00.000Z',
+        disabled: false,
+        remarks: [],
+        ...extra,
+      }) as Unsaved<StoredDevice>
+    await database.repositories.devices.save(
+      draft('coded', { manualCode: LONG_CODE, payload: PAYLOAD }),
+    )
+    await database.repositories.devices.save(draft('bare', { name: 'Fan' }))
+    const { backfill, calls } = runner(found)
+
+    backfill.trigger()
+    await backfill.idle()
+
+    expect(calls).toHaveLength(1)
+    expect(await database.repositories.devices.get('device:coded')).toMatchObject({
+      status: 'draft',
+      vendorName: 'Aqara',
+    })
   })
 
   it('never touches what the user entered', async () => {
@@ -278,7 +305,7 @@ describe('catalogue backfill', () => {
     let raced = false
     // The user renames the device between backfill reading it and writing it: the write is
     // refused (409), and must neither throw nor overwrite the rename.
-    const racing: Repository<DeviceDocument> = {
+    const racing: Repository<StoredDevice> = {
       ...real,
       get: async (id) => {
         const read = await real.get(id)
@@ -328,7 +355,7 @@ describe('catalogue backfill', () => {
     await database.repositories.devices.save(device('a'))
     await database.repositories.devices.save(device('b'))
     const real = database.repositories.devices
-    const failing: Repository<DeviceDocument> = {
+    const failing: Repository<StoredDevice> = {
       ...real,
       saveKeepingUpdatedAt: () =>
         Promise.reject(Object.assign(new Error('quota'), { status: 500 })),

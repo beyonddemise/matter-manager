@@ -22,14 +22,14 @@ import { isLockedDocument, ProjectLockedError } from '../../data/index.js'
 import { ARCHIVE_LIMITS, projectArchiveEntries } from '../../domain/archive/project-archive.js'
 import { writeZip, type ZipEntry, ZipError } from '../../domain/archive/zip.js'
 import { isProjectDocument, PROJECT_DOCUMENT_ID } from '../../domain/documents/project.js'
-import type { DeviceDocument } from '../../domain/index.js'
+import type { StoredDevice } from '../../domain/index.js'
 import { openProject, rawDatabase } from '../db/project-database.js'
 import { offerDownload } from '../pdf/download.js'
 import { streamCodecs } from './codec.js'
 
 /** What an export touches; injectable so a test need not own the browser's databases. */
 export interface ExportDependencies {
-  readonly devices: (dbName: string) => Promise<readonly DeviceDocument[]>
+  readonly devices: (dbName: string) => Promise<readonly StoredDevice[]>
   /** The `project` document's name and client, when the database has one. */
   readonly projectDocument: (
     dbName: string,

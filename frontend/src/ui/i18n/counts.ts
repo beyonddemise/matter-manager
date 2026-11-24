@@ -12,3 +12,10 @@ import { msg, str } from '@lit/localize'
 export function deviceCountText(count: number): string {
   return count === 1 ? msg('1 device') : msg(str`${count} devices`, { desc: 'A count of devices.' })
 }
+
+/** "1 draft", "3 drafts": how many of a room's devices are not finished yet (#358). */
+export function draftCountText(count: number): string {
+  return count === 1
+    ? msg('1 draft')
+    : msg(str`${count} drafts`, { desc: 'A count of devices saved as drafts.' })
+}

@@ -2,16 +2,16 @@ import { msg, updateWhenLocaleChanges } from '@lit/localize'
 import { html, LitElement, nothing, type PropertyDeclarations, type TemplateResult } from 'lit'
 import { ProjectLockedError, type ProjectRepositories } from '../../data/index.js'
 import {
-  type DeviceDocument,
   type Room,
   type RoomPathProblem,
   renameRoom,
   roomPathProblem,
   roomsOf,
+  type StoredDevice,
 } from '../../domain/index.js'
 import { PROJECT_CHANGED, PROJECT_DATA_CHANGED } from '../current-project.js'
 import { projectDatabase, projectIsEditable } from '../db/project-database.js'
-import { deviceCountText } from '../i18n/counts.js'
+import { deviceCountText, draftCountText } from '../i18n/counts.js'
 import { displayOrder } from '../i18n/localization.js'
 import { lockedProjectMessage, problemMessage } from '../i18n/problems.js'
 import { fieldValue } from './device-form.js'
@@ -60,7 +60,7 @@ export class RoomsView extends LitElement {
   /** The open project's name, from the shell; see `projectLine`. */
   declare projectName: string
   /** Every device: the rooms are derived from them. */
-  declare devices: readonly DeviceDocument[]
+  declare devices: readonly StoredDevice[]
   declare loaded: boolean
   /** A read or a rename did not finish. */
   declare failed: boolean
@@ -246,7 +246,12 @@ export class RoomsView extends LitElement {
             ${roomSpellings(room.spellings)}
           </a>
           <small class="app-empty" data-room-count>
-            ${deviceCountText(room.deviceCount)}
+            ${deviceCountText(room.deviceCount)}${
+              // In words, so a count that includes unfinished work says so (#358).
+              room.draftCount === 0
+                ? ''
+                : html` · <span data-room-drafts>${draftCountText(room.draftCount)}</span>`
+            }
           </small>
         </div>
 

@@ -1,7 +1,13 @@
 import { PDFDocument, StandardFonts } from 'pdf-lib'
 import { describe, expect, it } from 'vitest'
-import { AVERY_L7160, browseDevices, type DeviceDocument } from '../../../src/domain/index.js'
+import {
+  AVERY_L7160,
+  browseDevices,
+  type DeviceDocument,
+  type StoredDevice,
+} from '../../../src/domain/index.js'
 import { buildLabelPdf, type LabelOptions, labelColumns } from '../../../src/ui/pdf/labels.js'
+import { DRAFTS } from './draft-words.js'
 import { extractPlacedText } from './text-extraction.js'
 
 /** The verified reference device; see `test/domain/matter/payload.test.ts`. */
@@ -12,6 +18,7 @@ const OPTIONS: LabelOptions = {
   title: 'Labels',
   noQrCode: 'Filed from a pairing code',
   withoutRoom: 'Without a room',
+  drafts: DRAFTS,
 }
 
 /** The room line's size, in points, as `labels.ts` draws it. */
@@ -60,5 +67,27 @@ describe('the room on a label', () => {
 
     const font = await (await PDFDocument.create()).embedFont(StandardFonts.Helvetica)
     expect(font.widthOfTextAtSize(line?.text ?? '', DETAIL_SIZE)).toBeLessThanOrEqual(TEXT_WIDTH)
+  })
+})
+
+describe('a draft on a label (#358)', () => {
+  it('says Draft in its name line, and says it has no code where the QR would be', async () => {
+    const draft: StoredDevice = {
+      _id: 'device:d',
+      _rev: '1-a',
+      updatedAt: '2026-11-24T08:00:00.000Z',
+      type: 'device',
+      status: 'draft',
+      name: 'Fan',
+      addedAt: '2026-11-24T08:00:00.000Z',
+      disabled: false,
+      remarks: [],
+    }
+    const bytes = await buildLabelPdf(browseDevices([draft, lamp]), OPTIONS)
+    const texts = (await extractPlacedText(bytes)).map((line) => line.text)
+
+    expect(texts).toContain('Draft: Fan')
+    expect(texts).toContain('No setup code yet')
+    expect(texts).toContain('Studio lamp')
   })
 })

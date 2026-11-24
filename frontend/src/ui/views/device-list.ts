@@ -11,7 +11,6 @@ import { isLockedDocument, type ProjectRepositories } from '../../data/index.js'
 import {
   browseDevices,
   countSelected,
-  type DeviceDocument,
   type DeviceGroup,
   type ExportSelection,
   FIRST_LABEL,
@@ -20,6 +19,7 @@ import {
   type LabelStock,
   ROOM_PATH_SEPARATOR,
   roomPathBreadcrumb,
+  type StoredDevice,
   selectForExport,
   splitRoomPath,
   uuidOf,
@@ -29,6 +29,7 @@ import { projectDatabase, projectIsEditable } from '../db/project-database.js'
 import { displayOrder } from '../i18n/localization.js'
 import { lockedProjectMessage } from '../i18n/problems.js'
 import {
+  draftWords,
   inventoryFilename,
   inventoryLabels,
   labelsFilename,
@@ -36,6 +37,7 @@ import {
 } from '../pdf/download.js'
 import { ExportCancelled, type InventoryProgress } from '../pdf/progress.js'
 import { fieldValue } from './device-form.js'
+import { draftTag, draftWord, finishButton, shownName } from './draft-marker.js'
 import { projectLine } from './project-line.js'
 import { roomBreadcrumb, roomSpellings } from './room-breadcrumb.js'
 import { roomFromHash } from './room-filter.js'
@@ -111,7 +113,7 @@ export class DeviceListView extends LitElement {
   declare repositories?: ProjectRepositories
   /** The open project's name, from the shell; see `projectLine`. */
   declare projectName: string
-  declare devices: readonly DeviceDocument[]
+  declare devices: readonly StoredDevice[]
   /**
    * The room the list is filtered to, from `#/devices?room=…`, or `undefined` for every room.
    *
@@ -313,6 +315,8 @@ export class DeviceListView extends LitElement {
       compare: displayOrder(),
       // The stored name is English; people search for what the interface shows (#248).
       testVendorTerm: msg('Test vendor'),
+      // A draft is found by the word its marker shows (#358).
+      draftTerm: draftWord(),
     })
   }
 
@@ -433,7 +437,7 @@ export class DeviceListView extends LitElement {
     this.selected = next
   }
 
-  private renderDevice(device: DeviceDocument) {
+  private renderDevice(device: StoredDevice) {
     return html`
       <li class="wa-cluster wa-gap-s" ?data-disabled=${device.disabled} data-device-id=${device._id}>
         <!-- Outside the link, deliberately. Inside it, every tick would also navigate to the
@@ -443,17 +447,20 @@ export class DeviceListView extends LitElement {
           data-select
           ?checked=${this.selected.has(device._id)}
           @change=${() => this.toggleSelected(device._id)}
-          label=${msg(str`Select ${device.name}`)}
+          label=${msg(str`Select ${shownName(device)}`)}
         ></wa-checkbox>
         <!-- The whole row is the link, not just the name: a target the width of the list is
              what makes this usable on a phone, which is where a device gets looked up. -->
         <a class="wa-split app-device app-device-row" href="#/devices/${uuidOf(device._id) ?? ''}">
           <span class="wa-stack wa-gap-3xs">
-            <span>${device.name}</span>
+            <span class="wa-cluster wa-gap-xs">${shownName(device)} ${draftTag(device)}</span>
             ${device.spot === undefined ? '' : html`<small class="app-empty">${device.spot}</small>`}
           </span>
           ${device.disabled ? html`<wa-tag variant="neutral">${msg('Disabled')}</wa-tag>` : ''}
         </a>
+        <!-- Beside the row's link rather than inside it, for the checkbox's reason: one target
+             per action. Only for a draft (#358), and only where it can be saved (#55). -->
+        ${projectIsEditable() ? finishButton(device) : ''}
       </li>
     `
   }
@@ -694,6 +701,7 @@ export class DeviceListView extends LitElement {
         title: msg('Matter Manager labels'),
         noQrCode: msg('Filed from a pairing code'),
         withoutRoom: msg('Without a room'),
+        drafts: draftWords(),
         onProgress: (progress) => {
           if (token === this.exportToken) this.exportProgress = progress
         },

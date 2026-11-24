@@ -10,12 +10,21 @@ import {
   type CatalogLookup,
   catalogNames,
   type DeviceDraft,
+  type DraftDeviceDocument,
   DraftError,
+  documentId,
+  draftFormOf,
+  isDraftDevice,
   needsCatalogLookup,
   PayloadError,
   type PayloadProblem,
+  planDraftDevice,
+  planFinishedDevice,
   planNewDevice,
   readCredential,
+  type StoredDevice,
+  type Unsaved,
+  uuidOf,
 } from '../../domain/index.js'
 import { BACKFILL_WANTED, type CatalogApi } from '../catalog.js'
 import { catalog } from '../composition.js'
@@ -27,7 +36,7 @@ import { accessToken } from '../tokens.js'
 import { type ReviewSummary, renderReview, type StepStatus } from './add-device-review.js'
 import { type AddStep, type StepChecks, StepNavigation, stepOf } from './add-device-steps.js'
 import { DeviceFormView, fieldValue } from './device-form.js'
-import type { LeaveDialog } from './leave-dialog.js'
+import type { DraftOption, LeaveDialog } from './leave-dialog.js'
 import './leave-dialog.js'
 import './scan-dialog.js'
 
@@ -73,6 +82,15 @@ interface Reviewed {
   readonly code: string | undefined
 }
 
+/** The form's controls as plain text, absent optional values as empty ones. */
+type FormValues = Required<DeviceDraft>
+
+/** Whether two sets of values are the same input, so leaving would lose nothing. */
+function sameValues(a: FormValues, b: FormValues): boolean {
+  const keys = Object.keys(a) as (keyof FormValues)[]
+  return keys.every((key) => a[key].trim() === b[key].trim())
+}
+
 /** Whether two snapshots would show the person the same thing. */
 function sameReview(a: Reviewed, b: Reviewed): boolean {
   const keys = Object.keys(a.summary) as (keyof ReviewSummary)[]
@@ -102,10 +120,18 @@ function sameReview(a: Reviewed, b: Reviewed): boolean {
  * Each step is also an entry in the browser's history (#356), so Back moves one step back with
  * everything kept; leaving the form any other way while it holds input asks first, through the
  * shell's {@link LeaveGuard}.
+ *
+ * What it holds can be saved as a **draft** at any step (#358), and a draft reopens here
+ * (`#/devices/<uuid>/finish`, {@link draftId}) prefilled, on the first step that does not pass.
+ * Saving a draft again updates it; Save device finishes it through `planFinishedDevice`, the
+ * full checks of a new device.
  */
 export class AddDeviceView extends DeviceFormView implements LeaveGuard {
   static override properties = {
     ...DeviceFormView.properties,
+    draftId: { attribute: 'draft-id' },
+    stored: { state: true },
+    draftMissing: { state: true },
     scanSource: { attribute: false },
     canScan: { state: true },
     scanChecked: { state: true },
@@ -148,6 +174,21 @@ export class AddDeviceView extends DeviceFormView implements LeaveGuard {
    * from this, and a step shows its problem again when the person comes back to it.
    */
   declare checked: StepChecks
+
+  /**
+   * The uuid of the draft being finished, from `#/devices/<uuid>/finish`; `''` for a new
+   * device. Read once, when the form opens: the shell keys the element by it, so a different
+   * draft is a different form (`app-shell.ts`).
+   */
+  declare draftId: string
+  /**
+   * The draft as last read or saved (#358), or `undefined` for a device that has never been
+   * saved. Its id and revision are what make a second Save as draft an update of the same
+   * document, and what Save device finishes.
+   */
+  declare stored: DraftDeviceDocument | undefined
+  /** Whether {@link draftId} names no draft: gone, or never one. */
+  declare draftMissing: boolean
 
   /** Bound by a test to a camera that is not one; the real one otherwise. */
   declare scanSource?: ScanSource
@@ -207,8 +248,18 @@ export class AddDeviceView extends DeviceFormView implements LeaveGuard {
     },
   })
 
-  /** The date the form opened with, so that a date left as it was is not input to lose. */
-  private openedOn = ''
+  /**
+   * What the form opened with: empty controls and today's date for a new device, the draft's
+   * values for a reopened one. Leaving loses something only when the controls differ from it.
+   */
+  private baseline: FormValues = {
+    credential: '',
+    name: '',
+    room: '',
+    spot: '',
+    serial: '',
+    installedAt: '',
+  }
   /**
    * Whether nothing here may hold the person back any more: the device was saved, the person
    * chose Discard, or a project switch abandoned the form.
@@ -231,16 +282,81 @@ export class AddDeviceView extends DeviceFormView implements LeaveGuard {
     this.reviewed = undefined
     this.reviewChanged = false
     this.checked = {}
+    this.draftId = ''
+    this.stored = undefined
+    this.draftMissing = false
   }
 
   protected override firstUpdated(): void {
     // The date is set once, imperatively, rather than bound in the template: a bound `value`
     // would be rewritten on every re-render, so the first validation error would silently
     // undo whatever date the user had chosen.
-    this.openedOn = today()
-    this.setControlValue('[data-field="installed-at"]', this.openedOn)
-    void this.loadRooms()
+    this.baseline = { ...this.baseline, installedAt: today() }
+    this.setControlValue('[data-field="installed-at"]', this.baseline.installedAt)
     void this.checkScanning()
+    if (this.draftId === '') {
+      void this.loadRooms()
+      return
+    }
+    void this.openDraft()
+  }
+
+  /**
+   * Reopens the draft {@link draftId} names (#358): its values into the controls, then the first
+   * step that does not pass, so the person lands where something is left to do.
+   *
+   * The rooms are read first: the combobox accepts a room only once its option exists.
+   */
+  private async openDraft(): Promise<void> {
+    let found: StoredDevice | undefined
+    try {
+      const id = documentId('device', this.draftId)
+      ;[found] = await Promise.all([this.repos().devices.get(id), this.loadRooms()])
+    } catch {
+      // An id this application would never write, or storage that could not be read: either
+      // way there is no draft here to finish. Not logged: a draft can hold a setup code.
+      found = undefined
+    }
+    if (found !== undefined && !isDraftDevice(found)) {
+      // Finished meanwhile - on another phone, or in another tab. Its page is where it is now.
+      window.location.replace(`#/devices/${uuidOf(found._id) ?? ''}`)
+      return
+    }
+    if (found === undefined) {
+      this.draftMissing = true
+      return
+    }
+    this.stored = found
+    const values = draftFormOf(found)
+    this.baseline = values
+    this.setControlValue('[data-field="credential"]', values.credential)
+    this.setControlValue('[data-field="name"]', values.name)
+    this.setControlValue('[data-field="spot"]', values.spot)
+    this.setControlValue('[data-field="serial"]', values.serial)
+    // A draft without a date gets none, rather than today: the person had not chosen one.
+    this.setControlValue('[data-field="installed-at"]', values.installedAt)
+    if (values.room !== '') {
+      this.createdRoom = values.room
+      await this.selectRoom(values.room)
+    }
+    this.scheduleLookup()
+    this.openAtFirstProblem()
+  }
+
+  /**
+   * Goes to the first step whose check fails, or to Save when none does, with every step before
+   * it marked as checked. A problem on Scan it - where the form already is - is shown at once.
+   */
+  private openAtFirstProblem(): void {
+    const steps = ['scan', 'place', 'name'] as const
+    for (const step of steps) this.steps.check(step)
+    const first = steps.find((step) => this.checked[step] !== true)
+    if (first === 'scan') {
+      const outcome = this.checked.scan
+      this.error = outcome instanceof DraftError ? outcome : undefined
+      return
+    }
+    this.goToStep(first ?? 'review')
   }
 
   private resolvedSource: ScanSource | undefined
@@ -296,15 +412,20 @@ export class AddDeviceView extends DeviceFormView implements LeaveGuard {
   }
 
   /**
-   * Whether leaving now would lose what the person entered: any field with something in it, or
-   * a date changed from the one the form opened with. Being on a later step is not input: an
-   * empty form on Review loses nothing.
+   * Whether leaving now would lose what the person entered: any field changed from what the form
+   * opened with - empty controls and today's date for a new device, the draft's own values for a
+   * reopened draft (#358). Being on a later step is not input: an empty form on Review loses
+   * nothing, and neither does a draft opened and left untouched.
    */
   holdsInput(): boolean {
     if (this.released) return false
+    return !sameValues(this.values(), this.baseline)
+  }
+
+  /** The controls' values, absent optional ones as empty, for comparing with the baseline. */
+  private values(): FormValues {
     const draft = this.draft()
-    const typed = [draft.credential, draft.serial, draft.room, draft.spot, draft.name]
-    return typed.some((value) => (value ?? '').trim() !== '') || draft.installedAt !== this.openedOn
+    return { ...draft, spot: draft.spot ?? '', serial: draft.serial ?? '' }
   }
 
   /**
@@ -313,12 +434,117 @@ export class AddDeviceView extends DeviceFormView implements LeaveGuard {
    * still shows would save nothing and guard nothing. The shell calls {@link release} once it
    * actually leaves.
    *
-   * Drafts (#358) answer here: a `'draft'` choice will save the draft, then resolve `true`.
+   * Save as draft (#358) is answered here, so the shell still only hears "leave" or "stay":
+   * leave once the draft is stored, stay if storage refused it - the form then says why, and
+   * nothing the person typed is gone.
    */
   async confirmLeave(): Promise<boolean> {
     const dialog = this.querySelector<LeaveDialog>('leave-dialog')
     if (dialog === null) return true
-    return (await dialog.ask()) === 'discard'
+    dialog.discardLabel = this.stored === undefined ? undefined : msg('Discard changes')
+    const choice = await dialog.ask(this.draftOption())
+    if (choice === 'draft') return this.saveDraft()
+    return choice === 'discard'
+  }
+
+  /**
+   * Whether what is entered can be kept as a draft, asked of the draft planner itself so the
+   * dialog never offers a save the planner would refuse. Planned against the rooms already
+   * read, which only decides a room's spelling, never whether the draft is valid.
+   */
+  private draftOption(): DraftOption {
+    try {
+      planDraftDevice(this.draft(), this.knownRoomPaths(), {
+        uuid: () => 'planned',
+        now: () => new Date().toISOString(),
+      })
+      return 'offer'
+    } catch (problem) {
+      if (!(problem instanceof DraftError)) throw problem
+      return { refused: problemMessage(problem.problem) }
+    }
+  }
+
+  /**
+   * Saves what the form holds as a draft (#358) and says whether it was stored.
+   *
+   * Every step, any time: the draft planner needs one value and checks only what is present. A
+   * refusal is shown on the step that owns the field, as Save's is. Planned against a fresh read
+   * of the rooms, for the reason {@link onSubmit} gives; the project snapshot is taken before
+   * that read, so a switch during it writes nothing into the next project.
+   *
+   * The stored draft is kept ({@link stored}), so a second save is an update of the same
+   * document, not a second draft.
+   */
+  private async saveDraft(): Promise<boolean> {
+    if (this.saving || this.released) return false
+    this.saving = true
+    const since = this.projectSnapshot()
+    try {
+      const rooms = await this.readRooms()
+      this.rooms = rooms
+      let planned: Unsaved<DraftDeviceDocument>
+      try {
+        planned = planDraftDevice(
+          this.draft(),
+          this.knownRoomPaths(rooms),
+          { uuid: () => crypto.randomUUID(), now: () => new Date().toISOString() },
+          this.answerForSave(),
+          this.stored,
+        )
+      } catch (problem) {
+        if (!(problem instanceof DraftError)) throw problem
+        this.showProblem(problem)
+        return false
+      }
+      this.error = undefined
+      const saved = await this.writeSaved(planned, since)
+      if (saved === undefined || !isDraftDevice(saved)) {
+        await this.refreshStored(since)
+        return false
+      }
+      this.stored = saved
+      this.baseline = this.values()
+      return true
+    } finally {
+      this.saving = false
+    }
+  }
+
+  /**
+   * Re-reads the draft after a refused write: most often a conflict, the draft having moved on
+   * elsewhere, so the revision in hand would fail every retry the same way. Touches no control.
+   */
+  private async refreshStored(since: number): Promise<void> {
+    const held = this.stored
+    if (held === undefined || since !== this.projectSnapshot()) return
+    try {
+      const fresh = await this.repos().devices.get(held._id)
+      if (fresh !== undefined && isDraftDevice(fresh)) this.stored = fresh
+    } catch {
+      // The refusal is already on screen; a failed re-read adds nothing to say.
+    }
+  }
+
+  /** The Save as draft button: saves, then leaves for the list as Save device does. */
+  private async onSaveDraft(): Promise<void> {
+    if (await this.saveDraft()) this.releaseAndLeave()
+  }
+
+  /**
+   * Shows a planner's refusal beside its control, on the step that owns the field, and flags
+   * that step. Recorded first, because the step change shows exactly the problem the new step
+   * has (`StepNavigation.onStepChange`).
+   */
+  private showProblem(problem: DraftError): void {
+    const step = stepOf(problem.field)
+    if (step === undefined) {
+      this.error = problem
+      return
+    }
+    this.checked = { ...this.checked, [step]: problem }
+    if (step === this.step) this.error = problem
+    else this.goToStep(step)
   }
 
   /** Lets the input go, as the shell leaves the form: nothing asks, nothing saves, from here. */
@@ -730,30 +956,25 @@ export class AddDeviceView extends DeviceFormView implements LeaveGuard {
 
       let creation: ReturnType<typeof planNewDevice>
       try {
-        creation = planNewDevice(
-          this.draft(),
-          this.knownRoomPaths(rooms),
-          {
-            uuid: () => crypto.randomUUID(),
-            now: () => new Date().toISOString(),
-          },
-          // Whatever has arrived by now. Submit never waits for a lookup: saving offline, or
-          // before the answer, is the normal case, and backfill fills the names in later.
-          this.answerForSave(),
-        )
+        const clock = {
+          uuid: () => crypto.randomUUID(),
+          now: () => new Date().toISOString(),
+        }
+        // Whatever has arrived by now. Submit never waits for a lookup: saving offline, or
+        // before the answer, is the normal case, and backfill fills the names in later.
+        const answer = this.answerForSave()
+        const paths = this.knownRoomPaths(rooms)
+        // A draft is finished, not added (#358): the same checks, on the draft's own document,
+        // so finishing updates it rather than filing a second device beside it.
+        creation =
+          this.stored === undefined
+            ? planNewDevice(this.draft(), paths, clock, answer)
+            : planFinishedDevice(this.draft(), paths, clock, this.stored, answer)
       } catch (problem) {
         if (problem instanceof DraftError) {
           // Shown on the step that owns the field, beside its control, not above a summary that
-          // has no control in it. Recorded as that step's problem first, because the step change
-          // (`StepNavigation.onStepChange`) shows exactly the problem the new step has - and the
-          // stepper then flags it too.
-          const step = stepOf(problem.field)
-          if (step !== undefined) {
-            this.checked = { ...this.checked, [step]: problem }
-            this.goToStep(step)
-          } else {
-            this.error = problem
-          }
+          // has no control in it; the stepper flags it too.
+          this.showProblem(problem)
           return
         }
         // Anything else is a bug rather than a statement about the form, and swallowing it
@@ -767,7 +988,11 @@ export class AddDeviceView extends DeviceFormView implements LeaveGuard {
 
       // Stay on the form when storage refuses the write: navigating to a list that does not
       // contain the device would be the application saying it saved something it did not.
-      if (!(await this.write(creation, since))) return
+      if (!(await this.write(creation, since))) {
+        // A draft that moved on elsewhere fails every retry on the revision in hand.
+        await this.refreshStored(since)
+        return
+      }
       this.askForBackfill(creation)
     } finally {
       this.saving = false
@@ -860,9 +1085,20 @@ export class AddDeviceView extends DeviceFormView implements LeaveGuard {
   }
 
   override render() {
+    if (this.draftMissing) {
+      return html`
+        <div class="wa-stack wa-gap-l">
+          <h1>${msg('Draft not found')}</h1>
+          <p class="app-empty" data-draft-missing>
+            ${msg('There is no draft with that address in this catalogue. It may have been deleted.')}
+          </p>
+          <a class="app-back" href="#/devices">${msg('Back to devices')}</a>
+        </div>
+      `
+    }
     return html`
       <form class="wa-stack wa-gap-l app-form" @submit=${this.onSubmit} novalidate>
-        <h1>${msg('Add a device')}</h1>
+        <h1>${this.draftId === '' ? msg('Add a device') : msg('Finish a draft')}</h1>
         ${this.renderRequiredNote()}
 
         <wa-stepper
@@ -975,6 +1211,17 @@ export class AddDeviceView extends DeviceFormView implements LeaveGuard {
                   <wa-button data-next type="submit" variant="brand">${msg('Next')}</wa-button>
                 `
           }
+          <!-- On every step (#358): a draft needs one value, so there is no step too early to
+               keep what is there. A plain button, not a submit: Enter in a field is Next. -->
+          <wa-button
+            data-save-draft
+            type="button"
+            appearance="outlined"
+            ?disabled=${this.saving}
+            @click=${() => void this.onSaveDraft()}
+          >
+            ${msg('Save as draft')}
+          </wa-button>
           <wa-button href="#/devices" appearance="plain">${msg('Cancel')}</wa-button>
         </div>
 
@@ -995,3 +1242,12 @@ export class AddDeviceView extends DeviceFormView implements LeaveGuard {
 }
 
 customElements.define('add-device-view', AddDeviceView)
+
+/**
+ * The add form, opened on a draft to finish it (#358): `#/devices/<uuid>/finish`, with the
+ * draft's uuid in `draft-id`. A name of its own because every routed view `x` renders `<x-view>`
+ * (`views.browser.test.ts`); the behaviour is all {@link AddDeviceView}'s.
+ */
+export class FinishDeviceView extends AddDeviceView {}
+
+customElements.define('finish-device-view', FinishDeviceView)

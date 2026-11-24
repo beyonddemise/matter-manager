@@ -10,6 +10,7 @@
  */
 
 import { msg, str } from '@lit/localize'
+import type { DraftWords } from './draft-words.js'
 import type { InventoryLabels } from './inventory.js'
 
 /** The words the inventory prints, in whatever language is active right now. */
@@ -25,6 +26,16 @@ export function inventoryLabels(): InventoryLabels {
     withoutRoom: msg('Without a room'),
     nothingToExport: msg('There are no devices to export.'),
     testVendor: msg('Test vendor'),
+    drafts: draftWords(),
+  }
+}
+
+/** How a draft is marked on paper (#358), for the inventory and the label sheet alike. */
+export function draftWords(): DraftWords {
+  return {
+    marked: (name) => msg(str`Draft: ${name}`),
+    untitled: msg('Untitled draft'),
+    noSetupCode: msg('No setup code yet'),
   }
 }
 
