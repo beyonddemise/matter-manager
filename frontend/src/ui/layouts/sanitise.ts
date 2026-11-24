@@ -1,0 +1,860 @@
+/**
+ * The plan sanitiser for SVG layouts (#143; spec 2026-11-24 "SVG layouts", *Import* and
+ * *Sanitising*; ADR 0023).
+ *
+ * A plan is untrusted twice over: the file a writer imports, and every drawing that later
+ * arrives by replication, which some member's client or a direct CouchDB write produced. Both
+ * pass through {@link sanitisePlan} before anything renders them, so this module is the only
+ * thing standing between a hostile drawing and this application's origin when the
+ * Content-Security-Policy is not there to catch it. `npm run probe:svg` proves that it holds
+ * with no policy at all.
+ *
+ * **Lazily loaded.** DOMPurify is imported here and nowhere else, and this module is reached
+ * only by `import()`, so the sanitiser travels in a chunk only the layout feature downloads.
+ * `scripts/check-lazy-svg.mjs` fails the build if it reaches the entry bundle.
+ *
+ * **Behind one function.** When the native Sanitizer API reaches Safari, replacing DOMPurify is
+ * a change to this module alone (spec, *Sanitiser*, option 3).
+ *
+ * The steps, in the order the spec numbers them, each with its own {@link PlanProblem}:
+ * size, encoding, well-formedness, root, DOCTYPE, tree size, geometry, the sanitising itself
+ * (which strips rather than refuses), and finally "is anything left to draw". Every refusal is
+ * a value, never an exception, so the import dialog can say exactly what was wrong.
+ *
+ * @module
+ */
+
+import DOMPurify, { type Config, type DOMPurify as Purifier } from 'dompurify'
+
+const SVG_NS = 'http://www.w3.org/2000/svg'
+const XMLNS_NS = 'http://www.w3.org/2000/xmlns/'
+
+/**
+ * The largest plan accepted, in bytes: 2 MiB.
+ *
+ * The spike's largest ordinary detailed plan was 907 KB. Two attachments (the plan and its
+ * woven copy) base64-encoded in one replicated document come to about 5.6 MB at this size,
+ * under CouchDB's default `max_document_size` of 8 MB. Exported so a caller can refuse a
+ * `File` by its `size` before reading a byte of it.
+ */
+export const PLAN_MAX_BYTES = 2 * 1024 * 1024
+
+/** The most elements a plan may have, its root included. */
+export const PLAN_MAX_ELEMENTS = 100_000
+
+/** The deepest a plan may nest, counting the root as level 1. */
+export const PLAN_MAX_DEPTH = 64
+
+/**
+ * The most element instances a plan may render once every `<use>` is expanded.
+ *
+ * The element limit alone does not bound rendering: each `<use>` clones its target, nested uses
+ * multiply, and 61 of them can expand to a million instances that hang layout for minutes. So the
+ * expanded count gets the same bound the plain tree has.
+ */
+export const PLAN_MAX_INSTANCES = 100_000
+
+/** Why a plan was refused. Each kind is one row of the spec's import-check table. */
+export type PlanProblem =
+  | { readonly kind: 'too-large'; readonly bytes: number }
+  | { readonly kind: 'not-utf8' }
+  | { readonly kind: 'malformed' }
+  | { readonly kind: 'not-svg' }
+  | { readonly kind: 'doctype' }
+  | { readonly kind: 'too-many-elements'; readonly count: number }
+  | { readonly kind: 'too-deep'; readonly depth: number }
+  | { readonly kind: 'no-geometry' }
+  | { readonly kind: 'use-cycle' }
+  | { readonly kind: 'too-many-instances'; readonly count: number }
+  | { readonly kind: 'nothing-drawable' }
+
+/**
+ * What sanitising removed, by kind, so the import dialog can say "Removed: 2 scripts, 1
+ * external image, 14 event handlers" and a person whose plan looks different knows why.
+ *
+ * Counts, not a log: a removed element counts once, whatever it contained.
+ */
+export interface RemovedCounts {
+  /** `<script>` elements. */
+  scripts: number
+  /** `foreignObject`, `iframe`, `embed`, `object`, `audio`, `video`. */
+  embeddedContent: number
+  /** `animate`, `animateMotion`, `animateTransform`, `animateColor`, `set`, `discard`. */
+  animations: number
+  /** `<a>` elements unwrapped: the link removed, what it wrapped kept. */
+  links: number
+  /** `on*` attributes. */
+  eventHandlers: number
+  /** Attributes carrying `javascript:`, `vbscript:` or a `data:` URL that is not a raster image. */
+  unsafeUrls: number
+  /**
+   * `href`s that are not a local fragment, and attribute values the CSS parser could make
+   * fetch: a `url()` leaving the document, a function not on the allow-list, or an escape.
+   */
+  externalReferences: number
+  /** CSS at-rules and declarations dropped from `<style>` elements and `style` attributes. */
+  styleRules: number
+  /** Elements with an `mm-` id (removed whole), `mm-` class tokens and `data-mm-*` attributes. */
+  reservedNames: number
+  /** Any other element, such as one outside the SVG namespace. */
+  otherElements: number
+  /** Any other attribute, such as an editor's `inkscape:label`. */
+  otherAttributes: number
+}
+
+/** A `viewBox`: minimum x, minimum y, width and height, in user units. */
+export type ViewBox = readonly [minX: number, minY: number, width: number, height: number]
+
+/**
+ * The outcome of {@link sanitisePlan}.
+ *
+ * On success, `svg` is the sanitised root **in a document of its own that has no browsing
+ * context**, so nothing in it has loaded or can load. The caller renders it by importing it
+ * (`document.importNode(svg, true)`) into a shadow root that holds nothing else; it must never
+ * be serialised and re-parsed as HTML, which is how mutation XSS works.
+ */
+export type SanitisedPlan =
+  | {
+      readonly ok: true
+      readonly svg: SVGSVGElement
+      readonly viewBox: ViewBox
+      readonly removed: RemovedCounts
+    }
+  | { readonly ok: false; readonly problem: PlanProblem }
+
+/**
+ * Elements removed whatever DOMPurify's SVG profile says.
+ *
+ * Why each: `script` runs; `foreignObject` is a door back into HTML, where the spike measured an
+ * `onerror=` executing; the embedding elements load other documents; and the animation
+ * elements can **rewrite an attribute after sanitising**, `<animate attributeName="href"
+ * to="javascript:…">` being the classic bypass. `use` is *not* here: DOMPurify forbids it by
+ * default because of external and `data:` references, which the href rule below already
+ * removes, and plans use `<symbol>` + `<use>` for every repeated door and socket.
+ */
+const FORBIDDEN_ELEMENTS = [
+  'script',
+  'foreignObject',
+  'iframe',
+  'embed',
+  'object',
+  'audio',
+  'video',
+  'animate',
+  'animateColor',
+  'animateMotion',
+  'animateTransform',
+  'set',
+  'discard',
+]
+
+const EMBEDDED = new Set(['foreignobject', 'iframe', 'embed', 'object', 'audio', 'video'])
+const ANIMATIONS = new Set([
+  'animate',
+  'animatecolor',
+  'animatemotion',
+  'animatetransform',
+  'set',
+  'discard',
+])
+
+/** Elements that put something on the screen. A plan with none of them is refused. */
+const DRAWABLE = 'path, rect, circle, ellipse, line, polyline, polygon, text, image, use'
+
+/**
+ * The DOMPurify configuration, on top of its SVG and SVG-filter profiles.
+ *
+ * - **`KEEP_CONTENT: false`**: a removed element takes its subtree with it. The default hoists
+ *   the children, which would lift a `foreignObject`'s HTML body into the drawing for a second
+ *   look; removing it whole is simpler to reason about.
+ * - **`ADD_TAGS: ['use']`**: see {@link FORBIDDEN_ELEMENTS}.
+ * - **`RETURN_DOM`**: the result stays a tree. A string would have to be parsed again, and every
+ *   parse is a chance for the markup to mean something different the second time.
+ * - **`FORBID_ATTR: ['xml:id']`**: a second way to name an element, which the `mm-` reservation
+ *   below would otherwise have to police twice. No drawing tool needs it.
+ */
+const CONFIG: Config & { RETURN_DOM: true } = {
+  USE_PROFILES: { svg: true, svgFilters: true },
+  ADD_TAGS: ['use'],
+  FORBID_TAGS: FORBIDDEN_ELEMENTS,
+  FORBID_ATTR: ['xml:id'],
+  KEEP_CONTENT: false,
+  RETURN_DOM: true,
+}
+
+/**
+ * Raster images a plan may embed. Never `data:image/svg+xml`: that is a plan inside the plan,
+ * which this sanitiser would never see.
+ */
+const RASTER_DATA_URL = /^data:image\/(?:png|jpeg|webp|gif)[;,]/i
+
+/** Schemes that run code or smuggle a document, checked with whitespace and controls removed. */
+const UNSAFE_SCHEME = /(?:javascript|vbscript|data):/
+
+/**
+ * CSS functions a declaration may use. Everything else is dropped with its declaration.
+ *
+ * An allow-list rather than a deny-list of `url(`, because `url(` is not the only way CSS
+ * fetches: `image-set("…")`, `image()`, `cross-fade()` and `src()` all take a plain string, and
+ * a custom property can hide an escaped `u\72l(` until `var()` substitutes it. `url()` itself is
+ * allowed only when it points into the document (`url(#gradient)`), checked separately.
+ */
+const SAFE_CSS_FUNCTIONS = new Set([
+  'rgb',
+  'rgba',
+  'hsl',
+  'hsla',
+  'hwb',
+  'lab',
+  'lch',
+  'oklab',
+  'oklch',
+  'color',
+  'color-mix',
+  'calc',
+  'min',
+  'max',
+  'clamp',
+  'translate',
+  'translatex',
+  'translatey',
+  'translate3d',
+  'rotate',
+  'rotatex',
+  'rotatey',
+  'rotatez',
+  'rotate3d',
+  'scale',
+  'scalex',
+  'scaley',
+  'scale3d',
+  'skew',
+  'skewx',
+  'skewy',
+  'matrix',
+  'matrix3d',
+  'perspective',
+  'cubic-bezier',
+  'steps',
+  // Filter functions and basic shapes, which `filter=` and `clip-path=` take. None takes a URL.
+  'blur',
+  'brightness',
+  'contrast',
+  'drop-shadow',
+  'grayscale',
+  'hue-rotate',
+  'invert',
+  'opacity',
+  'saturate',
+  'sepia',
+  'inset',
+  'circle',
+  'ellipse',
+  'polygon',
+  'url',
+])
+
+/**
+ * A function call in a value: whatever precedes a `(`, up to a separator. An empty name is a
+ * bare parenthesis, as in a label's "Kitchen (north)", which calls nothing.
+ */
+const FUNCTION_CALL = /([^\s(),'"]*)\(/g
+
+/**
+ * Whether a CSS value, from a declaration or a presentation attribute, is free of anything that
+ * could fetch: no escapes, only {@link SAFE_CSS_FUNCTIONS}, and `url()` only into the document.
+ *
+ * **Why one rule for attributes and CSS.** A presentation attribute (`fill=`, `mask=`,
+ * `clip-path=`, `filter=`) is parsed by the browser's CSS parser, escapes and all, so
+ * `mask="\75 rl(…)"` fetches exactly as `mask: \75 rl(…)` would. The review of #367 found
+ * those attributes checked only for the literal text `url(`.
+ */
+function safeValue(value: string): boolean {
+  // Escapes can spell `url(` in a way only the CSS parser reveals. Drawing tools write none.
+  if (value.includes('\\')) return false
+  const lower = value.toLowerCase()
+  for (const match of lower.matchAll(FUNCTION_CALL)) {
+    const name = match[1] ?? ''
+    if (name === '') continue
+    if (!SAFE_CSS_FUNCTIONS.has(name)) return false
+    if (name === 'url' && !/^url\(\s*["']?#/.test(lower.slice(match.index))) return false
+  }
+  return true
+}
+
+/**
+ * CSS properties a plan may set, as the longhands the browser reports. An allow-list, because
+ * the danger is not only fetching: `position`, `z-index`, `inset`, `width` and `overflow` let a
+ * plan's CSS leave its box and lay itself over the application, where it could draw markers
+ * that are not ours (found by the review of #367). What a drawing needs is paint, text and
+ * geometry inside its own coordinate system.
+ */
+const ALLOWED_PROPERTIES = new Set([
+  'opacity',
+  'display',
+  'visibility',
+  'color',
+  'filter',
+  'lighting-color',
+  'paint-order',
+  'vector-effect',
+  'shape-rendering',
+  'image-rendering',
+  'text-rendering',
+  'text-anchor',
+  'dominant-baseline',
+  'alignment-baseline',
+  'baseline-shift',
+  'letter-spacing',
+  'word-spacing',
+  'line-height',
+  'writing-mode',
+  'direction',
+  'unicode-bidi',
+  'white-space',
+  'white-space-collapse',
+  'transform',
+  'transform-origin',
+  'transform-box',
+  'background-color',
+  'pointer-events',
+  'cx',
+  'cy',
+  'r',
+  'rx',
+  'ry',
+  'x',
+  'y',
+  'd',
+])
+
+/** Families allowed by prefix: `fill-opacity`, `stroke-dasharray`, `font-variant-caps` and so on. */
+const ALLOWED_PREFIXES = [
+  'fill',
+  'stroke',
+  'font',
+  'text-decoration',
+  'text-wrap',
+  'marker',
+  'mask',
+  'clip-path',
+  'clip-rule',
+  'stop-',
+  'flood-',
+  'color-interpolation',
+]
+
+const allowedProperty = (property: string) =>
+  ALLOWED_PROPERTIES.has(property) || ALLOWED_PREFIXES.some((prefix) => property.startsWith(prefix))
+
+/** Viewport units, which size a plan by the window rather than by its own box. */
+const VIEWPORT_UNIT = /\d(?:[sld]?v(?:w|h|i|b|min|max))\b/i
+
+/** Selectors that reach out of the plan's shadow root, onto its host or beyond. */
+const ESCAPING_SELECTOR = /:host|::slotted|::part/i
+
+/** One DOMPurify instance of our own, so its hooks never reach anybody else's use of it. */
+let purifier: Purifier | undefined
+
+/**
+ * Validates and sanitises an SVG plan.
+ *
+ * Takes the bytes rather than a string because two of the checks are about bytes: the size
+ * limit, and that the file is UTF-8 at all.
+ *
+ * @param bytes the file as read, or a stored `plan.svg` attachment
+ * @returns the sanitised plan with its normalised `viewBox` and what was removed, or the first
+ *   check it failed
+ */
+export function sanitisePlan(bytes: Uint8Array): SanitisedPlan {
+  // 1. Size, before anything else looks at the bytes.
+  if (bytes.byteLength > PLAN_MAX_BYTES) return refuse({ kind: 'too-large', bytes: bytes.length })
+
+  // 2. Encoding.
+  const text = decodeUtf8(bytes)
+  if (text === undefined) return refuse({ kind: 'not-utf8' })
+
+  // 5, ahead of 3. A DOCTYPE is refused *before* parsing, not after, because parsing is what it
+  // attacks: the internal subset declares the entities, and the parser expands them. A
+  // billion-laughs document would exhaust the tab inside `DOMParser` before any check on its
+  // result could run. A plan never needs one. The parsed tree is checked again below, so this
+  // text scan is a fast path, not the only guard.
+  if (/<!doctype/i.test(text)) return refuse({ kind: 'doctype' })
+
+  // 3. Well-formed. `DOMParser` reports failure in-band, as a `parsererror` element.
+  const parsed = new DOMParser().parseFromString(text, 'image/svg+xml')
+  if (parsed.getElementsByTagNameNS('*', 'parsererror').length > 0)
+    return refuse({ kind: 'malformed' })
+
+  // 4. Root.
+  const root = parsed.documentElement
+  if (root.localName !== 'svg' || root.namespaceURI !== SVG_NS) return refuse({ kind: 'not-svg' })
+
+  // 5. No DTD, from the parser's own point of view.
+  if (parsed.doctype !== null) return refuse({ kind: 'doctype' })
+
+  // 6. Size of the tree.
+  const tree = measureTree(root)
+  if (tree.elements > PLAN_MAX_ELEMENTS)
+    return refuse({ kind: 'too-many-elements', count: tree.elements })
+  if (tree.depth > PLAN_MAX_DEPTH) return refuse({ kind: 'too-deep', depth: tree.depth })
+
+  // 7. Geometry.
+  const viewBox = geometryOf(root)
+  if (viewBox === undefined) return refuse({ kind: 'no-geometry' })
+
+  // 8. Sanitise. Stripping is not refusing: a CAD export full of editor metadata still imports.
+  const removed = emptyCounts()
+  const plain = unprefixSvg(root)
+  removeReservedNames(plain, removed)
+  unwrapLinks(plain, removed)
+  const svg = purify(plain, removed)
+  if (svg === undefined) return refuse({ kind: 'nothing-drawable' })
+  filterStyles(svg, removed)
+  normaliseGeometry(svg, viewBox)
+
+  // 6, again, on what will actually render: every `<use>` expanded.
+  const expanded = expandedInstances(svg)
+  if (expanded === 'cycle') return refuse({ kind: 'use-cycle' })
+  if (expanded > PLAN_MAX_INSTANCES) return refuse({ kind: 'too-many-instances', count: expanded })
+
+  // 9. Something left.
+  if (svg.querySelector(DRAWABLE) === null) return refuse({ kind: 'nothing-drawable' })
+
+  return { ok: true, svg, viewBox, removed }
+}
+
+const refuse = (problem: PlanProblem): SanitisedPlan => ({ ok: false, problem })
+
+const emptyCounts = (): RemovedCounts => ({
+  scripts: 0,
+  embeddedContent: 0,
+  animations: 0,
+  links: 0,
+  eventHandlers: 0,
+  unsafeUrls: 0,
+  externalReferences: 0,
+  styleRules: 0,
+  reservedNames: 0,
+  otherElements: 0,
+  otherAttributes: 0,
+})
+
+/**
+ * Decodes strict UTF-8, or returns `undefined`.
+ *
+ * `fatal: true` because the default replaces a bad byte with U+FFFD and carries on, which would
+ * import a Latin-1 plan with every accented room name silently mangled. An XML declaration
+ * naming another encoding is refused too: the bytes may happen to be valid UTF-8 while the file
+ * means something else by them.
+ */
+function decodeUtf8(bytes: Uint8Array): string | undefined {
+  let text: string
+  try {
+    text = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+  } catch {
+    return undefined
+  }
+  const declared = /^\s*<\?xml\s[^>]*?\bencoding\s*=\s*["']([^"']*)["']/.exec(text)?.[1]
+  if (declared !== undefined && !/^utf-?8$/i.test(declared)) return undefined
+  return text
+}
+
+/** Counts the elements of a tree and its depth, without recursing (a hostile plan is deep). */
+function measureTree(root: Element): { elements: number; depth: number } {
+  let elements = 0
+  let depth = 0
+  const stack: Array<[Element, number]> = [[root, 1]]
+  for (let next = stack.pop(); next !== undefined; next = stack.pop()) {
+    const [element, level] = next
+    elements += 1
+    if (level > depth) depth = level
+    for (const child of element.children) stack.push([child, level + 1])
+  }
+  return { elements, depth }
+}
+
+/**
+ * How many element instances the tree renders with every `<use>` expanded, or `'cycle'`.
+ *
+ * A `<use>` renders a copy of its target's whole subtree, uses inside it included, so the count
+ * is a sum over a graph whose edges are children and `use` targets. Child edges alone cannot
+ * loop; a loop means a `use` reaches its own ancestor or another `use` that reaches it back,
+ * which browsers refuse to render and which is refused here. Iterative, with memoised counts,
+ * because a chain of twenty thousand uses would overflow a recursive walk, and capped, because
+ * the true count can be astronomically large.
+ */
+function expandedInstances(svg: SVGSVGElement): number | 'cycle' {
+  const byId = new Map<string, Element>()
+  for (const element of svg.querySelectorAll('[id]')) {
+    const id = element.getAttribute('id') ?? ''
+    if (!byId.has(id)) byId.set(id, element)
+  }
+  const edges = (element: Element): Element[] => {
+    const next = [...element.children]
+    if (element.localName === 'use') {
+      const href = urlStrip(
+        element.getAttribute('href') ?? element.getAttribute('xlink:href') ?? '',
+      )
+      const target = href.startsWith('#') ? byId.get(href.slice(1)) : undefined
+      if (target !== undefined) next.push(target)
+    }
+    return next
+  }
+  const cap = PLAN_MAX_INSTANCES + 1
+  const counted = new Map<Element, number>()
+  const onPath = new Set<Element>()
+  const stack: Array<{ element: Element; next: Element[] | undefined }> = [
+    { element: svg, next: undefined },
+  ]
+  while (stack.length > 0) {
+    const frame = stack[stack.length - 1] as { element: Element; next: Element[] | undefined }
+    if (frame.next === undefined) {
+      if (counted.has(frame.element)) {
+        stack.pop()
+        continue
+      }
+      frame.next = edges(frame.element)
+      onPath.add(frame.element)
+      for (const next of frame.next) {
+        if (onPath.has(next)) return 'cycle'
+        if (!counted.has(next)) stack.push({ element: next, next: undefined })
+      }
+      continue
+    }
+    stack.pop()
+    onPath.delete(frame.element)
+    let total = 1
+    for (const next of frame.next) total = Math.min(cap, total + (counted.get(next) ?? 0))
+    counted.set(frame.element, total)
+  }
+  return counted.get(svg) ?? 1
+}
+
+/** A plain number in user units: unitless or `px`, nothing else. */
+const LENGTH = /^\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?)(?:px)?\s*$/i
+
+const userUnits = (value: string | null): number | undefined => {
+  const match = value === null ? null : LENGTH.exec(value)
+  return match === null ? undefined : Number(match[1])
+}
+
+const positive = (value: number | undefined): value is number =>
+  value !== undefined && Number.isFinite(value) && value > 0
+
+/**
+ * The plan's `viewBox`, read from the attribute or synthesised from `width` and `height`.
+ *
+ * Without one there is no coordinate system for placements, which are stored in user units of
+ * this `viewBox`. A `width` or `height` that is present in user units but zero, negative or not
+ * finite is refused even beside a good `viewBox`: the file is broken, and guessing which half
+ * of it is right would be a guess.
+ */
+function geometryOf(root: Element): ViewBox | undefined {
+  const widthText = root.getAttribute('width')
+  const heightText = root.getAttribute('height')
+  const width = userUnits(widthText)
+  const height = userUnits(heightText)
+  if ((width !== undefined && !positive(width)) || (height !== undefined && !positive(height)))
+    return undefined
+
+  const box = root.getAttribute('viewBox')
+  if (box !== null) {
+    const parts = box
+      .trim()
+      .split(/[\s,]+/)
+      .map(Number)
+    const [minX, minY, w, h] = parts
+    if (
+      parts.length === 4 &&
+      parts.every(Number.isFinite) &&
+      minX !== undefined &&
+      minY !== undefined &&
+      positive(w) &&
+      positive(h)
+    )
+      return [minX, minY, w, h]
+    return undefined
+  }
+  return positive(width) && positive(height) ? [0, 0, width, height] : undefined
+}
+
+/**
+ * Puts the `viewBox` on the root and lets the plan scale to its container.
+ *
+ * `width` and `height` go: a plan's size is its container's business, and the markers placed
+ * over it rely on `xMidYMid meet` mapping user units linearly onto that container's box.
+ */
+function normaliseGeometry(svg: SVGSVGElement, viewBox: ViewBox): void {
+  svg.setAttribute('viewBox', viewBox.join(' '))
+  svg.removeAttribute('width')
+  svg.removeAttribute('height')
+  svg.setAttribute('preserveAspectRatio', 'xMidYMid meet')
+}
+
+/** Whether a name is one of ours: `mm-…`, which the woven device group uses. */
+const reserved = (name: string) => name.toLowerCase().startsWith('mm-')
+
+/**
+ * Removes every `mm-` name from the plan.
+ *
+ * **Why the names are ours.** The woven copy's device group (`g#mm-devices`, `data-mm-*`) is
+ * produced only by the app, from trusted inputs. A plan that could carry those names could
+ * forge markers: links to anywhere, devices that are not there. So an element with an `mm-` id
+ * goes **with its subtree**, which is also what makes a stored `woven.svg` sanitise back to its
+ * bare plan, forged group or genuine. A class token or `data-mm-*` attribute just goes.
+ */
+function removeReservedNames(root: Element, removed: RemovedCounts): void {
+  // The root included: it is the one element whose `mm-` names would otherwise survive. It
+  // cannot be removed, so it loses the name instead.
+  for (const element of [root, ...root.querySelectorAll('*')]) {
+    if (!element.isConnected) continue
+    if (reserved(element.getAttribute('id') ?? '')) {
+      if (element === root) element.removeAttribute('id')
+      else element.remove()
+      removed.reservedNames += 1
+      if (element !== root) continue
+    }
+    for (const attribute of [...element.attributes]) {
+      if (attribute.name.toLowerCase().startsWith('data-mm-')) {
+        element.removeAttributeNode(attribute)
+        removed.reservedNames += 1
+      }
+    }
+    const classes = element.getAttribute('class')
+    if (classes !== null) {
+      const tokens = classes.split(/\s+/).filter(Boolean)
+      const kept = tokens.filter((token) => !reserved(token))
+      if (kept.length < tokens.length) {
+        removed.reservedNames += tokens.length - kept.length
+        if (kept.length > 0) element.setAttribute('class', kept.join(' '))
+        else element.removeAttribute('class')
+      }
+    }
+  }
+}
+
+/**
+ * Replaces every SVG `<a>` with its children.
+ *
+ * **Why unwrap rather than keep or remove.** A link in a plan points wherever its author chose,
+ * and the only links the layout view may show are its own device markers. Removing the element
+ * would remove the room label it wrapped; unwrapping keeps the drawing and drops the link.
+ */
+function unwrapLinks(root: Element, removed: RemovedCounts): void {
+  for (const link of [...root.getElementsByTagNameNS(SVG_NS, 'a')]) {
+    // One child at a time: spreading them into `replaceWith` overflows the argument list for a
+    // link holding a few hundred thousand comments, which the element limit does not count.
+    while (link.firstChild !== null) link.before(link.firstChild)
+    link.remove()
+    removed.links += 1
+  }
+}
+
+/**
+ * Rewrites every prefixed SVG element (`<s:rect>` under `xmlns:s=…`) to the default namespace.
+ *
+ * The same drawing, and legal XML, but DOMPurify compares qualified names against its
+ * unprefixed allow-list and would drop the root, refusing a valid plan as empty. Only elements
+ * already in the SVG namespace are touched, so nothing is moved *into* SVG that was not there.
+ * Returns the root, which may itself have been replaced.
+ */
+function unprefixSvg(root: Element): Element {
+  let result = root
+  for (const element of [root, ...root.querySelectorAll('*')]) {
+    if (element.namespaceURI !== SVG_NS || element.prefix === null) continue
+    const plain = element.ownerDocument.createElementNS(SVG_NS, element.localName)
+    // The prefix's own declaration (`xmlns:s`) is dropped with the prefix it declared.
+    for (const attribute of [...element.attributes])
+      if (attribute.namespaceURI !== XMLNS_NS)
+        plain.setAttributeNodeNS(attribute.cloneNode() as Attr)
+    while (element.firstChild !== null) plain.append(element.firstChild)
+    element.replaceWith(plain)
+    if (element === root) result = plain
+  }
+  return result
+}
+
+/**
+ * Lowercased, with every whitespace and control character removed: deliberately *more*
+ * aggressive than a URL parser, because it is only used to *detect* a scheme. Finding
+ * `javascript:` in more places than the browser would is a safe mistake.
+ */
+const squash = (value: string) =>
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: removing controls is the point.
+  value.replace(/[\u0000- \u007f-\u009f]/g, '').toLowerCase()
+
+/**
+ * A URL as the URL parser reads it before anything else: leading and trailing C0 controls and
+ * spaces trimmed, tabs and newlines removed, and nothing more.
+ *
+ * **Why not {@link squash}.** Deciding that a reference *is* a fragment has to err the other
+ * way. `squash` also removes U+0080–U+009F, which the URL parser keeps, so `href="&#x85;#x"`
+ * looked like `#x` to the check and was requested as `/%C2%85` (review of #367).
+ */
+const urlStrip = (value: string) =>
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: the URL spec's own stripping.
+  value.replace(/^[\u0000- ]+|[\u0000- ]+$/g, '').replace(/[\t\n\r]/g, '')
+
+/**
+ * Why an attribute must go, or `undefined` if it may stay as far as references go.
+ *
+ * Applied to every attribute DOMPurify visits, before its own allow-list, and again to the
+ * result as a backstop. One predicate for both, so the two can never disagree.
+ */
+function rejection(
+  element: Element,
+  name: string,
+  value: string,
+): 'eventHandlers' | 'unsafeUrls' | 'externalReferences' | undefined {
+  const lower = name.toLowerCase()
+  if (lower.startsWith('on')) return 'eventHandlers'
+  const squashed = squash(value)
+  const isHref = lower === 'href' || lower === 'xlink:href'
+  if (isHref && element.localName === 'image' && RASTER_DATA_URL.test(squashed)) return undefined
+  if (UNSAFE_SCHEME.test(squashed)) return 'unsafeUrls'
+  // Only a fragment: the plan may point into itself (`<use href="#door">`) and nowhere else.
+  // A relative path is as external as an absolute one, resolved against this application.
+  if (isHref) return urlStrip(value).startsWith('#') ? undefined : 'externalReferences'
+  if (lower === 'xml:base') return 'externalReferences'
+  // Every other attribute may be a presentation attribute, read by the CSS parser, so it gets
+  // the CSS rule. `style` itself is filtered declaration by declaration in `filterStyles`.
+  if (lower !== 'style' && !safeValue(value)) return 'externalReferences'
+  return undefined
+}
+
+/** DOMPurify, once, with the reference rule as its attribute hook. */
+function instance(): Purifier {
+  if (purifier !== undefined) return purifier
+  const created = DOMPurify(window)
+  created.addHook('uponSanitizeAttribute', (node, data) => {
+    if (rejection(node as Element, data.attrName, data.attrValue) !== undefined)
+      data.keepAttr = false
+  })
+  purifier = created
+  return created
+}
+
+/**
+ * Runs DOMPurify over the parsed root and classifies what it removed.
+ *
+ * The root is passed as a node, so DOMPurify imports it into an inert HTML document of its own
+ * and never parses markup. What comes back is that document's body, holding our `svg`.
+ */
+function purify(root: Element, removed: RemovedCounts): SVGSVGElement | undefined {
+  const purify = instance()
+  const body = purify.sanitize(root, CONFIG)
+  for (const entry of purify.removed) {
+    // DOMPurify lists the body it wrapped our root in among the removed elements; it was never
+    // part of the plan.
+    if ('element' in entry && entry.element === body) continue
+    if ('element' in entry && entry.element instanceof Element) countElement(entry.element, removed)
+    else if ('attribute' in entry && entry.attribute !== null && entry.from instanceof Element)
+      countAttribute(entry.from, entry.attribute, removed)
+  }
+  const svg = body.firstChild
+  if (!(svg instanceof SVGSVGElement) || svg.namespaceURI !== SVG_NS) return undefined
+
+  // The backstop: the same reference rule over the finished tree, in case a future DOMPurify
+  // stops calling the hook for some attribute. It should find nothing.
+  for (const element of [svg, ...svg.querySelectorAll('*')]) {
+    for (const attribute of [...element.attributes]) {
+      const why = rejection(element, attribute.name, attribute.value)
+      if (why === undefined) continue
+      element.removeAttributeNode(attribute)
+      removed[why] += 1
+    }
+  }
+  return svg
+}
+
+function countElement(element: Element, removed: RemovedCounts): void {
+  const name = element.localName.toLowerCase()
+  if (name === 'script') removed.scripts += 1
+  else if (EMBEDDED.has(name)) removed.embeddedContent += 1
+  else if (ANIMATIONS.has(name)) removed.animations += 1
+  else removed.otherElements += 1
+}
+
+function countAttribute(element: Element, attribute: Attr, removed: RemovedCounts): void {
+  removed[rejection(element, attribute.name, attribute.value) ?? 'otherAttributes'] += 1
+}
+
+/**
+ * Whether a declaration may stay: an allowed property, with a value that cannot fetch and is
+ * not sized by the viewport. A custom property is never allowed: it is opaque until `var()`
+ * substitutes it, and drawing tools write none.
+ */
+function safeDeclaration(property: string, value: string): boolean {
+  return allowedProperty(property) && safeValue(value) && !VIEWPORT_UNIT.test(value)
+}
+
+/**
+ * Removes every unsafe declaration from a parsed declaration block, returning how many went.
+ *
+ * A longhand whose value is empty belongs to a shorthand that holds a `var()` the browser has
+ * not substituted yet. Its real value is unknowable here, so it goes too.
+ */
+function filterDeclarations(style: CSSStyleDeclaration): number {
+  const doomed = new Set<string>()
+  let pending = 0
+  for (let i = 0; i < style.length; i += 1) {
+    const property = style.item(i)
+    const value = style.getPropertyValue(property)
+    if (value === '') pending += 1
+    if (value === '' || !safeDeclaration(property, value)) doomed.add(property)
+  }
+  for (const property of doomed) style.removeProperty(property)
+  // The longhands of a `var()` shorthand were one declaration as written, so they count once.
+  return pending > 0 ? doomed.size - pending + 1 : doomed.size
+}
+
+/**
+ * Filters the CSS a plan carries, in `<style>` elements and `style` attributes.
+ *
+ * **Why keep CSS at all.** Illustrator and Inkscape style by class, and a plan without its
+ * stylesheet renders as black shapes. The shadow root it renders in keeps its rules off the
+ * application; what is left to stop is CSS that fetches.
+ *
+ * **Why the browser's parser** (`CSSStyleSheet.replaceSync`, `element.style`) **and not a
+ * tokenizer of our own.** What matters is what the browser will do with the text, so the
+ * browser is asked. A hand-rolled CSS tokenizer is a grammar re-implemented, and every place it
+ * disagrees with the real one is a bypass (lesson L49). The filtered rules are written back from
+ * the parser's own serialisation.
+ */
+function filterStyles(svg: SVGSVGElement, removed: RemovedCounts): void {
+  for (const element of [...svg.getElementsByTagNameNS(SVG_NS, 'style')]) {
+    const text = element.textContent ?? ''
+    const sheet = new CSSStyleSheet()
+    // `replaceSync` drops `@import` without a trace (constructed sheets may not import), so the
+    // count is taken from the text. Counting only; what is kept comes from the parsed rules.
+    removed.styleRules += text.match(/@import\b/gi)?.length ?? 0
+    sheet.replaceSync(text)
+    const kept: string[] = []
+    for (const rule of sheet.cssRules) {
+      // Every at-rule goes: `@font-face` and `@import` fetch, `@namespace` and `@media` are not
+      // worth an argument for a floor plan, and the list of at-rules keeps growing.
+      // A selector reaching the shadow host restyles the application around the plan.
+      if (!(rule instanceof CSSStyleRule) || ESCAPING_SELECTOR.test(rule.selectorText)) {
+        removed.styleRules += 1
+        continue
+      }
+      // Nested rules (CSS nesting) go too, rather than being filtered recursively.
+      while (rule.cssRules.length > 0) {
+        rule.deleteRule(0)
+        removed.styleRules += 1
+      }
+      removed.styleRules += filterDeclarations(rule.style)
+      kept.push(rule.cssText)
+    }
+    if (kept.length > 0) element.textContent = kept.join('\n')
+    else element.remove()
+  }
+
+  for (const element of [svg, ...svg.querySelectorAll('[style]')]) {
+    if (!(element instanceof SVGElement) || !element.hasAttribute('style')) continue
+    removed.styleRules += filterDeclarations(element.style)
+    if (element.style.length > 0) element.setAttribute('style', element.style.cssText)
+    else element.removeAttribute('style')
+  }
+}

@@ -324,7 +324,7 @@ Checks, in this order, each with its own message:
 | 3 | Well-formed | `DOMParser` (`image/svg+xml`) yields a `parsererror` |
 | 4 | Root | The document element is not `svg` in the SVG namespace |
 | 5 | No DTD | Any `<!DOCTYPE>`. It is the vehicle for entity expansion and external entities, and a plan does not need one |
-| 6 | Size of the tree | More than 100,000 elements, or nesting deeper than 64 |
+| 6 | Size of the tree | More than 100,000 elements, or nesting deeper than 64. After sanitising, also more than 100,000 instances with every `<use>` expanded, or a `<use>` cycle: 61 nested uses can expand to a million instances |
 | 7 | Geometry | No usable `viewBox`, and `width`/`height` cannot supply one (unitless or `px` only). A width or height that is zero, negative or not finite |
 | 8 | Sanitise | See below. **Stripping is not rejection**: a CAD export with metadata the sanitiser removes still imports |
 | 9 | Something left | The sanitised tree has no drawable element |
@@ -349,7 +349,13 @@ that is not enough on its own: a drawing that arrives by replication was written
 member's client, or by a direct CouchDB write, and must be treated as untrusted. Sanitising a
 1 MB plan takes milliseconds, and a render happens once per view.
 
-`ui/layouts/sanitise.ts` exposes one function, `sanitisePlan(text): { svg: SVGSVGElement, removed: RemovedCounts }`.
+`ui/layouts/sanitise.ts` exposes one function, `sanitisePlan(bytes): SanitisedPlan`: either
+`{ ok: true, svg: SVGSVGElement, viewBox, removed: RemovedCounts }` or `{ ok: false, problem }`
+naming the import check (1–7, 9) that failed. It takes bytes, not text, because checks 1 and 2
+are about bytes, and refuses with a value, not an exception, so the dialog can say which check.
+It runs the DOCTYPE check (5) on the text before parsing, since parsing is what a DTD attacks.
+Until PR 6 imports it, `frontend/scripts/awaiting-consumer.json` lists it, so `check:graph`
+does not report it and `check:lazy-svg` asserts DOMPurify is in no chunk at all.
 DOMPurify does the work, configured with its SVG and SVG-filter profiles and XML parsing of the
 input. On top of the profile:
 
@@ -375,6 +381,23 @@ HTML. That avoids the mutation-XSS class entirely. It goes into its own shadow r
 otherwise global: a plan's `rect { display: none }` would hide the application. The shadow root
 scopes its CSS to the drawing and its ids to the drawing. The markers live outside that shadow
 root, so the plan's CSS cannot reach them.
+
+A shadow root scopes selectors, not layout. A plan's `svg { position: fixed; z-index: … }` would
+still lay the drawing over the whole application, and `:host { … }` would style the element
+around it, which is enough to draw markers that are not ours (security review of #367). Two
+layers stop it:
+
+- **The sanitiser** drops every rule with a `:host`, `:host()`, `:host-context()`, `::slotted` or
+  `::part` selector, and keeps only an allow-list of paint, text and geometry properties.
+  `position`, `z-index`, `inset`, `top`/`left`/`right`/`bottom`, `width`, `height` and `overflow`
+  are not on it, and no value may use viewport units. The same applies to the root's own `style`.
+- **`<mm-plan-canvas>`** (PR 6) contains whatever gets through: the host has
+  `contain: strict; overflow: clip; isolation: isolate`, and its shadow stylesheet carries
+  `:host > svg { position: static !important }`.
+
+**Serialising a plan** (the stored `plan.svg`, the woven copy, the downloads) uses
+`XMLSerializer` only, never `outerHTML` or `innerHTML`. Those serialise as HTML, and HTML
+serialisation of foreign content is where mutation XSS comes from.
 
 **A stored `woven.svg` is never trusted, rendered or exported as it is.** Any member can write a
 drawing whose device group is forged: links elsewhere, markers that lie. So the device group is
@@ -619,7 +642,10 @@ Each PR leaves `main` releasable and is verifiable on its own.
 6. **Import and view.** The Rooms-page action and dialog, import checks, `#/layouts/:id` with
    `<mm-plan-canvas>`, view-mode markers, the side list, drafts marked, the "downloading" and
    "offline" states, "Download plans for offline use", the device page's list of plans it is on. `probe:runtime`
-   with a fixture layout.
+   with a fixture layout. `<mm-plan-canvas>` contains the plan (`contain: strict; overflow: clip;
+   isolation: isolate`, and `:host > svg { position: static !important }` in its shadow
+   stylesheet; see *Sanitising*). `probe:svg`'s sanitised mode then renders through it. This PR
+   removes `layouts/sanitise.ts` from `frontend/scripts/awaiting-consumer.json`.
 7. **Placing and the woven copy.** `weave.ts`, placing mode (pointer, single-pointer,
    keyboard, live region), save writing drawing then head, lazy regeneration, the e2e journey
    up to "reload offline".

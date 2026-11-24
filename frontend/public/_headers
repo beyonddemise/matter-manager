@@ -63,6 +63,11 @@
   #                                  carries one inline <style>. A hash covers the second, not
   #                                  the first. Note this does NOT relax script-src, which is
   #                                  where 'unsafe-inline' would matter.
+  #
+  # **script-src without 'unsafe-inline' is load-bearing twice.** Once for any injection, and
+  # once for SVG layouts (#143, ADR 0023), which render a plan as inline SVG: the spike measured
+  # a foreignObject onerror= and a javascript: href both executing with this policy removed.
+  # The plan sanitiser is the other half, and `npm run probe:svg` proves each without the other.
   #   data: in connect-src           <wa-icon> fetches its SVG through the network stack, and
   #                                  the bundled icons are small enough that Vite inlines them
   #                                  as data: URLs - so that fetch never leaves the page.

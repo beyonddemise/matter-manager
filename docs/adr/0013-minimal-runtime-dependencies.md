@@ -109,6 +109,7 @@ installing it, not by its own `dependencies` list.
 | `pdf-lib` | PDF writing, including font embedding. Not reasonable to hand-roll. |
 | `@zxing/browser` | QR decoding where `BarcodeDetector` is unavailable, which is every iOS Safari. Loaded lazily so browsers with the native API never pay for it. |
 | `@noble/hashes`, `@noble/curves`, `@noble/ciphers` | Identical crypto in both runtimes, for anything shared or browser-side. See above. |
+| `dompurify` | The SVG plan sanitiser for layouts ([ADR 0023](0023-layouts-inline-svg-drawings-on-demand.md)). The HTML Sanitizer API is not in Safari, and a hand-written sanitiser would have to rediscover every known bypass. Pinned exactly, imported by one module, loaded lazily with the layout feature (`check:lazy-svg`). |
 
 **QR *generation* needs nothing at all.** Web Awesome ships `<wa-qr-code>`, which renders
 client-side to a canvas and takes `value`, `size`, `fill`, `background`, `radius` and

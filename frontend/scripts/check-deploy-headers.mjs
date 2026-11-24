@@ -117,7 +117,12 @@ const REQUIRED_DIRECTIVES = [
   { name: 'object-src', why: 'a plugin document is script by another name' },
 ]
 
-/** What must never appear in `script-src`, whatever else the policy says. */
+/**
+ * What must never appear in `script-src`, whatever else the policy says.
+ *
+ * Two reasons, not one: an injected script, and SVG layouts (#143, ADR 0023), which render plans
+ * as inline SVG and are inert without the sanitiser only because of this rule (`probe:svg`).
+ */
 const FORBIDDEN_SOURCES = [
   {
     token: "'unsafe-inline'",
