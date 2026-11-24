@@ -17,7 +17,10 @@ const checker = join(packageRoot, 'scripts/check-module-graph.mjs')
  * checker nobody knows works (L8). Each case plants exactly one thing and asserts the verdict
  * flips.
  */
-function walk(files: Record<string, string>): { code: number; output: string } {
+function walk(
+  files: Record<string, string>,
+  awaiting?: Record<string, string>,
+): { code: number; output: string } {
   const directory = mkdtempSync(join(tmpdir(), 'module-graph-test-'))
   try {
     for (const [name, contents] of Object.entries(files)) {
@@ -25,9 +28,18 @@ function walk(files: Record<string, string>): { code: number; output: string } {
       mkdirSync(dirname(path), { recursive: true })
       writeFileSync(path, contents)
     }
+    const list = join(directory, 'awaiting.json')
+    if (awaiting !== undefined) writeFileSync(list, JSON.stringify(awaiting))
     const result = spawnSync(
       'node',
-      [checker, '--src', directory, '--entry', join(directory, 'main.ts')],
+      [
+        checker,
+        '--src',
+        directory,
+        '--entry',
+        join(directory, 'main.ts'),
+        ...(awaiting === undefined ? [] : ['--awaiting', list]),
+      ],
       { encoding: 'utf8' },
     )
     return { code: result.status ?? 1, output: `${result.stdout}${result.stderr}` }
@@ -165,6 +177,41 @@ describe('walking the import graph', () => {
     })
     expect(result.output).toContain('first.ts')
     expect(result.output).toContain('second.ts')
+  })
+})
+
+describe('modules awaiting their consumer', () => {
+  const tree = {
+    'main.ts': "import './used.js'\n",
+    'used.ts': 'export const used = 1\n',
+    'later.ts': 'export const later = 1\n',
+  }
+
+  it('does not report a listed module, and says that it is waiting', () => {
+    const result = walk(tree, { $comment: 'ignored', 'later.ts': 'the next pull request' })
+    expect(result.code).toBe(0)
+    expect(result.output).toContain('1 awaiting a consumer')
+    expect(result.output).toContain('the next pull request')
+  })
+
+  it('still reports an orphan that is not listed', () => {
+    const result = walk({ ...tree, 'forgotten.ts': 'export const f = 1\n' }, { 'later.ts': 'x' })
+    expect(result.code).toBe(1)
+    expect(result.output).toContain('forgotten.ts')
+    expect(result.output).not.toContain('later.ts')
+  })
+
+  it('fails once the listed module is reachable, so the entry cannot outlive its reason', () => {
+    const wired = { ...tree, 'main.ts': "import './used.js'\nimport('./later.js')\n" }
+    const result = walk(wired, { 'later.ts': 'x' })
+    expect(result.code).toBe(1)
+    expect(result.output).toContain('now reachable')
+  })
+
+  it('fails when the listed module does not exist', () => {
+    const result = walk(tree, { 'later.ts': 'x', 'renamed.ts': 'x' })
+    expect(result.code).toBe(1)
+    expect(result.output).toContain('does not exist')
   })
 })
 

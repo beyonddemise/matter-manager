@@ -349,7 +349,13 @@ that is not enough on its own: a drawing that arrives by replication was written
 member's client, or by a direct CouchDB write, and must be treated as untrusted. Sanitising a
 1 MB plan takes milliseconds, and a render happens once per view.
 
-`ui/layouts/sanitise.ts` exposes one function, `sanitisePlan(text): { svg: SVGSVGElement, removed: RemovedCounts }`.
+`ui/layouts/sanitise.ts` exposes one function, `sanitisePlan(bytes): SanitisedPlan`: either
+`{ ok: true, svg: SVGSVGElement, viewBox, removed: RemovedCounts }` or `{ ok: false, problem }`
+naming the import check (1–7, 9) that failed. It takes bytes, not text, because checks 1 and 2
+are about bytes, and refuses with a value, not an exception, so the dialog can say which check.
+It runs the DOCTYPE check (5) on the text before parsing, since parsing is what a DTD attacks.
+Until PR 6 imports it, `frontend/scripts/awaiting-consumer.json` lists it, so `check:graph`
+does not report it and `check:lazy-svg` asserts DOMPurify is in no chunk at all.
 DOMPurify does the work, configured with its SVG and SVG-filter profiles and XML parsing of the
 input. On top of the profile:
 

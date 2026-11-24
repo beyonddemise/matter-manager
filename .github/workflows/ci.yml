@@ -227,6 +227,22 @@ jobs:
         run: npm run check:lazy-pdf
         working-directory: frontend
 
+      # Both were in `npm run verify` and in no CI step, so a laptop enforced what CI did not.
+      - name: The Excel writer is not in the bundle everyone downloads
+        run: npm run check:lazy-xlsx
+        working-directory: frontend
+
+      - name: The route views are lazy and still precached
+        run: npm run check:lazy-views
+        working-directory: frontend
+
+      # DOMPurify joined the dependencies for SVG layouts (#143, ADR 0023) on condition that it
+      # is lazy. While the sanitiser awaits the layout view that imports it, this asserts it is
+      # in no chunk at all; once wired, that it is reached only by import().
+      - name: The plan sanitiser is not in the bundle everyone downloads
+        run: npm run check:lazy-svg
+        working-directory: frontend
+
       # #106 shipped an offline-first application whose icons and typography arrived from two
       # CDNs on every visit. Finding that took serving `dist` under a strict CSP and reading the
       # violations by hand, which nobody does twice - so both halves are checked here instead.
@@ -244,6 +260,16 @@ jobs:
       # application needs fails here rather than in front of a user.
       - name: The running site makes no cross-origin request
         run: npm run probe:runtime
+        working-directory: frontend
+
+      # #143 renders plans as inline SVG, which only two things keep inert: `script-src` without
+      # 'unsafe-inline', and the plan sanitiser. This renders a hostile SVG five ways, under the
+      # deployed policy and under none, and fails unless each holds without the other: nothing
+      # runs or leaves the origin under the policy, and the sanitised plan renders with nothing
+      # run and nothing fetched with no policy at all. It needs no build: it bundles
+      # src/ui/layouts/sanitise.ts itself and serves its own pages.
+      - name: A hostile SVG is inert under the policy, and after the sanitiser without one
+        run: npm run probe:svg
         working-directory: frontend
 
       # The job `e2e/README.md` promised in M2 and #57 finally added. It drives the *built*
