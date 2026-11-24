@@ -311,7 +311,10 @@ function readDevice(entry: ZipEntry): {
       return refuse('the payload and the manual code are different codes.')
     }
     // Not disabled: a draft has never been in service.
-    return { device: { ...draft, remarks, ...catalogBlock(value) }, refiled: false }
+    // A catalogue block only for a code that names its product: one beside no code, or a short
+    // code, would describe a product this draft cannot be shown to be (CodeRabbit on #369).
+    const block = draft.vendorId === undefined ? {} : catalogBlock(value)
+    return { device: { ...draft, remarks, ...block }, refiled: false }
   }
   if (credential === undefined) return refuse('no setup code.')
 

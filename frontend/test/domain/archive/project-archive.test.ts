@@ -392,6 +392,20 @@ describe('drafts (#358)', () => {
     expect(imported.refiled).toBe(0)
   })
 
+  it('drops a catalogue block from a draft whose code names no product', () => {
+    const block = {
+      vendorName: 'Acme',
+      catalogCheckedAt: '2026-11-24T09:00:00.000Z',
+      catalogSource: 'found',
+    }
+    const imported = readProjectArchive(archiveOf({ ...draft('a', { name: 'Fan' }), ...block }))
+    expect(imported.devices[0]).not.toHaveProperty('vendorName')
+    const named = readProjectArchive(
+      archiveOf({ ...draft('b', { manualCode: LONG_MANUAL, payload: PAYLOAD }), ...block }),
+    )
+    expect(named.devices[0]).toMatchObject({ vendorName: 'Acme' })
+  })
+
   it('refuses a draft whose setup code does not read, as it refuses a device', () => {
     expect(problemOf(archiveOf({ ...draft('a'), manualCode: '1234' }))).toBe('badDevice')
   })
