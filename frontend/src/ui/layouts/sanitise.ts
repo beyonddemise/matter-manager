@@ -83,6 +83,9 @@ export const PLAN_HOLDER_CSS = `@layer plan-holder {
     width: 100% !important;
     height: 100% !important;
     margin: 0 !important;
+    filter: none !important;
+    clip-path: none !important;
+    mask: none !important;
   }
 }`
 
@@ -381,7 +384,6 @@ const ALLOWED_PREFIXES = [
   'font',
   'text-decoration',
   'text-wrap',
-  'marker',
   'mask',
   'clip-path',
   'clip-rule',
@@ -489,11 +491,23 @@ const INNER_ONLY_ATTRIBUTES = new Set(['transform', 'transform-origin'])
  * are on none of them. The root's `width` and `height` pass here only to be read as geometry;
  * `normaliseGeometry` then removes them.
  */
-const presentationAllowed = (name: string, root: boolean) =>
-  allowedProperty(name) ||
-  name === 'width' ||
-  name === 'height' ||
-  (!root && INNER_ONLY_ATTRIBUTES.has(name))
+const presentationAllowed = (name: string, root: boolean, inMarker: boolean) => {
+  // The root's paint effects reach past its box: a drop-shadow or an offset filter region
+  // draws outside it (third security review of #367). Inside the root they are clipped.
+  if (root && ROOT_PAINT_EFFECTS.some((effect) => name.startsWith(effect))) return false
+  // Markers only as attributes, and only one level deep: a marker inside a marker multiplies
+  // painting by the vertex count at each level. One level is counted in the instance budget.
+  if (MARKER_ATTRIBUTES.includes(name)) return !inMarker
+  return (
+    allowedProperty(name) ||
+    name === 'width' ||
+    name === 'height' ||
+    (!root && INNER_ONLY_ATTRIBUTES.has(name))
+  )
+}
+
+/** Paint effects that draw beyond the box of the element they are set on. */
+const ROOT_PAINT_EFFECTS = ['filter', 'clip-path', 'mask']
 
 /** Whether an element is the plan's root: an `svg` whose parent, if any, is not SVG. */
 const isPlanRoot = (element: Element) =>
@@ -719,18 +733,21 @@ function expandedInstances(
   svg: SVGSVGElement,
   targets: ReadonlyMap<Element, readonly Element[]>,
 ): number | 'cycle' {
-  const edges = (element: Element): Element[] => [
-    ...element.children,
-    ...(targets.get(element) ?? []),
+  const markers = markerEdges(svg)
+  // Each edge carries how many times its target is painted: once for a child or a `<use>`,
+  // once per vertex for a marker.
+  const edges = (element: Element): Array<[Element, number]> => [
+    ...[...element.children].map((child): [Element, number] => [child, 1]),
+    ...(targets.get(element) ?? []).map((target): [Element, number] => [target, 1]),
+    ...(markers.get(element) ?? []),
   ]
   const cap = PLAN_MAX_INSTANCES + 1
   const counted = new Map<Element, number>()
   const onPath = new Set<Element>()
-  const stack: Array<{ element: Element; next: Element[] | undefined }> = [
-    { element: svg, next: undefined },
-  ]
+  type Frame = { element: Element; next: Array<[Element, number]> | undefined }
+  const stack: Frame[] = [{ element: svg, next: undefined }]
   while (stack.length > 0) {
-    const frame = stack[stack.length - 1] as { element: Element; next: Element[] | undefined }
+    const frame = stack[stack.length - 1] as Frame
     if (frame.next === undefined) {
       if (counted.has(frame.element)) {
         stack.pop()
@@ -738,7 +755,7 @@ function expandedInstances(
       }
       frame.next = edges(frame.element)
       onPath.add(frame.element)
-      for (const next of frame.next) {
+      for (const [next] of frame.next) {
         if (onPath.has(next)) return 'cycle'
         if (!counted.has(next)) stack.push({ element: next, next: undefined })
       }
@@ -747,10 +764,69 @@ function expandedInstances(
     stack.pop()
     onPath.delete(frame.element)
     let total = 1
-    for (const next of frame.next) total = Math.min(cap, total + (counted.get(next) ?? 0))
+    for (const [next, times] of frame.next)
+      total = Math.min(cap, total + times * (counted.get(next) ?? 0))
     counted.set(frame.element, total)
   }
   return counted.get(svg) ?? 1
+}
+
+/** The attributes that put a marker on a shape. CSS cannot: the sanitiser drops it there. */
+const MARKER_ATTRIBUTES = ['marker-start', 'marker-mid', 'marker-end']
+
+/** Shapes a marker is drawn on. */
+const MARKABLE = 'path, line, polyline, polygon'
+
+/**
+ * How many vertices a shape and everything inside it can put a marker on. Crude on purpose and
+ * never low: every run of digits and every command letter in `d` or `points` counts as a
+ * vertex of its own. Every number holds a digit run and two numbers never share one, and a
+ * `z` with no numbers is a vertex too, so the count cannot fall below the true one. It
+ * over-counts a path by at least half and an arc by more, which only spends budget.
+ */
+function markableVertices(element: Element): number {
+  let total = 0
+  for (const shape of [element, ...element.querySelectorAll(MARKABLE)]) {
+    const name = shape.localName
+    if (name === 'line') total += 2
+    else if (name === 'path' || name === 'polyline' || name === 'polygon') {
+      const text = shape.getAttribute(name === 'path' ? 'd' : 'points') ?? ''
+      total += (text.match(/\d+|[a-z]/gi)?.length ?? 0) + 1
+    }
+  }
+  return total
+}
+
+/**
+ * The markers each element puts on its shapes, weighted by how many vertices receive one.
+ *
+ * Markers multiply painting: one 300-vertex path drawing a 300-vertex marker that draws
+ * another is 300³ paints from 6 KB (third security review of #367). The sanitiser keeps
+ * markers to one level, as attributes only, outside any `<marker>`; this puts that one level in
+ * the instance budget as (vertices of the element and everything that inherits from it) ×
+ * (the marker's own counted size). A marker reached again through `<use>` is multiplied by the
+ * graph walk like anything else a `<use>` copies.
+ */
+function markerEdges(svg: SVGSVGElement): Map<Element, Array<[Element, number]>> {
+  const byId = new Map<string, Element>()
+  for (const element of svg.querySelectorAll('[id]')) {
+    const id = element.getAttribute('id') ?? ''
+    if (!byId.has(id)) byId.set(id, element)
+  }
+  const edges = new Map<Element, Array<[Element, number]>>()
+  const selector = MARKER_ATTRIBUTES.map((name) => `[${name}]`).join(', ')
+  for (const element of svg.querySelectorAll(selector)) {
+    const reached: Array<[Element, number]> = []
+    const times = markableVertices(element)
+    for (const name of MARKER_ATTRIBUTES) {
+      // The reference rule has already made every url() a fragment, so this only reads it.
+      const fragment = /url\(\s*["']?(#[^"')]*)/.exec(element.getAttribute(name) ?? '')?.[1]
+      if (fragment === undefined) continue
+      for (const marker of referenceTargets(fragment, byId)) reached.push([marker, times])
+    }
+    if (reached.length > 0) edges.set(element, reached)
+  }
+  return edges
 }
 
 /** A plain number in user units: unitless or `px`, nothing else. */
@@ -939,7 +1015,11 @@ function rejection(
   // from the holder, and every declaration that could move it is one the holder would fight.
   const root = isPlanRoot(element)
   if (root && lower === 'style') return 'styleRules'
-  if (PRESENTATION_ATTRIBUTES.has(lower) && !presentationAllowed(lower, root)) return 'styleRules'
+  if (
+    PRESENTATION_ATTRIBUTES.has(lower) &&
+    !presentationAllowed(lower, root, element.closest('marker') !== null)
+  )
+    return 'styleRules'
   // Only a fragment: the plan may point into itself (`<use href="#door">`) and nowhere else.
   // A relative path is as external as an absolute one, resolved against this application.
   if (isHref) return urlStrip(value).startsWith('#') ? undefined : 'externalReferences'
@@ -1022,14 +1102,16 @@ function safeDeclaration(property: string, value: string): boolean {
  * A longhand whose value is empty belongs to a shorthand that holds a `var()` the browser has
  * not substituted yet. Its real value is unknowable here, so it goes too.
  */
-function filterDeclarations(style: CSSStyleDeclaration): number {
+function filterDeclarations(style: CSSStyleDeclaration, reachesRoot = false): number {
   const doomed = new Set<string>()
   let pending = 0
   for (let i = 0; i < style.length; i += 1) {
     const property = style.item(i)
     const value = style.getPropertyValue(property)
     if (value === '') pending += 1
-    if (value === '' || !safeDeclaration(property, value)) doomed.add(property)
+    const paintsOutside =
+      reachesRoot && ROOT_PAINT_EFFECTS.some((effect) => property.startsWith(effect))
+    if (value === '' || paintsOutside || !safeDeclaration(property, value)) doomed.add(property)
   }
   for (const property of doomed) style.removeProperty(property)
   // The longhands of a `var()` shorthand were one declaration as written, so they count once.
@@ -1050,6 +1132,20 @@ function filterDeclarations(style: CSSStyleDeclaration): number {
  * the parser's own serialisation.
  */
 function filterStyles(svg: SVGSVGElement, removed: RemovedCounts): void {
+  // Whether a rule can reach the root is the browser's question, so the browser answers it,
+  // with the root where it will render: alone in a shadow root, with no element parent. A
+  // selector such as `svg:not(body > *)` matches there and nowhere else. A selector `matches`
+  // refuses (a pseudo-element) is treated as matching.
+  const parent = svg.parentNode
+  const scratch = svg.ownerDocument.createElement('div').attachShadow({ mode: 'open' })
+  scratch.append(svg)
+  const reachesRoot = (selector: string) => {
+    try {
+      return svg.matches(selector)
+    } catch {
+      return true
+    }
+  }
   for (const element of [...svg.getElementsByTagNameNS(SVG_NS, 'style')]) {
     const text = element.textContent ?? ''
     const sheet = new CSSStyleSheet()
@@ -1071,12 +1167,13 @@ function filterStyles(svg: SVGSVGElement, removed: RemovedCounts): void {
         rule.deleteRule(0)
         removed.styleRules += 1
       }
-      removed.styleRules += filterDeclarations(rule.style)
+      removed.styleRules += filterDeclarations(rule.style, reachesRoot(rule.selectorText))
       kept.push(rule.cssText)
     }
     if (kept.length > 0) element.textContent = kept.join('\n')
     else element.remove()
   }
+  parent?.appendChild(svg)
 
   for (const element of [svg, ...svg.querySelectorAll('[style]')]) {
     if (!(element instanceof SVGElement) || !element.hasAttribute('style')) continue

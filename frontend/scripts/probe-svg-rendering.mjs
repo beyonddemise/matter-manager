@@ -105,7 +105,8 @@ const NOT_OBSERVABLE = {
   '<script>': 'never runs when inserted by innerHTML or importNode, sanitised or not',
   'cross-origin <use>': 'the same-origin rule refuses it in every mode, with no policy report',
   '<?xml-stylesheet?>': 'outside the root element, so no mode here inserts it',
-  '@font-face': 'Chromium ignores it inside a shadow root, which is where a plan renders',
+  '@font-face':
+    'Chromium and Firefox ignore it inside a shadow root, which is where a plan renders (WebKit untested)',
   '<animate> rewriting href to javascript:': 'Chromium does not run the rewritten link',
 }
 
@@ -185,6 +186,45 @@ const GEOMETRY = [
     svg: box('', '<style>:host { outline: 5px solid red }</style>'),
     holderStops: false,
   },
+  // Markers, read from the browser's computed style: a marker set from CSS, and a marker
+  // inside a marker. Containment is not the defence against either: they multiply painting
+  // inside the box.
+  {
+    name: 'a marker set from CSS',
+    svg: box(
+      '',
+      '<marker id="mk"><circle r="1"/></marker><style>path { marker-mid: url(#mk) }</style><path d="M0 0 h10 h10 h10" stroke="black"/>',
+    ),
+    check: 'marker-css',
+    holderStops: false,
+  },
+  {
+    name: 'a marker inside a marker',
+    svg: box(
+      '',
+      '<marker id="inner"><circle r="1"/></marker><marker id="outer"><path d="M0 0 h1 h1 h1" marker-mid="url(#inner)"/></marker><path d="M0 0 h10 h10" marker-mid="url(#outer)" stroke="black"/>',
+    ),
+    check: 'marker-nested',
+    holderStops: false,
+  },
+]
+
+/**
+ * Ways for a plan to paint outside its box without moving it, found in a screenshot: every
+ * pixel outside the holder must still be the page's own background.
+ */
+const filterRegion =
+  '<filter id="o" x="-1000%" y="-1000%" width="3000%" height="3000%"><feOffset dx="-300" dy="-300"/></filter>'
+const PAINT = [
+  {
+    name: 'filter: drop-shadow on the root',
+    svg: box('', '<style>svg { filter: drop-shadow(-250px -250px 0 lime) }</style>'),
+  },
+  {
+    name: 'a filter region with feOffset on the root, from a stylesheet',
+    svg: box('', `${filterRegion}<style>svg { filter: url(#o) }</style>`),
+  },
+  { name: 'filter= on the root', svg: box('filter="url(#o)"', filterRegion) },
 ]
 
 /** A plan whose DTD declares an external entity. The sanitiser must refuse it outright. */
@@ -213,10 +253,32 @@ const useBombSvg = (spell) => {
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><defs>${defs}</defs><use href="#${spell('l6')}"/></svg>`
 }
 
+/** A path of `n` vertices, three bytes each. */
+const vertices = (n) => `M0 0${' h1'.repeat(n)}`
+
+/** `levels` markers, each a 300-vertex path whose marker-mid is the level below: 300^levels paints. */
+const markerBombSvg = (levels) => {
+  let defs = ''
+  for (let i = 0; i < levels; i += 1) {
+    const nested = i > 0 ? ` marker-mid="url(#m${i - 1})"` : ''
+    defs += `<marker id="m${i}" markerWidth="1" markerHeight="1"><path d="${vertices(300)}" stroke="black"${nested}/></marker>`
+  }
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><defs>${defs}</defs><path d="${vertices(300)}" marker-mid="url(#m${levels - 1})"/></svg>`
+}
+
+/** Documents the sanitiser must refuse outright. Never rendered by the probe, in any mode. */
 const BOMBS = {
   'the <use> bomb': useBombSvg((id) => id),
   'the percent-encoded <use> bomb': useBombSvg((id) => id.replace('l', '%6C')),
+  'the 400,000-vertex marker': `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><marker id="m"><circle r="1"/></marker><path d="${vertices(400_000)}" marker-mid="url(#m)"/></svg>`,
 }
+
+/**
+ * Documents the sanitiser accepts once it has defused them: the 300×300×300 marker bomb, which
+ * cannot nest once marker-* is gone from inside every marker. Checked by structure, never
+ * rendered: with `--bypass-sanitiser` rendering it would hang the probe.
+ */
+const DEFUSED = { 'the nested marker bomb': markerBombSvg(3) }
 
 const PAGE = `<!doctype html><html><head><meta charset="utf-8"><title>svg probe</title>
 <style>
@@ -250,6 +312,8 @@ const svg = ${JSON.stringify(svg)}
 const doctype = ${JSON.stringify(doctype)}
 const geometry = ${JSON.stringify(GEOMETRY)}
 const bombs = ${JSON.stringify(BOMBS)}
+const defused = ${JSON.stringify(DEFUSED)}
+const paint = ${JSON.stringify(PAINT)}
 const bypass = ${JSON.stringify(bypass)}
 const CONTROL = ${JSON.stringify(CONTROL)}
 const HOLDER_ONLY = ${JSON.stringify(HOLDER_ONLY)}
@@ -351,12 +415,95 @@ window.__run = async (mode) => {
       document.body.append(holder)
       const inside = insert(mode, holder, fixture.svg, notes)
       await settle(50)
-      if (escapes(holder, inside)) window.__fired.push('escaped: ' + fixture.name)
+      const caught =
+        fixture.check === 'marker-css' ? markerFromCss(inside)
+        : fixture.check === 'marker-nested' ? markerNested(inside)
+        : escapes(holder, inside)
+      if (caught) window.__fired.push('escaped: ' + fixture.name)
       holder.remove()
     }
   }
   await settle(400)
   return { fired: [...new Set(window.__fired)], violations: [...new Set(window.__violations)], notes }
+}
+
+const MARKERS = ['markerStart', 'markerMid', 'markerEnd']
+const marked = (element) => MARKERS.some((m) => getComputedStyle(element)[m] !== 'none')
+
+/** A marker the browser applies to a shape that has no marker attribute: it came from CSS. */
+const markerFromCss = (root) =>
+  [...root.querySelectorAll('path, line, polyline, polygon')].some(
+    (shape) => marked(shape) && !['marker-start', 'marker-mid', 'marker-end'].some((a) => shape.closest('[' + a + ']')),
+  )
+
+/** A marker the browser applies to a shape that is itself inside a marker. */
+const markerNested = (root) => [...root.querySelectorAll('marker *')].some(marked)
+
+/**
+ * The nested marker bomb, checked by structure and never rendered with the sanitiser bypassed.
+ * Sanitised, it is also rendered and timed: defused, it draws in milliseconds.
+ */
+window.__defused = async () => {
+  const notes = []
+  for (const [name, text] of Object.entries(defused)) {
+    const result = planFor(text)
+    if (!result.ok) { notes.push(name + ' was refused rather than defused: ' + result.problem.kind); continue }
+    if (result.svg.querySelector('marker [marker-start], marker [marker-mid], marker [marker-end]')) {
+      notes.push(name + ' was not defused')
+      continue
+    }
+    const holder = document.createElement('div')
+    holder.className = 'geometry'
+    document.body.append(holder)
+    const root = holder.attachShadow({ mode: 'open' })
+    root.adoptedStyleSheets = [holderSheet]
+    const started = performance.now()
+    root.append(document.importNode(result.svg, true))
+    root.querySelector('svg').getBoundingClientRect()
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))
+    const took = performance.now() - started
+    if (took > 3000) notes.push(name + ' took ' + Math.round(took) + ' ms to render')
+    holder.remove()
+  }
+  return notes
+}
+
+/** Renders one paint fixture alone on the page, so a screenshot shows only what it paints. */
+window.__paint = (mode, index) => {
+  // Removed, not hidden: a plan's own styles could make its content visible again.
+  for (const id of ['host', 'shadow', 'plan']) document.getElementById(id)?.remove()
+  for (const img of document.querySelectorAll('body > img')) img.remove()
+  const holder = document.createElement('div')
+  holder.className = 'geometry'
+  holder.id = 'painting'
+  document.body.append(holder)
+  insert(mode, holder, paint[index].svg, [])
+}
+
+window.__unpaint = () => document.getElementById('painting')?.remove()
+
+/** Whether any pixel of a screenshot outside the painting holder differs from the background. */
+window.__paintedOutside = async (png) => {
+  const image = new Image()
+  image.src = 'data:image/png;base64,' + png
+  await image.decode()
+  const canvas = document.createElement('canvas')
+  canvas.width = image.width
+  canvas.height = image.height
+  const context = canvas.getContext('2d')
+  context.drawImage(image, 0, 0)
+  const { data } = context.getImageData(0, 0, image.width, image.height)
+  const box = document.getElementById('painting').getBoundingClientRect()
+  const scale = image.width / window.innerWidth
+  for (let y = 0; y < image.height; y += 1) {
+    for (let x = 0; x < image.width; x += 1) {
+      const inside = x >= (box.left - 3) * scale && x < (box.right + 3) * scale && y >= (box.top - 3) * scale && y < (box.bottom + 3) * scale
+      if (inside) continue
+      const at = (y * image.width + x) * 4
+      if (data[at] < 250 || data[at + 1] < 250 || data[at + 2] < 250) return true
+    }
+  }
+  return false
 }
 `
 
@@ -423,6 +570,19 @@ async function measure(withPolicy) {
       await tab.mouse.move(350, 350)
       await tab.mouse.move(400, 400, { steps: 5 })
       await tab.waitForTimeout(500)
+      // With the sanitiser bypassed, the structural check reports the bomb before rendering it.
+      if (mode === SANITISED || mode === SANITISED_HELD)
+        r.notes.push(...(await tab.evaluate(() => window.__defused())))
+      // Paint outside the box, read off a screenshot: only the browser knows what a filter drew.
+      if (!mode.startsWith('img'))
+        for (const [index, fixture] of PAINT.entries()) {
+          await tab.evaluate(([m, i]) => window.__paint(m, i), [mode, index])
+          await tab.waitForTimeout(100)
+          const png = (await tab.screenshot()).toString('base64')
+          if (await tab.evaluate((p) => window.__paintedOutside(p), png))
+            r.fired.push(`escaped: ${fixture.name}`)
+          await tab.evaluate(() => window.__unpaint())
+        }
       await tab.close()
       results[mode] = { ...r, received: [...new Set(received)], strays: [...new Set(strays)] }
     }
@@ -473,7 +633,7 @@ const failures = []
 // and a vector only they can show proves nothing about the mode that ships.
 const control = noPolicy[CONTROL]
 const seen = new Set([...control.fired, ...control.received, ...control.strays])
-const geometryEffects = GEOMETRY.map((g) => `escaped: ${g.name}`)
+const geometryEffects = [...GEOMETRY, ...PAINT].map((g) => `escaped: ${g.name}`)
 for (const vector of [...EXPECTED_EFFECTS, ...geometryEffects, ...EXPECTED_PATHS])
   if (!seen.has(vector))
     failures.push(
@@ -492,7 +652,7 @@ for (const [mode, r] of Object.entries(underPolicy)) {
 // The holder's proof: with neither the policy nor the sanitiser, the holder keeps every layout
 // escape it is responsible for inside its box.
 const held = new Set(
-  GEOMETRY.filter((g) => g.holderStops !== false).map((g) => `escaped: ${g.name}`),
+  [...GEOMETRY, ...PAINT].filter((g) => g.holderStops !== false).map((g) => `escaped: ${g.name}`),
 )
 for (const fired of noPolicy[HOLDER_ONLY].fired.filter((f) => held.has(f)))
   failures.push(`no policy, ${HOLDER_ONLY}: ${fired}`)
@@ -519,6 +679,9 @@ if (bypass) {
     !r.notes.includes('the DOCTYPE plan was not refused') && 'the DOCTYPE plan still refused',
     ...Object.keys(BOMBS).map(
       (name) => !r.notes.includes(`${name} was not refused`) && `${name} still refused`,
+    ),
+    ...Object.keys(DEFUSED).map(
+      (name) => !r.notes.includes(`${name} was not defused`) && `${name} still defused`,
     ),
   ].filter(Boolean)
   for (const m of missing) failures.push(`bypassing the sanitiser went unnoticed: ${m}`)

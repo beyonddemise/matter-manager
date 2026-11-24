@@ -324,7 +324,7 @@ Checks, in this order, each with its own message:
 | 3 | Well-formed | `DOMParser` (`image/svg+xml`) yields a `parsererror` |
 | 4 | Root | The document element is not `svg` in the SVG namespace |
 | 5 | No DTD | Any `<!DOCTYPE>`. It is the vehicle for entity expansion and external entities, and a plan does not need one |
-| 6 | Size of the tree | More than 100,000 elements, or nesting deeper than 64. After sanitising, also more than 100,000 instances with every `<use>` expanded, or a `<use>` cycle: 61 nested uses can expand to a million instances. References are resolved as the browser resolves them (percent-decoded), and a `<use>` that reaches nothing is removed |
+| 6 | Size of the tree | More than 100,000 elements, or nesting deeper than 64. After sanitising, also more than 100,000 instances with every `<use>` expanded, or a `<use>` cycle: 61 nested uses can expand to a million instances. References are resolved as the browser resolves them (percent-decoded), and a `<use>` that reaches nothing is removed. Markers count too: they come only from attributes, never from CSS, never from inside another `<marker>`, and each costs (vertices it lands on) × (the marker's size) |
 | 7 | Geometry | No usable `viewBox`, and `width`/`height` cannot supply one (unitless or `px` only). A width or height that is zero, negative or not finite |
 | 8 | Sanitise | See below. **Stripping is not rejection**: a CAD export with metadata the sanitiser removes still imports |
 | 9 | Something left | The sanitised tree has no drawable element |
@@ -392,11 +392,15 @@ layers stop it:
   `position`, `z-index`, `inset`, `top`/`left`/`right`/`bottom`, `width`, `height` and `overflow`
   are not on it, nor is `transform`, and no value may use viewport units. Presentation
   attributes (SVG 2's list) get the same allow-list, with `transform=` allowed only inside the
-  plan. The root keeps no `style`, `overflow` or `transform` at all.
+  plan. The root keeps no `style`, `overflow`, `transform`, `filter`, `clip-path` or `mask` at
+  all, and a rule whose selector matches the root (asked of the browser, with the root in a
+  shadow root as it will render) loses `filter`, `clip-path` and `mask`: a root filter paints
+  past the box, as a drop-shadow or an offset filter region does.
 - **The holder** contains whatever gets through. `sanitise.ts` exports `PLAN_HOLDER_CSS`, and
   every element that renders a plan (PR 6's `<mm-plan-canvas>`) **must** adopt it in the shadow
   root that holds the plan: the host gets `contain: strict; overflow: clip; isolation: isolate`,
-  and `:host > svg` is forced `position: static`, `transform: none` and `overflow: hidden`,
+  and `:host > svg` is forced `position: static`, `transform: none`, `overflow: hidden`,
+  `filter: none`, `clip-path: none` and `mask: none`,
   inside a cascade layer so that no `!important` in a plan can outrank it.
 - `probe:svg` measures both by geometry, each without the other: the plan's box must stay
   within its holder's, and `elementFromPoint` just outside the holder must not hit it.

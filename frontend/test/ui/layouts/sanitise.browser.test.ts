@@ -650,3 +650,114 @@ describe('the security re-review of #367', () => {
     expect(removed.unsafeUrls).toBe(2)
   })
 })
+
+/** The third-pass review of #367: markers that multiply, and filters that paint outside. */
+describe('the third security review of #367', () => {
+  /** A path of `n` vertices, three bytes each. */
+  const path = (n: number) => `M0 0${' h1'.repeat(n)}`
+
+  /** `levels` markers, each a 300-vertex path whose marker-mid is the level below. */
+  const markerBomb = (levels: number) => {
+    let defs = ''
+    for (let i = 0; i < levels; i += 1) {
+      const nested = i > 0 ? ` marker-mid="url(#m${i - 1})"` : ''
+      defs += `<marker id="m${i}" markerWidth="1" markerHeight="1"><path d="${path(300)}" stroke="black"${nested}/></marker>`
+    }
+    return plan(`<defs>${defs}</defs><path d="${path(300)}" marker-mid="url(#m${levels - 1})"/>`)
+  }
+
+  it('N1. drops marker-* inside a <marker>, so markers cannot nest', () => {
+    const { svg } = clean(markerBomb(3))
+    for (const element of svg.querySelectorAll('marker *'))
+      for (const name of ['marker-start', 'marker-mid', 'marker-end'])
+        expect(element.hasAttribute(name)).toBe(false)
+  })
+
+  it('N1. drops every marker property from CSS, so markers come only from attributes', () => {
+    const { svg, markup } = clean(
+      plan(`<marker id="m"><circle r="1"/></marker>
+        <style>path { marker-mid: url(#m); stroke: red } g { marker: url(#m) }</style>
+        <path id="p" d="M0 0 h1 h1" style="marker-start: url(#m); fill: blue"/>`),
+    )
+    expect(markup).not.toMatch(/marker-(start|mid|end)|marker:/)
+    expect(svg.querySelector('style')?.textContent).toMatch(/stroke: red/)
+    expect(svg.querySelector('#p')?.getAttribute('style')).toMatch(/fill: blue/)
+  })
+
+  it('N1. keeps a marker attribute outside markers', () => {
+    const { svg } = clean(
+      plan(
+        '<marker id="arrow"><path d="M0 0 L1 1"/></marker><path id="p" d="M0 0 L5 5" marker-end="url(#arrow)"/>',
+      ),
+    )
+    expect(svg.querySelector('#p')?.getAttribute('marker-end')).toBe('url(#arrow)')
+  })
+
+  it('N1. counts vertices times the marker against the instance budget', () => {
+    // One level, 400,000 vertices: 1.2 MB, under the size limit, and 400,000 marker paints.
+    const single = plan(
+      `<marker id="m"><circle r="1"/></marker><path d="${path(400_000)}" marker-mid="url(#m)"/>`,
+    )
+    expect(problemOf(single)).toBe('too-many-instances')
+    // Inherited from a group, the markers land on every path inside it.
+    const paths = Array.from({ length: 200 }, () => `<path d="${path(300)}"/>`).join('')
+    const inherited = plan(
+      `<marker id="m"><circle r="1"/></marker><g marker-mid="url(#m)">${paths}</g>`,
+    )
+    expect(problemOf(inherited)).toBe('too-many-instances')
+    // A marker reached again through <use> is multiplied by the use as well.
+    const viaUse = plan(
+      `<marker id="m"><circle r="1"/></marker><path id="p" d="${path(2_000)}" marker-mid="url(#m)"/>${'<use href="#p"/>'.repeat(60)}`,
+    )
+    expect(problemOf(viaUse)).toBe('too-many-instances')
+  })
+
+  it('N1. accepts the arrowheads a drawing really has', () => {
+    const lines = Array.from(
+      { length: 200 },
+      (_, i) => `<line x1="0" y1="${i}" x2="9" y2="${i}" marker-end="url(#a)"/>`,
+    )
+    expect(
+      sanitise(plan(`<marker id="a"><path d="M0 0 L2 1 L0 2 z"/></marker>${lines.join('')}`)).ok,
+    ).toBe(true)
+  })
+
+  it('N2. drops filter, clip-path and mask from the root, by attribute or by any rule that matches it', () => {
+    const { svg } = clean(
+      plan(
+        `<style>svg { filter: drop-shadow(-250px -250px 0 lime) } svg:not(body > *) { clip-path: inset(1px) }
+          * { mask: url(#k) } .wall { filter: blur(1px); fill: red }</style><mask id="k"/>`,
+        'viewBox="0 0 100 100" filter="url(#o)" clip-path="url(#c)" mask="url(#k)"',
+      ),
+    )
+    expect(svg.hasAttribute('filter')).toBe(false)
+    expect(svg.hasAttribute('clip-path')).toBe(false)
+    expect(svg.hasAttribute('mask')).toBe(false)
+    const css = svg.querySelector('style')?.textContent ?? ''
+    expect(css).not.toMatch(/drop-shadow|clip-path|mask/)
+    expect(css).toMatch(/\.wall \{[^}]*filter: blur\(1px\)/)
+  })
+
+  it('N2. the holder turns off filter, clip-path and mask on the plan root', () => {
+    const holder = document.createElement('div')
+    holder.style.cssText = 'width: 100px; height: 100px'
+    document.body.append(holder)
+    const root = holder.attachShadow({ mode: 'open' })
+    const sheet = new CSSStyleSheet()
+    sheet.replaceSync(PLAN_HOLDER_CSS)
+    root.adoptedStyleSheets = [sheet]
+    const raw = `<svg xmlns="${SVG_NS}" viewBox="0 0 10 10"><style>svg { filter: drop-shadow(-250px -250px 0 lime) !important;
+      clip-path: inset(1px) !important; mask: url(#k) !important }</style><rect width="1" height="1"/></svg>`
+    root.append(
+      document.importNode(
+        new DOMParser().parseFromString(raw, 'image/svg+xml').documentElement,
+        true,
+      ),
+    )
+    const style = getComputedStyle(root.querySelector('svg') as SVGSVGElement)
+    expect(style.filter).toBe('none')
+    expect(style.clipPath).toBe('none')
+    expect(style.maskImage).toBe('none')
+    holder.remove()
+  })
+})
