@@ -45,6 +45,10 @@ const device = (
   updatedAt,
   remarks,
   name: 'Kitchen light',
+  // A catalogue block is only ever written for a code that names its product, so a fixture
+  // carrying one names it too; the merge copies a block only between known, equal products.
+  vendorId: 0xfff1,
+  productId: 0x8000,
   ...extra,
 })
 
@@ -427,6 +431,26 @@ describe('mergeDevice and drafts (#358)', () => {
       expect(merged.vendorId).toBe(2)
       expect(merged).not.toHaveProperty('vendorName')
       expect(merged).not.toHaveProperty('catalogCheckedAt')
+    }
+  })
+
+  it('copies no block between revisions whose product is unknown', () => {
+    // Two short codes carry no ids, so "both undefined" says nothing about being one product.
+    const unknown = (fixture: DeviceFixture): DeviceFixture => {
+      const { vendorId: _vendor, productId: _product, ...rest } = fixture
+      return rest
+    }
+    const named = unknown(
+      device('2-a', '2026-11-24T09:00:00.000Z', [], {
+        vendorName: 'Old code',
+        catalogCheckedAt: '2026-11-24T12:00:00.000Z',
+        catalogSource: 'found',
+      }),
+    )
+    const recoded = unknown(device('3-b', '2026-11-24T10:00:00.000Z', [], { name: 'New code' }))
+    for (const merged of [mergeDevice(named, [recoded]), mergeDevice(recoded, [named])]) {
+      expect(merged.name).toBe('New code')
+      expect(merged).not.toHaveProperty('vendorName')
     }
   })
 })

@@ -160,7 +160,16 @@ function catalogueSource<T extends Revision & CatalogBearing>(
   let best: T | undefined
   for (const revision of revisions) {
     if (revision.catalogCheckedAt === undefined) continue
-    if (revision.vendorId !== latest.vendorId || revision.productId !== latest.productId) continue
+    // Another revision's block only for a product both name, and name *known*: two revisions
+    // without ids (an 11-digit code, a draft with none) could hold different codes.
+    if (
+      revision !== latest &&
+      (revision.vendorId === undefined ||
+        revision.vendorId !== latest.vendorId ||
+        revision.productId !== latest.productId)
+    ) {
+      continue
+    }
     if (
       best === undefined ||
       compareText(revision.catalogCheckedAt, best.catalogCheckedAt ?? '') > 0 ||
