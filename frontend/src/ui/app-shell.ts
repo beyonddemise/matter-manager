@@ -35,6 +35,7 @@ import { localDatabase } from './db/project-database.js'
 import type { EmailSignIn, StartOutcome, VerifyOutcome } from './email-signin.js'
 import { negotiateLocale } from './i18n/locale.js'
 import { activateLocale, getLocale } from './i18n/localization.js'
+import { followedAddress, type LeaveGuard, leaveGuardIn, samePage } from './leave-guard.js'
 import { type LocalProjectDependencies, localProjectDefaults } from './local-projects.js'
 import type { PasskeySignIn, PasskeySignInOutcome } from './passkey-signin.js'
 import { type PlanMatrix, type PlansApi, resolvePlanMatrix } from './plans.js'
@@ -448,8 +449,64 @@ export class AppShell extends LitElement implements ViewHost {
    */
   declare takeUpdate?: (waiting: ServiceWorker) => void
 
+  /**
+   * Whether a view holding unsaved input is asking the person whether to leave (#356). While it
+   * is, every other navigation waits: one question at a time, answered for the latest address.
+   */
+  private askingToLeave = false
+
+  /**
+   * Follows the address, unless that would replace a view holding unsaved input.
+   *
+   * By the time `hashchange` fires the browser has already moved - Back, Forward, an address
+   * typed in - so the old view is kept on screen while the guard asks. Leave renders the address
+   * the browser is on by then; Stay has the view put its own address back.
+   */
   private readonly onHashChange = () => {
-    this.hash = window.location.hash
+    // The question already on screen is answered for wherever the browser is when it is.
+    if (this.askingToLeave) return
+    const next = window.location.hash
+    const guard = this.guardAgainst(next)
+    if (guard === undefined) {
+      this.follow(next)
+      return
+    }
+    void this.askToLeave(guard).then((leave) => this.settleLeave(guard, leave))
+  }
+
+  /**
+   * Acts on the answer to "leave?", for wherever the browser is *now*, not where it was when the
+   * question was asked: every `hashchange` while the question was open was set aside, and the
+   * address may since have moved again (Forward back to the form), or been moved by the view
+   * itself (a project switch, a Save landing, both of which let the view go on their own).
+   *
+   * - The browser is on another page: follow it if the person chose to leave, or if the view has
+   *   nothing left to lose; otherwise the view puts its own address back.
+   * - The browser is on the view's own page: a link the person chose to leave by is followed now;
+   *   anything else stays, and nothing is let go, since nothing was left.
+   *
+   * @param link the in-app address a click was stopped for, when a click asked
+   */
+  private settleLeave(guard: LeaveGuard, leave: boolean, link?: string): void {
+    const now = window.location.hash
+    if (!samePage(now, this.hash)) {
+      if (leave || !guard.holdsInput()) {
+        guard.release()
+        this.follow(now)
+      } else {
+        guard.restoreAddress()
+      }
+      return
+    }
+    if (leave && link !== undefined && guard.holdsInput()) {
+      guard.release()
+      window.location.hash = link
+    }
+  }
+
+  /** Renders `address`, and takes a return from Stripe's checkout off it if it carries one. */
+  private follow(address: string): void {
+    this.hash = address
     this.takeCheckoutReturn()
   }
 
@@ -580,6 +637,43 @@ export class AppShell extends LitElement implements ViewHost {
   private subscribes(): boolean {
     if (this.session !== 'signed-in' && this.session !== 'offline-held') return false
     return plansForSale(this.upgradeFacts().plan, this.billingOffer ?? []).length > 0
+  }
+
+  /**
+   * Asks before an in-app link leaves a view holding unsaved input: the header's navigation, a
+   * view's own Cancel. Unlike `hashchange`, a click can be stopped before anything moves, so the
+   * history keeps no entry for a navigation the person did not make. Capture phase, so the
+   * question comes before anything the link itself does.
+   */
+  private readonly onLinkClick = (event: MouseEvent): void => {
+    if (event.defaultPrevented) return
+    const address = followedAddress(event)
+    if (address === undefined) return
+    if (this.askingToLeave) {
+      event.preventDefault()
+      return
+    }
+    const guard = this.guardAgainst(address)
+    if (guard === undefined) return
+    event.preventDefault()
+    void this.askToLeave(guard).then((leave) => this.settleLeave(guard, leave, address))
+  }
+
+  /** The view a navigation to `address` would lose input from, if there is one. */
+  private guardAgainst(address: string): LeaveGuard | undefined {
+    if (samePage(this.hash, address)) return undefined
+    const guard = leaveGuardIn(this)
+    return guard?.holdsInput() ? guard : undefined
+  }
+
+  /** Asks `guard` whether to leave, holding every other navigation until it has answered. */
+  private async askToLeave(guard: LeaveGuard): Promise<boolean> {
+    this.askingToLeave = true
+    try {
+      return await guard.confirmLeave()
+    } finally {
+      this.askingToLeave = false
+    }
   }
 
   /**
@@ -741,6 +835,7 @@ export class AppShell extends LitElement implements ViewHost {
   override connectedCallback(): void {
     super.connectedCallback()
     window.addEventListener('hashchange', this.onHashChange)
+    this.addEventListener('click', this.onLinkClick, { capture: true })
     this.takeCheckoutReturn()
     // The cache's answer now, for the header; the server is asked once a session is confirmed.
     void this.loadBillingOffer()
@@ -968,6 +1063,7 @@ export class AppShell extends LitElement implements ViewHost {
     this.tokenRefresher?.stop()
     this.tokenRefresher = undefined
     window.removeEventListener('hashchange', this.onHashChange)
+    this.removeEventListener('click', this.onLinkClick, { capture: true })
     this.stopWatchingNetwork?.()
     this.stopWatchingNetwork = undefined
     super.disconnectedCallback()

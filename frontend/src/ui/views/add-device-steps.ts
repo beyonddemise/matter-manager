@@ -1,6 +1,7 @@
 /**
  * The add form's step navigation (#349, split out in #357): which step owns which field, what
- * earns a step its checkmark, and what happens when the person moves between steps.
+ * earns a step its checkmark, and what happens when the person moves between steps - in the
+ * stepper, or with the browser's Back and Forward (#356).
  *
  * Kept apart from `add-device.ts` the way Review's template is kept in `add-device-review.ts`:
  * the form owns the controls, the lookup and Save; this owns moving between steps. The state
@@ -11,7 +12,7 @@
 // Types only: the add form's side-effect imports are what register the elements.
 import type WaStepper from '@awesome.me/webawesome-pro/dist/components/stepper/stepper.js'
 import type { WaStepChangeEvent } from '@awesome.me/webawesome-pro/dist/events/events.js'
-import type { ReactiveControllerHost } from 'lit'
+import type { ReactiveController, ReactiveControllerHost } from 'lit'
 import {
   checkDraftFields,
   type DeviceDraft,
@@ -21,6 +22,51 @@ import {
 
 /** The four steps of adding a device, by their `<wa-step name>` (#349). */
 export type AddStep = 'scan' | 'place' | 'name' | 'review'
+
+/**
+ * The steps in the order the stepper shows them. A history entry's place among the form's
+ * entries is its step's place here (#356): the first entry is Scan, the second Place, and so on.
+ */
+const STEPS: readonly AddStep[] = ['scan', 'place', 'name', 'review']
+
+/**
+ * What the form writes into `history.state` for each of its entries: which form it belongs to,
+ * and the step it shows.
+ *
+ * The form's id rather than nothing, because the router keeps one address for every add form:
+ * an entry another form left behind (one closed earlier, or one before a reload) is told apart by
+ * its id alone.
+ */
+interface StepEntry {
+  readonly addDevice: string
+  readonly step: AddStep
+}
+
+/**
+ * The ids of the forms connected now. A form opening on an entry whose form is still connected
+ * does not adopt it: two forms answering the same entries would each move the other's history.
+ * The application never has two, but nothing else would stop it.
+ */
+const connectedForms = new Set<string>()
+
+/**
+ * Where the browser is in its history: the current entry's index, from the Navigation API where
+ * the browser has one (`globalThis` and optional, because not every browser does), and the
+ * history's length, the only clue the History API gives.
+ */
+function whereNow(): { readonly index: number | undefined; readonly length: number } {
+  const navigation = (globalThis as { navigation?: Navigation }).navigation
+  return { index: navigation?.currentEntry?.index, length: history.length }
+}
+
+/** `state` as one of the form's entries, or `undefined` for any other entry. */
+function stepEntry(state: unknown): StepEntry | undefined {
+  if (typeof state !== 'object' || state === null) return undefined
+  const { addDevice, step } = state as Partial<Record<keyof StepEntry, unknown>>
+  return typeof addDevice === 'string' && STEPS.includes(step as AddStep)
+    ? { addDevice, step: step as AddStep }
+    : undefined
+}
 
 /**
  * What each step's check found when the person last left it: `true` for a pass, the problem
@@ -78,7 +124,7 @@ export function stepOf(field: DraftField): AddStep | undefined {
  * (where the stepper and the panels render), and when an update has landed. All of it is
  * already public on the element, so the element is passed as itself.
  */
-export type StepHost = Pick<ReactiveControllerHost, 'updateComplete'> &
+export type StepHost = Pick<ReactiveControllerHost, 'updateComplete' | 'addController'> &
   Pick<HTMLElement, 'querySelector'> & {
     /**
      * The step on screen, mirrored from the stepper's `wa-step-change`. Decides which panel is
@@ -108,13 +154,60 @@ export interface StepForm {
 }
 
 /**
- * Moves the add form between its steps, and checks each step as the person leaves it.
+ * Moves the add form between its steps, checks each step as the person leaves it, and keeps the
+ * browser's history in step with the stepper (#356).
  *
- * A plain helper rather than a Lit `ReactiveController`: it has nothing to do on connect,
- * disconnect or update, and the state it changes lives on the element, which re-renders on
- * each assignment as it did before the split.
+ * **History.** Each step is an entry: `#/devices/new` for Scan, then `?step=place`, `?step=name`
+ * and `?step=review`, each stamped with a {@link StepEntry}. The router ignores the query, so the
+ * shell keeps this element across them. The form's entries are always its steps in order - its
+ * n-th entry shows the n-th step - which is what makes browser Back the previous step and Forward
+ * the next, and the Previous button and Back the same move.
+ *
+ * The stepper stays the one source of truth for what is on screen. Every move, from the stepper's
+ * buttons, a click on a step, an Edit link or a save-time error, lands in the stepper first;
+ * {@link sync} then brings the history to it: an entry pushed for each step forward, an entry
+ * gone back for each step back. Back and Forward in the browser go the other way: `popstate`
+ * names an entry of this form, and the stepper is moved to its step, through the same
+ * `wa-step-change` as a press of Next, so a step left that way is checked like any other.
+ *
+ * Going back is one `history.go(-n)` straight to the entry wanted: the form's entries are always
+ * one unbroken run, its first step first (pushed in order, and put back in order by
+ * {@link restore}), so the entry n back is the step n back. A traversal is asynchronous, and the
+ * stepper may move again while one is in flight; nothing else is started until it lands, and
+ * landing syncs again to wherever the stepper is by then.
+ *
+ * A Lit `ReactiveController`, for the history: the entry the form opened on is taken over when
+ * it is connected, and `popstate` is listened to only while it is.
  */
-export class StepNavigation {
+export class StepNavigation implements ReactiveController {
+  /** Which form the entries belong to; adopted from an entry this form left before a reload. */
+  private id: string = crypto.randomUUID()
+  /** The step the current history entry shows. Differs from the stepper only while syncing. */
+  private shown: AddStep = 'scan'
+  /** Whether a traversal of this form's own (`history.go`) is in flight. */
+  private traversing = false
+  /** Where to go once back on the form's first entry, after Save or a project switch. */
+  private exit: string | undefined
+  /**
+   * The form's address without its query, as it was when the form was connected: the route the
+   * shell matched. Kept rather than read each time, because the address may be another page's
+   * by the time the entries are put back ({@link restore}).
+   */
+  private path = '#'
+  /**
+   * Whether the form has left for its {@link exit}. Its entries are gone, so it touches the
+   * history no more, whatever its stepper does in the moment before the shell removes it.
+   */
+  private left = false
+  /**
+   * Where the form last stood on one of its own entries, for {@link restore}: the entry's index
+   * in the Navigation API, where the browser has it, and `history.length` for one that does not.
+   */
+  private stood: { readonly index: number | undefined; readonly length: number } = {
+    index: undefined,
+    length: 0,
+  }
+
   /**
    * @param host the add form, whose state this reads and writes
    * @param form what the form exposes to the navigation and to nothing else
@@ -122,7 +215,187 @@ export class StepNavigation {
   constructor(
     private readonly host: StepHost,
     private readonly form: StepForm,
-  ) {}
+  ) {
+    host.addController(this)
+  }
+
+  /**
+   * Takes over the entry the form opened on.
+   *
+   * One of this form's own entries - the person reloaded on a later step, or came Forward into
+   * the form after leaving it - is adopted, with its id, and the history walked back from it to
+   * the first: the values are gone, so a later step would be an empty one, and Back from step 1
+   * must leave rather than walk through entries for steps nobody is on. Any other entry,
+   * including a deep link naming a later step, is replaced with the form's own first entry.
+   */
+  hostConnected(): void {
+    window.addEventListener('popstate', this.onPopState)
+    this.path = location.hash.split('?')[0] || '#'
+    const arrived = stepEntry(history.state)
+    if (arrived !== undefined && !connectedForms.has(arrived.addDevice)) {
+      this.id = arrived.addDevice
+      this.shown = arrived.step
+      connectedForms.add(this.id)
+      this.sync()
+      return
+    }
+    connectedForms.add(this.id)
+    this.shown = this.host.step
+    history.replaceState(this.entry(this.shown), '', this.address(this.shown))
+    this.stood = whereNow()
+  }
+
+  hostDisconnected(): void {
+    window.removeEventListener('popstate', this.onPopState)
+    connectedForms.delete(this.id)
+  }
+
+  /** Whether the form has nothing of its own in flight in the history: no walk, no exit. */
+  get settled(): boolean {
+    return !this.traversing && this.exit === undefined
+  }
+
+  /** The state stamped on the entry for `step`. */
+  private entry(step: AddStep): StepEntry {
+    return { addDevice: this.id, step }
+  }
+
+  /**
+   * The address of the entry for `step`: the form's own, with the step in its query. Built from
+   * {@link path}, so that it is the route the shell matched.
+   */
+  private address(step: AddStep): string {
+    return step === 'scan' ? this.path : `${this.path}?step=${step}`
+  }
+
+  /**
+   * Brings the history to the step the stepper shows, or to the first entry once {@link exit} is
+   * set: entries pushed going forward, one traversal going back, after which `onPopState` calls
+   * this again.
+   */
+  private sync(): void {
+    if (this.traversing || this.left) return
+    if (stepEntry(history.state)?.addDevice !== this.id) {
+      // Not on one of the form's own entries, so there is nothing of the form's to move, and
+      // walking back from here would walk another page's history. An exit is then a plain
+      // navigation, as it was before the form had entries.
+      const exit = this.exit
+      if (exit !== undefined) {
+        this.exit = undefined
+        this.left = true
+        location.hash = exit
+      }
+      return
+    }
+    const target = this.exit === undefined ? this.host.step : 'scan'
+    const from = STEPS.indexOf(this.shown)
+    const to = STEPS.indexOf(target)
+    if (to < from) {
+      this.traversing = true
+      history.go(to - from)
+      return
+    }
+    for (const step of STEPS.slice(from + 1, to + 1)) {
+      history.pushState(this.entry(step), '', this.address(step))
+    }
+    this.shown = target
+    this.stood = whereNow()
+    if (this.exit !== undefined) {
+      const exit = this.exit
+      this.exit = undefined
+      this.left = true
+      location.replace(exit)
+    }
+  }
+
+  /**
+   * Follows the person's Back and Forward, and lands this form's own traversals.
+   *
+   * An entry that is not this form's is left alone: leaving the form is the shell's to decide
+   * (`leave-guard.ts`), and an entry another form left behind is not this one's to rewrite.
+   */
+  private readonly onPopState = (event: PopStateEvent): void => {
+    const arrived = stepEntry(event.state)
+    if (this.left) return
+    if (arrived === undefined || arrived.addDevice !== this.id) {
+      // Something else moved the history off the form's entries while it was walking them back
+      // (an address assigned, the person's own Back on top of the form's). Walking on from an
+      // entry that is not the form's would walk through another page's history, so it stops,
+      // and an exit it was walking towards is already somewhere else.
+      if (this.traversing && this.exit !== undefined) this.left = true
+      this.traversing = false
+      this.exit = undefined
+      return
+    }
+    const ours = this.traversing
+    this.traversing = false
+    this.shown = arrived.step
+    this.stood = whereNow()
+    const stepper = this.stepper()
+    if (!ours && this.exit === undefined && arrived.step !== this.host.step && stepper !== null) {
+      // The person's own Back or Forward: the stepper follows, and its `wa-step-change` checks
+      // the step left exactly as Next would. No sync here: the stepper reports the change after
+      // its own update, and until then the history would be synced to the step being left.
+      // `onStepChange` syncs once it lands, and finds the history already there.
+      stepper.goTo(arrived.step)
+      return
+    }
+    this.sync()
+  }
+
+  /**
+   * Leaves the form for `address`, taking the form's entries with it: back to the first, which
+   * is then replaced. Back from wherever the form led then goes to wherever the form was opened
+   * from, never into a form that has been saved, or abandoned by a project switch.
+   */
+  leave(address: string): void {
+    if (this.left) return
+    this.exit = address
+    this.sync()
+  }
+
+  /**
+   * Puts the form's entries back after the browser has already left them and the person chose
+   * to stay. Nothing once the form has left: its entries are gone with it.
+   *
+   * The form's own entry is still in the history wherever the browser went - behind a typed
+   * address, ahead of the page Back reached - so the browser goes back to it, rather than the
+   * form pushing copies: a copy pushed on top of a typed address would leave that address between
+   * the form and the page before it, and Back would land there.
+   *
+   * Where the browser has the Navigation API, the entry's index says exactly how far; the same
+   * index means the entry itself was overwritten, and copies are pushed as below. Without
+   * it, {@link stood}'s `history.length` is the clue: a new entry (an address typed in) changes
+   * it, so the form's entry is the one behind; a traversal (Back from step 1) does not, and how
+   * far ahead the entries are cannot be known, so every step up to the one on screen is pushed
+   * again, in order, and Back from it is still the previous step. A new entry that leaves the
+   * length unchanged - typed when exactly one entry was ahead, or at the browser's history cap -
+   * is then taken for a traversal, and Back from step 1 lands on the typed address and asks again:
+   * nothing is lost, only a second question (the stepper spec's "Known limit").
+   */
+  restore(): void {
+    if (this.left) return
+    const now = whereNow()
+    const indexed = now.index !== undefined && this.stood.index !== undefined
+    if (indexed && now.index !== this.stood.index) {
+      this.traversing = true
+      history.go((this.stood.index as number) - (now.index as number))
+      return
+    }
+    // The same index: the form's entry itself was overwritten (`replaceState`), so there is no
+    // entry of its own to go back to, and only pushing puts one there.
+    if (!indexed && now.length !== this.stood.length) {
+      this.traversing = true
+      history.back()
+      return
+    }
+    this.traversing = false
+    for (const step of STEPS.slice(0, STEPS.indexOf(this.host.step) + 1)) {
+      history.pushState(this.entry(step), '', this.address(step))
+    }
+    this.shown = this.host.step
+    this.stood = whereNow()
+  }
 
   /** The stepper, once rendered. */
   private stepper(): WaStepper | null {
@@ -142,7 +415,7 @@ export class StepNavigation {
     this.stepper()?.next()
   }
 
-  /** Moves to the previous step: what Back does. */
+  /** Moves to the previous step: what the Previous button does, and browser Back with it. */
   previous(): void {
     this.stepper()?.previous()
   }
@@ -193,6 +466,7 @@ export class StepNavigation {
     }
     host.error = this.problemOn(host.step)
     void this.focus(host.step)
+    this.sync()
   }
 
   /**
