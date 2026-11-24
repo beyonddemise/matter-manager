@@ -25,6 +25,7 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { dirname, join, posix } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { buildSanitiserBundle } from './sanitiser-bundle.mjs'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -120,7 +121,32 @@ function eagerlyReachable() {
 const holdsSanitiser = (code) => SANITISER_TOKENS.some((token) => code.includes(token))
 const carrying = [...chunks].filter(([, code]) => holdsSanitiser(code)).map(([name]) => name)
 
+// Resolved before either verdict, both of which are claims about the whole first load: a chunk
+// this walk cannot find is a chunk it cannot rule out, for the reason check-lazy-pdf.mjs gives.
+const { seen: eager, unresolved } = eagerlyReachable()
+
+if (unresolved.length > 0) {
+  console.error('Found a script this check cannot resolve under dist/assets, so it cannot tell')
+  console.error("whether that chunk's contents are part of the first load:\n")
+  for (const { name, from } of unresolved) {
+    console.error(`  ${name} (${from === 'index.html' ? 'loaded by' : 'imported from'} ${from})`)
+  }
+  process.exit(1)
+}
+
 if (awaitingConsumer) {
+  // The positive control for this state. "In no chunk" is also what tokens that no longer match
+  // DOMPurify look like, so the tokens must be found in the sanitiser itself, bundled from
+  // src/ui/layouts/sanitise.ts exactly as probe:svg bundles it.
+  const bundle = await buildSanitiserBundle()
+  const missing = SANITISER_TOKENS.filter((token) => !bundle.includes(token))
+  if (missing.length > 0) {
+    console.error(`The sanitiser, bundled on its own, does not contain ${missing.join(', ')}.`)
+    console.error('This check has stopped recognising DOMPurify, so "in no chunk" would mean')
+    console.error('nothing. Update SANITISER_TOKENS against the installed version.')
+    process.exit(1)
+  }
+
   // Nothing imports the sanitiser yet, so nothing may ship it. A chunk holding it means some
   // module imports DOMPurify directly, outside `sanitise.ts` and outside this decision.
   if (carrying.length > 0) {
@@ -132,21 +158,10 @@ if (awaitingConsumer) {
     )
     process.exit(1)
   }
-  console.log('lazy sanitiser: ok (not yet imported by the application, and in no chunk)')
+  console.log(
+    'lazy sanitiser: ok (not yet imported by the application, and in no chunk; the markers match the sanitiser bundled on its own)',
+  )
   process.exit(0)
-}
-
-const { seen: eager, unresolved } = eagerlyReachable()
-
-if (unresolved.length > 0) {
-  // Not a verdict on the sanitiser: a refusal to give one, for the reason check-lazy-pdf.mjs
-  // gives. A chunk this walk cannot find is a chunk it cannot rule out.
-  console.error('Found a script this check cannot resolve under dist/assets, so it cannot tell')
-  console.error("whether that chunk's contents are part of the first load:\n")
-  for (const { name, from } of unresolved) {
-    console.error(`  ${name} (${from === 'index.html' ? 'loaded by' : 'imported from'} ${from})`)
-  }
-  process.exit(1)
 }
 
 const shipped = carrying.filter((name) => eager.has(name))

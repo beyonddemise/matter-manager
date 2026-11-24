@@ -207,6 +207,18 @@ while (queue.length > 0) {
   }
 }
 
+// An existing path that is not a `.ts` module under `src` would be listed as "awaiting" while
+// describing nothing the graph contains.
+const inventory = new Set(modules(src))
+const notModules = [...awaiting.keys()].filter((file) => existsSync(file) && !inventory.has(file))
+if (notModules.length > 0) {
+  console.error(
+    `${awaitingFile} lists path(s) that are not modules under ${relative(root, src)}:\n`,
+  )
+  for (const file of notModules) console.error(`  ${relative(root, file)}`)
+  process.exit(1)
+}
+
 const stale = [...awaiting.keys()].filter((file) => !existsSync(file) || reached.has(file))
 if (stale.length > 0) {
   console.error(`${awaitingFile} lists module(s) that are not awaiting anything:\n`)

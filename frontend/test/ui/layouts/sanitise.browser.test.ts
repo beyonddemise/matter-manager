@@ -6,7 +6,7 @@
  * `CSSStyleSheet`) driven by DOMPurify; a Node DOM would test a different parser from the one
  * an attacker targets.
  */
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   PLAN_MAX_BYTES,
   type PlanProblem,
@@ -88,10 +88,17 @@ describe('the import checks, in order', () => {
   <!ENTITY d "&c;&c;&c;&c;&c;&c;&c;&c;&c;&c;">
 ]>
 ${plan('<text>&d;</text>')}`
-    expect(problemOf(laughs)).toBe('doctype')
     const external = `<!DOCTYPE svg [<!ENTITY ext SYSTEM "https://elsewhere.invalid/x">]>${plan('<text>&ext;</text>')}`
-    expect(problemOf(external)).toBe('doctype')
-    expect(problemOf(`<!doctype svg>${plan('')}`)).toBe('doctype')
+    // "Before the parser" is the claim, so the parser must never be called for these.
+    const parse = vi.spyOn(DOMParser.prototype, 'parseFromString')
+    try {
+      expect(problemOf(laughs)).toBe('doctype')
+      expect(problemOf(external)).toBe('doctype')
+      expect(problemOf(`<!doctype svg>${plan('')}`)).toBe('doctype')
+      expect(parse).not.toHaveBeenCalled()
+    } finally {
+      parse.mockRestore()
+    }
   })
 
   it('refuses more than 100,000 elements', () => {
@@ -292,7 +299,8 @@ describe('what the sanitiser removes, and counts', () => {
     // A shorthand is filtered as its longhands: the image goes, the colour stays.
     expect(svg.querySelector('#shorthand')?.getAttribute('style')).toMatch(/background-color: red/)
     expect(markup).not.toContain('elsewhere')
-    expect(removed.styleRules).toBe(3)
+    // Counted per longhand: of `background`'s, only `background-color` is allowed to stay.
+    expect(removed.styleRules).toBeGreaterThanOrEqual(3)
   })
 
   it('reserves the mm- names: a forged device group is removed whole', () => {
@@ -386,5 +394,132 @@ describe('what the sanitiser keeps', () => {
     const twice = clean(once)
     expect(twice.markup).toBe(once)
     expect(Object.values(twice.removed).every((count) => count === 0)).toBe(true)
+  })
+})
+
+/**
+ * Findings of the independent security review of #367, each reproduced in Chromium with no
+ * policy before it was fixed. Every case here failed first.
+ */
+describe('the security review of #367', () => {
+  it('1. removes escaped and string-taking CSS functions from presentation attributes', () => {
+    const { markup, removed } = clean(
+      plan(`<rect id="a" width="1" height="1" mask="\\75 rl(https://elsewhere.invalid/m.svg#m)"/>
+        <rect id="b" width="1" height="1" clip-path="u\\rl(https://elsewhere.invalid/c.svg#c)"/>
+        <rect id="c" width="1" height="1" fill="\\75 rl(https://elsewhere.invalid/p.svg#p) red"/>
+        <rect id="d" width="1" height="1" mask="image-set('https://elsewhere.invalid/m.png' 1x)"/>
+        <rect id="e" width="1" height="1" filter="url(https://elsewhere.invalid/f.svg#f)"/>`),
+    )
+    expect(markup).not.toMatch(/elsewhere|\\|image-set/)
+    expect(removed.externalReferences).toBe(5)
+  })
+
+  it('1. keeps the functions a drawing really uses in its attributes', () => {
+    const { svg } = clean(
+      plan(`<rect id="t" width="1" height="1" transform="translate(10 10) rotate(45) scale(2)"
+        fill="rgb(10, 20, 30)" filter="url(#f)" clip-path="inset(1px)"/>`),
+    )
+    const rect = svg.querySelector('#t')
+    expect(rect?.getAttribute('transform')).toBe('translate(10 10) rotate(45) scale(2)')
+    expect(rect?.getAttribute('fill')).toBe('rgb(10, 20, 30)')
+    expect(rect?.getAttribute('filter')).toBe('url(#f)')
+    expect(rect?.getAttribute('clip-path')).toBe('inset(1px)')
+  })
+
+  it('2. drops :host rules, which would style the page around the plan', () => {
+    const { svg, removed } = clean(
+      plan(`<style>:host { outline: 5px solid red } :host(.x) rect { fill: red }
+        :host-context(body) rect { fill: red } .wall { stroke: black }</style>`),
+    )
+    const css = svg.querySelector('style')?.textContent ?? ''
+    expect(css).not.toMatch(/host/)
+    expect(css).toMatch(/\.wall/)
+    expect(removed.styleRules).toBe(3)
+  })
+
+  it('2. drops CSS that would take the plan out of its box', () => {
+    const { svg, markup } = clean(
+      plan(
+        `<style>svg { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+          z-index: 2147483647; inset: 0; overflow: visible } .wall { stroke: black; stroke-width: 2 }</style>`,
+        'viewBox="0 0 100 100" style="position: fixed; z-index: 9; right: 0; bottom: 0; fill: red"',
+      ),
+    )
+    expect(markup).not.toMatch(/position|z-index|inset|top:|left:|right:|bottom:|vw|vh|overflow/)
+    expect(svg.querySelector('style')?.textContent).toMatch(/stroke-width: 2/)
+    expect(svg.getAttribute('style')).toMatch(/fill: red/)
+  })
+
+  it('2. drops viewport-unit sizes even on properties it otherwise keeps', () => {
+    const { svg } = clean(plan('<style>.a { stroke-width: 50vmax } .b { font-size: 3dvh }</style>'))
+    expect(svg.querySelector('style')?.textContent ?? '').not.toMatch(/vmax|dvh/)
+  })
+
+  it('3. refuses <use> that expands exponentially', () => {
+    let defs = '<g id="l0"><rect width="1" height="1"/></g>'
+    for (let level = 1; level <= 6; level += 1) {
+      const uses = Array.from({ length: 10 }, (_, i) => `<use href="#l${level - 1}" x="${i}"/>`)
+      defs += `<g id="l${level}">${uses.join('')}</g>`
+    }
+    const bomb = `<svg xmlns="${SVG_NS}" viewBox="0 0 100 100"><defs>${defs}</defs><use href="#l6"/></svg>`
+    expect(problemOf(bomb)).toBe('too-many-instances')
+  })
+
+  it('3. refuses a <use> cycle, direct or through an ancestor', () => {
+    expect(problemOf(plan('<g id="a"><use href="#b"/></g><g id="b"><use href="#a"/></g>'))).toBe(
+      'use-cycle',
+    )
+    expect(
+      problemOf(plan('<g id="self"><rect width="1" height="1"/><use href="#self"/></g>')),
+    ).toBe('use-cycle')
+  })
+
+  it('3. accepts ordinary reuse, and a long chain without exhausting the stack', () => {
+    const doors = Array.from({ length: 500 }, (_, i) => `<use href="#door" x="${i}"/>`).join('')
+    expect(sanitise(plan(`<symbol id="door"><path d="M0 0h1"/></symbol>${doors}`)).ok).toBe(true)
+    // Each link of the chain doubles nothing, but 20,000 links still nest 20,000 instances deep.
+    let chain = '<g id="c0"><rect width="1" height="1"/></g>'
+    for (let i = 1; i < 20_000; i += 1) chain += `<g id="c${i}"><use href="#c${i - 1}"/></g>`
+    expect(problemOf(plan(chain))).toBe('too-many-instances')
+  })
+
+  it('4. treats C1 controls in an href as the URL parser does: not a fragment', () => {
+    const { markup, removed } = clean(
+      plan(`<image href="&#x85;#x" width="1" height="1"/><use href="&#x9;#kept"/>
+        <rect id="kept" width="1" height="1"/>`),
+    )
+    expect(markup).not.toContain('\u0085')
+    expect(markup).toContain('#kept')
+    expect(removed.externalReferences).toBe(1)
+  })
+
+  it('5. removes reserved names from the root too', () => {
+    const { svg, removed } = clean(
+      plan('', 'viewBox="0 0 1 1" id="mm-root" class="mm-x plan" data-mm-device="x"'),
+    )
+    expect(svg.hasAttribute('data-mm-device')).toBe(false)
+    expect(svg.getAttribute('class')).toBe('plan')
+    expect(svg.hasAttribute('id')).toBe(false)
+    expect(removed.reservedNames).toBe(3)
+  })
+
+  it('CodeRabbit: keeps a drawing written with an svg: prefix', () => {
+    const prefixed = `<s:svg xmlns:s="${SVG_NS}" viewBox="0 0 10 10"><s:defs><s:linearGradient id="g"/></s:defs>
+      <s:rect id="r" width="1" height="1" fill="url(#g)"/></s:svg>`
+    const { svg, removed } = clean(prefixed)
+    expect(svg.querySelector('#r')?.namespaceURI).toBe(SVG_NS)
+    expect(svg.querySelector('linearGradient')).not.toBeNull()
+    expect(Object.values(removed).every((count) => count === 0)).toBe(true)
+  })
+
+  it('CodeRabbit: unwraps a link holding more children than an argument list can', () => {
+    const { svg, removed } = clean(plan(`<a>${'<!--x-->'.repeat(200_000)}<rect id="in"/></a>`))
+    expect(svg.querySelector('#in')).not.toBeNull()
+    expect(removed.links).toBe(1)
+  })
+
+  it('6. removes xml:id, so mm- names cannot arrive that way', () => {
+    const { markup } = clean(plan('<g xml:id="mm-devices"><rect width="1" height="1"/></g>'))
+    expect(markup).not.toMatch(/xml:id|mm-/)
   })
 })

@@ -272,6 +272,13 @@ jobs:
         run: npm run probe:svg
         working-directory: frontend
 
+      # The probe's own self-test: with the sanitiser bypassed, the sanitised row must show the
+      # attacks. It passes only when the probe *detects* the bypass, rather than inverting a
+      # failing exit code - an inverted exit would also pass on a crash before anything ran.
+      - name: The SVG probe notices when the sanitiser is bypassed
+        run: node scripts/probe-svg-rendering.mjs --bypass-sanitiser
+        working-directory: frontend
+
       # The job `e2e/README.md` promised in M2 and #57 finally added. It drives the *built*
       # site, because what these journeys are for is what unit tests cannot reach: the service
       # worker, the bundle that actually ships, and a real IndexedDB surviving a reload.

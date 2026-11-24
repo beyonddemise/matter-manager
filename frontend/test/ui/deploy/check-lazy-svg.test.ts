@@ -52,6 +52,18 @@ describe('while the sanitiser awaits its consumer', () => {
     expect(code).toBe(0)
   })
 
+  it('refuses a chunk it cannot resolve, rather than calling the build sanitiser-free', () => {
+    const missingEntry = scan({ 'index.html': INDEX }, AWAITING)
+    expect(missingEntry.code).toBe(1)
+    expect(missingEntry.output).toContain('cannot resolve')
+    const missingImport = scan(
+      { 'index.html': INDEX, 'assets/index-aaa.js': 'import"./gone-ccc.js";export{}' },
+      AWAITING,
+    )
+    expect(missingImport.code).toBe(1)
+    expect(missingImport.output).toContain('gone-ccc.js')
+  })
+
   it('refuses a build that contains it, even lazily: nothing should import it yet', () => {
     const { code, output } = scan(LAZY, AWAITING)
     expect(code).toBe(1)

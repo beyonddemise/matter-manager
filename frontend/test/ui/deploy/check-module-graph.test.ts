@@ -208,6 +208,15 @@ describe('modules awaiting their consumer', () => {
     expect(result.output).toContain('now reachable')
   })
 
+  it('fails when a listed path exists but is not a module', () => {
+    const result = walk(
+      { ...tree, 'notes.md': '# not code\n' },
+      { 'later.ts': 'x', 'notes.md': 'x' },
+    )
+    expect(result.code).toBe(1)
+    expect(result.output).toContain('not modules')
+  })
+
   it('fails when the listed module does not exist', () => {
     const result = walk(tree, { 'later.ts': 'x', 'renamed.ts': 'x' })
     expect(result.code).toBe(1)
