@@ -564,7 +564,11 @@ It is a `device:<uuid>` document like any other, not a type of its own, with one
   Status column in the sheet. A draft never in service is never disabled.
 - **Finishing** (`planFinishedDevice`) runs every check `planNewDevice` runs, keeps the id,
   revision, `addedAt` and remarks, and removes `status`. That planner is the only way from a
-  draft to a complete device. A finished device does not become a draft again.
+  draft to a complete device. Nothing turns a finished device back into a draft, with one
+  exception the conflict merge allows: `mergeDevice` keeps the latest revision whole (ADR 0010),
+  so a draft saved on one replica after the same draft was finished on another wins, and the
+  device is a draft again, still marked and finishable. That is the merge's last-writer rule.
+  It is not a special case for drafts.
 - **Discarding a draft is deleting it**, confirmed on its page like any delete.
 - No server rule reads these fields: the project database's `validate_doc_update` asks only for a
   `type`, so a draft replicates exactly as a device does.

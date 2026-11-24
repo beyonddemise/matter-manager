@@ -79,13 +79,16 @@ async function newForm(repositories = database.repositories): Promise<AddDeviceV
 }
 
 /** The form opened on the stored draft, as `#/devices/<uuid>/finish` opens it. */
-async function finishForm(uuid = UUID): Promise<AddDeviceView> {
+async function finishForm(
+  uuid = UUID,
+  repositories = database.repositories,
+): Promise<AddDeviceView> {
   history.pushState(null, '', `#/devices/${uuid}/finish`)
   await customElements.whenDefined('wa-input')
   const element = (await fixture(
     html`<finish-device-view
       draft-id=${uuid}
-      .repositories=${database.repositories}
+      .repositories=${repositories}
       .scanSource=${neverAvailable()}
       .signedIn=${() => false}
     ></finish-device-view>`,
@@ -351,6 +354,33 @@ describe('reopening a draft', () => {
     element.querySelector<HTMLElement>('[data-leave-discard]')?.click()
     expect(await answer).toBe(true)
     expect(await devices()).toHaveLength(1)
+  })
+
+  it('saves nothing while the draft is still being read, so no second document appears', async () => {
+    await storeDraft()
+    const real = database.repositories
+    let release: () => void = () => {}
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const element = await finishForm(UUID, {
+      ...real,
+      devices: {
+        ...real.devices,
+        get: async (id) => {
+          await held
+          return real.devices.get(id)
+        },
+      },
+    })
+    fill(element, 'serial', 'SN-early')
+
+    await press(element, '[data-save-draft]')
+    await saved(element)
+    expect(await devices()).toHaveLength(1)
+
+    release()
+    await waitUntil(() => element.stored !== undefined, 'the draft never loaded')
   })
 
   it('says so when there is no such draft', async () => {

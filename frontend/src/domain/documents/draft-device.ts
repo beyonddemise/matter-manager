@@ -102,6 +102,10 @@ export function planDraftDevice(
   const room =
     typed(draft.room) === undefined ? undefined : matchRoom(readRoomPath(draft.room), rooms)
   const now = clock.now()
+  const code =
+    credential === undefined
+      ? {}
+      : { ...credentialFields(credential), ...catalogFor(credential, catalog, now) }
 
   return {
     _id: stored?._id ?? documentId('device', clock.uuid()),
@@ -110,9 +114,8 @@ export function planDraftDevice(
     status: 'draft',
     ...present('name', typed(draft.name)),
     ...present('room', room),
-    ...(credential === undefined
-      ? {}
-      : { ...credentialFields(credential), ...catalogFor(credential, catalog, now) }),
+    ...code,
+    ...keptCatalogue(stored, code),
     ...optionalText('spot', draft.spot),
     ...optionalText('serial', draft.serial),
     ...present('installedAt', installedAt),
@@ -127,6 +130,25 @@ function catalogueOf(stored: DraftDeviceDocument): Partial<CatalogFields> {
   return Object.fromEntries(
     CATALOG_FIELD_KEYS.flatMap((key) => (stored[key] === undefined ? [] : [[key, stored[key]]])),
   ) as Partial<CatalogFields>
+}
+
+/**
+ * The catalogue block a stored draft already held, when the planned document still names the
+ * same product and was given no newer answer; nothing otherwise.
+ *
+ * Why: the add form asks the catalogue only when the code field changes, so a draft reopened
+ * offline (or saved before a lookup answered) has no answer in hand. Without this, saving it
+ * again or finishing it would drop names that backfill had already found.
+ */
+function keptCatalogue(
+  stored: DraftDeviceDocument | undefined,
+  planned: Pick<DeviceDocument, 'vendorId' | 'productId' | 'catalogCheckedAt'>,
+): Partial<CatalogFields> {
+  const sameProduct =
+    stored?.vendorId !== undefined &&
+    stored.vendorId === planned.vendorId &&
+    stored.productId === planned.productId
+  return sameProduct && planned.catalogCheckedAt === undefined ? catalogueOf(stored) : {}
 }
 
 /**
@@ -155,14 +177,9 @@ export function planFinishedDevice(
   // The draft's own uuid, so the planned id is already the one kept below.
   const uuid = uuidOf(stored._id) ?? stored._id
   const planned = planNewDevice(draft, rooms, { ...clock, uuid: () => uuid }, catalog)
-  const sameProduct =
-    stored.vendorId !== undefined &&
-    stored.vendorId === planned.vendorId &&
-    stored.productId === planned.productId
-  const kept = planned.catalogCheckedAt === undefined && sameProduct ? catalogueOf(stored) : {}
   return {
     ...planned,
-    ...kept,
+    ...keptCatalogue(stored, planned),
     _id: stored._id,
     ...(stored._rev === undefined ? {} : { _rev: stored._rev }),
     addedAt: stored.addedAt,

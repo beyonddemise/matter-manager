@@ -477,7 +477,7 @@ export class AddDeviceView extends DeviceFormView implements LeaveGuard {
    * document, not a second draft.
    */
   private async saveDraft(): Promise<boolean> {
-    if (this.saving || this.released) return false
+    if (this.saving || this.released || this.draftLoading()) return false
     this.saving = true
     const since = this.projectSnapshot()
     try {
@@ -524,6 +524,14 @@ export class AddDeviceView extends DeviceFormView implements LeaveGuard {
     } catch {
       // The refusal is already on screen; a failed re-read adds nothing to say.
     }
+  }
+
+  /**
+   * Whether the draft this form was opened on has not been read yet. Saving then would take the
+   * new-device path and file a second document beside the draft (review of #369).
+   */
+  private draftLoading(): boolean {
+    return this.draftId !== '' && this.stored === undefined
   }
 
   /** The Save as draft button: saves, then leaves for the list as Save device does. */
@@ -907,7 +915,7 @@ export class AddDeviceView extends DeviceFormView implements LeaveGuard {
     // Released: saved, discarded or abandoned, and on its way out. The form stays on screen until
     // its history traversal lands, and a Save in that moment would file the device twice, or
     // file it after the person chose Discard (CodeRabbit on #368).
-    if (this.saving || this.released) return
+    if (this.saving || this.released || this.draftLoading()) return
     // Set before the first `await`, not after the planning: two quick clicks would otherwise
     // both get past the guard while the room read below was still in flight.
     this.saving = true

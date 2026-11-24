@@ -196,6 +196,22 @@ describe('saving a draft again', () => {
     expect(again).not.toHaveProperty('updatedAt')
   })
 
+  it('keeps the catalogue names the draft already had for the same product', () => {
+    // Reopened offline: no answer in hand, and backfill had already named it.
+    const block = {
+      vendorName: 'Acme',
+      catalogCheckedAt: '2026-11-24T09:00:00.000Z',
+      catalogSource: 'found' as const,
+    }
+    const named = stored({ manualCode: LONG_CODE, vendorId: 0xfff1, productId: 0x8000, ...block })
+    expect(
+      planDraftDevice(form({ credential: PAYLOAD }), [], later, undefined, named),
+    ).toMatchObject(block)
+    expect(
+      planDraftDevice(form({ credential: SHORT_CODE }), [], later, undefined, named),
+    ).not.toHaveProperty('vendorName')
+  })
+
   it('drops a value the person has since cleared', () => {
     const again = planDraftDevice(form({ room: 'Hall' }), [], later, undefined, stored())
     expect(again).not.toHaveProperty('name')
