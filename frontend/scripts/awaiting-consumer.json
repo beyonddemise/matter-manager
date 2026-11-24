@@ -1,0 +1,10 @@
+{
+  "$comment": [
+    "Modules under src/ui that no entry point reaches yet, each with the change that will import it.",
+    "Read by scripts/check-module-graph.mjs, which skips them and fails if an entry goes stale (the",
+    "module is gone, or something now reaches it), and by scripts/check-lazy-svg.mjs, which asserts",
+    "DOMPurify ships in no chunk at all while the sanitiser is listed here. Paths are relative to",
+    "src/ui. Remove an entry in the pull request that wires its module in."
+  ],
+  "layouts/sanitise.ts": "#143 PR 6 (import and view) reaches it with import() from the layout view and the import dialog"
+}

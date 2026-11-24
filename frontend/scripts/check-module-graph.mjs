@@ -20,7 +20,16 @@
  * the chain that made #120's seven invisible was exactly that - `db/project-database.ts`
  * mentions `accessToken`, which made `tokens.ts` look used.
  *
+ * **One sanctioned exception: a module awaiting its consumer.** A feature that lands in
+ * reviewable slices sometimes lands a module one pull request before the one that imports it:
+ * #143's plan sanitiser is reviewed and proven by `probe:svg` before the layout view exists. Such
+ * a module is listed in `scripts/awaiting-consumer.json` with the change that will import it,
+ * and is not reported. The list cannot rot quietly: an entry naming a module that does not exist
+ * fails, and so does an entry whose module has become reachable, so the entry is removed by the
+ * same pull request that wires the module in. An unlisted orphan still fails exactly as before.
+ *
  * Usage:  node scripts/check-module-graph.mjs [--src <directory>] [--entry <file>]...
+ *           [--awaiting <json>]
  */
 
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
@@ -45,6 +54,23 @@ const src = resolve(argument('--src', join(root, 'src/ui')))
 const entries = process.argv.includes('--entry')
   ? process.argv.filter((_, i) => process.argv[i - 1] === '--entry').map((path) => resolve(path))
   : [join(src, 'main.ts')]
+
+/**
+ * Modules awaiting their consumer, as paths relative to `src`, each with the change that will
+ * import it. The repository's own list applies only to the repository's own tree: a `--src`
+ * pointed elsewhere (the checker's tests) brings its list with `--awaiting`, or has none.
+ */
+const awaitingFile = argument(
+  '--awaiting',
+  process.argv.includes('--src') ? undefined : join(root, 'scripts/awaiting-consumer.json'),
+)
+const awaiting = new Map(
+  awaitingFile === undefined
+    ? []
+    : Object.entries(JSON.parse(readFileSync(awaitingFile, 'utf8')))
+        .filter(([key]) => key !== '$comment')
+        .map(([key, why]) => [resolve(src, key), why]),
+)
 
 if (!existsSync(src)) {
   console.error(`No such directory: ${src}`)
@@ -181,7 +207,30 @@ while (queue.length > 0) {
   }
 }
 
-const orphans = [...modules(src)].filter((file) => !reached.has(file)).sort()
+// An existing path that is not a `.ts` module under `src` would be listed as "awaiting" while
+// describing nothing the graph contains.
+const inventory = new Set(modules(src))
+const notModules = [...awaiting.keys()].filter((file) => existsSync(file) && !inventory.has(file))
+if (notModules.length > 0) {
+  console.error(
+    `${awaitingFile} lists path(s) that are not modules under ${relative(root, src)}:\n`,
+  )
+  for (const file of notModules) console.error(`  ${relative(root, file)}`)
+  process.exit(1)
+}
+
+const stale = [...awaiting.keys()].filter((file) => !existsSync(file) || reached.has(file))
+if (stale.length > 0) {
+  console.error(`${awaitingFile} lists module(s) that are not awaiting anything:\n`)
+  for (const file of stale) {
+    const why = existsSync(file) ? 'now reachable from an entry point' : 'does not exist'
+    console.error(`  ${relative(root, file)}: ${why}`)
+  }
+  console.error('\nRemove the entry. The list is only for modules no entry point reaches yet.')
+  process.exit(1)
+}
+
+const orphans = [...modules(src)].filter((file) => !reached.has(file) && !awaiting.has(file)).sort()
 
 if (orphans.length > 0) {
   console.error(`${orphans.length} module(s) under ${relative(root, src)} reach no entry point:\n`)
@@ -194,4 +243,8 @@ if (orphans.length > 0) {
   process.exit(1)
 }
 
-console.log(`module graph: ok (${reached.size} modules, all reachable from an entry point)`)
+const waiting = awaiting.size === 0 ? '' : `; ${awaiting.size} awaiting a consumer`
+console.log(
+  `module graph: ok (${reached.size} modules, all reachable from an entry point${waiting})`,
+)
+for (const [file, why] of awaiting) console.log(`  awaiting: ${relative(root, file)}: ${why}`)

@@ -22,6 +22,7 @@
     "@noble/ciphers": "As @noble/hashes, for symmetric encryption. Zero dependencies.",
     "@matter-manager/core": "The workspace domain package. Pure, no dependencies of its own.",
     "@matter-manager/data": "The workspace persistence package. Depends only on core; imports no PouchDB implementation itself.",
+    "dompurify": "The SVG plan sanitiser for layouts (#143, ADR 0023). The HTML Sanitizer API is not in Safari, and iOS Safari is a primary target; a sanitiser of our own would have to rediscover every known bypass (namespace confusion, animation rewriting href, mutation XSS). Audited, zero dependencies (its one optional dependency is type declarations), pinned exactly, imported only by frontend/src/ui/layouts/sanitise.ts and loaded lazily; scripts/check-lazy-svg.mjs fails the build if it reaches the entry bundle.",
     "events": "Node's EventEmitter, as a browser shim. Not a choice: pouchdb-browser@9 imports `events` at module scope and does not declare it, so without this the bundle fails to evaluate with \"Class extends value [object Object]\". The browser has no EventEmitter of its own. Zero dependencies, MIT; remove when PouchDB stops needing it."
   },
   "banned": {
