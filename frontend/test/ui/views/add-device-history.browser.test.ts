@@ -272,6 +272,25 @@ describe('saving', () => {
     history.back()
     await waitUntil(() => location.hash === '#/start', `Back went to ${location.hash}`)
   })
+
+  it('saves nothing more once it has saved, while the form is still on screen', async () => {
+    // Leaving takes a traversal, and the shell removes the form only once it lands. A second
+    // Save in that moment would file the same device twice.
+    const element = await form()
+    fillAll(element)
+    await press(element, 'wa-step[name="review"]')
+    await on(element, 'review')
+    await press(element, '[data-save]')
+    await waitUntil(() => !element.saving && location.hash === '#/devices', 'never saved')
+
+    element
+      .querySelector('form')
+      ?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    await waitUntil(() => !element.saving)
+    await new Promise((resolve) => setTimeout(resolve, 200))
+
+    expect(await database.repositories.devices.list()).toHaveLength(1)
+  })
 })
 
 describe('leaving with something entered', () => {

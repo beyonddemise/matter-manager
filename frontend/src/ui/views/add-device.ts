@@ -659,7 +659,10 @@ export class AddDeviceView extends DeviceFormView implements LeaveGuard {
       this.steps.next()
       return
     }
-    if (this.saving) return
+    // Released: saved, discarded or abandoned, and on its way out. The form stays on screen until
+    // its history traversal lands, and a Save in that moment would file the device twice, or
+    // file it after the person chose Discard (CodeRabbit on #368).
+    if (this.saving || this.released) return
     // Set before the first `await`, not after the planning: two quick clicks would otherwise
     // both get past the guard while the room read below was still in flight.
     this.saving = true
