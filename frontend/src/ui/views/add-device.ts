@@ -47,6 +47,12 @@ export const LOOKUP_DEBOUNCE_MS = 300
  */
 export const SCAN_CHECK_TIMEOUT_MS = 5000
 
+/**
+ * How long Review's live region stays empty before a repeated "something changed" notice goes
+ * back in, so that screen readers see a change to announce (#353; see `announceReviewChanged`).
+ */
+const REVIEW_CHANGED_GAP_MS = 100
+
 /** Where the background lookup stands, and for which code. */
 type LookupState =
   | { readonly kind: 'idle' }
@@ -162,6 +168,11 @@ export class AddDeviceView extends DeviceFormView {
    * like {@link decodeImage}: a test binds a shorter one, nothing renders from it.
    */
   scanCheckTimeoutMs: number = SCAN_CHECK_TIMEOUT_MS
+  /**
+   * How long a repeated "something changed" notice stays down before it goes back in. A plain
+   * field for the same reason: a test binds a longer one to act inside the gap.
+   */
+  reviewChangedGapMs: number = REVIEW_CHANGED_GAP_MS
   /** Bound by a test to a fake; the real API otherwise. */
   declare catalog?: CatalogApi
   /** Where the background lookup stands. Never read by anything that saves except `onSubmit`. */
@@ -185,11 +196,13 @@ export class AddDeviceView extends DeviceFormView {
     draft: () => this.draft(),
     enterReview: () => {
       this.showReview(this.snapshotForReview())
-      this.reviewChanged = false
+      this.dismissReviewChanged()
     },
   })
 
   private lookupTimer: ReturnType<typeof setTimeout> | undefined
+  /** The pending re-show of the "something changed" notice; see {@link announceReviewChanged}. */
+  private reviewChangedTimer: ReturnType<typeof setTimeout> | undefined
   private lookupAbort: AbortController | undefined
 
   constructor() {
@@ -261,6 +274,8 @@ export class AddDeviceView extends DeviceFormView {
     // would ask again, because lookups start only when the field changes.
     this.stopLookup()
     if (this.lookupState.kind === 'pending') this.lookupState = IDLE
+    // A notice due to reappear would otherwise do so on a form nobody is looking at.
+    clearTimeout(this.reviewChangedTimer)
     super.disconnectedCallback()
   }
 
@@ -448,6 +463,36 @@ export class AddDeviceView extends DeviceFormView {
   }
 
   /**
+   * Says, in Review's live region, that Save refreshed the summary instead of saving - every
+   * time it does, not only the first.
+   *
+   * Why the notice is taken down and put back after a pause: a live region speaks when its
+   * content changes, and a second refresh while the notice is still up changes nothing, so
+   * assistive technology would stay silent (#353). Re-rendering it in the same update - a
+   * counter or a `keyed` node - is a removal and an insertion of the same text in one batch,
+   * which screen readers coalesce or ignore unevenly. An empty region left long enough to be
+   * noticed, then the notice inserted again, is the one change they all report; the 100 ms is
+   * the gap Angular CDK's LiveAnnouncer uses for the same reason. A sighted person sees the
+   * notice blink, which tells them too that Save refreshed again.
+   */
+  private announceReviewChanged(): void {
+    this.dismissReviewChanged()
+    this.reviewChangedTimer = setTimeout(() => {
+      this.reviewChanged = true
+    }, this.reviewChangedGapMs)
+  }
+
+  /**
+   * Takes the "something changed" notice down, including one still waiting to reappear: a
+   * Save that gets past the comparison within the gap would otherwise see it come back.
+   */
+  private dismissReviewChanged(): void {
+    clearTimeout(this.reviewChangedTimer)
+    this.reviewChangedTimer = undefined
+    this.reviewChanged = false
+  }
+
+  /**
    * Moves to a step. Public for the last step's "Edit" links and for a save-time error that
    * has to be shown on the step that owns its field.
    */
@@ -581,12 +626,12 @@ export class AddDeviceView extends DeviceFormView {
       const now = this.snapshotForReview()
       if (pressedOn === undefined || !sameReview(now, pressedOn)) {
         this.showReview(now)
-        this.reviewChanged = true
+        this.announceReviewChanged()
         return
       }
       // Review now shows what is about to be saved, so a notice from an earlier refresh is no
       // longer true - and left up, it would sit beside a storage error as if it explained it.
-      this.reviewChanged = false
+      this.dismissReviewChanged()
 
       let creation: ReturnType<typeof planNewDevice>
       try {

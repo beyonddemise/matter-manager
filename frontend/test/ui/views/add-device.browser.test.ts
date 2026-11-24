@@ -1159,6 +1159,37 @@ describe('reviewing before saving', () => {
     expect((await devices())[0]?.name).toBe('Pantry light')
   })
 
+  it('announces a second refresh to the live region, not only the first', async () => {
+    // A live region speaks when its content changes. A notice already up whose text a second
+    // refresh leaves alone is no change, so the second refresh would pass in silence (#353).
+    const element = await form()
+    fillAll(element)
+    await toReview(element)
+    fill(element, 'name', 'Pantry light')
+    dispatchSubmit(element)
+    await waitUntil(() => changedNotice(element), 'Save never refreshed Review')
+
+    const region = element.querySelector('[data-step-panel="review"] [role="status"]')
+    if (region === null) throw new Error('no live region on Review')
+    // What the region held each time the browser delivered its mutations: the announcement is
+    // proven only by an emptied region seen first, then the notice again in a later batch.
+    const seen: string[] = []
+    const observer = new MutationObserver(() => seen.push(region.textContent?.trim() ?? ''))
+    observer.observe(region, { childList: true, subtree: true, characterData: true })
+    try {
+      fill(element, 'name', 'Larder light')
+      dispatchSubmit(element)
+      await waitUntil(
+        () => seen.some((text, at) => text.includes('Something changed') && seen[at - 1] === ''),
+        'the second refresh never reached the live region',
+      )
+    } finally {
+      observer.disconnect()
+    }
+    expect(reviewOf(element, 'name').textContent).toContain('Larder light')
+    expect(await devices()).toHaveLength(0)
+  })
+
   it('drops a save still waiting on the rooms once the person leaves Review', async () => {
     // Save waits for the room re-read, and nothing holds the person on Review meanwhile. Edit,
     // a change, and Next back to Review build a new summary; were the waiting save to compare
@@ -1392,6 +1423,35 @@ describe('a refreshed Review, then a write storage refuses', () => {
       () => element.querySelector('[data-save-failed]') !== null,
       'the refused write was never reported',
     )
+    expect(changedNotice(element)).toBe(false)
+  })
+
+  it('keeps the notice down when that Save comes before the notice is back', async () => {
+    // A refresh puts the notice back only after a gap (#353). A matching Save inside it has
+    // already said the notice is no longer true, so the gap must not end by showing it. The gap
+    // is lengthened so that the matching Save is sure to land inside it.
+    const gap = 1000
+    const element = await form(refusingWrites())
+    element.reviewChangedGapMs = gap
+    fillAll(element)
+    await toReview(element)
+    const save = element.querySelector('[data-save]') as HTMLButtonElement
+
+    fill(element, 'name', 'Pantry light')
+    const refreshed = performance.now()
+    dispatchSubmit(element)
+    await waitUntil(() => reviewOf(element, 'name').textContent?.includes('Pantry light'))
+    await waitUntil(() => !save.disabled, 'the refreshing Save never finished')
+    dispatchSubmit(element)
+    await waitUntil(
+      () => element.querySelector('[data-save-failed]') !== null,
+      'the refused write was never reported',
+    )
+    // Still inside the gap: the notice was pending, not yet shown, when that Save matched.
+    expect(performance.now() - refreshed).toBeLessThan(gap)
+    expect(changedNotice(element)).toBe(false)
+
+    await new Promise((resolve) => setTimeout(resolve, gap + 100))
     expect(changedNotice(element)).toBe(false)
   })
 })

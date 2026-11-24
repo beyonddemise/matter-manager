@@ -94,7 +94,7 @@ function block(
         data-edit
         type="button"
         appearance="plain"
-        size="small"
+        size="s"
         @click=${() => onEdit(step)}
       >
         ${msg('Edit')}<span class="wa-visually-hidden">: ${heading}</span>
