@@ -564,11 +564,11 @@ It is a `device:<uuid>` document like any other, not a type of its own, with one
   Status column in the sheet. A draft never in service is never disabled.
 - **Finishing** (`planFinishedDevice`) runs every check `planNewDevice` runs, keeps the id,
   revision, `addedAt` and remarks, and removes `status`. That planner is the only way from a
-  draft to a complete device. Nothing turns a finished device back into a draft, with one
-  exception the conflict merge allows: `mergeDevice` keeps the latest revision whole (ADR 0010),
-  so a draft saved on one replica after the same draft was finished on another wins, and the
-  device is a draft again, still marked and finishable. That is the merge's last-writer rule.
-  It is not a special case for drafts.
+  draft to a complete device, and nothing turns one back. That includes the conflict merge: a
+  complete revision beats a draft (see *Conflicts*). So when one replica finishes a draft while
+  another saves it again offline, the merge keeps the finished device, and the draft side's later
+  values give way. Its remarks are unioned as always. Carrying those values across would need
+  the full checks inside the merge, which holds no planner.
 - **Discarding a draft is deleting it**, confirmed on its page like any delete.
 - No server rule reads these fields: the project database's `validate_doc_update` asks only for a
   `type`, so a draft replicates exactly as a device does.
@@ -758,8 +758,8 @@ it.
 | Shape | Strategy |
 |---|---|
 | `remarks` | Union by `id`, sorted by `createdAt`. Nothing is discarded. |
-| Scalars (`name`, `room`, `disabled`, `spot`) | Last write wins by `updatedAt`. |
-| Catalogue block (`vendorName` … `catalogSource`) | Taken whole from the revision with the newest `catalogCheckedAt`, ties by `(updatedAt, _rev)`. |
+| Scalars (`name`, `room`, `disabled`, `spot`, `status`) | Last write wins by `updatedAt`, among the complete revisions when there is one: a complete revision beats a draft (#358). |
+| Catalogue block (`vendorName` … `catalogSource`) | Taken whole from the revision with the newest `catalogCheckedAt` among those naming the winner's product (`vendorId`, `productId`), ties by `(updatedAt, _rev)`. None when none does. |
 | `audit:*` | Cannot conflict — append-only. |
 
 Losing revisions are deleted after a successful merge, or `_conflicts` grows without bound

@@ -7,6 +7,11 @@ Date: 2026-08-19
 Accepted. The Rooms row is removed by [0021](0021-room-is-a-device-property.md): a room is now a
 scalar on the device, so it merges with the other scalars.
 
+Amended by #358 (device drafts). For the scalars, a complete revision beats a draft: last write
+wins among the complete revisions, and among drafts only when every revision is a draft. This
+is still a function of the set of revisions, so replicas still converge. The catalogue block is
+taken only from a revision naming the winner's product. DATA-MODEL, *Conflicts*, has both rules.
+
 ## Context
 
 Devices carry timestamped remarks — "replaced batteries", "behind the panel, needs the long

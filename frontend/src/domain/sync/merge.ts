@@ -134,18 +134,33 @@ export function mergeRemarks(revisions: readonly RemarkBearing[]): readonly Rema
 /** A revision that may carry a catalogue block (`catalog/copy.ts`). */
 export interface CatalogBearing {
   readonly catalogCheckedAt?: string
+  /** The product a block describes is the one these name; see {@link catalogueSource}. */
+  readonly vendorId?: number
+  readonly productId?: number
+}
+
+/** A revision that may be a draft (#358): `status` absent means complete. */
+export interface StatusBearing {
+  readonly status?: 'draft'
 }
 
 /**
- * The revision whose catalogue block wins: the newest `catalogCheckedAt`, ties broken by the
- * same `(updatedAt, _rev)` order as scalars so that every replica picks the same one.
+ * The revision whose catalogue block wins: the newest `catalogCheckedAt` among the revisions
+ * naming the same product as `latest`, ties broken by the same `(updatedAt, _rev)` order as
+ * scalars so that every replica picks the same one.
+ *
+ * Why the product: a draft's setup code can change between revisions (#358), and a block from a
+ * revision with another code would pair this device's code with another product's name and
+ * links - stamped `catalogCheckedAt`, so backfill would never correct it.
  */
 function catalogueSource<T extends Revision & CatalogBearing>(
   revisions: readonly T[],
+  latest: T,
 ): T | undefined {
   let best: T | undefined
   for (const revision of revisions) {
     if (revision.catalogCheckedAt === undefined) continue
+    if (revision.vendorId !== latest.vendorId || revision.productId !== latest.productId) continue
     if (
       best === undefined ||
       compareText(revision.catalogCheckedAt, best.catalogCheckedAt ?? '') > 0 ||
@@ -165,16 +180,24 @@ function catalogueSource<T extends Revision & CatalogBearing>(
  * has its own clock (`catalogCheckedAt`) because it is written by backfill, not by the person
  * editing: a newer rename that never saw the lookup must not erase what the lookup found.
  *
+ * **A complete revision beats a draft** (#358): the scalars come from the latest *complete*
+ * revision when there is one, and from the latest draft only when every revision is a draft.
+ * Otherwise a draft saved offline on one replica after the same draft was finished on another
+ * would turn the finished device back into a draft. The draft side's newer values are not carried
+ * across: only the complete revision passed `planNewDevice`'s checks, and the merge, which every
+ * replica runs alike, holds no planner. Its remarks survive, as always.
+ *
  * The result does not depend on which revision arrived as `winner`, so two replicas merging the
- * same conflict independently reach the same document.
+ * same conflict independently reach the same document: both rules are functions of the set.
  */
-export function mergeDevice<T extends RemarkBearing & CatalogBearing>(
+export function mergeDevice<T extends RemarkBearing & CatalogBearing & StatusBearing>(
   winner: T,
   conflicts: readonly T[],
 ): T {
   const revisions = [winner, ...conflicts]
-  const latest = latestRevision(revisions)
+  const complete = revisions.filter((revision) => revision.status !== 'draft')
+  const latest = latestRevision(complete.length > 0 ? complete : revisions)
   const merged = { ...latest, remarks: mergeRemarks(revisions) }
-  const source = catalogueSource(revisions)
+  const source = catalogueSource(revisions, latest)
   return source === undefined || source === latest ? merged : withCatalogBlock(merged, source)
 }

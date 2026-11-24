@@ -29,6 +29,9 @@ type DeviceFixture = Revision & {
   readonly supportUrl?: string
   readonly catalogCheckedAt?: string
   readonly catalogSource?: 'found' | 'missing' | 'test-vendor' | 'unusable'
+  readonly status?: 'draft'
+  readonly vendorId?: number
+  readonly productId?: number
 }
 
 const device = (
@@ -379,5 +382,51 @@ describe('mergeDevice and the catalogue block', () => {
     })
     const results = [mergeDevice(a, [b, c]), mergeDevice(b, [c, a]), mergeDevice(c, [a, b])]
     for (const result of results) expect(result).toEqual(results[0])
+  })
+})
+
+describe('mergeDevice and drafts (#358)', () => {
+  const finished = device('3-f', '2026-11-24T10:00:00.000Z', [], { name: 'Finished' })
+  const draftLater = device(
+    '3-d',
+    '2026-11-24T11:00:00.000Z',
+    [remark('r1', '2026-11-24T11:00:00.000Z')],
+    {
+      name: 'Draft edit',
+      status: 'draft',
+    },
+  )
+
+  it('a complete revision beats a draft, however late the draft was written', () => {
+    for (const merged of [
+      mergeDevice(finished, [draftLater]),
+      mergeDevice(draftLater, [finished]),
+    ]) {
+      expect(merged).not.toHaveProperty('status')
+      expect(merged.name).toBe('Finished')
+      // Remarks are still unioned: nothing written on the draft side is lost there.
+      expect(merged.remarks.map((each) => each.id)).toEqual(['r1'])
+    }
+  })
+
+  it('between drafts only, the latest wins as before', () => {
+    const early = device('2-d', '2026-11-24T09:00:00.000Z', [], { name: 'Early', status: 'draft' })
+    expect(mergeDevice(early, [draftLater])).toMatchObject({ name: 'Draft edit', status: 'draft' })
+  })
+
+  it('takes the catalogue block only from a revision naming the same product', () => {
+    const named = device('2-a', '2026-11-24T09:00:00.000Z', [], {
+      vendorId: 1,
+      productId: 1,
+      vendorName: 'Old product',
+      catalogCheckedAt: '2026-11-24T12:00:00.000Z',
+      catalogSource: 'found',
+    })
+    const recoded = device('3-b', '2026-11-24T10:00:00.000Z', [], { vendorId: 2, productId: 2 })
+    for (const merged of [mergeDevice(named, [recoded]), mergeDevice(recoded, [named])]) {
+      expect(merged.vendorId).toBe(2)
+      expect(merged).not.toHaveProperty('vendorName')
+      expect(merged).not.toHaveProperty('catalogCheckedAt')
+    }
   })
 })
