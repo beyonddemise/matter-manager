@@ -175,6 +175,7 @@ export class AccountView extends LitElement {
 
   override disconnectedCallback(): void {
     window.removeEventListener('pageshow', this.onPageShow)
+    this.billingRuns++
     super.disconnectedCallback()
   }
 
@@ -248,6 +249,9 @@ export class AccountView extends LitElement {
    */
   private forget(): void {
     this.reads++
+    this.billingRuns++
+    this.billingPending = undefined
+    this.billingProblem = undefined
     this.loaded = 'signed-out'
     this.editing = undefined
     this.announcement = ''
@@ -255,6 +259,13 @@ export class AccountView extends LitElement {
 
   /** Counts reads, so an answer to an older read never overwrites a newer one. */
   private reads = 0
+
+  /**
+   * Counts billing ownership: bumped when the session ends and when the view leaves the page.
+   * Why: a session URL that answers after a sign-out is the departed account's Checkout or
+   * billing portal, and must not be opened for whoever uses this browser next.
+   */
+  private billingRuns = 0
 
   /** Reads the methods and shows what came back. */
   private async refresh(): Promise<void> {
@@ -414,12 +425,18 @@ export class AccountView extends LitElement {
     if (actions === undefined || this.billingPending !== undefined) return
     this.billingPending = pending
     this.billingProblem = undefined
+    const run = this.billingRuns
     let outcome: SessionOutcome
     try {
       outcome = await start(actions)
     } catch {
       // The shell's actions never throw, but a stub might: the reader is told, not left waiting.
       outcome = { kind: 'unavailable' }
+    }
+    // The session ended or the view left while the request was out: the answer is not theirs.
+    if (run !== this.billingRuns) {
+      this.billingPending = undefined
+      return
     }
     if (outcome.kind === 'redirect') {
       this.redirect(outcome.url)

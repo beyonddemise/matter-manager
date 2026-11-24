@@ -5,6 +5,7 @@ import type { AuthMethods, AuthMethodsApi } from './auth-methods.js'
 import {
   type BillingActions,
   type BillingApi,
+  canCharge,
   checkoutReturnText,
   resolveBillingOffer,
   type SessionOutcome,
@@ -512,7 +513,9 @@ export class AppShell extends LitElement implements ViewHost {
         await new Promise((resolve) => setTimeout(resolve, wait))
         if (!this.projects.isCurrent(generation)) return
         await this.rereadProfile()
-        if (this.projects.facts?.billing !== undefined) return
+        // A subscription that can charge is the new one: an ended one (a returning customer's
+        // old `canceled`) is what the webhook has not replaced yet, so the rereads go on.
+        if (canCharge(this.projects.facts?.billing)) return
       }
     })()
   }

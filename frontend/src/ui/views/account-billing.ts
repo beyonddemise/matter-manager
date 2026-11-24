@@ -165,7 +165,15 @@ export function renderBilling(
   // The portal needs billing configured: on a deployment that dropped Stripe it would be a 404.
   const manageable = account && sells && billing !== undefined
   const note = state.checkoutReturn === undefined ? nothing : returnNote(state.checkoutReturn)
-  if (billing === undefined && subscribable.length === 0 && !manageable && note === nothing)
+  // The problem counts: a refused Checkout can empty the offer behind it (`not-offered` reloads
+  // it), and the reader must still hear why the press did nothing.
+  if (
+    billing === undefined &&
+    subscribable.length === 0 &&
+    !manageable &&
+    note === nothing &&
+    state.problem === undefined
+  )
     return nothing
 
   const disabled = !state.online || state.pending !== undefined || state.session !== 'signed-in'

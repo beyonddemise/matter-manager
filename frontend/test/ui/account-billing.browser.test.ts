@@ -276,6 +276,42 @@ describe('what Stripe’s answers say', () => {
     },
   )
 
+  it('keeps saying why when the refused plan’s offer goes away behind it', async () => {
+    const { el } = await account({ offer: ['pro'], actions: actions({ kind: 'not-offered' }) })
+    ;(el.querySelector('[data-subscribe="pro"]') as HTMLElement).click()
+    await waitUntil(() => el.querySelector('[data-billing-problem]') !== null, 'no problem shown')
+    // The shell reloads the offer on `not-offered`; this deployment now sells nothing.
+    el.offer = []
+    await el.updateComplete
+    expect(el.querySelector('[data-subscribe]')).toBeNull()
+    expect(text(el.querySelector('[data-billing-problem]'))).toBe(
+      'Billing could not be reached. Please try again.',
+    )
+  })
+
+  it('does not open a Stripe page that answers after the session ended', async () => {
+    let answer: (outcome: SessionOutcome) => void = () => {}
+    const { el, redirect } = await account({
+      plan: 'pro',
+      offer: ['pro'],
+      billing: { status: 'active', cancelAtPeriodEnd: false },
+      actions: {
+        checkout: async () => ({ kind: 'unavailable' }),
+        portal: () =>
+          new Promise<SessionOutcome>((resolve) => {
+            answer = resolve
+          }),
+      },
+    })
+    ;(el.querySelector('[data-manage-billing]') as HTMLElement).click()
+    await el.updateComplete
+    el.session = 'signed-out'
+    await el.updateComplete
+    answer({ kind: 'redirect', url: PORTAL_URL })
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(redirect).not.toHaveBeenCalled()
+  })
+
   it('says there is nothing to manage when the portal finds no billing account', async () => {
     const { el } = await account({
       plan: 'pro',

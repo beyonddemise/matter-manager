@@ -2925,6 +2925,34 @@ describe('billing through Stripe (#263, phase 2)', () => {
     expect(readProfile).toHaveBeenCalled()
   })
 
+  it('keeps rereading past a returning customer’s ended subscription', async () => {
+    // The webhook lags: the first answers still carry the old, cancelled subscription.
+    window.location.hash = '#/account?checkout=success'
+    let calls = 0
+    const readProfile = vi.fn(async () => {
+      calls += 1
+      return calls <= 2
+        ? serverProfile({ plan: 'free', billing: { status: 'canceled', cancelAtPeriodEnd: false } })
+        : serverProfile({
+            plan: 'pro',
+            billing: {
+              status: 'active',
+              currentPeriodEnd: '2026-12-24T12:00:00Z',
+              cancelAtPeriodEnd: false,
+            },
+          })
+    })
+    const { element } = await mount({
+      cachedProfile: profile({ plan: 'free', projectLimit: 1 }),
+      billing: selling(),
+      readProfile,
+    })
+    await waitUntil(
+      () => account(element)?.querySelector('[data-billing-next]') !== null,
+      'the rereads stopped at the ended subscription',
+    )
+  })
+
   it('says a cancelled Checkout charged nothing, and forgets it on leaving the page', async () => {
     window.location.hash = '#/account?checkout=cancel'
     const { element } = await mount({ cachedProfile: profile(), billing: selling() })
