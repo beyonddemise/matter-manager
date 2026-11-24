@@ -390,6 +390,72 @@ describe('reopening a draft', () => {
     expect(shown(element, 'serial')).toBe('')
   })
 
+  /**
+   * A finish form whose draft has been read but whose room selection is still waiting for the
+   * form's update (`openDraft`'s `updateComplete`), held there until `release` is called.
+   */
+  async function heldInRoomSelection(): Promise<{
+    element: AddDeviceView
+    release: () => void
+  }> {
+    await storeDraft({
+      room: 'Hall',
+      manualCode: '34970112332',
+      installedAt: '2026-11-20',
+    })
+    await customElements.whenDefined('wa-input')
+    let release: () => void = () => {}
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    history.pushState(null, '', `#/devices/${UUID}/finish`)
+    const fresh = document.createElement('finish-device-view') as AddDeviceView
+    fresh.setAttribute('draft-id', UUID)
+    fresh.repositories = database.repositories
+    fresh.scanSource = neverAvailable()
+    fresh.signedIn = () => false
+    // Lit asks `getUpdateComplete` for `updateComplete`; holding it once the draft is stored
+    // holds exactly the wait between reading the draft and selecting its room.
+    const original = (fresh as unknown as { getUpdateComplete: () => Promise<boolean> })
+      .getUpdateComplete
+    ;(fresh as unknown as { getUpdateComplete: () => Promise<boolean> }).getUpdateComplete =
+      function (this: AddDeviceView) {
+        const settled = original.call(this)
+        return this.stored === undefined ? settled : held.then(() => settled)
+      }
+    document.body.append(fresh)
+    await waitUntil(() => fresh.stored !== undefined, 'the draft was never read')
+    return { element: fresh, release }
+  }
+
+  it('stays inert and saves nothing until the room is selected and the step chosen', async () => {
+    const { element, release } = await heldInRoomSelection()
+    try {
+      expect(element.querySelector('form')?.inert).toBe(true)
+      element.querySelector<HTMLElement>('[data-save-draft]')?.click()
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      expect(await devices()).toHaveLength(1)
+      expect((await devices())[0]?._rev?.startsWith('1-')).toBe(true)
+
+      release()
+      await waitUntil(() => element.querySelector('form')?.inert === false, 'never became usable')
+      expect(shown(element, 'room')).toBe('Hall')
+    } finally {
+      element.remove()
+    }
+  })
+
+  it('takes no room and moves no step when left during the room selection (CodeRabbit on #369)', async () => {
+    const { element, release } = await heldInRoomSelection()
+    element.remove()
+    release()
+    await new Promise((resolve) => setTimeout(resolve, 50))
+
+    expect(shown(element, 'room')).toBe('')
+    expect(stepper(element).active).toBe('scan')
+    expect(element.querySelector('form')?.inert).toBe(true)
+  })
+
   it('does nothing with a read that lands after the form was left (CodeRabbit on #369)', async () => {
     // A device finished elsewhere: a live form would replace the address with its page.
     await database.repositories.devices.save({
