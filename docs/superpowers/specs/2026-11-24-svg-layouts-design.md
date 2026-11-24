@@ -324,7 +324,7 @@ Checks, in this order, each with its own message:
 | 3 | Well-formed | `DOMParser` (`image/svg+xml`) yields a `parsererror` |
 | 4 | Root | The document element is not `svg` in the SVG namespace |
 | 5 | No DTD | Any `<!DOCTYPE>`. It is the vehicle for entity expansion and external entities, and a plan does not need one |
-| 6 | Size of the tree | More than 100,000 elements, or nesting deeper than 64. After sanitising, also more than 100,000 instances with every `<use>` expanded, or a `<use>` cycle: 61 nested uses can expand to a million instances |
+| 6 | Size of the tree | More than 100,000 elements, or nesting deeper than 64. After sanitising, also more than 100,000 instances with every `<use>` expanded, or a `<use>` cycle: 61 nested uses can expand to a million instances. References are resolved as the browser resolves them (percent-decoded), and a `<use>` that reaches nothing is removed |
 | 7 | Geometry | No usable `viewBox`, and `width`/`height` cannot supply one (unitless or `px` only). A width or height that is zero, negative or not finite |
 | 8 | Sanitise | See below. **Stripping is not rejection**: a CAD export with metadata the sanitiser removes still imports |
 | 9 | Something left | The sanitised tree has no drawable element |
@@ -390,10 +390,16 @@ layers stop it:
 - **The sanitiser** drops every rule with a `:host`, `:host()`, `:host-context()`, `::slotted` or
   `::part` selector, and keeps only an allow-list of paint, text and geometry properties.
   `position`, `z-index`, `inset`, `top`/`left`/`right`/`bottom`, `width`, `height` and `overflow`
-  are not on it, and no value may use viewport units. The same applies to the root's own `style`.
-- **`<mm-plan-canvas>`** (PR 6) contains whatever gets through: the host has
-  `contain: strict; overflow: clip; isolation: isolate`, and its shadow stylesheet carries
-  `:host > svg { position: static !important }`.
+  are not on it, nor is `transform`, and no value may use viewport units. Presentation
+  attributes (SVG 2's list) get the same allow-list, with `transform=` allowed only inside the
+  plan. The root keeps no `style`, `overflow` or `transform` at all.
+- **The holder** contains whatever gets through. `sanitise.ts` exports `PLAN_HOLDER_CSS`, and
+  every element that renders a plan (PR 6's `<mm-plan-canvas>`) **must** adopt it in the shadow
+  root that holds the plan: the host gets `contain: strict; overflow: clip; isolation: isolate`,
+  and `:host > svg` is forced `position: static`, `transform: none` and `overflow: hidden`,
+  inside a cascade layer so that no `!important` in a plan can outrank it.
+- `probe:svg` measures both by geometry, each without the other: the plan's box must stay
+  within its holder's, and `elementFromPoint` just outside the holder must not hit it.
 
 **Serialising a plan** (the stored `plan.svg`, the woven copy, the downloads) uses
 `XMLSerializer` only, never `outerHTML` or `innerHTML`. Those serialise as HTML, and HTML
@@ -642,10 +648,9 @@ Each PR leaves `main` releasable and is verifiable on its own.
 6. **Import and view.** The Rooms-page action and dialog, import checks, `#/layouts/:id` with
    `<mm-plan-canvas>`, view-mode markers, the side list, drafts marked, the "downloading" and
    "offline" states, "Download plans for offline use", the device page's list of plans it is on. `probe:runtime`
-   with a fixture layout. `<mm-plan-canvas>` contains the plan (`contain: strict; overflow: clip;
-   isolation: isolate`, and `:host > svg { position: static !important }` in its shadow
-   stylesheet; see *Sanitising*). `probe:svg`'s sanitised mode then renders through it. This PR
-   removes `layouts/sanitise.ts` from `frontend/scripts/awaiting-consumer.json`.
+   with a fixture layout. `<mm-plan-canvas>` adopts `PLAN_HOLDER_CSS` from `sanitise.ts` in its
+   shadow root (see *Sanitising*), and `probe:svg`'s held mode then renders through the element
+   itself. This PR removes `layouts/sanitise.ts` from `frontend/scripts/awaiting-consumer.json`.
 7. **Placing and the woven copy.** `weave.ts`, placing mode (pointer, single-pointer,
    keyboard, live region), save writing drawing then head, lazy regeneration, the e2e journey
    up to "reload offline".

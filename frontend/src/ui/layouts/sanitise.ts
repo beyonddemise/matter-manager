@@ -54,6 +54,38 @@ export const PLAN_MAX_DEPTH = 64
  */
 export const PLAN_MAX_INSTANCES = 100_000
 
+/**
+ * The stylesheet every element that renders a plan must adopt in the shadow root it puts the
+ * plan in (`shadowRoot.adoptedStyleSheets`). PR 6's `<mm-plan-canvas>` is that element.
+ *
+ * **Why the holder as well as the sanitiser.** A shadow root scopes selectors, not layout, and
+ * the ways for a drawing to leave its box (`position`, `transform`, `overflow`, sizes) are
+ * many, so the box is enforced where the box is: the host contains and clips everything inside
+ * it, and the plan's root cannot be moved, transformed or allowed to overflow. The sanitiser
+ * removes those properties too, and `probe:svg` proves each layer without the other.
+ *
+ * **Why a cascade layer.** An `!important` declaration in a layer beats every unlayered
+ * `!important` declaration, whatever its specificity. A plan's own `<style>` cannot declare a
+ * layer (the sanitiser drops every at-rule), so nothing in a plan can outrank these.
+ */
+export const PLAN_HOLDER_CSS = `@layer plan-holder {
+  :host {
+    display: block;
+    contain: strict;
+    overflow: clip;
+    isolation: isolate;
+  }
+  :host > svg {
+    position: static !important;
+    transform: none !important;
+    overflow: hidden !important;
+    display: block !important;
+    width: 100% !important;
+    height: 100% !important;
+    margin: 0 !important;
+  }
+}`
+
 /** Why a plan was refused. Each kind is one row of the spec's import-check table. */
 export type PlanProblem =
   | { readonly kind: 'too-large'; readonly bytes: number }
@@ -186,7 +218,23 @@ const CONFIG: Config & { RETURN_DOM: true } = {
  * Raster images a plan may embed. Never `data:image/svg+xml`: that is a plan inside the plan,
  * which this sanitiser would never see.
  */
-const RASTER_DATA_URL = /^data:image\/(?:png|jpeg|webp|gif)[;,]/i
+const RASTER_TYPE = /^image\/(?:png|jpeg|webp|gif)[;,]/i
+
+/**
+ * Whether a value is a raster `data:` URL, read by the URL parser itself rather than by a
+ * pattern over the text: the parser decides what the scheme is, so it decides here too. A
+ * control character before or inside `data:` (`&#x85;data:…`, `da&#x85;ta:…`) makes it a
+ * relative URL the browser requests from this origin, and here it makes it no `data:` URL at
+ * all (re-review of #367).
+ */
+function isRasterDataUrl(value: string): boolean {
+  try {
+    const url = new URL(value)
+    return url.protocol === 'data:' && RASTER_TYPE.test(url.pathname)
+  } catch {
+    return false
+  }
+}
 
 /** Schemes that run code or smuggle a document, checked with whitespace and controls removed. */
 const UNSAFE_SCHEME = /(?:javascript|vbscript|data):/
@@ -313,9 +361,7 @@ const ALLOWED_PROPERTIES = new Set([
   'unicode-bidi',
   'white-space',
   'white-space-collapse',
-  'transform',
-  'transform-origin',
-  'transform-box',
+  'color-rendering',
   'background-color',
   'pointer-events',
   'cx',
@@ -346,6 +392,114 @@ const ALLOWED_PREFIXES = [
 
 const allowedProperty = (property: string) =>
   ALLOWED_PROPERTIES.has(property) || ALLOWED_PREFIXES.some((prefix) => property.startsWith(prefix))
+
+/**
+ * The attributes SVG 2 defines as presentation attributes: each sets the CSS property of the
+ * same name, so the browser reads it as CSS. The spec's list, not a guess at which attributes
+ * look like CSS. Every other attribute (`viewBox`, `points`, `offset` on a `<stop>`, `scale` on
+ * `<feDisplacementMap>`) is not CSS, whatever its name.
+ */
+const PRESENTATION_ATTRIBUTES = new Set([
+  'alignment-baseline',
+  'baseline-shift',
+  'clip',
+  'clip-path',
+  'clip-rule',
+  'color',
+  'color-interpolation',
+  'color-interpolation-filters',
+  'color-rendering',
+  'cursor',
+  'cx',
+  'cy',
+  'd',
+  'direction',
+  'display',
+  'dominant-baseline',
+  'fill',
+  'fill-opacity',
+  'fill-rule',
+  'filter',
+  'flood-color',
+  'flood-opacity',
+  'font-family',
+  'font-size',
+  'font-size-adjust',
+  'font-stretch',
+  'font-style',
+  'font-variant',
+  'font-weight',
+  'glyph-orientation-horizontal',
+  'glyph-orientation-vertical',
+  'height',
+  'image-rendering',
+  'letter-spacing',
+  'lighting-color',
+  'marker-end',
+  'marker-mid',
+  'marker-start',
+  'mask',
+  'mask-type',
+  'opacity',
+  'overflow',
+  'paint-order',
+  'pointer-events',
+  'r',
+  'rx',
+  'ry',
+  'shape-rendering',
+  'stop-color',
+  'stop-opacity',
+  'stroke',
+  'stroke-dasharray',
+  'stroke-dashoffset',
+  'stroke-linecap',
+  'stroke-linejoin',
+  'stroke-miterlimit',
+  'stroke-opacity',
+  'stroke-width',
+  'text-anchor',
+  'text-decoration',
+  'text-overflow',
+  'text-rendering',
+  'transform',
+  'transform-origin',
+  'unicode-bidi',
+  'vector-effect',
+  'visibility',
+  'white-space',
+  'width',
+  'word-spacing',
+  'writing-mode',
+  'x',
+  'y',
+])
+
+/**
+ * Presentation attributes allowed on elements inside the plan but never on its root, and never
+ * as CSS: shapes need a size and a `transform=`, while the root's size is its holder's business
+ * and a transformed root leaves its box (re-review of #367: `transform="scale(50)"` on the root
+ * covered the page). Inside the root, a transform moves content within a box that clips it.
+ */
+const INNER_ONLY_ATTRIBUTES = new Set(['transform', 'transform-origin'])
+
+/**
+ * Whether a presentation attribute may stay: the CSS property allow-list, the same one
+ * declarations get, plus sizes and the inner-only transforms. `overflow`, `clip` and `cursor`
+ * are on none of them. The root's `width` and `height` pass here only to be read as geometry;
+ * `normaliseGeometry` then removes them.
+ */
+const presentationAllowed = (name: string, root: boolean) =>
+  allowedProperty(name) ||
+  name === 'width' ||
+  name === 'height' ||
+  (!root && INNER_ONLY_ATTRIBUTES.has(name))
+
+/** Whether an element is the plan's root: an `svg` whose parent, if any, is not SVG. */
+const isPlanRoot = (element: Element) =>
+  element.localName === 'svg' &&
+  element.namespaceURI === SVG_NS &&
+  element.parentElement?.namespaceURI !== SVG_NS
 
 /** Viewport units, which size a plan by the window rather than by its own box. */
 const VIEWPORT_UNIT = /\d(?:[sld]?v(?:w|h|i|b|min|max))\b/i
@@ -414,7 +568,7 @@ export function sanitisePlan(bytes: Uint8Array): SanitisedPlan {
   normaliseGeometry(svg, viewBox)
 
   // 6, again, on what will actually render: every `<use>` expanded.
-  const expanded = expandedInstances(svg)
+  const expanded = expandedInstances(svg, resolveUses(svg, removed))
   if (expanded === 'cycle') return refuse({ kind: 'use-cycle' })
   if (expanded > PLAN_MAX_INSTANCES) return refuse({ kind: 'too-many-instances', count: expanded })
 
@@ -475,6 +629,83 @@ function measureTree(root: Element): { elements: number; depth: number } {
 }
 
 /**
+ * The elements a `<use>` reference can reach, resolved the way the browser resolves it.
+ *
+ * **Why decode.** Chromium percent-decodes a fragment before looking the id up, so
+ * `href="#%6C5"` reaches `id="l5"`. Looking up the raw text instead let a `<use>` bomb spelled
+ * with escapes count as zero instances and hang the tab (re-review of #367). The URL parser
+ * produces the fragment and `decodeURIComponent` decodes it, so no escaping rule of ours is
+ * involved; the raw text is looked up as well, so whichever the browser picks is counted.
+ */
+function referenceTargets(href: string, byId: ReadonlyMap<string, Element>): Element[] {
+  const stripped = urlStrip(href)
+  if (!stripped.startsWith('#')) return []
+  const found = new Set<Element>()
+  const raw = byId.get(stripped.slice(1))
+  if (raw !== undefined) found.add(raw)
+  try {
+    const decoded = byId.get(
+      decodeURIComponent(new URL(stripped, 'http://plan.invalid/').hash.slice(1)),
+    )
+    if (decoded !== undefined) found.add(decoded)
+  } catch {
+    // A malformed escape decodes to nothing, so it reaches nothing.
+  }
+  return [...found]
+}
+
+/**
+ * Resolves every `<use>`, removes the ones that reach nothing, and returns what the rest reach.
+ *
+ * **Why remove rather than count as zero.** A reference this function cannot resolve is one it
+ * cannot vouch for: if the browser resolves it some other way, an uncounted `<use>` is exactly
+ * how the bomb got through. A `<use>` that reaches nothing draws nothing, so removing it costs
+ * the drawing nothing. Removing one can strand another that pointed at it, so the removals
+ * follow the references rather than rescanning the tree.
+ */
+function resolveUses(svg: SVGSVGElement, removed: RemovedCounts): Map<Element, Element[]> {
+  const byId = new Map<string, Element>()
+  for (const element of svg.querySelectorAll('[id]')) {
+    const id = element.getAttribute('id') ?? ''
+    if (!byId.has(id)) byId.set(id, element)
+  }
+  const targets = new Map<Element, Element[]>()
+  const pointingAt = new Map<Element, Element[]>()
+  for (const use of svg.getElementsByTagNameNS(SVG_NS, 'use')) {
+    const href = use.getAttribute('href') ?? use.getAttribute('xlink:href') ?? ''
+    const reached = referenceTargets(href, byId)
+    targets.set(use, reached)
+    for (const target of reached) {
+      const list = pointingAt.get(target)
+      if (list === undefined) pointingAt.set(target, [use])
+      else list.push(use)
+    }
+  }
+  const dangling = (use: Element) =>
+    (targets.get(use) ?? []).every((target) => !svg.contains(target))
+  const queue = [...targets.keys()].filter(dangling)
+  for (let use = queue.pop(); use !== undefined; use = queue.pop()) {
+    if (!svg.contains(use)) continue
+    const gone = [use, ...use.querySelectorAll('*')]
+    // An href still present is an unresolvable reference; an absent one was already removed,
+    // and counted, by the reference rule.
+    if (use.hasAttribute('href') || use.hasAttribute('xlink:href')) removed.externalReferences += 1
+    use.remove()
+    for (const element of gone)
+      for (const other of pointingAt.get(element) ?? []) if (dangling(other)) queue.push(other)
+  }
+  for (const use of [...targets.keys()]) {
+    if (!svg.contains(use)) targets.delete(use)
+    else
+      targets.set(
+        use,
+        (targets.get(use) ?? []).filter((target) => svg.contains(target)),
+      )
+  }
+  return targets
+}
+
+/**
  * How many element instances the tree renders with every `<use>` expanded, or `'cycle'`.
  *
  * A `<use>` renders a copy of its target's whole subtree, uses inside it included, so the count
@@ -484,23 +715,14 @@ function measureTree(root: Element): { elements: number; depth: number } {
  * because a chain of twenty thousand uses would overflow a recursive walk, and capped, because
  * the true count can be astronomically large.
  */
-function expandedInstances(svg: SVGSVGElement): number | 'cycle' {
-  const byId = new Map<string, Element>()
-  for (const element of svg.querySelectorAll('[id]')) {
-    const id = element.getAttribute('id') ?? ''
-    if (!byId.has(id)) byId.set(id, element)
-  }
-  const edges = (element: Element): Element[] => {
-    const next = [...element.children]
-    if (element.localName === 'use') {
-      const href = urlStrip(
-        element.getAttribute('href') ?? element.getAttribute('xlink:href') ?? '',
-      )
-      const target = href.startsWith('#') ? byId.get(href.slice(1)) : undefined
-      if (target !== undefined) next.push(target)
-    }
-    return next
-  }
+function expandedInstances(
+  svg: SVGSVGElement,
+  targets: ReadonlyMap<Element, readonly Element[]>,
+): number | 'cycle' {
+  const edges = (element: Element): Element[] => [
+    ...element.children,
+    ...(targets.get(element) ?? []),
+  ]
   const cap = PLAN_MAX_INSTANCES + 1
   const counted = new Map<Element, number>()
   const onPath = new Set<Element>()
@@ -706,13 +928,18 @@ function rejection(
   element: Element,
   name: string,
   value: string,
-): 'eventHandlers' | 'unsafeUrls' | 'externalReferences' | undefined {
+): 'eventHandlers' | 'unsafeUrls' | 'externalReferences' | 'styleRules' | undefined {
   const lower = name.toLowerCase()
   if (lower.startsWith('on')) return 'eventHandlers'
   const squashed = squash(value)
   const isHref = lower === 'href' || lower === 'xlink:href'
-  if (isHref && element.localName === 'image' && RASTER_DATA_URL.test(squashed)) return undefined
+  if (isHref && element.localName === 'image' && isRasterDataUrl(value)) return undefined
   if (UNSAFE_SCHEME.test(squashed)) return 'unsafeUrls'
+  // The root is the box the plan must stay in, so it keeps no style of its own: its size comes
+  // from the holder, and every declaration that could move it is one the holder would fight.
+  const root = isPlanRoot(element)
+  if (root && lower === 'style') return 'styleRules'
+  if (PRESENTATION_ATTRIBUTES.has(lower) && !presentationAllowed(lower, root)) return 'styleRules'
   // Only a fragment: the plan may point into itself (`<use href="#door">`) and nowhere else.
   // A relative path is as external as an absolute one, resolved against this application.
   if (isHref) return urlStrip(value).startsWith('#') ? undefined : 'externalReferences'

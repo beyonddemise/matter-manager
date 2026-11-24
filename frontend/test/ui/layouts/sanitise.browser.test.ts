@@ -8,6 +8,7 @@
  */
 import { describe, expect, it, vi } from 'vitest'
 import {
+  PLAN_HOLDER_CSS,
   PLAN_MAX_BYTES,
   type PlanProblem,
   type RemovedCounts,
@@ -263,7 +264,9 @@ describe('what the sanitiser removes, and counts', () => {
     )
     expect(svg.querySelector('#local')?.getAttribute('fill')).toBe('url(#grad)')
     expect(markup).not.toMatch(/elsewhere|x\.cur/)
-    expect(removed.externalReferences).toBe(3)
+    // `cursor=` goes as a presentation attribute no plan may set, before its URL is looked at.
+    expect(removed.externalReferences).toBe(2)
+    expect(removed.styleRules).toBe(1)
   })
 
   it('keeps <style> but drops its at-rules and any declaration that could fetch', () => {
@@ -447,7 +450,8 @@ describe('the security review of #367', () => {
     )
     expect(markup).not.toMatch(/position|z-index|inset|top:|left:|right:|bottom:|vw|vh|overflow/)
     expect(svg.querySelector('style')?.textContent).toMatch(/stroke-width: 2/)
-    expect(svg.getAttribute('style')).toMatch(/fill: red/)
+    // The root keeps no style at all (re-review A): it is the box the plan must stay in.
+    expect(svg.hasAttribute('style')).toBe(false)
   })
 
   it('2. drops viewport-unit sizes even on properties it otherwise keeps', () => {
@@ -521,5 +525,128 @@ describe('the security review of #367', () => {
   it('6. removes xml:id, so mm- names cannot arrive that way', () => {
     const { markup } = clean(plan('<g xml:id="mm-devices"><rect width="1" height="1"/></g>'))
     expect(markup).not.toMatch(/xml:id|mm-/)
+  })
+})
+
+/**
+ * The re-review of #367 at 8690a3b: the same classes again, each found with a bypass of the
+ * first fix. Every case here failed first.
+ */
+describe('the security re-review of #367', () => {
+  const huge = '<rect x="-100000" y="-100000" width="200000" height="200000"/>'
+
+  it('A. strips overflow, transform and style from the root', () => {
+    const { svg } = clean(
+      plan(
+        huge,
+        'viewBox="0 0 100 100" overflow="visible" transform="scale(50)" style="fill: red"',
+      ),
+    )
+    expect(svg.hasAttribute('overflow')).toBe(false)
+    expect(svg.hasAttribute('transform')).toBe(false)
+    expect(svg.hasAttribute('style')).toBe(false)
+  })
+
+  it('A. drops transform and overflow from CSS, and keeps transform= on inner elements', () => {
+    const { svg } = clean(
+      plan(`<style>svg { transform: scale(50) } .a { transform: rotate(1deg); fill: red }</style>
+        <g id="g" transform="translate(5 5)" style="transform: scale(9); stroke: blue"><rect width="1" height="1"/></g>`),
+    )
+    const css = svg.querySelector('style')?.textContent ?? ''
+    expect(css).not.toMatch(/transform/)
+    expect(css).toMatch(/fill: red/)
+    const group = svg.querySelector('#g')
+    expect(group?.getAttribute('transform')).toBe('translate(5 5)')
+    expect(group?.getAttribute('style')).not.toMatch(/transform/)
+  })
+
+  it('A. gives presentation attributes the CSS property allow-list', () => {
+    const { svg } = clean(
+      plan(`<rect id="r" width="1" height="1" overflow="visible" cursor="crosshair" clip="auto"
+        fill="red" stroke-width="2"/><svg id="inner" overflow="visible"><rect width="1" height="1"/></svg>
+        <linearGradient id="g"><stop id="s" offset="0.5" stop-color="red"/></linearGradient>`),
+    )
+    const rect = svg.querySelector('#r')
+    expect(rect?.hasAttribute('overflow')).toBe(false)
+    expect(rect?.hasAttribute('cursor')).toBe(false)
+    expect(rect?.hasAttribute('clip')).toBe(false)
+    expect(rect?.getAttribute('fill')).toBe('red')
+    expect(rect?.getAttribute('stroke-width')).toBe('2')
+    expect(rect?.getAttribute('width')).toBe('1')
+    expect(svg.querySelector('#inner')?.hasAttribute('overflow')).toBe(false)
+    expect(svg.querySelector('#s')?.getAttribute('offset')).toBe('0.5')
+  })
+
+  it('A. keeps a hostile plan inside a holder that uses PLAN_HOLDER_CSS, even unsanitised', () => {
+    const holder = document.createElement('div')
+    holder.style.cssText =
+      'position: absolute; left: 300px; top: 300px; width: 200px; height: 200px'
+    document.body.append(holder)
+    const root = holder.attachShadow({ mode: 'open' })
+    const sheet = new CSSStyleSheet()
+    sheet.replaceSync(PLAN_HOLDER_CSS)
+    root.adoptedStyleSheets = [sheet]
+    const raw = `<svg xmlns="${SVG_NS}" viewBox="0 0 10 10" overflow="visible" transform="scale(50)"
+      style="position: fixed; inset: 0; width: 100vw; height: 100vh">
+      <style>svg { position: fixed !important; transform: scale(50) !important; overflow: visible !important }</style>${huge}</svg>`
+    root.append(
+      document.importNode(
+        new DOMParser().parseFromString(raw, 'image/svg+xml').documentElement,
+        true,
+      ),
+    )
+    const box = holder.getBoundingClientRect()
+    const drawn = (root.querySelector('svg') as SVGSVGElement).getBoundingClientRect()
+    expect(drawn.left).toBeGreaterThanOrEqual(box.left - 1)
+    expect(drawn.right).toBeLessThanOrEqual(box.right + 1)
+    expect(drawn.top).toBeGreaterThanOrEqual(box.top - 1)
+    expect(drawn.bottom).toBeLessThanOrEqual(box.bottom + 1)
+    for (const [x, y] of [
+      [box.left - 5, box.top + 100],
+      [box.right + 5, box.top + 100],
+      [box.left + 100, box.top - 5],
+      [box.left + 100, box.bottom + 5],
+    ])
+      expect(document.elementFromPoint(x as number, y as number)).not.toBe(holder)
+    holder.remove()
+  })
+
+  /** Sixty-one uses expanding to a million instances, with each reference spelled by `spell`. */
+  const bomb = (spell: (id: string) => string) => {
+    let defs = '<g id="l0"><rect width="1" height="1"/></g>'
+    for (let level = 1; level <= 6; level += 1) {
+      const uses = Array.from(
+        { length: 10 },
+        (_, i) => `<use href="#${spell(`l${level - 1}`)}" x="${i}"/>`,
+      )
+      defs += `<g id="l${level}">${uses.join('')}</g>`
+    }
+    return `<svg xmlns="${SVG_NS}" viewBox="0 0 100 100"><defs>${defs}</defs><use href="#${spell('l6')}"/></svg>`
+  }
+
+  it('B. refuses the <use> bomb with percent-encoded references, which the browser decodes', () => {
+    expect(problemOf(bomb((id) => id.replace('l', '%6C')))).toBe('too-many-instances')
+  })
+
+  it('B. resolves an encoded reference, and removes a <use> that resolves to nothing', () => {
+    const { svg, removed } = clean(
+      plan(`<symbol id="door"><path d="M0 0h1"/></symbol><use id="encoded" href="#%64oor"/>
+        <use id="dangling" href="#nowhere"/><use id="broken" href="#%E0%A4%A"/>`),
+    )
+    expect(svg.querySelector('#encoded')).not.toBeNull()
+    expect(svg.querySelector('#dangling')).toBeNull()
+    expect(svg.querySelector('#broken')).toBeNull()
+    expect(removed.externalReferences).toBe(2)
+  })
+
+  it('C. reads a raster data: URL as the URL parser does, controls and all', () => {
+    const { markup, removed } = clean(
+      plan(`<image width="5" height="5" href="&#x85;data:image/png;base64,AAAA"/>
+        <image width="5" height="5" href="da&#x85;ta:image/png;base64,AAAA"/>
+        <image id="ok" width="5" height="5" href=" data:image/png;base64,AAAA"/>`),
+    )
+    expect(markup).not.toContain('\u0085')
+    expect(markup).toContain('id="ok"')
+    expect(removed.unsafeUrls).toBe(2)
   })
 })
