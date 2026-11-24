@@ -1,6 +1,12 @@
 import { playwright } from '@vitest/browser-playwright'
 import { defineConfig } from 'vitest/config'
 
+/** The zone the `ui-west` project runs its pages in: UTC-7 or UTC-8, never UTC. */
+const WEST_OF_UTC = 'America/Los_Angeles'
+
+/** Browser tests that run in {@link WEST_OF_UTC} instead of the runner's own zone. */
+const WEST_OF_UTC_TESTS = 'test/ui/**/*.west.browser.test.ts'
+
 /**
  * The frontend's own test configuration.
  *
@@ -8,7 +14,7 @@ import { defineConfig } from 'vitest/config'
  * `backend/vitest.config.ts` gives about itself: each half installs and tests without the other
  * present, and the repository root belongs to neither.
  *
- * The four projects are the old package boundaries, kept as *environments* rather than as
+ * The first four projects are the old package boundaries, kept as *environments* rather than as
  * packages. That distinction is the whole of #181: `domain` and `data` never needed a separate
  * `package.json`, but they very much need a separate environment.
  *
@@ -16,13 +22,9 @@ import { defineConfig } from 'vitest/config'
  * incidental. If a DOM ever becomes available to those tests, depending on one by accident
  * becomes possible, and the promise that the domain layer is testable anywhere erodes without
  * anything failing. `tsconfig.domain.json` makes the same statement to the compiler.
+ *
+ * The fifth, `ui-west`, is `ui` again with its pages west of UTC (#354).
  */
-/** The zone the `ui-west` project runs its pages in: UTC-7 or UTC-8, never UTC. */
-const WEST_OF_UTC = 'America/Los_Angeles'
-
-/** Browser tests that run in {@link WEST_OF_UTC} instead of the runner's own zone. */
-const WEST_OF_UTC_TESTS = 'test/ui/**/*.west.browser.test.ts'
-
 export default defineConfig({
   test: {
     projects: [
