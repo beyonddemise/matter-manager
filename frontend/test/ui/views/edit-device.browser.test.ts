@@ -6,6 +6,7 @@ import '@awesome.me/webawesome-pro/dist/components/input/input.js'
 import '@awesome.me/webawesome-pro/dist/components/option/option.js'
 import { fixture, html, waitUntil } from '@open-wc/testing-helpers'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { userEvent } from 'vitest/browser'
 import type { ProjectRepositories } from '../../../src/data/index.js'
 import {
   CATALOG_FIELD_KEYS,
@@ -284,6 +285,53 @@ describe('saving an edit', () => {
     await submit(element, async () => (await stored()).room !== 'Ground Floor/Kitchen')
 
     expect((await stored()).room).toBe('First Floor/Study')
+  })
+
+  it('moves the device to a room typed over the current one and left, on a real keyboard (#355)', async () => {
+    // The edit form opens with the device's room picked, so this is the everyday move: focus
+    // the room, type the new one over it, Tab away, Save. A combobox that only accepts options
+    // restores the picked room on blur, and the move silently did not happen.
+    await seed()
+    const element = await form()
+    const combobox = element.querySelector('[data-field="room"]') as HTMLElement & {
+      inputValue?: unknown
+    }
+
+    // Focusing the field selects its text, so typing replaces the room shown.
+    combobox.focus()
+    await userEvent.keyboard('First Floor/Study')
+    await userEvent.keyboard('{Tab}')
+    await element.updateComplete
+    expect(combobox.inputValue).toBe('First Floor/Study')
+
+    await submit(element, async () => (await stored()).room !== 'Ground Floor/Kitchen')
+
+    expect((await stored()).room).toBe('First Floor/Study')
+  })
+
+  it('refuses a room typed, left, then cleared and left again, rather than saving the old text', async () => {
+    // With custom values allowed, a typed room becomes the combobox's `value`, and clearing the
+    // field does not take it away: the component only drops values that match an option. The
+    // field is empty, so the save must say the room is missing, not file it under "Study".
+    await seed()
+    const element = await form()
+    const combobox = element.querySelector('[data-field="room"]') as HTMLElement & {
+      value?: unknown
+    }
+    combobox.focus()
+    await userEvent.keyboard('First Floor/Study')
+    await userEvent.keyboard('{Tab}')
+    await waitUntil(() => combobox.value === 'First Floor/Study', 'the typed room never landed')
+
+    combobox.focus()
+    await userEvent.keyboard('{Backspace}')
+    await userEvent.keyboard('{Tab}')
+    await element.updateComplete
+
+    await submit(element, () => element.querySelector('[data-error]') !== null)
+
+    expect(element.error?.field).toBe('room')
+    expect((await stored()).room).toBe('Ground Floor/Kitchen')
   })
 
   it('shows the device in its own spelling of a room spelled more than one way', async () => {

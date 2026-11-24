@@ -160,8 +160,14 @@ function scanningSource(code: string): ScanSource {
 
 /** Reads back what a control currently shows. */
 function fieldValue(element: HTMLElement, field: string): string {
-  const control = element.querySelector(`[data-field="${field}"]`) as { value?: unknown } | null
-  return typeof control?.value === 'string' ? control.value : ''
+  const control = element.querySelector(`[data-field="${field}"]`) as {
+    value?: unknown
+    inputValue?: unknown
+  } | null
+  // The room is its text, as the form reads it (`roomValue`): the combobox's `value` lags the
+  // text, and keeps a typed room the text no longer shows.
+  const shown = field === 'room' ? control?.inputValue : control?.value
+  return typeof shown === 'string' ? shown : ''
 }
 
 /** Fills a control the way a user's typing leaves it: through the DOM property. */
@@ -475,11 +481,10 @@ describe('the room', () => {
 
     fill(element, 'credential', PAYLOAD)
     fill(element, 'name', 'Hall sensor')
-    // On Place it with the combobox not focused. Entering the step focuses it, and a
-    // single-select combobox restores the selected option's label on blur, so a change of mind
-    // typed while it had focus would be undone by the component - before this form ever read
-    // it - when the next step takes focus. The state pinned here is the one that reaches the
-    // form's own read: a stale selection and different typed text.
+    // On Place it with the combobox not focused, so the state pinned here is the one before any
+    // blur: a stale selection and different typed text, read as the text. The real-keyboard
+    // test below covers leaving the field, which `allow-custom-value` keeps from restoring the
+    // pick (#355).
     await next(element)
     ;(document.activeElement as HTMLElement | null)?.blur()
     selectRoom(element, 'Ground Floor/Kitchen')
@@ -490,6 +495,41 @@ describe('the room', () => {
 
     const saved = (await devices()).find((device) => device.name === 'Hall sensor')
     expect(saved?.room).toBe('Ground Floor/Hall')
+  })
+
+  it('keeps a room typed after a pick when the field is left, on a real keyboard (#355)', async () => {
+    // The order a person actually uses: pick from the list, think again, type over it, and
+    // Tab away. A single-select combobox that only accepts options puts the old pick back on
+    // blur, so the typed room was gone before Save could read it.
+    await existing('Kitchen')
+    const element = await form()
+    await waitUntil(() => element.rooms.length === 1, 'the view never read the existing rooms')
+    fill(element, 'credential', PAYLOAD)
+    fill(element, 'name', 'Attic sensor')
+    await next(element)
+
+    const combobox = element.querySelector('[data-field="room"]') as HTMLElement & {
+      value?: unknown
+      inputValue?: unknown
+    }
+    combobox.focus()
+    await userEvent.keyboard('Kitch')
+    const kitchen = combobox.querySelector('wa-option[value="Kitchen"]') as HTMLElement
+    await userEvent.click(kitchen)
+    await waitUntil(() => combobox.value === 'Kitchen', 'the pick never landed')
+    await userEvent.keyboard('{Tab}')
+
+    // Focusing the field selects its text, so typing replaces the pick.
+    combobox.focus()
+    await userEvent.keyboard('Attic')
+    await userEvent.keyboard('{Tab}')
+    await element.updateComplete
+    expect(combobox.inputValue).toBe('Attic')
+
+    await submit(element, async () => (await devices()).length === 2)
+
+    const saved = (await devices()).find((device) => device.name === 'Attic sensor')
+    expect(saved?.room).toBe('Attic')
   })
 })
 
