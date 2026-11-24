@@ -17,6 +17,12 @@ import { defineConfig } from 'vitest/config'
  * becomes possible, and the promise that the domain layer is testable anywhere erodes without
  * anything failing. `tsconfig.domain.json` makes the same statement to the compiler.
  */
+/** The zone the `ui-west` project runs its pages in: UTC-7 or UTC-8, never UTC. */
+const WEST_OF_UTC = 'America/Los_Angeles'
+
+/** Browser tests that run in {@link WEST_OF_UTC} instead of the runner's own zone. */
+const WEST_OF_UTC_TESTS = 'test/ui/**/*.west.browser.test.ts'
+
 export default defineConfig({
   test: {
     projects: [
@@ -53,6 +59,7 @@ export default defineConfig({
         test: {
           name: 'ui',
           include: ['test/ui/**/*.browser.test.ts'],
+          exclude: [WEST_OF_UTC_TESTS],
           browser: {
             enabled: true,
             // Vitest 4.1's browser.provider takes a factory, not a provider-name string; the
@@ -60,6 +67,26 @@ export default defineConfig({
             // against 4.1.11 with "provider was changed to accept a factory instead of a
             // string".
             provider: playwright(),
+            headless: true,
+            instances: [{ browser: 'chromium' }],
+          },
+        },
+      },
+      {
+        // The same browser environment as `ui`, with the page's clock in a zone west of UTC
+        // (#354). The runner, CI included, is in UTC, where a date-only value formatted in the
+        // browser's own zone and one pinned to UTC read the same; only west of Greenwich does
+        // `2026-08-19` become 18 August. A project of its own rather than a zone for the whole
+        // suite, so no other test starts depending on, or being hidden by, the runner's zone.
+        // `timezoneId` is Playwright's context option, which is what `Intl` in the page reads;
+        // `TZ` would move only the Node process.
+        resolve: { conditions: ['module', 'browser', 'production'] },
+        test: {
+          name: 'ui-west',
+          include: [WEST_OF_UTC_TESTS],
+          browser: {
+            enabled: true,
+            provider: playwright({ contextOptions: { timezoneId: WEST_OF_UTC } }),
             headless: true,
             instances: [{ browser: 'chromium' }],
           },
