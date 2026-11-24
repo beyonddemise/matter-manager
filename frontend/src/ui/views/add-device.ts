@@ -136,6 +136,7 @@ export class AddDeviceView extends DeviceFormView implements LeaveGuard {
     draftMissing: { state: true },
     finishedElsewhere: { state: true },
     draftOpened: { state: true },
+    deletedElsewhere: { state: true },
     scanSource: { attribute: false },
     canScan: { state: true },
     scanChecked: { state: true },
@@ -205,6 +206,11 @@ export class AddDeviceView extends DeviceFormView implements LeaveGuard {
    * nothing. Unused for a new device.
    */
   declare draftOpened: boolean
+  /**
+   * Whether this form's draft was deleted elsewhere while it was open. The form then forgets the
+   * draft, says so, and its next save files what is typed as a new draft or device.
+   */
+  declare deletedElsewhere: boolean
 
   /** Bound by a test to a camera that is not one; the real one otherwise. */
   declare scanSource?: ScanSource
@@ -303,6 +309,7 @@ export class AddDeviceView extends DeviceFormView implements LeaveGuard {
     this.draftMissing = false
     this.finishedElsewhere = undefined
     this.draftOpened = false
+    this.deletedElsewhere = false
   }
 
   protected override firstUpdated(): void {
@@ -527,26 +534,27 @@ export class AddDeviceView extends DeviceFormView implements LeaveGuard {
       // What is planned, and so what the baseline becomes once it is stored. Read after the last
       // wait before planning; anything typed during the write below stays unsaved input.
       const input = this.values()
-      let planned: Unsaved<DraftDeviceDocument>
-      try {
-        planned = planDraftDevice(
+      // One uuid for every attempt, so a retry after a conflict cannot file a second document.
+      const uuid = crypto.randomUUID()
+      const answer = this.answerForSave()
+      const plan = (stored: DraftDeviceDocument | undefined): Unsaved<DraftDeviceDocument> =>
+        planDraftDevice(
           input,
           this.knownRoomPaths(rooms),
-          { uuid: () => crypto.randomUUID(), now: () => new Date().toISOString() },
-          this.answerForSave(),
-          this.stored,
+          { uuid: () => uuid, now: () => new Date().toISOString() },
+          answer,
+          stored,
         )
+      try {
+        plan(this.stored)
       } catch (problem) {
         if (!(problem instanceof DraftError)) throw problem
         this.showProblem(problem)
         return false
       }
       this.error = undefined
-      const saved = await this.writeSaved(planned, since)
-      if (saved === undefined || !isDraftDevice(saved)) {
-        await this.refreshStored(since)
-        return false
-      }
+      const saved = await this.writeRetrying(plan, since)
+      if (saved === undefined || !isDraftDevice(saved)) return false
       this.stored = saved
       this.baseline = input
       return true
@@ -576,22 +584,64 @@ export class AddDeviceView extends DeviceFormView implements LeaveGuard {
   }
 
   /**
-   * Re-reads the draft after a refused write: most often a conflict, the draft having moved on
-   * elsewhere, so the revision in hand would fail every retry the same way. Touches no control.
-   * A draft finished elsewhere meanwhile is said on screen, with a way to it, rather than
-   * retried against forever.
+   * Writes a planned save, and when it is refused as a conflict - the draft moved on elsewhere:
+   * a teammate's remark, a catalogue backfill - reads the draft again and writes once more,
+   * planned against the fresh copy so its remarks and catalogue block are kept (review of #369).
+   *
+   * `plan` is called with the draft in hand each time, so a retry is the same input on the new
+   * revision. A second conflict is said as `changed`: the draft has been re-read, so the next
+   * press goes through. A draft finished or deleted elsewhere is said on screen instead
+   * ({@link rereadStored}); nothing is written then.
    */
-  private async refreshStored(since: number): Promise<void> {
-    const held = this.stored
-    if (held === undefined || since !== this.projectSnapshot()) return
-    try {
-      const fresh = await this.repos().devices.get(held._id)
-      if (since !== this.projectSnapshot() || fresh === undefined) return
-      if (isDraftDevice(fresh)) this.stored = fresh
-      else this.finishedElsewhere = fresh._id
-    } catch {
-      // The refusal is already on screen; a failed re-read adds nothing to say.
+  private async writeRetrying(
+    plan: (stored: DraftDeviceDocument | undefined) => Unsaved<StoredDevice>,
+    since: number,
+  ): Promise<StoredDevice | undefined> {
+    const first = await this.writeSaved(plan(this.stored), since)
+    if (first !== undefined || !this.lastWriteConflicted || this.stored === undefined) return first
+    if ((await this.rereadStored(since)) !== 'draft') return undefined
+    const second = await this.writeSaved(plan(this.stored), since)
+    if (second === undefined && this.lastWriteConflicted) {
+      await this.rereadStored(since)
+      if (this.finishedElsewhere === undefined && !this.deletedElsewhere)
+        this.saveFailed = 'changed'
     }
+    return second
+  }
+
+  /**
+   * Reads the draft again after a conflict, and says what became of it:
+   *
+   * - `'draft'`: still a draft; {@link stored} is now the fresh revision.
+   * - `'finished'`: completed elsewhere; the form says so, links to it, and saves no more.
+   * - `'deleted'`: deleted elsewhere. Retrying against it would conflict forever, and Discard
+   *   would lose what was typed (often a code just scanned). So the form says so, forgets the
+   *   draft, and the next save files the input as a new draft or device.
+   * - `'unknown'`: the read failed or is obsolete; the refusal already on screen stands.
+   */
+  private async rereadStored(since: number): Promise<'draft' | 'finished' | 'deleted' | 'unknown'> {
+    const held = this.stored
+    if (held === undefined || since !== this.projectSnapshot()) return 'unknown'
+    let fresh: StoredDevice | undefined
+    try {
+      fresh = await this.repos().devices.get(held._id)
+    } catch {
+      return 'unknown'
+    }
+    if (since !== this.projectSnapshot()) return 'unknown'
+    if (fresh === undefined) {
+      this.stored = undefined
+      this.deletedElsewhere = true
+      this.saveFailed = false
+      return 'deleted'
+    }
+    if (!isDraftDevice(fresh)) {
+      this.finishedElsewhere = fresh._id
+      this.saveFailed = false
+      return 'finished'
+    }
+    this.stored = fresh
+    return 'draft'
   }
 
   /**
@@ -1064,22 +1114,23 @@ export class AddDeviceView extends DeviceFormView implements LeaveGuard {
       // longer true - and left up, it would sit beside a storage error as if it explained it.
       this.dismissReviewChanged()
 
-      let creation: ReturnType<typeof planNewDevice>
+      // One uuid for every attempt, so a retry after a conflict cannot file a second device.
+      const uuid = crypto.randomUUID()
+      const clock = { uuid: () => uuid, now: () => new Date().toISOString() }
+      // Whatever has arrived by now. Submit never waits for a lookup: saving offline, or
+      // before the answer, is the normal case, and backfill fills the names in later.
+      const answer = this.answerForSave()
+      const paths = this.knownRoomPaths(rooms)
+      const input = this.draft()
+      // A draft is finished, not added (#358): the same checks, on the draft's own document,
+      // so finishing updates it rather than filing a second device beside it. Called again on
+      // a retry, with the draft read afresh.
+      const plan = (stored: DraftDeviceDocument | undefined) =>
+        stored === undefined
+          ? planNewDevice(input, paths, clock, answer)
+          : planFinishedDevice(input, paths, clock, stored, answer)
       try {
-        const clock = {
-          uuid: () => crypto.randomUUID(),
-          now: () => new Date().toISOString(),
-        }
-        // Whatever has arrived by now. Submit never waits for a lookup: saving offline, or
-        // before the answer, is the normal case, and backfill fills the names in later.
-        const answer = this.answerForSave()
-        const paths = this.knownRoomPaths(rooms)
-        // A draft is finished, not added (#358): the same checks, on the draft's own document,
-        // so finishing updates it rather than filing a second device beside it.
-        creation =
-          this.stored === undefined
-            ? planNewDevice(this.draft(), paths, clock, answer)
-            : planFinishedDevice(this.draft(), paths, clock, this.stored, answer)
+        plan(this.stored)
       } catch (problem) {
         if (problem instanceof DraftError) {
           // Shown on the step that owns the field, beside its control, not above a summary that
@@ -1098,12 +1149,9 @@ export class AddDeviceView extends DeviceFormView implements LeaveGuard {
 
       // Stay on the form when storage refuses the write: navigating to a list that does not
       // contain the device would be the application saying it saved something it did not.
-      if (!(await this.write(creation, since))) {
-        // A draft that moved on elsewhere fails every retry on the revision in hand.
-        await this.refreshStored(since)
-        return
-      }
-      this.askForBackfill(creation)
+      const saved = await this.writeRetrying(plan, since)
+      if (saved === undefined) return
+      this.askForBackfill(saved)
     } finally {
       this.saving = false
     }
@@ -1234,6 +1282,21 @@ export class AddDeviceView extends DeviceFormView implements LeaveGuard {
                   </div>
                 </wa-callout>
               `
+        }
+        ${
+          // Inside a status region, so the news is announced where the save was pressed.
+          html`<div role="status">
+            ${
+              this.deletedElsewhere
+                ? html`
+                    <wa-callout variant="warning" data-deleted-elsewhere>
+                      <wa-icon slot="icon" name="circle-info"></wa-icon>
+                      ${msg('This draft was deleted somewhere else. What you entered is still here: save again to keep it as a new draft, or finish it as a new device.')}
+                    </wa-callout>
+                  `
+                : ''
+            }
+          </div>`
         }
 
         <wa-stepper

@@ -309,6 +309,11 @@ that is now the point, and it is met without changing the route table.
   - The baseline is what was planned, so an edit made during the write stays guarded, and the
     form does not leave.
   - A failed room read says "storage" rather than rejecting.
+  - A conflict on Save as draft or Save device (a teammate's remark, a catalogue backfill)
+    re-reads the draft and retries once, keeping the other side's remarks and catalogue block.
+    A second conflict says "changed somewhere else, save again". A draft deleted elsewhere is
+    said on the form and forgotten, so the next save files the input as a new draft or device
+    rather than conflicting forever.
 - **Discarding a draft** is the delete on its device page, confirmed in a dialog that says what
   goes with it. The edit route sends a draft to the finish route: `planDeviceEdit` takes only a
   complete device.

@@ -1715,6 +1715,14 @@
   <source>Open the finished device</source>
   <target>Fertiges Gerät öffnen</target>
 </trans-unit>
+<trans-unit id="saeae3e44e497fdfc">
+  <source>This draft was deleted somewhere else. What you entered is still here: save again to keep it as a new draft, or finish it as a new device.</source>
+  <target>Dieser Entwurf wurde anderswo gelöscht. Was Sie eingegeben haben, ist noch da: Speichern Sie erneut, um es als neuen Entwurf zu behalten, oder stellen Sie es als neues Gerät fertig.</target>
+</trans-unit>
+<trans-unit id="sd2b4462777cb42f7">
+  <source>This was changed somewhere else while you saved. Everything you entered is still here — save again.</source>
+  <target>Das wurde anderswo geändert, während Sie gespeichert haben. Alles, was Sie eingegeben haben, ist noch da – speichern Sie erneut.</target>
+</trans-unit>
 </body>
 </file>
 </xliff>

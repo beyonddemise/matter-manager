@@ -616,3 +616,111 @@ describe('saving a reopened draft safely (CodeRabbit on #369)', () => {
     }
   })
 })
+
+describe('a draft that moved on elsewhere while open (review of #369)', () => {
+  /** Another phone's write to the draft: a remark, as a teammate adds one. */
+  async function remarkElsewhere(): Promise<void> {
+    const current = (await database.repositories.devices.get(
+      `device:${UUID}`,
+    )) as DraftDeviceDocument
+    const { updatedAt: _stamp, ...rest } = current
+    await database.repositories.devices.save({
+      ...rest,
+      remarks: [
+        {
+          id: 'r1',
+          text: 'Ask the owner',
+          authorSub: 's',
+          authorName: 'B',
+          createdAt: '2026-11-24T10:00:00.000Z',
+        },
+      ],
+    } as Unsaved<StoredDevice>)
+  }
+
+  it('saves a draft changed elsewhere on the first press, keeping what the other side added', async () => {
+    await storeDraft()
+    const element = await finishForm()
+    await waitUntil(() => element.querySelector('form')?.inert === false)
+    await remarkElsewhere()
+    fill(element, 'serial', 'SN-mine')
+
+    await press(element, '[data-save-draft]')
+    await saved(element)
+
+    const stored = await devices()
+    expect(stored).toHaveLength(1)
+    expect(stored[0]).toMatchObject({ status: 'draft', serial: 'SN-mine' })
+    expect(stored[0]?.remarks.map((each) => each.id)).toEqual(['r1'])
+    expect(element.querySelector('[data-save-failed]')).toBeNull()
+  })
+
+  it('finishes a draft changed elsewhere on the first press', async () => {
+    await storeDraft({ manualCode: '34970112332', installedAt: '2026-11-20', room: 'Hall' })
+    const element = await finishForm()
+    await waitUntil(() => element.querySelector('form')?.inert === false)
+    await remarkElsewhere()
+    element.goToStep('review')
+    await waitUntil(() => stepper(element).active === 'review')
+    await settle(element)
+
+    await press(element, '[data-save]')
+    await saved(element)
+
+    const stored = await devices()
+    expect(stored).toHaveLength(1)
+    expect(stored[0]).not.toHaveProperty('status')
+    expect(stored[0]?.remarks.map((each) => each.id)).toEqual(['r1'])
+  })
+
+  it('says the draft changed elsewhere when the retry conflicts too, and saves on the next press', async () => {
+    await storeDraft()
+    const real = database.repositories
+    let conflicts = 2
+    const element = await finishForm(UUID, {
+      ...real,
+      devices: {
+        ...real.devices,
+        save: async (document) => {
+          if (conflicts-- > 0)
+            throw Object.assign(new Error('conflict'), { status: 409, name: 'conflict' })
+          return real.devices.save(document)
+        },
+      },
+    })
+    await waitUntil(() => element.querySelector('form')?.inert === false)
+    fill(element, 'serial', 'SN-mine')
+
+    await press(element, '[data-save-draft]')
+    await saved(element)
+    expect(conflicts).toBe(0)
+    expect(element.querySelector('[data-save-changed]')).not.toBeNull()
+    expect(element.querySelector('[data-save-failed]')).toBeNull()
+
+    await press(element, '[data-save-draft]')
+    await saved(element)
+    expect((await devices())[0]).toMatchObject({ serial: 'SN-mine' })
+  })
+
+  it('says the draft was deleted elsewhere, and saves the input as a new draft on the next press', async () => {
+    const first = await storeDraft()
+    const element = await finishForm()
+    await waitUntil(() => element.querySelector('form')?.inert === false)
+    // Deleted on another phone, and replicated here.
+    await database.repositories.devices.remove(first)
+    fill(element, 'credential', PAYLOAD)
+
+    await press(element, '[data-save-draft]')
+    await saved(element)
+    expect(element.querySelector('[data-deleted-elsewhere]')).not.toBeNull()
+    expect(element.querySelector('[data-save-failed]')).toBeNull()
+    expect(shown(element, 'credential')).toBe(PAYLOAD)
+    expect(await devices()).toEqual([])
+
+    await press(element, '[data-save-draft]')
+    await saved(element)
+    const stored = await devices()
+    expect(stored).toHaveLength(1)
+    expect(stored[0]).toMatchObject({ status: 'draft', name: 'Hall sensor', payload: PAYLOAD })
+  })
+})

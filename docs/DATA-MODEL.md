@@ -572,6 +572,13 @@ It is a `device:<uuid>` document like any other, not a type of its own, with one
 - **Discarding a draft is deleting it**, confirmed on its page like any delete.
 - No server rule reads these fields: the project database's `validate_doc_update` asks only for a
   `type`, so a draft replicates exactly as a device does.
+- **Risk: builds from before drafts.** Nothing stops an older build from receiving a draft by
+  replication, and it reads the draft as a complete device. Its PDF exports throw on a draft
+  without a name or code (`winAnsiSafe(undefined)`). Its merge is plain last-write-wins (see
+  *Conflicts*), so if it resolves a finished-versus-draft conflict first, it can keep the draft
+  and prune the finished revision, along with a setup code entered when finishing.
+  `meta:project.schemaVersion` exists but nothing enforces it. A client-version gate before sync
+  is [#373](https://github.com/beyonddemise/matter-manager/issues/373).
 
 #### Encrypted fields: `enc:v1:`
 
@@ -761,6 +768,11 @@ it.
 | Scalars (`name`, `room`, `disabled`, `spot`, `status`) | Last write wins by `updatedAt`, among the complete revisions when there is one: a complete revision beats a draft (#358). |
 | Catalogue block (`vendorName` … `catalogSource`) | Taken whole from the revision with the newest `catalogCheckedAt` among those naming the winner's product (`vendorId`, `productId`), ties by `(updatedAt, _rev)`. None when none does. |
 | `audit:*` | Cannot conflict — append-only. |
+
+The "complete beats draft" rule holds only where every replica that resolves runs a build that
+has it. A build from before drafts resolves by plain last-write-wins, and a resolution it writes
+and prunes is final (see *Drafts*, and [#373](https://github.com/beyonddemise/matter-manager/issues/373)
+for the client-version gate that would close this).
 
 Losing revisions are deleted after a successful merge, or `_conflicts` grows without bound
 and every read pays for it.

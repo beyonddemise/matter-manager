@@ -4,7 +4,7 @@ import '@awesome.me/webawesome-pro/dist/components/combobox/combobox.js'
 import '@awesome.me/webawesome-pro/dist/components/option/option.js'
 import { msg, updateWhenLocaleChanges } from '@lit/localize'
 import { html, LitElement, type PropertyDeclarations, type TemplateResult } from 'lit'
-import { ProjectLockedError, type ProjectRepositories } from '../../data/index.js'
+import { isConflict, ProjectLockedError, type ProjectRepositories } from '../../data/index.js'
 import {
   type CatalogNames,
   type DeviceFields,
@@ -87,10 +87,17 @@ export abstract class DeviceFormView extends LitElement {
   /**
    * Why the last write was rejected, if it was. Distinct from a rejected *field*.
    *
-   * Two reasons with two sentences: `storage` is worth retrying, `locked` (#303) is not — the
-   * project's key has not reached this browser, and every retry is refused until it has.
+   * Three reasons with three sentences: `storage` is worth retrying, `locked` (#303) is not — the
+   * project's key has not reached this browser, and every retry is refused until it has — and
+   * `changed` (#358) means the document moved on elsewhere while this form saved, so the form
+   * has read it again and the next save goes through. Only the add form sets `changed`.
    */
-  declare saveFailed: false | 'storage' | 'locked'
+  declare saveFailed: false | 'storage' | 'locked' | 'changed'
+  /**
+   * Whether the last refused write was refused as a conflict (a stale `_rev`), which the add form
+   * answers by reading the draft again and retrying once rather than as "storage" (#358).
+   */
+  protected lastWriteConflicted = false
   /**
    * Whether the existing rooms could not be read.
    *
@@ -255,6 +262,7 @@ export abstract class DeviceFormView extends LitElement {
     since: number,
   ): Promise<StoredDevice | undefined> {
     if (since !== this.projectGeneration) return undefined
+    this.lastWriteConflicted = false
     try {
       const saved = await this.repos().devices.save(device)
       // Not observable today: a successful save always navigates away from the form, so
@@ -266,6 +274,7 @@ export abstract class DeviceFormView extends LitElement {
       return saved
     } catch (error) {
       this.saveFailed = error instanceof ProjectLockedError ? 'locked' : 'storage'
+      this.lastWriteConflicted = isConflict(error)
       return undefined
     }
   }
@@ -428,6 +437,15 @@ export abstract class DeviceFormView extends LitElement {
         <wa-callout variant="warning" data-save-locked>
           <wa-icon slot="icon" name="circle-info"></wa-icon>
           ${lockedProjectMessage('change')}
+        </wa-callout>
+      `
+    }
+
+    if (this.saveFailed === 'changed') {
+      return html`
+        <wa-callout variant="warning" data-save-changed>
+          <wa-icon slot="icon" name="circle-info"></wa-icon>
+          ${msg('This was changed somewhere else while you saved. Everything you entered is still here — save again.')}
         </wa-callout>
       `
     }
