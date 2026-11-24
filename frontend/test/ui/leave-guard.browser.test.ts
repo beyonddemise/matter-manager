@@ -13,6 +13,7 @@ import { fixture, fixtureCleanup, html, waitUntil } from '@open-wc/testing-helpe
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import '../../src/ui/app-shell.js'
 import { PROJECT_CHANGED } from '../../src/ui/current-project.js'
+import { currentProjectDatabaseName, rawDatabase } from '../../src/ui/db/project-database.js'
 import { followedAddress, samePage } from '../../src/ui/leave-guard.js'
 import type { AddDeviceView } from '../../src/ui/views/add-device.js'
 import {
@@ -34,8 +35,21 @@ beforeEach(() => {
 afterEach(async () => {
   fixtureCleanup()
   window.location.hash = ''
+  await removeWrittenDevices()
   await destroyProjectStores()
 })
+
+/**
+ * Deletes every device a test here filed. The form writes through `projectDatabase()`, the real
+ * current-project database, not the isolated store's (which isolates the index): it is shared by
+ * every browser test file in the run, and a draft saved by Save as draft here showed up in the
+ * next file's device list (`i18n.browser.test.ts` lost its empty state on CI, #369).
+ */
+async function removeWrittenDevices(): Promise<void> {
+  const database = rawDatabase(currentProjectDatabaseName())
+  const { rows } = await database.allDocs({ startkey: 'device:', endkey: 'device:￿' })
+  await database.bulkDocs(rows.map((row) => ({ _id: row.id, _rev: row.value.rev, _deleted: true })))
+}
 
 async function shellOnForm(): Promise<{ shell: HTMLElement; form: AddDeviceView }> {
   const shell = await fixture<HTMLElement>(
