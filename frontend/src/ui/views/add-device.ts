@@ -3,17 +3,14 @@
 import '@awesome.me/webawesome-pro/dist/components/step/step.js'
 import '@awesome.me/webawesome-pro/dist/components/stepper/stepper.js'
 // Types only: the side-effect imports above are what register the elements.
-import type WaStepper from '@awesome.me/webawesome-pro/dist/components/stepper/stepper.js'
 import type { WaStepChangeEvent } from '@awesome.me/webawesome-pro/dist/events/events.js'
 import { msg } from '@lit/localize'
 import { html, type TemplateResult } from 'lit'
 import {
   type CatalogLookup,
   catalogNames,
-  checkDraftFields,
   type DeviceDraft,
   DraftError,
-  type DraftField,
   needsCatalogLookup,
   PayloadError,
   type PayloadProblem,
@@ -27,6 +24,7 @@ import { codesFromImage, type ImageProblem, ImageScanError } from '../scan/image
 import { cameraSource, type ScanSource } from '../scan/source.js'
 import { accessToken } from '../tokens.js'
 import { type ReviewSummary, renderReview, type StepStatus } from './add-device-review.js'
+import { type AddStep, type StepChecks, StepNavigation, stepOf } from './add-device-steps.js'
 import { DeviceFormView, fieldValue } from './device-form.js'
 import './scan-dialog.js'
 
@@ -70,54 +68,6 @@ interface Reviewed {
 function sameReview(a: Reviewed, b: Reviewed): boolean {
   const keys = Object.keys(a.summary) as (keyof ReviewSummary)[]
   return a.code === b.code && keys.every((key) => a.summary[key] === b.summary[key])
-}
-
-/** The four steps of adding a device, by their `<wa-step name>` (#349). */
-export type AddStep = 'scan' | 'place' | 'name' | 'review'
-
-/**
- * The step that owns each field a new device's draft can fail on: where a message about that
- * field has to be shown, so that it sits beside a control the person can see.
- */
-export const STEP_OF: Readonly<Record<'credential' | 'installedAt' | 'room' | 'name', AddStep>> = {
-  credential: 'scan',
-  installedAt: 'scan',
-  room: 'place',
-  name: 'name',
-}
-
-/**
- * What earns each step its checkmark: its own fields, and only those.
- *
- * Derived from {@link STEP_OF} rather than written out a second time, so a field cannot be
- * shown on one step and checked on another. The last step checks nothing of its own; Save
- * runs the whole plan.
- */
-const CHECKS: Readonly<Record<AddStep, readonly DraftField[]>> = {
-  scan: fieldsOf('scan'),
-  place: fieldsOf('place'),
-  name: fieldsOf('name'),
-  review: [],
-}
-
-/** The fields {@link STEP_OF} places on `step`. A declaration, so {@link CHECKS} can call it. */
-function fieldsOf(step: AddStep): readonly DraftField[] {
-  return (Object.keys(STEP_OF) as (keyof typeof STEP_OF)[]).filter(
-    (field) => STEP_OF[field] === step,
-  )
-}
-
-/** The `data-field` of the control for each field {@link STEP_OF} places on a step. */
-const CONTROL_OF: Readonly<Record<keyof typeof STEP_OF, string>> = {
-  credential: 'credential',
-  installedAt: 'installed-at',
-  room: 'room',
-  name: 'name',
-}
-
-/** The step a field's message belongs on, or `undefined` for a field this form never has. */
-function stepOf(field: DraftField): AddStep | undefined {
-  return field === 'remark' ? undefined : STEP_OF[field]
 }
 
 /**
@@ -184,7 +134,7 @@ export class AddDeviceView extends DeviceFormView {
    * otherwise; absent for a step not yet left. The stepper draws its checkmarks and warnings
    * from this, and a step shows its problem again when the person comes back to it.
    */
-  declare checked: Readonly<Partial<Record<AddStep, DraftError | true>>>
+  declare checked: StepChecks
 
   /** Bound by a test to a camera that is not one; the real one otherwise. */
   declare scanSource?: ScanSource
@@ -226,6 +176,18 @@ export class AddDeviceView extends DeviceFormView {
   signedIn: () => boolean = () => accessToken() !== undefined
   /** `navigator.onLine` is trusted only to say *offline* (`connectivity.ts`). */
   online: () => boolean = () => navigator.onLine !== false
+
+  /**
+   * Moving between the steps (`add-device-steps.ts`). The state it changes - {@link step},
+   * {@link checked}, `error` - stays here, where the template renders from it.
+   */
+  private readonly steps = new StepNavigation(this, {
+    draft: () => this.draft(),
+    enterReview: () => {
+      this.showReview(this.snapshotForReview())
+      this.reviewChanged = false
+    },
+  })
 
   private lookupTimer: ReturnType<typeof setTimeout> | undefined
   private lookupAbort: AbortController | undefined
@@ -472,31 +434,6 @@ export class AddDeviceView extends DeviceFormView {
     return { ...this.fields(), credential: fieldValue(this, '[data-field="credential"]') }
   }
 
-  /** The stepper, once rendered. */
-  private stepper(): WaStepper | null {
-    return this.querySelector('wa-stepper')
-  }
-
-  /**
-   * Checks a step's own fields as the person leaves it, and records what it found.
-   *
-   * Validation without a gate (#349): every step is checked, and none refuses the person on
-   * the way out - they move between steps freely, in any order. The same readers
-   * `planNewDevice` runs (`checkDraftFields`), so a checkmark never promises what Save would
-   * refuse. The message itself waits for the person's return: shown now, it would name a
-   * control that is about to be hidden. Until then the stepper flags the step.
-   */
-  private checkStep(step: AddStep): void {
-    let outcome: DraftError | true = true
-    try {
-      checkDraftFields(this.draft(), CHECKS[step])
-    } catch (problem) {
-      if (!(problem instanceof DraftError)) throw problem
-      outcome = problem
-    }
-    this.checked = { ...this.checked, [step]: outcome }
-  }
-
   /**
    * Puts a summary on the Save step, with every step checked against the same controls.
    *
@@ -506,14 +443,8 @@ export class AddDeviceView extends DeviceFormView {
    * otherwise sit beside a card still saying the code is missing.
    */
   private showReview(summary: Reviewed): void {
-    for (const step of ['scan', 'place', 'name'] as const) this.checkStep(step)
+    for (const step of ['scan', 'place', 'name'] as const) this.steps.check(step)
     this.reviewed = summary
-  }
-
-  /** The problem the last check of `step` found, if it found one. */
-  private problemOn(step: AddStep): DraftError | undefined {
-    const outcome = this.checked[step]
-    return outcome instanceof DraftError ? outcome : undefined
   }
 
   /**
@@ -521,66 +452,7 @@ export class AddDeviceView extends DeviceFormView {
    * has to be shown on the step that owns its field.
    */
   goToStep(step: AddStep): void {
-    this.stepper()?.goTo(step)
-  }
-
-  /**
-   * Checks the step being left, and shows the panel for the step the stepper moved to.
-   *
-   * The error on screen is always the new step's own, if it has one: an error about a field on
-   * another step would name a control the person can no longer see (the spec's third
-   * anti-goal). The last step has no fields of its own, so it is never flagged itself;
-   * arriving on it checks every other step, including any jumped over, so its cards and the
-   * stepper give one verdict on everything about to be saved.
-   */
-  private onStepChange(event: WaStepChangeEvent): void {
-    const left = event.detail.previousName as AddStep | null
-    this.step = event.detail.name as AddStep
-    if (this.step === 'review') {
-      this.showReview(this.snapshotForReview())
-      this.reviewChanged = false
-    } else if (left !== null && left !== 'review') {
-      this.checkStep(left)
-    }
-    this.error = this.problemOn(this.step)
-    void this.focusStep(this.step)
-  }
-
-  /**
-   * Puts focus where a step that has just come on screen begins (WCAG 2.2 AA, PRODUCT.md): the
-   * control an error on this step is about, else the step's first control, else - on Review,
-   * which has no control of its own - Review's heading.
-   *
-   * Without it, focus stays on Next, or on a control inside a panel that is now hidden, and a
-   * keyboard or screen-reader user has to hunt for where the new step begins. The control in
-   * error first because a save-time refusal lands here to be fixed, and starting on another
-   * control would make the person find the one the message names. Review's own heading rather
-   * than its first card's: focus on "Scan it" would announce step 1's name on entering step 4,
-   * and the stepper announces nothing when focus is moved elsewhere. Only on a change, which is
-   * all `wa-step-change` reports - the form opening on Scan it moves nothing, because jumping
-   * into a field on load scrolls a phone and opens its keyboard before the page has been read.
-   *
-   * After `updateComplete`, because the panel is unhidden, and Review first rendered, by the
-   * update this step change has just requested.
-   */
-  private async focusStep(step: AddStep): Promise<void> {
-    await this.updateComplete
-    // A later change superseded this one while it waited; that change does its own focusing.
-    if (this.step !== step) return
-    const panel = this.querySelector(`[data-step-panel="${step}"]`)
-    if (panel === null) return
-    const field = this.error?.field
-    // `stepOf` places only fields that have a control, so a match is a key of CONTROL_OF.
-    const inError =
-      field !== undefined && stepOf(field) === step
-        ? panel.querySelector<HTMLElement>(
-            `[data-field="${CONTROL_OF[field as keyof typeof CONTROL_OF]}"]`,
-          )
-        : null
-    const target =
-      inError ??
-      panel.querySelector<HTMLElement>(step === 'review' ? '[data-review-heading]' : '[data-field]')
-    target?.focus()
+    this.steps.goTo(step)
   }
 
   /**
@@ -632,11 +504,11 @@ export class AddDeviceView extends DeviceFormView {
     if (reviewed === undefined) return ''
     return html`
       <div class="wa-stack wa-gap-m">
-        <!-- Where focus lands on entering Review (see focusStep), so that a screen reader says
+        <!-- Where focus lands on entering Review (see StepNavigation.focus), so that a screen reader says
              Review rather than the first card's step name. Hidden even while focused, unlike the
              plain visually-hidden utility, which shows content on focus: the stepper already
              names the step on screen, and a heading appearing on every entry would shift the
-             cards. Not in the tab order; only focusStep puts focus here. -->
+             cards. Not in the tab order; only StepNavigation.focus puts focus here. -->
         <h2 class="wa-visually-hidden-force" tabindex="-1" data-review-heading>${msg('Save')}</h2>
         <!-- Always in the tree, so that the callout is announced when it appears. -->
         <div role="status">
@@ -666,7 +538,7 @@ export class AddDeviceView extends DeviceFormView {
     // Enter in a field on steps 1-3 means Next. Saving from Scan would store a device whose
     // place and name the person never saw on Review.
     if (this.step !== 'review') {
-      this.stepper()?.next()
+      this.steps.next()
       return
     }
     if (this.saving) return
@@ -732,8 +604,9 @@ export class AddDeviceView extends DeviceFormView {
       } catch (problem) {
         if (problem instanceof DraftError) {
           // Shown on the step that owns the field, beside its control, not above a summary that
-          // has no control in it. Recorded as that step's problem first, because `onStepChange`
-          // shows exactly the problem the new step has - and the stepper then flags it too.
+          // has no control in it. Recorded as that step's problem first, because the step change
+          // (`StepNavigation.onStepChange`) shows exactly the problem the new step has - and the
+          // stepper then flags it too.
           const step = stepOf(problem.field)
           if (step !== undefined) {
             this.checked = { ...this.checked, [step]: problem }
@@ -855,7 +728,7 @@ export class AddDeviceView extends DeviceFormView {
           orientation="horizontal"
           clickable
           label=${msg('Add a device')}
-          @wa-step-change=${this.onStepChange}
+          @wa-step-change=${(event: WaStepChangeEvent) => this.steps.onStepChange(event)}
         >
           ${this.renderStep('scan', msg('Scan'))}
           ${this.renderStep('place', msg('Place'))}
@@ -939,7 +812,7 @@ export class AddDeviceView extends DeviceFormView {
                     data-back
                     type="button"
                     appearance="outlined"
-                    @click=${() => this.stepper()?.previous()}
+                    @click=${() => this.steps.previous()}
                   >
                     ${msg('Back')}
                   </wa-button>
