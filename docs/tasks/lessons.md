@@ -1634,3 +1634,30 @@ to any generated or structured file.
 - **Rule:** before saying a branch will pass CI, run the step list from
   `.github/workflows/ci.yml`, every `run:` line in its working directory, not a script that
   covers part of it. A UI change that alters a flow the journeys walk needs `npm run e2e`.
+
+## L51: read the whole issue thread before briefing an agent
+
+- 2026-11-24, #143: I briefed the spec agent with "render via `<img src=blob:>`" after reading
+  the issue through `gh issue view … | head -80`. The cut dropped item 3 of the owner's
+  decision ("inline SVG with a sanitiser"), so the brief contradicted the owner. The agent
+  caught it.
+- **Rule:** never truncate an issue's body or comments when that reading feeds a brief or a
+  design. Read the full thread (`gh issue view N --comments`), or select the "Decision"
+  comments and read them whole. When a brief states a decision, quote the source comment.
+
+## L52: green CI and a reviewer's silence are not a review of security or concurrency code
+
+- 2026-11-24: the SVG sanitiser (#367) and the add-form history (#368) both had green CI and
+  no CodeRabbit findings, because CodeRabbit had hit its spending cap. Independent adversarial
+  reviewers then found an escaped `url(` fetching cross-origin, CSS covering the app, a
+  `<use>` render bomb, and two races that left the form dead. Each later round of the
+  sanitiser found a variant of the round before: encoded references, `overflow`/`transform`,
+  then markers.
+- **Rule:** code that parses untrusted input, or that coordinates history, sync or concurrent
+  writes, gets an adversarial review from a fresh agent with runnable proofs of concept
+  before merge, whatever CodeRabbit says. When a second round finds the same class of hole,
+  change the approach: read values the way the browser does (the URL and CSS parsers), or
+  close the family structurally (no nested markers, a containing holder), rather than adding
+  another rule (L49).
+- Merge only what you verified. A merge you did not make is reported to the owner, not
+  explained away.
