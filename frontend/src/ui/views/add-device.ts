@@ -308,21 +308,41 @@ export class AddDeviceView extends DeviceFormView implements LeaveGuard {
   }
 
   /**
-   * Asks whether to leave (`leave-dialog.ts`). Discard lets the form go, so that the navigation
-   * the shell then makes is not asked about a second time.
+   * Asks whether to leave (`leave-dialog.ts`). Lets nothing go itself: Discard can still lead
+   * nowhere (Forward came back while the question was open), and a form that let go of input it
+   * still shows would save nothing and guard nothing. The shell calls {@link release} once it
+   * actually leaves.
    *
    * Drafts (#358) answer here: a `'draft'` choice will save the draft, then resolve `true`.
    */
   async confirmLeave(): Promise<boolean> {
     const dialog = this.querySelector<LeaveDialog>('leave-dialog')
     if (dialog === null) return true
-    const choice = await dialog.ask()
-    if (choice === 'discard') this.released = true
-    return choice === 'discard'
+    return (await dialog.ask()) === 'discard'
   }
 
-  /** Puts the form's history entries back, after the browser left them and the person stayed. */
+  /** Lets the input go, as the shell leaves the form: nothing asks, nothing saves, from here. */
+  release(): void {
+    this.released = true
+  }
+
+  /**
+   * Lets the input go on the form's own account (a project switch, a Save that landed) and
+   * leaves for the list. A question still open is withdrawn, so that whoever asked it acts on
+   * where the browser now is rather than keeping a form that will save nothing.
+   */
+  private releaseAndLeave(): void {
+    this.released = true
+    this.querySelector<LeaveDialog>('leave-dialog')?.withdraw()
+    this.steps.leave('#/devices')
+  }
+
+  /**
+   * Puts the form's history entries back, after the browser left them and the person stayed.
+   * Nothing once released: those entries belong to a form that is on its way out.
+   */
   restoreAddress(): void {
+    if (this.released) return
     this.steps.restore()
   }
 
@@ -333,8 +353,7 @@ export class AddDeviceView extends DeviceFormView implements LeaveGuard {
 
   /** A project switch abandons the form: it leaves, and takes its history entries with it. */
   protected override leaveForList(): void {
-    this.released = true
-    this.steps.leave('#/devices')
+    this.releaseAndLeave()
   }
 
   override disconnectedCallback(): void {
@@ -756,8 +775,7 @@ export class AddDeviceView extends DeviceFormView implements LeaveGuard {
 
     // The form's entries go with it (StepNavigation.leave): Back from the list must not return
     // to a finished form, whose Save would file the same device a second time.
-    this.released = true
-    this.steps.leave('#/devices')
+    this.releaseAndLeave()
   }
 
   /**

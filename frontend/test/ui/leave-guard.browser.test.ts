@@ -12,6 +12,7 @@ import '@awesome.me/webawesome-pro/dist/components/input/input.js'
 import { fixture, fixtureCleanup, html, waitUntil } from '@open-wc/testing-helpers'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import '../../src/ui/app-shell.js'
+import { PROJECT_CHANGED } from '../../src/ui/current-project.js'
 import { followedAddress, samePage } from '../../src/ui/leave-guard.js'
 import type { AddDeviceView } from '../../src/ui/views/add-device.js'
 import {
@@ -130,6 +131,77 @@ describe('a link out of the form', () => {
     shell.querySelector<HTMLAnchorElement>('nav a[href="#/rooms"]')?.click()
 
     await waitUntil(() => location.hash === '#/rooms', `went to ${location.hash}`)
+  })
+})
+
+describe('while the question is open (review of #368)', () => {
+  /** What a background key recovery does with no one pressing anything. */
+  const switchProject = () => window.dispatchEvent(new CustomEvent(PROJECT_CHANGED))
+
+  /** Clicks a choice if the dialog is still there to click it in. */
+  const pressIfOpen = (form: HTMLElement, choice: 'stay' | 'discard') => {
+    if (dialogOpen(form)) form.querySelector<HTMLElement>(`[data-leave-${choice}]`)?.click()
+  }
+
+  it('lets a project switch take the form away, even after a link asked', async () => {
+    const { shell, form } = await shellOnForm()
+    type(form, 'name', 'Lamp')
+    shell.querySelector<HTMLAnchorElement>('nav a[href="#/rooms"]')?.click()
+    await waitUntil(() => dialogOpen(form), 'the form never asked')
+
+    switchProject()
+    // Long enough for the switch's own navigation to fire while the question is still open.
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    pressIfOpen(form, 'stay')
+
+    await waitUntil(() => shell.querySelector('device-list-view') !== null, 'the form stayed')
+    expect(shell.querySelector('add-device-view')).toBeNull()
+    expect(location.hash).toBe('#/devices')
+  })
+
+  it('lets a project switch take the form away, even after Back asked', async () => {
+    const { shell, form } = await shellOnForm()
+    type(form, 'name', 'Lamp')
+    history.back()
+    await waitUntil(() => dialogOpen(form), 'the form never asked')
+
+    switchProject()
+    // Long enough for the switch's own navigation to fire while the question is still open.
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    pressIfOpen(form, 'stay')
+
+    await waitUntil(() => shell.querySelector('device-list-view') !== null, 'the form stayed')
+    expect(location.hash).toBe('#/devices')
+  })
+
+  it('keeps the form alive when Forward came back to it before Discard', async () => {
+    const { shell, form } = await shellOnForm()
+    type(form, 'name', 'Lamp')
+    history.back()
+    await waitUntil(() => dialogOpen(form), 'the form never asked')
+    history.forward()
+    await waitUntil(() => location.hash === FORM, 'Forward never came back')
+
+    await choose(form, 'discard')
+    await waitUntil(() => !dialogOpen(form))
+
+    // Discard went nowhere, so nothing was let go: the form still guards what it holds.
+    expect(shell.querySelector('add-device-view')).toBe(form)
+    expect(form.holdsInput()).toBe(true)
+  })
+
+  it('stays on the form after a typed address, with Back still the previous page', async () => {
+    const { shell, form } = await shellOnForm()
+    type(form, 'name', 'Lamp')
+    location.hash = '#/rooms'
+    await choose(form, 'stay')
+    await waitUntil(() => location.hash === FORM, `the address stayed ${location.hash}`)
+    expect(shell.querySelector('add-device-view')).toBe(form)
+
+    history.back()
+
+    await waitUntil(() => dialogOpen(form), 'Back did not ask')
+    expect(location.hash).toBe('#/devices')
   })
 })
 

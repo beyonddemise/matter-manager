@@ -52,6 +52,15 @@ export class LeaveDialog extends LitElement {
     return this.pending
   }
 
+  /**
+   * Takes the question away unanswered, because the form let go of its input on its own (a
+   * project switch, a Save landing) while it was open. Resolves as Stay: the person chose
+   * nothing, and whoever asked then reads where the browser is (`AppShell.settleLeave`).
+   */
+  withdraw(): void {
+    this.answer('stay')
+  }
+
   /** Resolves the question with `choice` and closes the dialog. Only the first answer counts. */
   private answer(choice: LeaveChoice): void {
     const settle = this.settle

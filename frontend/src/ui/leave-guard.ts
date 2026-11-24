@@ -20,11 +20,20 @@ export interface LeaveGuard {
    * that a navigation nothing would be lost to goes ahead without a dialog.
    */
   holdsInput(): boolean
-  /** Asks the person whether to leave; resolves `true` to leave, `false` to stay. */
+  /**
+   * Asks the person whether to leave; resolves `true` to leave, `false` to stay. Lets nothing go
+   * by itself: the answer may yet lead nowhere (Forward came back while the question was open),
+   * so only {@link release} does.
+   */
   confirmLeave(): Promise<boolean>
   /**
+   * Lets the input go: called by the shell just before it follows a navigation away, so that
+   * nothing asks about that navigation again.
+   */
+  release(): void
+  /**
    * Puts the view's own address back after the browser has already moved away from it (Back, an
-   * address typed in) and the person chose to stay.
+   * address typed in) and the person chose to stay. Nothing, once the view has let go.
    */
   restoreAddress(): void
 }

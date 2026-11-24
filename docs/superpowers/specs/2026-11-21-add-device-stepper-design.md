@@ -246,10 +246,28 @@ that is now the point, and it is met without changing the route table.
   asks the view (`leave-guard.ts`) before a `hashchange` to another route (Back from step 1, an
   address typed) and before an in-app link click (header navigation, Cancel); `beforeunload`
   covers a reload and a closed tab. A `hashchange` has already moved the address, so the shell
-  keeps the form on screen while it asks; on Stay the form pushes its entries back (every step up
-  to the current one), on Discard the shell renders where the browser went. A link click is
-  stopped before it navigates, so it leaves no entry behind. Nothing is asked when nothing would
-  be lost.
+  keeps the form on screen while it asks. Navigations while the question is open are set aside,
+  and the answer is acted on for wherever the browser is *then* (`AppShell.settleLeave`):
+  - On another page: Discard follows it; Stay has the form go back to its own entry, which is
+    still in the history - behind a typed address, ahead of the page Back reached. The
+    Navigation API's entry index says how far. Without that API, a change in `history.length`
+    marks a typed address (the entry is the one behind); otherwise every step up to the current
+    one is pushed again, so Back from it is still the previous step.
+  - On the form's own page (Forward came back while asking): nothing happens, and nothing is let
+    go. The form is *released* - stops guarding and saving - only when the shell actually
+    leaves it (`LeaveGuard.release`).
+  - If the form lets go on its own while asking (a project switch, a Save landing), it withdraws
+    the question, and the shell follows the form's own navigation to the list.
+
+  A link click is stopped before it navigates, so it leaves no entry behind. Nothing is asked
+  when nothing would be lost.
+
+  **Known limit, without the Navigation API only.** A typed address that leaves
+  `history.length` unchanged is taken for a
+  traversal: one typed when exactly one entry was ahead of the form's current one (Back a step,
+  then an address), or once the browser's history is at its cap (50 entries in Chromium). Stay
+  then pushes the entries again, and Back from step 1 lands on the typed address and asks once
+  more. Nothing is lost, only a second question; the History API cannot tell the two apart.
 - **The question** is `leave-dialog.ts`: a `wa-dialog` with **Stay** (focused, and what Escape
   means) and **Discard**. Its `LeaveChoice` type is the seam for drafts (#358), which adds
   **Save as draft** as a third choice without touching the shell or the history.

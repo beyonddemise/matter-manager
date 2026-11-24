@@ -49,6 +49,16 @@ interface StepEntry {
  */
 const connectedForms = new Set<string>()
 
+/**
+ * Where the browser is in its history: the current entry's index, from the Navigation API where
+ * the browser has one (`globalThis` and optional, because not every browser does), and the
+ * history's length, the only clue the History API gives.
+ */
+function whereNow(): { readonly index: number | undefined; readonly length: number } {
+  const navigation = (globalThis as { navigation?: Navigation }).navigation
+  return { index: navigation?.currentEntry?.index, length: history.length }
+}
+
 /** `state` as one of the form's entries, or `undefined` for any other entry. */
 function stepEntry(state: unknown): StepEntry | undefined {
   if (typeof state !== 'object' || state === null) return undefined
@@ -189,6 +199,14 @@ export class StepNavigation implements ReactiveController {
    * history no more, whatever its stepper does in the moment before the shell removes it.
    */
   private left = false
+  /**
+   * Where the form last stood on one of its own entries, for {@link restore}: the entry's index
+   * in the Navigation API, where the browser has it, and `history.length` for one that does not.
+   */
+  private stood: { readonly index: number | undefined; readonly length: number } = {
+    index: undefined,
+    length: 0,
+  }
 
   /**
    * @param host the add form, whose state this reads and writes
@@ -224,6 +242,7 @@ export class StepNavigation implements ReactiveController {
     connectedForms.add(this.id)
     this.shown = this.host.step
     history.replaceState(this.entry(this.shown), '', this.address(this.shown))
+    this.stood = whereNow()
   }
 
   hostDisconnected(): void {
@@ -280,6 +299,7 @@ export class StepNavigation implements ReactiveController {
       history.pushState(this.entry(step), '', this.address(step))
     }
     this.shown = target
+    this.stood = whereNow()
     if (this.exit !== undefined) {
       const exit = this.exit
       this.exit = undefined
@@ -310,6 +330,7 @@ export class StepNavigation implements ReactiveController {
     const ours = this.traversing
     this.traversing = false
     this.shown = arrived.step
+    this.stood = whereNow()
     const stepper = this.stepper()
     if (!ours && this.exit === undefined && arrived.step !== this.host.step && stepper !== null) {
       // The person's own Back or Forward: the stepper follows, and its `wa-step-change` checks
@@ -334,16 +355,46 @@ export class StepNavigation implements ReactiveController {
   }
 
   /**
-   * Puts the form's entries back after the browser has already left them - Back from step 1, an
-   * address typed in - and the person chose to stay. Every step up to the one on screen, not
-   * only that one, so that Back from it is still the previous step.
+   * Puts the form's entries back after the browser has already left them and the person chose
+   * to stay. Nothing once the form has left: its entries are gone with it.
+   *
+   * The form's own entry is still in the history wherever the browser went - behind a typed
+   * address, ahead of the page Back reached - so the browser goes back to it, rather than the
+   * form pushing copies: a copy pushed on top of a typed address would leave that address between
+   * the form and the page before it, and Back would land there.
+   *
+   * Where the browser has the Navigation API, the entry's index says exactly how far; the same
+   * index means the entry itself was overwritten, and copies are pushed as below. Without
+   * it, {@link stood}'s `history.length` is the clue: a new entry (an address typed in) changes
+   * it, so the form's entry is the one behind; a traversal (Back from step 1) does not, and how
+   * far ahead the entries are cannot be known, so every step up to the one on screen is pushed
+   * again, in order, and Back from it is still the previous step. A new entry that leaves the
+   * length unchanged - typed when exactly one entry was ahead, or at the browser's history cap -
+   * is then taken for a traversal, and Back from step 1 lands on the typed address and asks again:
+   * nothing is lost, only a second question (the stepper spec's "Known limit").
    */
   restore(): void {
+    if (this.left) return
+    const now = whereNow()
+    const indexed = now.index !== undefined && this.stood.index !== undefined
+    if (indexed && now.index !== this.stood.index) {
+      this.traversing = true
+      history.go((this.stood.index as number) - (now.index as number))
+      return
+    }
+    // The same index: the form's entry itself was overwritten (`replaceState`), so there is no
+    // entry of its own to go back to, and only pushing puts one there.
+    if (!indexed && now.length !== this.stood.length) {
+      this.traversing = true
+      history.back()
+      return
+    }
     this.traversing = false
     for (const step of STEPS.slice(0, STEPS.indexOf(this.host.step) + 1)) {
       history.pushState(this.entry(step), '', this.address(step))
     }
     this.shown = this.host.step
+    this.stood = whereNow()
   }
 
   /** The stepper, once rendered. */

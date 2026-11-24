@@ -18,6 +18,7 @@ import '@awesome.me/webawesome-pro/dist/components/option/option.js'
 import { fixture, fixtureCleanup, html, waitUntil } from '@open-wc/testing-helpers'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { DeviceDocument } from '../../../src/domain/index.js'
+import { PROJECT_CHANGED } from '../../../src/ui/current-project.js'
 import type { ScanSource } from '../../../src/ui/scan/source.js'
 import type { AddDeviceView } from '../../../src/ui/views/add-device.js'
 import '../../../src/ui/views/add-device.js'
@@ -346,7 +347,9 @@ describe('leaving with something entered', () => {
     expect(await answer).toBe(false)
   })
 
-  it('lets go once the person chooses Discard', async () => {
+  it('answers Discard, and lets go only once released', async () => {
+    // Discard may still lead nowhere (Forward came back while it was asked), so the answer
+    // alone lets nothing go: the shell releases the form as it actually leaves.
     const element = await form()
     fill(element, 'credential', PAYLOAD)
     const answer = element.confirmLeave()
@@ -355,7 +358,25 @@ describe('leaving with something entered', () => {
     element.querySelector<HTMLElement>('[data-leave-discard]')?.click()
 
     expect(await answer).toBe(true)
+    expect(element.holdsInput()).toBe(true)
+    element.release()
     expect(element.holdsInput()).toBe(false)
+  })
+
+  it('withdraws an open question when it lets go on its own', async () => {
+    const element = await form()
+    fill(element, 'credential', PAYLOAD)
+    const answer = element.confirmLeave()
+    await waitUntil(() => element.querySelector('[data-leave-dialog]')?.hasAttribute('open'))
+
+    window.dispatchEvent(new CustomEvent(PROJECT_CHANGED))
+
+    expect(await answer).toBe(false)
+    expect(element.holdsInput()).toBe(false)
+    // And its entries stay gone: there is nothing to put back for a form on its way out.
+    const before = location.hash
+    element.restoreAddress()
+    expect(location.hash).toBe(before)
   })
 
   it('asks the browser to confirm a reload or a closed tab, only with input', async () => {

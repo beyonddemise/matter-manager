@@ -471,10 +471,37 @@ export class AppShell extends LitElement implements ViewHost {
       this.follow(next)
       return
     }
-    void this.askToLeave(guard).then((leave) => {
-      if (leave) this.follow(window.location.hash)
-      else if (!samePage(window.location.hash, this.hash)) guard.restoreAddress()
-    })
+    void this.askToLeave(guard).then((leave) => this.settleLeave(guard, leave))
+  }
+
+  /**
+   * Acts on the answer to "leave?", for wherever the browser is *now*, not where it was when the
+   * question was asked: every `hashchange` while the question was open was set aside, and the
+   * address may since have moved again (Forward back to the form), or been moved by the view
+   * itself (a project switch, a Save landing, both of which let the view go on their own).
+   *
+   * - The browser is on another page: follow it if the person chose to leave, or if the view has
+   *   nothing left to lose; otherwise the view puts its own address back.
+   * - The browser is on the view's own page: a link the person chose to leave by is followed now;
+   *   anything else stays, and nothing is let go, since nothing was left.
+   *
+   * @param link the in-app address a click was stopped for, when a click asked
+   */
+  private settleLeave(guard: LeaveGuard, leave: boolean, link?: string): void {
+    const now = window.location.hash
+    if (!samePage(now, this.hash)) {
+      if (leave || !guard.holdsInput()) {
+        guard.release()
+        this.follow(now)
+      } else {
+        guard.restoreAddress()
+      }
+      return
+    }
+    if (leave && link !== undefined && guard.holdsInput()) {
+      guard.release()
+      window.location.hash = link
+    }
   }
 
   /** Renders `address`, and takes a return from Stripe's checkout off it if it carries one. */
@@ -629,9 +656,7 @@ export class AppShell extends LitElement implements ViewHost {
     const guard = this.guardAgainst(address)
     if (guard === undefined) return
     event.preventDefault()
-    void this.askToLeave(guard).then((leave) => {
-      if (leave) window.location.hash = address
-    })
+    void this.askToLeave(guard).then((leave) => this.settleLeave(guard, leave, address))
   }
 
   /** The view a navigation to `address` would lose input from, if there is one. */
