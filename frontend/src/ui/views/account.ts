@@ -175,7 +175,9 @@ export class AccountView extends LitElement {
 
   override disconnectedCallback(): void {
     window.removeEventListener('pageshow', this.onPageShow)
+    // Ownership ends here, so the pending mark goes with it (see `startBilling`).
     this.billingRuns++
+    this.billingPending = undefined
     super.disconnectedCallback()
   }
 
@@ -434,10 +436,9 @@ export class AccountView extends LitElement {
       outcome = { kind: 'unavailable' }
     }
     // The session ended or the view left while the request was out: the answer is not theirs.
-    if (run !== this.billingRuns) {
-      this.billingPending = undefined
-      return
-    }
+    // `billingPending` is left alone: whoever invalidated the run already cleared it, and by now
+    // it may mark a newer request, which a stale answer must not unblock.
+    if (run !== this.billingRuns) return
     if (outcome.kind === 'redirect') {
       this.redirect(outcome.url)
       return

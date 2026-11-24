@@ -312,6 +312,45 @@ describe('what Stripe’s answers say', () => {
     expect(redirect).not.toHaveBeenCalled()
   })
 
+  it('does not let a stale answer unblock a newer request', async () => {
+    const answers: Array<(outcome: SessionOutcome) => void> = []
+    const portal = vi.fn(
+      () =>
+        new Promise<SessionOutcome>((resolve) => {
+          answers.push(resolve)
+        }),
+    )
+    const { el, redirect } = await account({
+      plan: 'pro',
+      offer: ['pro'],
+      billing: { status: 'active', cancelAtPeriodEnd: false },
+      actions: { checkout: async () => ({ kind: 'unavailable' }), portal },
+    })
+    const manage = () => el.querySelector('[data-manage-billing]') as HTMLElement
+    manage().click() // A, for the session about to end
+    await el.updateComplete
+    el.session = 'signed-out'
+    await el.updateComplete
+    el.session = 'signed-in'
+    await el.updateComplete
+    manage().click() // B, the new session's
+    await el.updateComplete
+    expect(portal).toHaveBeenCalledTimes(2)
+
+    answers[0]?.({ kind: 'redirect', url: PORTAL_URL }) // A answers, stale
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    await el.updateComplete
+    // B is still on its way: the buttons stay disabled and a press starts nothing.
+    expect(manage().hasAttribute('disabled')).toBe(true)
+    manage().click()
+    await el.updateComplete
+    expect(portal).toHaveBeenCalledTimes(2)
+    expect(redirect).not.toHaveBeenCalled()
+
+    answers[1]?.({ kind: 'redirect', url: PORTAL_URL })
+    await waitUntil(() => redirect.mock.calls.length === 1, 'B never redirected')
+  })
+
   it('says there is nothing to manage when the portal finds no billing account', async () => {
     const { el } = await account({
       plan: 'pro',
