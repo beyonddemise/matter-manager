@@ -168,6 +168,11 @@ export class AddDeviceView extends DeviceFormView {
    * like {@link decodeImage}: a test binds a shorter one, nothing renders from it.
    */
   scanCheckTimeoutMs: number = SCAN_CHECK_TIMEOUT_MS
+  /**
+   * How long a repeated "something changed" notice stays down before it goes back in. A plain
+   * field for the same reason: a test binds a longer one to act inside the gap.
+   */
+  reviewChangedGapMs: number = REVIEW_CHANGED_GAP_MS
   /** Bound by a test to a fake; the real API otherwise. */
   declare catalog?: CatalogApi
   /** Where the background lookup stands. Never read by anything that saves except `onSubmit`. */
@@ -474,7 +479,7 @@ export class AddDeviceView extends DeviceFormView {
     this.dismissReviewChanged()
     this.reviewChangedTimer = setTimeout(() => {
       this.reviewChanged = true
-    }, REVIEW_CHANGED_GAP_MS)
+    }, this.reviewChangedGapMs)
   }
 
   /**

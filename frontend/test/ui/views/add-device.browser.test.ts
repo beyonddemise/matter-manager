@@ -1427,14 +1427,18 @@ describe('a refreshed Review, then a write storage refuses', () => {
   })
 
   it('keeps the notice down when that Save comes before the notice is back', async () => {
-    // A refresh puts the notice back only after a pause (#353). A matching Save inside it has
-    // already said the notice is no longer true, so the pause must not end by showing it.
+    // A refresh puts the notice back only after a gap (#353). A matching Save inside it has
+    // already said the notice is no longer true, so the gap must not end by showing it. The gap
+    // is lengthened so that the matching Save is sure to land inside it.
+    const gap = 1000
     const element = await form(refusingWrites())
+    element.reviewChangedGapMs = gap
     fillAll(element)
     await toReview(element)
     const save = element.querySelector('[data-save]') as HTMLButtonElement
 
     fill(element, 'name', 'Pantry light')
+    const refreshed = performance.now()
     dispatchSubmit(element)
     await waitUntil(() => reviewOf(element, 'name').textContent?.includes('Pantry light'))
     await waitUntil(() => !save.disabled, 'the refreshing Save never finished')
@@ -1443,7 +1447,11 @@ describe('a refreshed Review, then a write storage refuses', () => {
       () => element.querySelector('[data-save-failed]') !== null,
       'the refused write was never reported',
     )
-    await new Promise((resolve) => setTimeout(resolve, 300))
+    // Still inside the gap: the notice was pending, not yet shown, when that Save matched.
+    expect(performance.now() - refreshed).toBeLessThan(gap)
+    expect(changedNotice(element)).toBe(false)
+
+    await new Promise((resolve) => setTimeout(resolve, gap + 100))
     expect(changedNotice(element)).toBe(false)
   })
 })
