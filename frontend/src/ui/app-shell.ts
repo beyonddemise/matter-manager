@@ -969,9 +969,18 @@ export class AppShell extends LitElement implements ViewHost {
     // stay set and the dialog would reopen by itself when a later request brings the button back.
     // Here rather than in `updated()`, so it lands in the same render instead of a second one.
     // Likewise when billing turns Upgrade into a link to the account page.
-    if (this.upgrading && (!offersUpgrade(this.upgradeFacts()) || this.subscribes()))
+    if (this.upgrading && (!offersUpgrade(this.upgradeFacts()) || this.subscribes())) {
+      // Closed because leaving the waitlist took Upgrade away: the dialog's own status region
+      // goes with it, so the shell's says what happened, in this render.
+      if (this.leavingWaitlist && !offersUpgrade(this.upgradeFacts())) {
+        this.announcement = leftWaitlistText()
+      }
       this.onCloseUpgrade()
+    }
   }
+
+  /** Whether a waitlist leave is waiting on the refresh that may close the dialog. */
+  private leavingWaitlist = false
 
   /**
    * Gives focus back when the upgrade dialog closes (WCAG 2.4.3), whichever way it closed: Close,
@@ -1752,7 +1761,15 @@ export class AppShell extends LitElement implements ViewHost {
       this.waitlistProblem = 'not-stored'
       return
     }
-    await this.projects.refresh(false)
+    // While leaving, the refresh below renders before it resolves, and that render can close the
+    // dialog (`willUpdate`). Set first, so the announcement arrives in that same render rather
+    // than after it: on a slow machine the dialog was gone and the region still empty (#369 CI).
+    this.leavingWaitlist = leaving
+    try {
+      await this.projects.refresh(false)
+    } finally {
+      this.leavingWaitlist = false
+    }
     if (!leaving) return
     // Leaving a request for the top plan takes the Upgrade button away (ruling R3), and
     // `willUpdate` closes the dialog with it. Its status region goes too, so the shell's own
