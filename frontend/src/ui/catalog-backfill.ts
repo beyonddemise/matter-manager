@@ -96,6 +96,7 @@ const codeOf = (device: StoredDevice): string | undefined => device.payload ?? d
  * would quietly revert whatever was edited since. Checked again with `needsCatalogLookup`, so a
  * block written meanwhile by another tab or replica is not replaced by this answer.
  *
+ * @param code the code the catalogue was asked about; nothing is written unless it is still the one stored
  * @param block the catalogue fields to write, built from the time it is given
  * @throws whatever `devices.saveKeepingUpdatedAt` throws, except a 409; the caller ends the
  *   pass on it
@@ -103,6 +104,7 @@ const codeOf = (device: StoredDevice): string | undefined => device.payload ?? d
 async function fill(
   devices: Repository<StoredDevice>,
   id: string,
+  code: string,
   block: (checkedAt: string) => Partial<CatalogFields>,
   deps: BackfillDependencies,
   signal: AbortSignal,
@@ -110,7 +112,10 @@ async function fill(
   const fresh = await devices.get(id)
   if (signal.aborted || fresh === undefined) return
   const at = deps.now()
-  if (!needsCatalogLookup(fresh, at)) return
+  // The code asked about must still be the code stored: a draft's code can change while the lookup
+  // is out (#358), and a block for the old one would be stamped and never corrected. A device
+  // skipped here stays due, so a later pass asks about its new code.
+  if (!needsCatalogLookup(fresh, at) || codeOf(fresh) !== code) return
   try {
     // Keeps `updatedAt`: filling the block is not an edit, and a restamp would let this write,
     // made on a stale copy, outrank a newer rename or move in `mergeDevice` (ruling R26).
@@ -162,11 +167,11 @@ async function runOnce(deps: BackfillDependencies, signal: AbortSignal): Promise
       if (outcome.kind === 'unavailable' || outcome.kind === 'signed-out') return
       if (outcome.kind === 'found') {
         const { lookup } = outcome
-        await fill(devices, candidate._id, (at) => catalogFields(lookup, at), deps, signal)
+        await fill(devices, candidate._id, code, (at) => catalogFields(lookup, at), deps, signal)
       } else {
         // `unusable` (400/422): the API will never read this stored code. It is marked so that
         // `needsCatalogLookup` skips it from now on, instead of sending it on every trigger.
-        await fill(devices, candidate._id, unusableBlock, deps, signal)
+        await fill(devices, candidate._id, code, unusableBlock, deps, signal)
       }
       break
     }

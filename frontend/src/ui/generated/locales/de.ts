@@ -171,6 +171,7 @@
 's60f8a9487f3f1996': `Auf dem Server`,
 's6127afa01767fcc0': `Mit einem Upgrade bleiben Ihre Projekte auf allen Geräten synchron.`,
 's617dcf3e0a38ba6e': str`Geben Sie den Code ein, den wir an ${0} gesendet haben.`,
+'s623499f7ec27bfd1': `Dieser Entwurf wurde anderswo fertiggestellt und wird deshalb von hier aus nicht gespeichert. Was Sie eingegeben haben, steht weiter in diesem Formular.`,
 's6297d95e0264e6db': `Nur der Eigentümer kann es wiederherstellen, durch einen Tarifwechsel nach oben.`,
 's638a932e429dd7a6': `Dies ist kein Projektexport von Matter Manager. Es wurde nichts importiert.`,
 's6416760c6e0f9597': `Dieser Entwurf hat noch keinen Einrichtungscode. Stellen Sie ihn fertig, um einen hinzuzufügen.`,
@@ -433,5 +434,6 @@
 'sfbd747a1d61ef2ed': `Dieses Projekt ist nicht mehr auf dem Server`,
 'sfc2d9e54d89a7a0b': `Geht das Passwort verloren, lässt sich die Datei nicht mehr öffnen. Niemand kann es wiederherstellen: weder Matter Manager noch der Server noch Ihre anderen Geräte.`,
 'sfd7b1a72cf854ff4': `Excel exportieren`,
+'sffce892809236cfe': `Fertiges Gerät öffnen`,
     };
   

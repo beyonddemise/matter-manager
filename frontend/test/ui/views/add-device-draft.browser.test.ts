@@ -16,10 +16,12 @@ import '@awesome.me/webawesome-pro/dist/components/option/option.js'
 import { fixture, fixtureCleanup, html, waitUntil } from '@open-wc/testing-helpers'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { DraftDeviceDocument, StoredDevice, Unsaved } from '../../../src/domain/index.js'
+import { PROJECT_DATA_CHANGED } from '../../../src/ui/current-project.js'
 import type { ScanSource } from '../../../src/ui/scan/source.js'
 import type { AddDeviceView } from '../../../src/ui/views/add-device.js'
 import '../../../src/ui/views/add-device.js'
 import { browserDatabase, type TestDatabase } from '../support/browser-database.js'
+import { lockedDatabase } from '../support/locked-database.js'
 
 const PAYLOAD = 'MT:Y.K9042C00KA0648G00'
 const UUID = 'draft-1'
@@ -402,5 +404,104 @@ describe('reopening a draft', () => {
     })
     await finishForm()
     await waitUntil(() => location.hash === `#/devices/${UUID}`, `still at ${location.hash}`)
+  })
+})
+
+describe('saving a reopened draft safely (CodeRabbit on #369)', () => {
+  it('stays, saying so, when the rooms cannot be read for a draft', async () => {
+    const real = database.repositories
+    let reads = 0
+    const element = await newForm({
+      ...real,
+      devices: {
+        ...real.devices,
+        list: async () => {
+          // The form's own first read passes; the one Save as draft makes fails.
+          if (reads++ > 0) throw new Error('storage')
+          return real.devices.list()
+        },
+      },
+    })
+    fill(element, 'name', 'Hall sensor')
+
+    const answer = element.confirmLeave()
+    await waitUntil(() => element.querySelector('[data-leave-draft]') !== null)
+    element.querySelector<HTMLElement>('[data-leave-draft]')?.click()
+
+    expect(await answer).toBe(false)
+    await settle(element)
+    expect(element.querySelector('[data-save-failed]')).not.toBeNull()
+    expect(await devices()).toEqual([])
+  })
+
+  it('says the draft was finished elsewhere, keeps the input, and saves no more', async () => {
+    const first = await storeDraft()
+    const element = await finishForm()
+    await waitUntil(() => element.stored !== undefined)
+    // Finished on another phone after this form read it.
+    const { updatedAt: _stamp, status: _status, ...rest } = first as DraftDeviceDocument
+    await database.repositories.devices.save({
+      ...rest,
+      name: 'Hall sensor',
+      room: 'Hall',
+      manualCode: '34970112332',
+      installedAt: '2026-11-24',
+    } as Unsaved<StoredDevice>)
+    fill(element, 'serial', 'SN-mine')
+
+    await press(element, '[data-save-draft]')
+    await saved(element)
+    await waitUntil(() => element.querySelector('[data-finished-elsewhere]') !== null)
+    expect(shown(element, 'serial')).toBe('SN-mine')
+
+    await press(element, '[data-save-draft]')
+    await saved(element)
+    const stored = await devices()
+    expect(stored).toHaveLength(1)
+    expect(stored[0]).not.toHaveProperty('status')
+    expect(stored[0]).not.toHaveProperty('serial')
+  })
+
+  it('never saves a draft read while locked, so its stored code is kept', async () => {
+    const locked = await lockedDatabase()
+    try {
+      await locked.unlocked.devices.save({
+        _id: `device:${UUID}`,
+        type: 'device',
+        status: 'draft',
+        name: 'Hall sensor',
+        manualCode: '34970112332',
+        addedAt: '2026-11-24T09:00:00.000Z',
+        disabled: false,
+        remarks: [],
+      } as Unsaved<StoredDevice>)
+      const element = await finishForm(UUID, locked.unlockable)
+      await waitUntil(() => element.stored !== undefined)
+      // The key arrives while the form still holds the locked read.
+      locked.unlock()
+      fill(element, 'serial', 'SN-1')
+
+      await press(element, '[data-save-draft]')
+      await saved(element)
+
+      expect(element.saveFailed).toBe('locked')
+      expect((await locked.unlocked.devices.get(`device:${UUID}`))?.manualCode).toBe('34970112332')
+
+      // The next sync re-reads it: the code comes back into the form, and a save keeps it.
+      window.dispatchEvent(new CustomEvent(PROJECT_DATA_CHANGED))
+      await waitUntil(
+        () => shown(element, 'credential') === '34970112332',
+        'the code never came back',
+      )
+      await press(element, '[data-save-draft]')
+      await saved(element)
+      expect(await locked.unlocked.devices.get(`device:${UUID}`)).toMatchObject({
+        manualCode: '34970112332',
+        serial: 'SN-1',
+      })
+    } finally {
+      fixtureCleanup()
+      await locked.destroy()
+    }
   })
 })

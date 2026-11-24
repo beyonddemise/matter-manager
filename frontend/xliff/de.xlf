@@ -1707,6 +1707,14 @@
   <target>Status</target>
   <note from="lit-localize">Spreadsheet column header: whether a device is a draft</note>
 </trans-unit>
+<trans-unit id="s623499f7ec27bfd1">
+  <source>This draft was finished somewhere else, so it is not saved from here. What you entered is still on this form.</source>
+  <target>Dieser Entwurf wurde anderswo fertiggestellt und wird deshalb von hier aus nicht gespeichert. Was Sie eingegeben haben, steht weiter in diesem Formular.</target>
+</trans-unit>
+<trans-unit id="sffce892809236cfe">
+  <source>Open the finished device</source>
+  <target>Fertiges Gerät öffnen</target>
+</trans-unit>
 </body>
 </file>
 </xliff>

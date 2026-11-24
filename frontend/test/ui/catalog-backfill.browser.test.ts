@@ -108,6 +108,27 @@ describe('catalogue backfill', () => {
     })
   })
 
+  it('writes no answer about a code the device no longer carries (#358)', async () => {
+    await database.repositories.devices.save(device('a'))
+    // The code changes while the lookup is out, as a draft's can.
+    const { backfill } = runner(async () => {
+      const current = await database.repositories.devices.get('device:a')
+      if (current !== undefined) {
+        const { updatedAt: _stamp, payload: _payload, ...rest } = current as DeviceDocument
+        // Another 21-digit code: still one the catalogue could be asked about.
+        await database.repositories.devices.save({ ...rest, manualCode: '111111111111111111111' })
+      }
+      return { kind: 'found', lookup: AQARA_LOOKUP }
+    })
+
+    backfill.trigger()
+    await backfill.idle()
+
+    const after = await database.repositories.devices.get('device:a')
+    expect(after).not.toHaveProperty('vendorName')
+    expect(after).not.toHaveProperty('catalogCheckedAt')
+  })
+
   it('never touches what the user entered', async () => {
     await database.repositories.devices.save(
       device('a', {

@@ -299,6 +299,16 @@ that is now the point, and it is met without changing the route table.
 - **Finishing.** Save device on a reopened draft plans with `planFinishedDevice`: the full
   `planNewDevice` checks, on the draft's own id and revision, its status removed. A refused
   write re-reads the draft, so a retry is not stuck on a revision that moved on elsewhere.
+- **Writes are refused, and say why, while unsafe.** These were added after review on #369.
+  - The form is `inert` while a reopened draft is read, and an obsolete read (after a project
+    switch, or the form being left) does nothing.
+  - A draft finished elsewhere is shown in a callout with a link to the device, and the form
+    saves no more.
+  - A draft read while the project was locked is never saved: the form says so, and the next
+    sync re-reads it and puts its setup code back.
+  - The baseline is what was planned, so an edit made during the write stays guarded, and the
+    form does not leave.
+  - A failed room read says "storage" rather than rejecting.
 - **Discarding a draft** is the delete on its device page, confirmed in a dialog that says what
   goes with it. The edit route sends a draft to the finish route: `planDeviceEdit` takes only a
   complete device.
