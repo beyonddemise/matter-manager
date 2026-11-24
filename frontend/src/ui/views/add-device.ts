@@ -20,12 +20,15 @@ import {
 import { BACKFILL_WANTED, type CatalogApi } from '../catalog.js'
 import { catalog } from '../composition.js'
 import { imageMessage, problemMessage } from '../i18n/problems.js'
+import { LEAVE_GUARD, type LeaveGuard } from '../leave-guard.js'
 import { codesFromImage, type ImageProblem, ImageScanError } from '../scan/image.js'
 import { cameraSource, type ScanSource } from '../scan/source.js'
 import { accessToken } from '../tokens.js'
 import { type ReviewSummary, renderReview, type StepStatus } from './add-device-review.js'
 import { type AddStep, type StepChecks, StepNavigation, stepOf } from './add-device-steps.js'
 import { DeviceFormView, fieldValue } from './device-form.js'
+import type { LeaveDialog } from './leave-dialog.js'
+import './leave-dialog.js'
 import './scan-dialog.js'
 
 /** Today, as `<input type="date">` writes it: a calendar date in the user's own timezone. */
@@ -95,8 +98,12 @@ function sameReview(a: Reviewed, b: Reviewed): boolean {
  * read the label, decide where the thing lives, name it, check it. All four panels stay in the
  * tree and only the active one is shown, so the controls keep their values across steps and
  * `planNewDevice` still reads every control on Save, exactly as on the one-page form.
+ *
+ * Each step is also an entry in the browser's history (#356), so Back moves one step back with
+ * everything kept; leaving the form any other way while it holds input asks first, through the
+ * shell's {@link LeaveGuard}.
  */
-export class AddDeviceView extends DeviceFormView {
+export class AddDeviceView extends DeviceFormView implements LeaveGuard {
   static override properties = {
     ...DeviceFormView.properties,
     scanSource: { attribute: false },
@@ -200,6 +207,14 @@ export class AddDeviceView extends DeviceFormView {
     },
   })
 
+  /** The date the form opened with, so that a date left as it was is not input to lose. */
+  private openedOn = ''
+  /**
+   * Whether nothing here may hold the person back any more: the device was saved, the person
+   * chose Discard, or a project switch abandoned the form.
+   */
+  private released = false
+
   private lookupTimer: ReturnType<typeof setTimeout> | undefined
   /** The pending re-show of the "something changed" notice; see {@link announceReviewChanged}. */
   private reviewChangedTimer: ReturnType<typeof setTimeout> | undefined
@@ -222,7 +237,8 @@ export class AddDeviceView extends DeviceFormView {
     // The date is set once, imperatively, rather than bound in the template: a bound `value`
     // would be rewritten on every re-render, so the first validation error would silently
     // undo whatever date the user had chosen.
-    this.setControlValue('[data-field="installed-at"]', today())
+    this.openedOn = today()
+    this.setControlValue('[data-field="installed-at"]', this.openedOn)
     void this.loadRooms()
     void this.checkScanning()
   }
@@ -265,7 +281,64 @@ export class AddDeviceView extends DeviceFormView {
     }
   }
 
+  override connectedCallback(): void {
+    super.connectedCallback()
+    this.setAttribute(LEAVE_GUARD, '')
+    window.addEventListener('beforeunload', this.onBeforeUnload)
+  }
+
+  /**
+   * Asks the browser to confirm a reload or a closed tab while the form holds input. The
+   * browser's own dialog, not ours: a page may show nothing of its own while it unloads.
+   */
+  private readonly onBeforeUnload = (event: BeforeUnloadEvent): void => {
+    if (this.holdsInput()) event.preventDefault()
+  }
+
+  /**
+   * Whether leaving now would lose what the person entered: any field with something in it, or
+   * a date changed from the one the form opened with. Being on a later step is not input: an
+   * empty form on Review loses nothing.
+   */
+  holdsInput(): boolean {
+    if (this.released) return false
+    const draft = this.draft()
+    const typed = [draft.credential, draft.serial, draft.room, draft.spot, draft.name]
+    return typed.some((value) => (value ?? '').trim() !== '') || draft.installedAt !== this.openedOn
+  }
+
+  /**
+   * Asks whether to leave (`leave-dialog.ts`). Discard lets the form go, so that the navigation
+   * the shell then makes is not asked about a second time.
+   *
+   * Drafts (#358) answer here: a `'draft'` choice will save the draft, then resolve `true`.
+   */
+  async confirmLeave(): Promise<boolean> {
+    const dialog = this.querySelector<LeaveDialog>('leave-dialog')
+    if (dialog === null) return true
+    const choice = await dialog.ask()
+    if (choice === 'discard') this.released = true
+    return choice === 'discard'
+  }
+
+  /** Puts the form's history entries back, after the browser left them and the person stayed. */
+  restoreAddress(): void {
+    this.steps.restore()
+  }
+
+  /** Whether the form's history has caught up with its stepper. For tests, which must wait. */
+  get historySettled(): boolean {
+    return this.steps.settled
+  }
+
+  /** A project switch abandons the form: it leaves, and takes its history entries with it. */
+  protected override leaveForList(): void {
+    this.released = true
+    this.steps.leave('#/devices')
+  }
+
   override disconnectedCallback(): void {
+    window.removeEventListener('beforeunload', this.onBeforeUnload)
     // The form closing is one of the two moments the spec aborts a lookup; the other is the
     // code changing. A lookup still `pending` is forgotten as well as aborted: an element that is
     // detached and attached again (a move, not a destroy) would otherwise keep "pending" on
@@ -678,7 +751,10 @@ export class AddDeviceView extends DeviceFormView {
       this.saving = false
     }
 
-    window.location.hash = '#/devices'
+    // The form's entries go with it (StepNavigation.leave): Back from the list must not return
+    // to a finished form, whose Save would file the same device a second time.
+    this.released = true
+    this.steps.leave('#/devices')
   }
 
   /**
@@ -891,6 +967,7 @@ export class AddDeviceView extends DeviceFormView {
             this.scanOpen = false
           }}
         ></scan-dialog>
+        <leave-dialog></leave-dialog>
       </form>
     `
   }

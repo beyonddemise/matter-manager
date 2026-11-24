@@ -1608,6 +1608,22 @@
   <source>Manage billing</source>
   <target>Abrechnung verwalten</target>
 </trans-unit>
+<trans-unit id="s8c786b99f00f0827">
+  <source>Leave without saving?</source>
+  <target>Ohne Speichern verlassen?</target>
+</trans-unit>
+<trans-unit id="s262d1a755553c6f0">
+  <source>What you entered on this form has not been saved. If you leave, it is lost.</source>
+  <target>Was Sie in diesem Formular eingegeben haben, ist nicht gespeichert. Wenn Sie es verlassen, geht es verloren.</target>
+</trans-unit>
+<trans-unit id="sd98b4e251f0641c0">
+  <source>Stay</source>
+  <target>Bleiben</target>
+</trans-unit>
+<trans-unit id="sc00a88b90cd60661">
+  <source>Discard</source>
+  <target>Verwerfen</target>
+</trans-unit>
 </body>
 </file>
 </xliff>

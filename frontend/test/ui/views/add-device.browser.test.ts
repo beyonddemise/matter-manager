@@ -25,14 +25,23 @@ import { lockedDatabase } from '../support/locked-database.js'
 /** The verified reference device; see `test/domain/matter/payload.test.ts`. */
 const PAYLOAD = 'MT:Y.K9042C00KA0648G00'
 const SHORT_CODE = '34970112332'
+/** The form's own address; each step after the first adds `?step=` to it (#356). */
+const FORM = '#/devices/new'
 
 let database: TestDatabase
 
 beforeEach(() => {
   database = browserDatabase()
+  // An entry no earlier test's form stamped, at the form's address, so that each test's form
+  // starts its history afresh rather than adopting entries another form left (#356).
+  history.replaceState(null, '', FORM)
 })
 
 afterEach(async () => {
+  // A form still walking its history back (after a save) would otherwise do so in the next test.
+  for (const element of document.querySelectorAll<AddDeviceView>('add-device-view')) {
+    await waitUntil(() => element.historySettled, 'a form never settled its history')
+  }
   await database.destroy()
 })
 
@@ -1392,7 +1401,7 @@ describe('a write storage refuses', () => {
   it('stays on the form and says so, rather than navigating as though it saved', async () => {
     // Navigating to a list that does not contain the device is the application saying it
     // saved something it did not - and what it did not save is a code that cannot be recreated.
-    const before = window.location.hash
+    // Still on the form, on Review, where Save was pressed.
     const element = await form(refusingWrites())
     fill(element, 'credential', PAYLOAD)
     fill(element, 'name', 'Kitchen ceiling light')
@@ -1401,7 +1410,7 @@ describe('a write storage refuses', () => {
     await submit(element, () => element.querySelector('[data-save-failed]') !== null)
 
     expect(await devices()).toHaveLength(0)
-    expect(window.location.hash).toBe(before)
+    expect(window.location.hash).toBe(`${FORM}?step=review`)
     expect(fieldValue(element, 'credential')).toBe(PAYLOAD)
   })
 })
@@ -1460,7 +1469,7 @@ describe('a project locked on this device', () => {
   it('says the device cannot be filed until the key arrives, and keeps what was typed', async () => {
     const encrypted = await lockedDatabase()
     try {
-      const before = window.location.hash
+      // Still on the form, on Review, where Save was pressed.
       const element = await form(encrypted.locked)
       fill(element, 'credential', PAYLOAD)
       fill(element, 'name', 'Kitchen ceiling light')
@@ -1472,7 +1481,7 @@ describe('a project locked on this device', () => {
         'after the next sync',
       )
       expect(element.querySelector('[data-save-failed]')).toBeNull()
-      expect(window.location.hash).toBe(before)
+      expect(window.location.hash).toBe(`${FORM}?step=review`)
       expect(fieldValue(element, 'credential')).toBe(PAYLOAD)
       expect(await encrypted.unlocked.devices.list()).toHaveLength(0)
     } finally {

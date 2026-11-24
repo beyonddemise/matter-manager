@@ -143,6 +143,14 @@ export abstract class DeviceFormView extends LitElement {
     this.resolved = undefined
     this.rooms = []
     this.error = undefined
+    this.leaveForList()
+  }
+
+  /**
+   * Goes to the device list, for a project switch. A method so the add form can take its own
+   * history entries with it (#356); the edit form has none and simply navigates.
+   */
+  protected leaveForList(): void {
     window.location.hash = '#/devices'
   }
 

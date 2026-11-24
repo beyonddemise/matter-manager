@@ -34,7 +34,8 @@ buttons — one on the form, one inside the scan dialog (`scan-dialog.ts`). One 
 - The edit form (`edit-device.ts`) stays a single page. Editing is usually one field; four
   screens to rename a device is worse.
 - No change to validation rules, the stored document, or `planNewDevice`.
-- No per-step URL. The route stays `#/devices/new`; browser Back leaves the form.
+- ~~No per-step URL.~~ Superseded by [#356](https://github.com/beyonddemise/matter-manager/issues/356):
+  each step is a history entry, so browser Back moves one step back; see "History" below.
 
 ## Anti-goals (would be a failure even if it works)
 
@@ -218,3 +219,37 @@ fields through the steps. `npm run verify` clean, coverage gate met, zero warnin
   with none it submits only a form with exactly one field, and this form has several, since
   hidden panels stay in the tree. Covered by real-keypress tests in the setup-code and name
   fields, not by a dispatched `submit`, which would pass without the button.
+
+## History: Back is the previous step (#356)
+
+*Added 2026-11-24, the owner's decision on #356: browser Back moves one step back, and leaving
+with unsaved input asks first.* Approach 3 above was rejected for making Back walk the steps;
+that is now the point, and it is met without changing the route table.
+
+- **Address.** One route still: `#/devices/new` is step 1, and later steps add a query:
+  `?step=place`, `?step=name`, `?step=review`. `matchRoute` ignores the query, so the shell keeps
+  the same element and its controls keep their values. Each entry carries
+  `history.state = { addDevice: <form id>, step }`.
+- **One source of truth.** The stepper decides what is on screen; `StepNavigation` reconciles the
+  history to it: an entry pushed per step forward, one `history.go(-n)` back to the step wanted.
+  The form's n-th entry is always the n-th step, so the Previous button and browser Back are the
+  same move, and Forward after Back is the step that was left. Browser Back and Forward move the
+  stepper through `goTo`, so the step left is checked as on Next: Forward never skips a check.
+- **Jumps.** A click on a later step pushes an entry for each step passed; an Edit link or a
+  save-time error walks back. Back is always the previous step in the stepper's order.
+- **Reload or deep link** onto a later step lands on step 1, because the values are gone. An entry
+  this form stamped before the reload is adopted and walked back to its first entry, so Back then
+  leaves the form; an unstamped one (a deep link) is replaced with `#/devices/new`.
+- **Save** (and a project switch) walks back to the form's first entry and *replaces* it with
+  `#/devices`: Back from the list never returns into a finished form.
+- **Leaving with input.** Input is any field with text, or a date changed from today. The shell
+  asks the view (`leave-guard.ts`) before a `hashchange` to another route (Back from step 1, an
+  address typed) and before an in-app link click (header navigation, Cancel); `beforeunload`
+  covers a reload and a closed tab. A `hashchange` has already moved the address, so the shell
+  keeps the form on screen while it asks; on Stay the form pushes its entries back (every step up
+  to the current one), on Discard the shell renders where the browser went. A link click is
+  stopped before it navigates, so it leaves no entry behind. Nothing is asked when nothing would
+  be lost.
+- **The question** is `leave-dialog.ts`: a `wa-dialog` with **Stay** (focused, and what Escape
+  means) and **Discard**. Its `LeaveChoice` type is the seam for drafts (#358), which adds
+  **Save as draft** as a third choice without touching the shell or the history.
