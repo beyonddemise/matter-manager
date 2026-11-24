@@ -3,7 +3,7 @@
 import '@awesome.me/webawesome-pro/dist/components/format-date/format-date.js'
 import { msg } from '@lit/localize'
 import { html, type TemplateResult } from 'lit'
-import type { AddStep } from './add-device.js'
+import type { AddStep } from './add-device-steps.js'
 
 /**
  * What the person filled in on steps 1-3, exactly as the controls held it when Review was
