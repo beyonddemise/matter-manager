@@ -39,6 +39,7 @@ import { beginProjectAction, projectActionRunning } from '../../src/ui/project-b
 import type { Project } from '../../src/ui/projects.js'
 import type { SyncableProject } from '../../src/ui/sync/manager.js'
 import '../../src/ui/styles/app.css'
+import type { BillingApi } from '../../src/ui/billing.js'
 import type { Profile } from '../../src/ui/profile.js'
 import type { ProjectsView } from '../../src/ui/views/projects.js'
 import type { WaitlistApi, WaitlistOutcome } from '../../src/ui/waitlist.js'
@@ -206,6 +207,17 @@ interface Options {
   readonly signIn?: () => void
   /** What the server answers for the profile; nothing (no token) by default. */
   readonly readProfile?: () => Promise<Profile | undefined>
+  /** The billing API; one that knows nothing (signed out, or offline) by default. */
+  readonly billing?: BillingApi
+  /** Where the shell sends the browser for Stripe; a stub, so a test never navigates. */
+  readonly redirect?: (url: string) => void
+}
+
+/** A billing API that knows nothing: the answer the real one gives without a token. */
+const NO_BILLING: BillingApi = {
+  offer: async () => ({ kind: 'unknown' }),
+  checkout: async () => ({ kind: 'unavailable' }),
+  portal: async () => ({ kind: 'unavailable' }),
 }
 
 /** The shell, wired to fakes, settled past its first refresh. */
@@ -247,6 +259,9 @@ async function mount(options: Options = {}) {
       .waitlist=${options.waitlist}
       .plans=${options.plans ?? { read: async () => undefined }}
       .readProfile=${options.readProfile ?? (async () => undefined)}
+      .billing=${options.billing ?? NO_BILLING}
+      .redirect=${options.redirect ?? (() => {})}
+      .checkoutRereads=${[0, 0, 0]}
       .backfill=${backfill}
       .projectStore=${store}
       .signOutPushTimeoutMs=${options.signOutPushTimeoutMs}
@@ -1659,11 +1674,7 @@ describe('upgrading', () => {
     // No projects row without a matrix: how many projects a plan includes is the published
     // matrix's alone (ADR 0020), and the built-in tables have no number to put in its place.
     expect(table.querySelector('[data-row="projects"]')).toBeNull()
-    expect(texts(table, '[data-row="price"] td')).toEqual([
-      'Free',
-      'To be announced',
-      'To be announced',
-    ])
+    expect(texts(table, '[data-row="price"] td')).toEqual(['Free', 'Subscription', 'Subscription'])
     const labels = (row: string) =>
       [...table.querySelectorAll(`[data-row="${row}"] td wa-icon`)].map((icon) =>
         icon.getAttribute('label'),
@@ -1693,7 +1704,7 @@ describe('upgrading', () => {
     ])
     expect(cards[0]?.classList.contains('app-plan-current')).toBe(true)
     expect(cards[0]?.querySelector('[data-your-plan]')).not.toBeNull()
-    expect(cards[2]?.querySelector('[data-row="price"]')?.textContent).toContain('To be announced')
+    expect(cards[2]?.querySelector('[data-row="price"]')?.textContent).toContain('Subscription')
 
     for (const card of cards) {
       expect(card.getBoundingClientRect().width).toBeGreaterThan(0)
@@ -1711,7 +1722,7 @@ describe('upgrading', () => {
 
     expect(text(dialog)).toContain('Ihr Plan')
     expect(text(dialog)).toContain('Home')
-    expect(text(dialog)).toContain('Wird noch bekannt gegeben')
+    expect(text(dialog)).toContain('Abonnement')
     expect(text(dialog)).toContain('Synchronisation und Teilen')
     expect(text(dialog.querySelector('[data-waitlist-statement]'))).toBe(
       'In intensiver Entwicklung. Setzen Sie sich kostenlos auf die Warteliste.',
@@ -2774,5 +2785,185 @@ describe('the account page plans (#263)', () => {
       'Projects your plan includes: 3. Yours: 5 (legacy plan).',
     )
     expect(readProfile).toHaveBeenCalled()
+  })
+})
+
+describe('billing through Stripe (#263, phase 2)', () => {
+  const selling = (over: Partial<BillingApi> = {}): BillingApi => ({
+    offer: vi.fn(async () => ({ kind: 'offer', plans: ['member', 'pro'] }) as const),
+    checkout: vi.fn(
+      async () => ({ kind: 'redirect', url: 'https://checkout.stripe.com/c/1' }) as const,
+    ),
+    portal: vi.fn(
+      async () => ({ kind: 'redirect', url: 'https://billing.stripe.com/p/1' }) as const,
+    ),
+    ...over,
+  })
+
+  const account = (element: Element) => element.querySelector('account-view')
+
+  it('turns Upgrade into a link to the account page while a plan above is for sale', async () => {
+    const { element } = await mount({
+      cachedProfile: profile({ plan: 'free', projectLimit: 1 }),
+      billing: selling(),
+    })
+    await waitUntil(
+      () => element.querySelector('[data-upgrade]')?.getAttribute('href') === '#/account',
+      'Upgrade never became a link',
+    )
+    ;(element.querySelector('[data-upgrade]') as HTMLElement).click()
+    await element.updateComplete
+    expect(element.querySelector('[data-upgrade-dialog]')).toBeNull()
+  })
+
+  it('keeps the waitlist dialog on a deployment without Stripe', async () => {
+    const billing = selling({ offer: async () => ({ kind: 'none' }) })
+    const { element } = await mount({
+      cachedProfile: profile({ plan: 'free', projectLimit: 1 }),
+      billing,
+    })
+    const dialog = await openUpgrade(element)
+    expect(dialog.querySelector('[data-waitlist]')).not.toBeNull()
+    expect(element.querySelector('[data-upgrade]')?.hasAttribute('href')).toBe(false)
+  })
+
+  it('asks what is for sale once the session is confirmed, and caches the answer', async () => {
+    const billing = selling()
+    const { store } = await mount({ cachedProfile: profile(), billing })
+    await waitUntil(
+      async () => (await store.cache().readBillingOffer()) !== undefined,
+      'never cached',
+    )
+    expect((await store.cache().readBillingOffer())?.plans).toEqual(['member', 'pro'])
+    expect(billing.offer).toHaveBeenCalled()
+  })
+
+  it('subscribes from the account page and sends the browser to Checkout', async () => {
+    window.location.hash = '#/account'
+    const billing = selling()
+    const redirect = vi.fn()
+    const { element } = await mount({
+      cachedProfile: profile({ plan: 'free', projectLimit: 1 }),
+      billing,
+      redirect,
+    })
+    await waitUntil(
+      () => account(element)?.querySelector('[data-subscribe="pro"]') !== null,
+      'no Subscribe',
+    )
+    ;(element.querySelector('account-view [data-subscribe="pro"]') as HTMLElement).click()
+    await waitUntil(() => redirect.mock.calls.length === 1, 'never redirected')
+    expect(billing.checkout).toHaveBeenCalledWith('pro')
+    expect(redirect).toHaveBeenCalledWith('https://checkout.stripe.com/c/1')
+  })
+
+  it('rereads the profile when Stripe already bills the account, so Manage billing appears', async () => {
+    window.location.hash = '#/account'
+    // The account's subscription reaches the server while this device still caches none: it is
+    // what the server says only once the refused Checkout has asked again.
+    let billed = false
+    const readProfile = vi.fn(async () =>
+      billed
+        ? serverProfile({ plan: 'member', billing: { status: 'active', cancelAtPeriodEnd: false } })
+        : serverProfile({ plan: 'free' }),
+    )
+    const { element } = await mount({
+      cachedProfile: profile({ plan: 'free', projectLimit: 1 }),
+      billing: selling({
+        checkout: async () => {
+          billed = true
+          return { kind: 'already-subscribed' }
+        },
+      }),
+      readProfile,
+    })
+    await waitUntil(
+      () => account(element)?.querySelector('[data-subscribe="member"]') !== null,
+      'no Subscribe',
+    )
+    ;(element.querySelector('account-view [data-subscribe="member"]') as HTMLElement).click()
+    await waitUntil(
+      () => account(element)?.querySelector('[data-manage-billing]') !== null,
+      'Manage billing never appeared',
+    )
+    expect(text(account(element)?.querySelector('[data-billing-problem]') ?? null)).toContain(
+      'You already have a subscription',
+    )
+  })
+
+  it('reads the return from Checkout, cleans the URL and rereads the profile', async () => {
+    window.location.hash = '#/account?checkout=success'
+    const readProfile = vi.fn(async () =>
+      serverProfile({
+        plan: 'pro',
+        billing: {
+          status: 'active',
+          currentPeriodEnd: '2026-12-24T12:00:00Z',
+          cancelAtPeriodEnd: false,
+        },
+      }),
+    )
+    const { element } = await mount({
+      cachedProfile: profile({ plan: 'free', projectLimit: 1 }),
+      billing: selling(),
+      readProfile,
+    })
+    await waitUntil(
+      () => account(element)?.querySelector('[data-checkout-return]') !== null,
+      'no return note',
+    )
+    expect(window.location.hash).toBe('#/account')
+    // The note arrives with the page, so the shell's live region is what speaks it.
+    await waitUntil(
+      () => text(element.querySelector('[data-status-announcement]')).startsWith('Thank you.'),
+      'the return was never announced',
+    )
+    await waitUntil(
+      () => account(element)?.querySelector('[data-billing-next]') !== null,
+      'the profile was not reread after Checkout',
+    )
+    expect(readProfile).toHaveBeenCalled()
+  })
+
+  it('keeps rereading past a returning customer’s ended subscription', async () => {
+    // The webhook lags: the first answers still carry the old, cancelled subscription.
+    window.location.hash = '#/account?checkout=success'
+    let calls = 0
+    const readProfile = vi.fn(async () => {
+      calls += 1
+      return calls <= 2
+        ? serverProfile({ plan: 'free', billing: { status: 'canceled', cancelAtPeriodEnd: false } })
+        : serverProfile({
+            plan: 'pro',
+            billing: {
+              status: 'active',
+              currentPeriodEnd: '2026-12-24T12:00:00Z',
+              cancelAtPeriodEnd: false,
+            },
+          })
+    })
+    const { element } = await mount({
+      cachedProfile: profile({ plan: 'free', projectLimit: 1 }),
+      billing: selling(),
+      readProfile,
+    })
+    await waitUntil(
+      () => account(element)?.querySelector('[data-billing-next]') !== null,
+      'the rereads stopped at the ended subscription',
+    )
+  })
+
+  it('says a cancelled Checkout charged nothing, and forgets it on leaving the page', async () => {
+    window.location.hash = '#/account?checkout=cancel'
+    const { element } = await mount({ cachedProfile: profile(), billing: selling() })
+    await waitUntil(
+      () => text(account(element)?.querySelector('[data-checkout-return]') ?? null) !== '',
+      'no return note',
+    )
+    expect(text(account(element)?.querySelector('[data-checkout-return]') ?? null)).toBe(
+      'Checkout was cancelled. Nothing was charged.',
+    )
+    window.location.hash = '#/'
+    await waitUntil(() => element.checkoutReturn === undefined, 'the note outlived the page')
   })
 })

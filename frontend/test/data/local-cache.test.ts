@@ -152,6 +152,26 @@ describe('caching the plan matrix', () => {
   })
 })
 
+describe('caching the billing offer (#263)', () => {
+  it('answers "never fetched" before anything has been', async () => {
+    expect(await localCache(memoryDatabase()).readBillingOffer()).toBeUndefined()
+  })
+
+  it('reads back what was written, and replaces it, beside the plan matrix', async () => {
+    const database = memoryDatabase()
+    const cache = localCache(database)
+    await cache.writePlanMatrix({ matrix: { free: { Projects: 1 } }, fetchedAt: 'then' })
+
+    await cache.writeBillingOffer({ plans: ['member', 'pro'], fetchedAt: 'then' })
+    // A deployment that dropped Stripe: nothing for sale is an answer too.
+    await cache.writeBillingOffer({ plans: [], fetchedAt: 'now' })
+
+    expect(await cache.readBillingOffer()).toMatchObject({ plans: [], fetchedAt: 'now' })
+    expect((await cache.readPlanMatrix())?.fetchedAt).toBe('then')
+    expect((await database.allDocs()).rows).toHaveLength(2)
+  })
+})
+
 describe('caching the escrow key', () => {
   const CACHED = {
     kid: 'a'.repeat(64),
@@ -229,6 +249,7 @@ describe('the cache is never replicated', () => {
       'clear',
       'clearProfile',
       'markAccessRemoved',
+      'readBillingOffer',
       'readEscrowKey',
       'readLocalProjects',
       'readPlanMatrix',
@@ -237,6 +258,7 @@ describe('the cache is never replicated', () => {
       'removeLocalProject',
       'setLocalState',
       'updateLocalProject',
+      'writeBillingOffer',
       'writeEscrowKey',
       'writePlanMatrix',
       'writeProfile',

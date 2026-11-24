@@ -5,23 +5,19 @@ import '@awesome.me/webawesome-pro/dist/components/format-date/format-date.js'
 import { msg, updateWhenLocaleChanges } from '@lit/localize'
 import { html, LitElement, nothing, type PropertyValues, type TemplateResult } from 'lit'
 import { isLegacyLimit, type Plan, planOf, planSyncs } from '../../domain/plan.js'
+import type { Billing, BillingActions, SessionOutcome } from '../billing.js'
 import type { CredentialsLike } from '../passkey-signin.js'
 import type { PlanMatrix } from '../plans.js'
 import type { SessionState } from '../session.js'
 import type { Passkey, SignInMethods, SignInMethodsApi } from '../sign-in-methods.js'
-import { renderPlanComparison } from '../upgrade-dialog.js'
+import { planName, renderPlanComparison } from '../upgrade-dialog.js'
+import {
+  type BillingPending,
+  type BillingProblem,
+  problemOf,
+  renderBilling,
+} from './account-billing.js'
 import { legacyText } from './projects-text.js'
-
-/**
- * Each plan's public name, a table so no plan is named by comparison (ADR 0009). The `member`
- * tier is marketed as "Home" (see `MARKETING_TIERS` in `domain/plan.ts`); the internal tier name
- * never reaches the reader.
- */
-const PLAN_NAMES: Readonly<Record<Plan, () => string>> = {
-  free: () => msg('Free'),
-  member: () => msg('Home'),
-  pro: () => msg('Pro'),
-}
 
 /**
  * How this account signs in: the email and plan, which providers are linked, and the passkeys,
@@ -53,6 +49,11 @@ export class AccountView extends LitElement {
     projectLimit: { attribute: false },
     planProjectLimit: { attribute: false },
     online: { attribute: false },
+    offer: { attribute: false },
+    billing: { attribute: false },
+    billingActions: { attribute: false },
+    redirect: { attribute: false },
+    checkoutReturn: { attribute: false },
     email: {},
     plan: {},
     session: {},
@@ -61,6 +62,8 @@ export class AccountView extends LitElement {
     editing: { state: true },
     busy: { state: true },
     announcement: { state: true },
+    billingPending: { state: true },
+    billingProblem: { state: true },
   }
 
   /** The sign-in-methods calls. Injected by the shell; a test binds a stub. */
@@ -125,12 +128,41 @@ export class AccountView extends LitElement {
   /** The persistent status region's text. Empty announces nothing. */
   declare announcement: string
 
+  /**
+   * The plans the deployment sells (`GET /billing`, #263), as the shell last heard them: the
+   * cache's answer, then the server's. `undefined` until heard; empty on a deployment without
+   * Stripe, which shows no purchase at all.
+   */
+  declare offer?: readonly Plan[]
+
+  /** The account's Stripe subscription, from the cached profile. */
+  declare billing?: Billing
+
+  /** Starts a Checkout or a portal session. Injected by the shell; a test binds a stub. */
+  declare billingActions?: BillingActions
+
+  /**
+   * Sends the browser to a Stripe page. A top-level navigation, never a fetch: the page stays
+   * inside `connect-src 'self'`. Injected by tests, so they never leave the runner.
+   */
+  declare redirect: (url: string) => void
+
+  /** How the browser came back from Checkout, when it just did; the shell reads it off the URL. */
+  declare checkoutReturn?: 'success' | 'cancel'
+
+  /** The billing request on its way, if any. */
+  declare billingPending: BillingPending | undefined
+
+  /** Why the last billing request did not reach Stripe, until another is tried. */
+  declare billingProblem: BillingProblem | undefined
+
   constructor() {
     super()
     updateWhenLocaleChanges(this)
     this.passkeySupport = () => typeof PublicKeyCredential !== 'undefined'
     this.busy = false
     this.announcement = ''
+    this.redirect = (url) => window.location.assign(url)
   }
 
   override connectedCallback(): void {
@@ -138,6 +170,25 @@ export class AccountView extends LitElement {
     // A view that arrives already signed-in is read by `willUpdate`, so it is not read twice.
     if (this.session !== 'signed-in') void this.refresh()
     this.loadPlanMatrix()
+    window.addEventListener('pageshow', this.onPageShow)
+  }
+
+  override disconnectedCallback(): void {
+    window.removeEventListener('pageshow', this.onPageShow)
+    // Ownership ends here, so the pending mark goes with it (see `startBilling`).
+    this.billingRuns++
+    this.billingPending = undefined
+    super.disconnectedCallback()
+  }
+
+  /**
+   * Back from Stripe without finishing: the browser may restore this page from its back/forward
+   * cache exactly as it was left, with the request that redirected still marked pending, which
+   * would leave every billing button disabled until a reload. A restored page is no longer
+   * leaving, so the buttons come back.
+   */
+  private onPageShow = (event: PageTransitionEvent): void => {
+    if (event.persisted) this.billingPending = undefined
   }
 
   /** The one matrix load in flight, so a retry can never race the load it retries. */
@@ -200,6 +251,9 @@ export class AccountView extends LitElement {
    */
   private forget(): void {
     this.reads++
+    this.billingRuns++
+    this.billingPending = undefined
+    this.billingProblem = undefined
     this.loaded = 'signed-out'
     this.editing = undefined
     this.announcement = ''
@@ -207,6 +261,13 @@ export class AccountView extends LitElement {
 
   /** Counts reads, so an answer to an older read never overwrites a newer one. */
   private reads = 0
+
+  /**
+   * Counts billing ownership: bumped when the session ends and when the view leaves the page.
+   * Why: a session URL that answers after a sign-out is the departed account's Checkout or
+   * billing portal, and must not be opened for whoever uses this browser next.
+   */
+  private billingRuns = 0
 
   /** Reads the methods and shows what came back. */
   private async refresh(): Promise<void> {
@@ -349,6 +410,58 @@ export class AccountView extends LitElement {
       }
     })
 
+  /**
+   * Starts a Checkout or a portal session and sends the browser to it. One at a time, and not
+   * only by the disabled buttons, which update a render later than a quick second press arrives.
+   *
+   * On a redirect the buttons stay disabled: the page is leaving, and a press in the moment
+   * before it goes would start a second session. Otherwise the problem is shown and focus goes
+   * back to the first action, because the pressed button was disabled on the way and dropped
+   * focus to the page (WCAG 2.4.3).
+   */
+  private async startBilling(
+    pending: BillingPending,
+    start: (actions: BillingActions) => Promise<SessionOutcome>,
+  ): Promise<void> {
+    const actions = this.billingActions
+    if (actions === undefined || this.billingPending !== undefined) return
+    this.billingPending = pending
+    this.billingProblem = undefined
+    const run = this.billingRuns
+    let outcome: SessionOutcome
+    try {
+      outcome = await start(actions)
+    } catch {
+      // The shell's actions never throw, but a stub might: the reader is told, not left waiting.
+      outcome = { kind: 'unavailable' }
+    }
+    // The session ended or the view left while the request was out: the answer is not theirs.
+    // `billingPending` is left alone: whoever invalidated the run already cleared it, and by now
+    // it may mark a newer request, which a stale answer must not unblock.
+    if (run !== this.billingRuns) return
+    if (outcome.kind === 'redirect') {
+      this.redirect(outcome.url)
+      return
+    }
+    this.billingProblem = problemOf(outcome)
+    this.billingPending = undefined
+    await this.updateComplete
+    const target = this.querySelector<HTMLElement & { updateComplete?: Promise<unknown> }>(
+      '[data-billing] wa-button:not([disabled])',
+    )
+    // A button enabled by this render has not yet enabled its inner control, which refuses focus.
+    await target?.updateComplete
+    target?.focus()
+  }
+
+  private onSubscribe = (plan: Plan): void => {
+    void this.startBilling(plan, (actions) => actions.checkout(plan))
+  }
+
+  private onManageBilling = (): void => {
+    void this.startBilling('portal', (actions) => actions.portal())
+  }
+
   /** Swaps the label for an input and moves focus into it. */
   private startRename(passkey: Passkey): void {
     this.editing = passkey.id
@@ -483,7 +596,8 @@ export class AccountView extends LitElement {
 
   /**
    * The plans with what each includes, from the published matrix, the account's own marked
-   * (#263, phase 1 — changing the plan waits for ADR 0009's billing decision).
+   * (#263), and below them the subscription: Subscribe, Manage billing and the billing dates
+   * (`account-billing.ts`), on a deployment that sells plans through Stripe.
    *
    * The comparison itself is the upgrade dialog's (#224): the matrix's columns and rows
    * verbatim, "Your plan" on the account's. Where the account's recorded limit diverges from
@@ -512,6 +626,20 @@ export class AccountView extends LitElement {
                 </p>`
               : renderPlanComparison(plan, this.planMatrix)
           }
+          ${renderBilling(
+            {
+              plan,
+              offer: this.offer,
+              billing: this.billing,
+              session: this.session,
+              // Unknown is not offline: a view mounted without the shell's word acts as online.
+              online: this.online !== false,
+              pending: this.billingPending,
+              problem: this.billingProblem,
+              checkoutReturn: this.checkoutReturn,
+            },
+            { onSubscribe: this.onSubscribe, onManage: this.onManageBilling },
+          )}
         </div>
       </wa-card>
     `
@@ -527,7 +655,7 @@ export class AccountView extends LitElement {
             ? nothing
             : html`<div class="wa-stack wa-gap-2xs">
                 <span data-account-email>${this.email}</span>
-                ${this.plan === undefined ? nothing : html`<span data-account-plan>${PLAN_NAMES[this.plan]()}</span>`}
+                ${this.plan === undefined ? nothing : html`<span data-account-plan>${planName(this.plan)}</span>`}
               </div>`
         }
         ${

@@ -157,8 +157,12 @@ export interface PlanFeatures {
   readonly clientName: boolean
   /** Whether a project can be handed to another account. */
   readonly transfer: boolean
-  /** `tba` ("to be announced") while ADR 0009 leaves billing open. */
-  readonly price: 'free' | 'tba'
+  /**
+   * `subscription` for a plan bought through Stripe (ADR 0009, update 2026-11-24). The amount is
+   * not here: the published matrix and Stripe's Checkout state it, so a price change needs no
+   * release.
+   */
+  readonly price: 'free' | 'subscription'
 }
 
 /**
@@ -167,13 +171,24 @@ export interface PlanFeatures {
  */
 export const PLAN_FEATURES: Readonly<Record<Plan, PlanFeatures>> = Object.freeze({
   free: { clientName: false, transfer: false, price: 'free' },
-  member: { clientName: false, transfer: false, price: 'tba' },
-  pro: { clientName: true, transfer: true, price: 'tba' },
+  member: { clientName: false, transfer: false, price: 'subscription' },
+  pro: { clientName: true, transfer: true, price: 'subscription' },
 } satisfies Record<Plan, PlanFeatures>)
 
 /** The plans above `plan`, in upgrade order: what an account on it could still wait for. */
 export function plansAbove(plan: Plan): readonly Plan[] {
   return PLANS.slice(PLANS.indexOf(plan) + 1)
+}
+
+/**
+ * The plans above `plan` that the deployment sells (`GET /billing`), in upgrade order: what an
+ * account on it can subscribe to (#263). A lower plan is never offered here: moving down is a
+ * change to an existing subscription, which the Stripe portal makes.
+ *
+ * @param offered the plans the deployment has a Stripe price for
+ */
+export function plansForSale(plan: Plan, offered: readonly Plan[]): readonly Plan[] {
+  return plansAbove(plan).filter((above) => offered.includes(above))
 }
 
 /**

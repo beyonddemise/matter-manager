@@ -54,6 +54,12 @@ export interface CachedProfile {
   readonly planRequested?: string
   /** When the account joined the waitlist or last changed the plan, ISO-8601. */
   readonly requestedAt?: string
+  /**
+   * The Stripe subscription as the profile's `billing` last reported it (#263). `unknown`: it is
+   * whatever an older or newer build wrote, and `cachedBilling` decides what this build makes
+   * of it.
+   */
+  readonly billing?: unknown
   /** When this was fetched, ISO-8601. For showing how stale a cached answer is. */
   readonly fetchedAt: string
 }
@@ -77,6 +83,24 @@ export interface CachedPlanMatrix {
 
 /** The document id the plan matrix is cached under. */
 export const PLAN_MATRIX_ID = 'cache:plans'
+
+/**
+ * The plans `GET /billing` last said this deployment sells (#263), kept so the account page
+ * knows offline that a subscription can be bought here, and says it needs a connection rather
+ * than saying nothing. An empty list is an answer: the deployment has no Stripe (a 404).
+ *
+ * The offer is the deployment's, not the account's, so it is not personal data and survives a
+ * change of account like the plan matrix. `plans` is `unknown` for the reason
+ * {@link CachedPlanMatrix} gives for `matrix`.
+ */
+export interface CachedBillingOffer {
+  readonly plans: unknown
+  /** When it was fetched, ISO-8601. */
+  readonly fetchedAt: string
+}
+
+/** The document id the billing offer is cached under. */
+export const BILLING_OFFER_ID = 'cache:billing'
 
 /**
  * The escrow public key as `GET /escrowkey` last answered it (#301), kept so a project born
@@ -266,6 +290,10 @@ export interface LocalCache {
   readPlanMatrix(): Promise<CachedPlanMatrix | undefined>
   /** Replaces the cached plan matrix. */
   writePlanMatrix(cached: CachedPlanMatrix): Promise<void>
+  /** The cached billing offer, or `undefined` if `GET /billing` has never answered. */
+  readBillingOffer(): Promise<CachedBillingOffer | undefined>
+  /** Replaces the cached billing offer. */
+  writeBillingOffer(cached: CachedBillingOffer): Promise<void>
   /** The cached escrow key, or `undefined` if `GET /escrowkey` has never answered. */
   readEscrowKey(): Promise<CachedEscrowKey | undefined>
   /** Replaces the cached escrow key — a rotation replaces, two keys would be two answers. */
@@ -496,6 +524,14 @@ export function localCache(database: PouchDB.Database): LocalCache {
 
     async writePlanMatrix(cached: CachedPlanMatrix): Promise<void> {
       await writeSingleton(PLAN_MATRIX_ID, cached)
+    },
+
+    async readBillingOffer(): Promise<CachedBillingOffer | undefined> {
+      return readSingleton<CachedBillingOffer>(BILLING_OFFER_ID)
+    },
+
+    async writeBillingOffer(cached: CachedBillingOffer): Promise<void> {
+      await writeSingleton(BILLING_OFFER_ID, cached)
     },
 
     async readEscrowKey(): Promise<CachedEscrowKey | undefined> {

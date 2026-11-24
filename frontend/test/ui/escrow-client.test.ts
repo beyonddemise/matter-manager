@@ -49,6 +49,8 @@ function fakeCache(initial?: CachedEscrowKey, broken = false) {
     clearProfile: unused,
     readPlanMatrix: unused,
     writePlanMatrix: unused,
+    readBillingOffer: unused,
+    writeBillingOffer: unused,
     readProjects: unused,
     writeProjects: unused,
     setLocalState: unused,

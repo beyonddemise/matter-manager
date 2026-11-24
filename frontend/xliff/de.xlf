@@ -951,10 +951,6 @@
   <source>Pro</source>
   <target>Pro</target>
 </trans-unit>
-<trans-unit id="s3811b3fb7445c7dc">
-  <source>To be announced</source>
-  <target>Wird noch bekannt gegeben</target>
-</trans-unit>
 <trans-unit id="s2929031238d41539">
   <source>Included</source>
   <target>Enthalten</target>
@@ -1563,6 +1559,54 @@
 <trans-unit id="sf80c83f83ecaeb11">
   <source>Check this step</source>
   <target>Diesen Schritt prüfen</target>
+</trans-unit>
+<trans-unit id="s6d7efb5ab40b33b4">
+  <source>Subscription</source>
+  <target>Abonnement</target>
+</trans-unit>
+<trans-unit id="s5cb7cfca97b0a575">
+  <source>You already have a subscription. Change it under Manage billing.</source>
+  <target>Sie haben bereits ein Abonnement. Ändern Sie es unter „Abrechnung verwalten“.</target>
+</trans-unit>
+<trans-unit id="s4bece93f15605a8d">
+  <source>There is no subscription to manage yet.</source>
+  <target>Es gibt noch kein Abonnement, das Sie verwalten könnten.</target>
+</trans-unit>
+<trans-unit id="sa8866fa496e0ffa2">
+  <source>Too many attempts. Please wait a minute and try again.</source>
+  <target>Zu viele Versuche. Bitte warten Sie eine Minute und versuchen Sie es erneut.</target>
+</trans-unit>
+<trans-unit id="secaac646d3c49ef4">
+  <source>Billing could not be reached. Please try again.</source>
+  <target>Die Abrechnung ist nicht erreichbar. Bitte versuchen Sie es erneut.</target>
+</trans-unit>
+<trans-unit id="s0e916eb4727d306c">
+  <source>Your subscription ends on <x id="0" equiv-text="${date}"/>.</source>
+  <target>Ihr Abonnement endet am <x id="0" equiv-text="${date}"/>.</target>
+</trans-unit>
+<trans-unit id="sb3d00ef773519613">
+  <source>Next billing date: <x id="0" equiv-text="${date}"/></source>
+  <target>Nächste Abrechnung: <x id="0" equiv-text="${date}"/></target>
+</trans-unit>
+<trans-unit id="s6a567d97c0b01ee6">
+  <source>Your last payment did not go through. Update your payment method under Manage billing.</source>
+  <target>Ihre letzte Zahlung ist nicht eingegangen. Aktualisieren Sie Ihre Zahlungsmethode unter „Abrechnung verwalten“.</target>
+</trans-unit>
+<trans-unit id="sa2022da40e58def0">
+  <source>Thank you. Your plan changes as soon as Stripe confirms the payment, usually within a minute.</source>
+  <target>Vielen Dank. Ihr Plan ändert sich, sobald Stripe die Zahlung bestätigt, meist innerhalb einer Minute.</target>
+</trans-unit>
+<trans-unit id="sc0850f0956176caf">
+  <source>Checkout was cancelled. Nothing was charged.</source>
+  <target>Der Bezahlvorgang wurde abgebrochen. Es wurde nichts berechnet.</target>
+</trans-unit>
+<trans-unit id="sd8f43d5eac0189d2">
+  <source>Subscribe to <x id="0" equiv-text="${planName(plan)}"/></source>
+  <target><x id="0" equiv-text="${planName(plan)}"/> abonnieren</target>
+</trans-unit>
+<trans-unit id="s2eacaf82b6be0a8d">
+  <source>Manage billing</source>
+  <target>Abrechnung verwalten</target>
 </trans-unit>
 </body>
 </file>

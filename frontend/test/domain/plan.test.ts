@@ -15,6 +15,7 @@ import {
   planOf,
   planSyncs,
   plansAbove,
+  plansForSale,
   SYNCED_PLANS,
   showsUpgrade,
   tierOf,
@@ -161,10 +162,23 @@ describe('the plans in order', () => {
   it('compares client name, transfer and price per plan', () => {
     expect(PLAN_FEATURES).toEqual({
       free: { clientName: false, transfer: false, price: 'free' },
-      member: { clientName: false, transfer: false, price: 'tba' },
-      pro: { clientName: true, transfer: true, price: 'tba' },
+      member: { clientName: false, transfer: false, price: 'subscription' },
+      pro: { clientName: true, transfer: true, price: 'subscription' },
     })
   })
+
+  it.each([
+    ['free', ['member', 'pro'], ['member', 'pro']],
+    ['free', ['pro'], ['pro']],
+    ['member', ['member', 'pro'], ['pro']],
+    ['pro', ['member', 'pro'], []],
+    ['free', [], []],
+  ] satisfies [Plan, Plan[], Plan[]][])(
+    'for sale above %s when %j is sold: %j',
+    (plan, offered, forSale) => {
+      expect(plansForSale(plan, offered)).toEqual(forSale)
+    },
+  )
 
   it('cannot be changed from outside', () => {
     expect(Object.isFrozen(PLANS_IN_ORDER)).toBe(true)

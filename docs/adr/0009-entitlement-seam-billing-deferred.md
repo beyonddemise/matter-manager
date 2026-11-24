@@ -54,3 +54,32 @@ actions' call sites were already there, which is the seam doing what this record
 making each policy a table change rather than an audit. Archived projects no longer count toward
 the limit. The CouchDB validator additionally refuses writes from an owner whose plan cannot
 sync; see `docs/SECURITY-MODEL.md`, *Operator accounts and plans*.
+
+## Update 2026-11-24: the provider is Stripe
+
+The product owner settled the provider question on 2026-10-28 (#263): **Stripe**. The integration
+defaults, shared by both repositories:
+
+- **Stripe-hosted pages only.** Subscribing is a Stripe-hosted Checkout; changing plan, cancelling
+  and updating the payment method is the Stripe Customer Portal. The API answers a session URL and
+  the browser is sent there by a top-level navigation, so card data never reaches our code, there is
+  no Stripe.js, and the Content-Security-Policy names no Stripe origin (a navigation is neither a
+  `connect-src` fetch nor a `form-action` submit).
+- **Stripe is the source of truth for the plan.** A signed webhook maps the subscription's price to a
+  plan and sets it through the same path an operator's `PUT /customer` takes, so a downgrade starts
+  the read-only grace of #211/#284 exactly as an operator's does. Neither the redirect back from
+  Checkout nor anything in the browser grants a plan; the page rereads the profile and shows what the
+  webhook set.
+- **The next billing date and the cancellation state** come from the subscription and are exposed as
+  `billing` on the profile; the account page shows them.
+- **Unconfigured means absent.** Every `/billing` route answers 404 on a deployment without Stripe,
+  and the app then behaves as it did before billing: the waitlist dialog behind Upgrade, no purchase
+  on the account page.
+- **VAT.** As the consequences above noted, Stripe, unlike a merchant of record, leaves VAT
+  registration and filing with the operator. Stripe Tax is a configuration switch
+  (`STRIPE_AUTOMATIC_TAX` on the backend), not a code decision.
+
+What this record set out to protect held: the provider arrived as a new route group and one page,
+with the entitlement call sites untouched. Amounts are not in the app: the published plan matrix
+(ADR 0020) and Checkout state them, so a price change needs no release. The contract is the
+`billing` tag in `openapi.yaml`; the backend half is matter-manager-backend#60.

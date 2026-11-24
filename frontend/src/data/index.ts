@@ -25,6 +25,8 @@ export {
 } from './conflicts.js'
 export { isConflict } from './errors.js'
 export {
+  BILLING_OFFER_ID,
+  type CachedBillingOffer,
   type CachedEscrowKey,
   type CachedPlanMatrix,
   type CachedProfile,
