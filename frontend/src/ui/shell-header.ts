@@ -79,6 +79,9 @@ export function renderAccount(
  * @param state the plan, the session, the connection, the cached request and the change in flight
  * @param matrix the published plan matrix, when one has been heard; the built-in tables otherwise
  * @param handlers join, leave and sign in; closing is `onClose`
+ * @param subscribes the deployment sells a plan above the account's (#263): Upgrade is then a
+ *   link to the account page, where Subscribe starts Stripe's Checkout, and the waitlist
+ *   dialog is not offered — a waitlist for something that can be bought would be a detour
  */
 export function renderUpgrade(
   state: WaitlistState,
@@ -87,7 +90,20 @@ export function renderUpgrade(
   onOpen: () => void,
   onClose: () => void,
   handlers: WaitlistHandlers,
+  subscribes = false,
 ): TemplateResult | '' {
+  if (subscribes) {
+    return html`<wa-button
+      data-upgrade
+      href="#/account"
+      size="s"
+      variant="brand"
+      appearance="outlined"
+    >
+      <wa-icon slot="start" name="rocket" class="wa-desktop-only"></wa-icon>
+      ${msg('Upgrade')}
+    </wa-button>`
+  }
   if (!offersUpgrade(state)) return ''
   return html`
     <!-- The rocket is desktop only: at phone width it is what keeps the header on one line at

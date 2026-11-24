@@ -1,13 +1,20 @@
 import { msg, updateWhenLocaleChanges } from '@lit/localize'
 import { html, LitElement, type PropertyValues, type TemplateResult } from 'lit'
-import { DEFAULT_PLAN, type Plan } from '../domain/plan.js'
+import { DEFAULT_PLAN, type Plan, plansForSale } from '../domain/plan.js'
 import type { AuthMethods, AuthMethodsApi } from './auth-methods.js'
+import {
+  type BillingActions,
+  type BillingApi,
+  resolveBillingOffer,
+  type SessionOutcome,
+} from './billing.js'
 import { BACKFILL_WANTED } from './catalog.js'
 import { type CatalogBackfill, defaultCatalogBackfill } from './catalog-backfill.js'
 import {
   authMethods as authMethodsClient,
   beginGitHubSignIn,
   beginSignIn,
+  billing as billingClient,
   emailSignInClient,
   endSession,
   followProfileLocale,
@@ -215,6 +222,11 @@ export class AppShell extends LitElement implements ViewHost {
     waitlist: { attribute: false },
     planMatrix: { state: true },
     plans: { attribute: false },
+    billingOffer: { state: true },
+    checkoutReturn: { state: true },
+    billing: { attribute: false },
+    redirect: { attribute: false },
+    checkoutRereads: { attribute: false },
     signingIn: { state: true },
     signInNotice: { state: true },
     emailAuth: { attribute: false },
@@ -282,6 +294,27 @@ export class AppShell extends LitElement implements ViewHost {
   declare planMatrix: PlanMatrix | undefined
   /** Fetches the matrix; injected by tests, the real API otherwise. */
   declare plans?: PlansApi
+  /**
+   * The plans this deployment sells through Stripe (#263): the cache's answer, then the server's
+   * once signed in. `undefined` until heard; empty when the deployment has no Stripe (a 404),
+   * which leaves the header's Upgrade and the account page as they were before billing.
+   */
+  declare billingOffer: readonly Plan[] | undefined
+  /**
+   * How the browser came back from Stripe's Checkout (`#/account?checkout=…`), while the account
+   * page it came back to stays open. Read off the URL once and the URL cleaned, so a reload or a
+   * bookmark does not say it again.
+   */
+  declare checkoutReturn: 'success' | 'cancel' | undefined
+  /** The billing calls; injected by tests, the real API otherwise. */
+  declare billing?: BillingApi
+  /** Sends the browser to a Stripe page; injected by tests so they never navigate. */
+  declare redirect?: (url: string) => void
+  /**
+   * How long to wait before each profile reread after a successful Checkout, in milliseconds;
+   * injected by tests. See {@link followCheckout}.
+   */
+  declare checkoutRereads: readonly number[]
   /** The sign-in dialog's step, or `undefined` while it is closed. */
   declare signingIn: SignInStep | undefined
   /** The sign-in dialog's status line; `''` for silence. Never carries an address or a code. */
@@ -415,6 +448,128 @@ export class AppShell extends LitElement implements ViewHost {
 
   private readonly onHashChange = () => {
     this.hash = window.location.hash
+    this.takeCheckoutReturn()
+  }
+
+  /**
+   * Reads Stripe's return from the hash (`#/account?checkout=success`, the backend's
+   * `STRIPE_RETURN_URL` with the query appended) and takes the query off the URL with
+   * `replaceState`, which fires no `hashchange`, so the note is shown once and a reload does not
+   * repeat it. Leaving the account page forgets the note.
+   *
+   * A successful return rereads the profile ({@link followCheckout}): Stripe's webhook, not the
+   * redirect, sets the plan, and the two race.
+   */
+  private takeCheckoutReturn(): void {
+    const hash = window.location.hash
+    const at = hash.indexOf('?')
+    const path = at === -1 ? hash : hash.slice(0, at)
+    const match = matchRoute(path, this.routes ?? ROUTES)
+    if (match?.route.view !== 'account') {
+      this.checkoutReturn = undefined
+      return
+    }
+    if (at === -1) return
+    const query = new URLSearchParams(hash.slice(at + 1))
+    const how = query.get('checkout')
+    if (how !== 'success' && how !== 'cancel') return
+    query.delete('checkout')
+    const rest = query.toString()
+    const clean = rest === '' ? path : `${path}?${rest}`
+    window.history.replaceState(
+      window.history.state,
+      '',
+      `${window.location.pathname}${window.location.search}${clean}`,
+    )
+    this.hash = clean
+    this.checkoutReturn = how
+    if (how === 'success') this.checkoutFollowOwed = true
+    if (this.session === 'signed-in') this.followCheckout()
+  }
+
+  /** A successful Checkout's profile rereads are owed, waiting for the session. */
+  private checkoutFollowOwed = false
+
+  /**
+   * Rereads the profile after a successful Checkout until it reports a subscription, at most
+   * once per entry in {@link checkoutRereads}. Why more than once: the browser can be back before
+   * Stripe's webhook has reached the backend, and the startup read then hears the old plan. The
+   * waits grow, so a webhook that is late costs a few requests, not a loop.
+   */
+  private followCheckout(): void {
+    if (!this.checkoutFollowOwed) return
+    this.checkoutFollowOwed = false
+    const generation = this.projects.generation
+    void (async () => {
+      for (const wait of this.checkoutRereads) {
+        await new Promise((resolve) => setTimeout(resolve, wait))
+        if (!this.projects.isCurrent(generation)) return
+        await this.rereadProfile()
+        if (this.projects.facts?.billing !== undefined) return
+      }
+    })()
+  }
+
+  /** The one offer load in flight; see {@link loadBillingOffer}. */
+  private billingOfferLoad: Promise<void> | undefined
+
+  /** A load was asked for while one was in flight: one more is owed once it settles. */
+  private billingOfferOwed = false
+
+  /**
+   * Loads the billing offer through the cache ladder (`resolveBillingOffer`). Single-flight, with
+   * one follow-up queued: the load at startup reads the cache before the session is known, and
+   * the sign-in that arrives meanwhile must still ask the server rather than be dropped.
+   */
+  private loadBillingOffer(): Promise<void> {
+    if (this.billingOfferLoad !== undefined) {
+      this.billingOfferOwed = true
+      return this.billingOfferLoad
+    }
+    this.billingOfferLoad = resolveBillingOffer(
+      this.billing ?? billingClient(),
+      (this.projectStore ?? localProjectDefaults).cache(),
+      (plans) => {
+        this.billingOffer = plans
+      },
+    )
+      .catch(() => {})
+      .finally(() => {
+        this.billingOfferLoad = undefined
+        if (this.billingOfferOwed) {
+          this.billingOfferOwed = false
+          void this.loadBillingOffer()
+        }
+      })
+    return this.billingOfferLoad
+  }
+
+  /**
+   * The account page's Checkout and portal calls, with what the shell does about their answers:
+   * an offer that went stale is read again, and an account Stripe already bills has its profile
+   * reread so Manage billing appears where Subscribe was.
+   */
+  private billingActions: BillingActions = {
+    checkout: (plan) => this.startBillingSession((api) => api.checkout(plan)),
+    portal: () => this.startBillingSession((api) => api.portal()),
+  }
+
+  private async startBillingSession(
+    start: (api: BillingApi) => Promise<SessionOutcome>,
+  ): Promise<SessionOutcome> {
+    const outcome = await start(this.billing ?? billingClient())
+    if (outcome.kind === 'not-offered') void this.loadBillingOffer()
+    if (outcome.kind === 'already-subscribed') void this.rereadProfile()
+    return outcome
+  }
+
+  /**
+   * Whether Upgrade goes to the account page to buy: a plan above the account's is for sale, and
+   * the reader is an account that can buy it. Otherwise the waitlist dialog, as before billing.
+   */
+  private subscribes(): boolean {
+    if (this.session !== 'signed-in' && this.session !== 'offline-held') return false
+    return plansForSale(this.upgradeFacts().plan, this.billingOffer ?? []).length > 0
   }
 
   /**
@@ -552,6 +707,9 @@ export class AppShell extends LitElement implements ViewHost {
     this.upgrading = false
     this.refreshing = false
     this.planMatrix = undefined
+    this.billingOffer = undefined
+    this.checkoutReturn = undefined
+    this.checkoutRereads = [0, 3000, 10000]
     this.signingIn = undefined
     this.signInNotice = ''
     this.waitlistBusy = false
@@ -573,6 +731,9 @@ export class AppShell extends LitElement implements ViewHost {
   override connectedCallback(): void {
     super.connectedCallback()
     window.addEventListener('hashchange', this.onHashChange)
+    this.takeCheckoutReturn()
+    // The cache's answer now, for the header; the server is asked once a session is confirmed.
+    void this.loadBillingOffer()
     window.addEventListener(PROJECT_CHANGED, this.onProjectChanged)
     window.addEventListener(BACKFILL_WANTED, this.onBackfillWanted)
     this.stopWatchingNetwork = watchConnectivity(
@@ -585,6 +746,8 @@ export class AppShell extends LitElement implements ViewHost {
         if (regained && this.session === 'signed-in') void this.projects.refresh(true)
         // The other half of "on connectivity becoming online" (spec §Backfill).
         if (regained && this.session === 'signed-in') this.triggerBackfill()
+        // What the deployment sells may have been unknowable offline.
+        if (regained && this.session === 'signed-in') void this.loadBillingOffer()
       },
     )
 
@@ -620,6 +783,9 @@ export class AppShell extends LitElement implements ViewHost {
           // escrow public key. Fire-and-forget like the rest of this transition — it never
           // throws and never blocks sync; a failure is retried at the next sign-in.
           void (this.escrow ?? prepareEscrow)((this.projectStore ?? localProjectDefaults).cache())
+          // What this deployment sells (#263): `GET /billing` needs the session.
+          void this.loadBillingOffer()
+          this.followCheckout()
         }
         return
       }
@@ -689,7 +855,9 @@ export class AppShell extends LitElement implements ViewHost {
     // or a background profile refresh that dropped the request. Without this `upgrading` would
     // stay set and the dialog would reopen by itself when a later request brings the button back.
     // Here rather than in `updated()`, so it lands in the same render instead of a second one.
-    if (this.upgrading && !offersUpgrade(this.upgradeFacts())) this.onCloseUpgrade()
+    // Likewise when billing turns Upgrade into a link to the account page.
+    if (this.upgrading && (!offersUpgrade(this.upgradeFacts()) || this.subscribes()))
+      this.onCloseUpgrade()
   }
 
   /**
@@ -856,7 +1024,8 @@ export class AppShell extends LitElement implements ViewHost {
 
   /**
    * The account page: the cached profile's email, plan and limits, read as the header reads
-   * them, and the published plan matrix for the plans it lists (#263, ADR 0020).
+   * them, the published plan matrix for the plans it lists (#263, ADR 0020), and the Stripe
+   * offer and subscription with the calls that buy and manage one (#263, phase 2).
    */
   renderAccount(): TemplateResult {
     return html`<account-view
@@ -869,6 +1038,11 @@ export class AppShell extends LitElement implements ViewHost {
       .loadPlans=${this.loadAccountPlans}
       .online=${this.online}
       .session=${this.session}
+      .offer=${this.billingOffer}
+      .billing=${this.projects.facts?.billing}
+      .billingActions=${this.billingActions}
+      .redirect=${this.redirect ?? ((url: string) => window.location.assign(url))}
+      .checkoutReturn=${this.checkoutReturn}
     ></account-view>`
   }
 
@@ -1555,6 +1729,7 @@ export class AppShell extends LitElement implements ViewHost {
                 onLeave: this.onLeaveWaitlist,
                 onSignIn: this.onSignIn,
               },
+              this.subscribes(),
             )}
             <wa-button data-scheme-toggle appearance="plain" size="s" @click=${this.cycleScheme}>
               <wa-icon

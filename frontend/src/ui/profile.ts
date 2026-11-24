@@ -22,6 +22,7 @@
 
 import type { CachedProfile, LocalCache } from '../data/index.js'
 import { isPlan, isWaitlistPlan, type Plan, planOf } from '../domain/plan.js'
+import { type Billing, isBilling } from './billing.js'
 import { accessToken } from './tokens.js'
 
 /** What a user may choose, matching the contract's enum. */
@@ -49,6 +50,11 @@ export interface Profile {
   readonly planRequested?: Plan
   /** When it joined the waitlist or last changed the plan, ISO-8601. */
   readonly requestedAt?: string
+  /**
+   * The Stripe subscription the plan follows (#263): status, next billing date, cancellation.
+   * Absent unless the account has one.
+   */
+  readonly billing?: Billing
 }
 
 const LOCALES: readonly string[] = ['auto', 'en', 'de']
@@ -143,7 +149,8 @@ export function isProfile(body: unknown): body is Profile {
     isPlan(value.plan) &&
     typeof value.projectLimit === 'number' &&
     (value.planProjectLimit === undefined || typeof value.planProjectLimit === 'number') &&
-    isWaitlistPair(value.planRequested, value.requestedAt)
+    isWaitlistPair(value.planRequested, value.requestedAt) &&
+    (value.billing === undefined || isBilling(value.billing))
   )
 }
 
@@ -165,8 +172,17 @@ export function cachedProfileOf(profile: Profile, fetchedAt: string): CachedProf
     ...(profile.planRequested === undefined || profile.requestedAt === undefined
       ? {}
       : { planRequested: profile.planRequested, requestedAt: profile.requestedAt }),
+    ...(profile.billing === undefined ? {} : { billing: profile.billing }),
     fetchedAt,
   }
+}
+
+/**
+ * The cached subscription, or `undefined` when the account has none or the cache holds a shape
+ * this build cannot read. No subscription is the safe reading: the page then offers no portal.
+ */
+export function cachedBilling(cached: CachedProfile | undefined): Billing | undefined {
+  return isBilling(cached?.billing) ? cached.billing : undefined
 }
 
 /**

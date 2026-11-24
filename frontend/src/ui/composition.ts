@@ -23,6 +23,7 @@
 import PouchDB from 'pouchdb-browser'
 import { isLocalOnlyDatabase, type LocalCache } from '../data/index.js'
 import { type AuthMethodsApi, authMethodsApi } from './auth-methods.js'
+import { type BillingApi, billingApi } from './billing.js'
 import { answeringTestVendors, type CatalogApi, catalogApi } from './catalog.js'
 import { ensureDeviceKey } from './db/device-key.js'
 import {
@@ -283,6 +284,11 @@ export function waitlist(fetchImpl: typeof fetch = fetch): WaitlistApi {
 /** The published plan matrix (#224): public marketing copy, behind the same API base, no token. */
 export function plans(fetchImpl: typeof fetch = fetch): PlansApi {
   return plansApi(API_BASE, fetchImpl)
+}
+
+/** The Stripe billing calls (#263): the offer, Checkout and the portal. */
+export function billing(fetchImpl: typeof fetch = fetch): BillingApi {
+  return billingApi(API_BASE, fetchImpl)
 }
 
 /** The sign-in methods this deployment serves (piece 2): public, no token, never cached. */

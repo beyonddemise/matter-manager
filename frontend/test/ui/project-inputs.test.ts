@@ -321,3 +321,22 @@ describe('the waitlist request in the facts', () => {
     expect(await readProjectFacts(cache, undefined, false)).not.toHaveProperty('request')
   })
 })
+
+describe('the subscription in the facts (#263)', () => {
+  it('is read from the cached profile', async () => {
+    const billing = {
+      status: 'active',
+      cancelAtPeriodEnd: true,
+      currentPeriodEnd: '2026-12-24T00:00:00Z',
+    }
+    await cache.writeProfile({ sub: 'google|1', plan: 'pro', billing, fetchedAt: FETCHED })
+
+    expect((await readProjectFacts(cache, undefined, false)).billing).toEqual(billing)
+  })
+
+  it('is absent when the account has none', async () => {
+    await cache.writeProfile({ sub: 'google|1', plan: 'free', fetchedAt: FETCHED })
+
+    expect(await readProjectFacts(cache, undefined, false)).not.toHaveProperty('billing')
+  })
+})

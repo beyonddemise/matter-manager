@@ -17,7 +17,8 @@
 
 import type { LocalCache, LocalProjectEntry, ServerProject } from '../data/index.js'
 import { DEFAULT_PLAN, type Plan } from '../domain/plan.js'
-import { cachedPlan, cachedRequest, type PlanRequest } from './profile.js'
+import type { Billing } from './billing.js'
+import { cachedBilling, cachedPlan, cachedRequest, type PlanRequest } from './profile.js'
 import { type Project, readLifecycle } from './projects.js'
 import type { ListedProject } from './projects-model.js'
 
@@ -39,6 +40,8 @@ export interface ProjectFacts {
   readonly email?: string
   /** The plan the account is waiting for, when the cached profile says it is (#224). */
   readonly request?: PlanRequest
+  /** The Stripe subscription, when the cached profile reports one (#263). */
+  readonly billing?: Billing
   /**
    * Signed in, but whose session this is is not known yet: no profile is cached (a new token
    * forgets it). {@link local} then holds only unstamped entries, so a choice it lacks may only be
@@ -152,6 +155,7 @@ export async function readProjectFacts(
   // model reads the two alike: neither names a project, and both refuse every server action.
   const server = fresh ?? (lastHeard.length === 0 ? undefined : lastHeard)
   const request = cachedRequest(profile)
+  const billing = cachedBilling(profile)
   return {
     local: visible,
     server,
@@ -163,6 +167,7 @@ export async function readProjectFacts(
       : { reportedPlanLimit: profile.planProjectLimit }),
     ...(profile?.email === undefined ? {} : { email: profile.email }),
     ...(request === undefined ? {} : { request }),
+    ...(billing === undefined ? {} : { billing }),
     accountPending: signedIn && sub === undefined,
   }
 }

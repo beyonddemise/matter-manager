@@ -61,8 +61,9 @@ Success: no one who used Matter Manager ever has to factory-reset a device becau
 - **Security:** setup codes are encrypted at rest per project, and a project taken to the server carries its key wrapped for a server escrow key (ADR 0022); the rest of the device data is deliberately unencrypted (ADR 0005). Codes must never be logged. They leave the browser in three ways only: encrypted through sync; through the catalogue lookup on our own API ([ADR 0019](docs/adr/0019-setup-code-to-own-api.md)), which decodes them in memory, never stores or logs them, and never echoes them in an error, and from which only vendor and product IDs reach the DCL; and in every export the user asks for — the project archive, the labels and inventory PDFs, and the Excel sheet. Those are plain text, except the project archive when the user gives it a password: it is then an AES-encrypted zip (WinZip AE-2) that opens with the password alone, and that nobody can open without it (#307). Each plain export is the user's to protect.
 - **Dependencies:** minimal runtime dependencies, enforced in CI (ADR 0013).
 - **PDFs** are generated client-side (pdf-lib, loaded lazily).
+- **Billing:** Stripe (ADR 0009, update 2026-11-24). Subscribing is a Stripe-hosted Checkout and managing is the Stripe Customer Portal, both reached from the account page, so card data never reaches the app. Stripe's webhook sets the plan. On a deployment without Stripe, "Upgrade" opens the free waitlist instead.
 - **Undecided:**
-  - pricing, prices and billing provider (ADR 0009); the "Upgrade" path currently shows "It's just alpha — coming soon";
+  - prices, trial and proration policy (Stripe configuration, not code);
   - organisations or teams for installers (the schema is ready, the feature is not built);
   - an operator admin UI.
 

@@ -54,6 +54,8 @@ function fakeCache(initial?: CachedPlanMatrix, broken?: 'read' | 'write') {
     clear: unused,
     readEscrowKey: unused,
     writeEscrowKey: unused,
+    readBillingOffer: unused,
+    writeBillingOffer: unused,
     async readPlanMatrix() {
       if (broken === 'read') throw new Error('the cache is unreadable')
       return stored

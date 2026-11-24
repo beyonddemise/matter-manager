@@ -50,12 +50,15 @@ function planName(plan: Plan): string {
   return PLAN_NAMES[plan]()
 }
 
-/** The price row's words, while ADR 0009 leaves billing open. */
-const PRICES: Readonly<Record<'free' | 'tba', () => string>> = {
+/**
+ * The price row's words. No amount: the published matrix and Stripe's Checkout state it (ADR
+ * 0009, update 2026-11-24), and this row only shows when no matrix was ever heard.
+ */
+const PRICES: Readonly<Record<'free' | 'subscription', () => string>> = {
   /* why: this shares its id with the plan name "Free"; a `desc` alone does not split the two
      translations, so a different German word here would need an explicit `{id: …}`. */
   free: () => msg('Free'),
-  tba: () => msg('To be announced'),
+  subscription: () => msg('Subscription'),
 }
 
 /** A check or a dash, labelled, so the table reads correctly to a screen reader. */

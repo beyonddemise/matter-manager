@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { CachedProfile, LocalCache } from '../../src/data/index.js'
 import {
+  cachedBilling,
   cachedLocale,
   cachedPlan,
   cachedProfileOf,
@@ -65,6 +66,12 @@ const noProjects = {
   },
   writeEscrowKey: async (): Promise<never> => {
     throw new Error('the profile tests do not use the escrow key')
+  },
+  readBillingOffer: async (): Promise<never> => {
+    throw new Error('the profile tests do not use the billing offer')
+  },
+  writeBillingOffer: async (): Promise<never> => {
+    throw new Error('the profile tests do not use the billing offer')
   },
 }
 
@@ -454,5 +461,40 @@ describe('the waitlist request in the cache', () => {
     await settled()
 
     expect(current()).toMatchObject({ planRequested: 'pro', requestedAt: AT })
+  })
+})
+
+describe('the subscription in the profile and the cache (#263)', () => {
+  const fetchedAt = '2026-11-24T09:00:00.000Z'
+  const BILLING = {
+    status: 'active',
+    currentPeriodEnd: '2026-12-24T00:00:00Z',
+    cancelAtPeriodEnd: false,
+  } as const
+
+  it('recognises a profile with or without a subscription, and refuses a malformed one', () => {
+    expect(isProfile({ ...PROFILE, billing: BILLING })).toBe(true)
+    expect(isProfile({ ...PROFILE, billing: { status: 'lapsed', cancelAtPeriodEnd: false } })).toBe(
+      false,
+    )
+    expect(isProfile({ ...PROFILE, billing: 'active' })).toBe(false)
+  })
+
+  it('caches the subscription with the profile, and reads it back', () => {
+    const cached = cachedProfileOf({ ...PROFILE, billing: BILLING }, fetchedAt)
+    expect(cached.billing).toEqual(BILLING)
+    expect(cachedBilling(cached)).toEqual(BILLING)
+  })
+
+  it('caches no subscription for an account without one', () => {
+    expect(cachedProfileOf(PROFILE, fetchedAt)).not.toHaveProperty('billing')
+  })
+
+  it.each([
+    ['nothing cached', undefined],
+    ['no subscription', { sub: 'x', fetchedAt }],
+    ['a shape another build wrote', { sub: 'x', billing: { status: 'gone' }, fetchedAt }],
+  ])('reads no subscription for %s', (_case, cached) => {
+    expect(cachedBilling(cached)).toBeUndefined()
   })
 })
