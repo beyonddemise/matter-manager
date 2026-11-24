@@ -526,6 +526,49 @@ project archive with a password; see *Project export* below. Only the vendor and
 by id, and positional identity would make "the same remark twice" indistinguishable from
 "two different remarks".
 
+#### Drafts: `"status": "draft"`
+
+A device saved before every required field passed ([#358](https://github.com/beyonddemise/matter-manager/issues/358)).
+It is a `device:<uuid>` document like any other, not a type of its own, with one more field:
+
+```jsonc
+{
+  "_id": "device:6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+  "type": "device",
+  "status": "draft",                 // absent on a complete device
+  "manualCode": "enc:v1:<base64>",   // only once a code was read; encrypted like any device's
+  "serial": "SN-000123",
+  "installedAt": "2026-11-24",
+  "addedAt": "2026-11-24T08:00:00.000Z",
+  "updatedAt": "2026-11-24T08:00:00.000Z",
+  "disabled": false,
+  "remarks": []
+}
+```
+
+- **A missing `status` means complete.** Every document written before drafts existed is
+  complete as it is; nothing migrates. `"draft"` is the only value; any other is refused on import.
+- **What a draft may lack:** `name`, `room`, `manualCode` (and with it every credential field)
+  and `installedAt`. It needs at least one of the setup code, name, room, spot and serial number.
+  The date alone does not count, because the form fills it with today.
+- **What it holds is checked like a device's** (`planDraftDevice`). A setup code is stored only
+  once it decodes, so a draft never holds a half-typed code; a room path must be well formed and
+  joins an existing spelling. A draft's room is a room like any device's (ADR 0021): the Rooms
+  page counts it, and says how many of a room's devices are drafts.
+- **The setup code gets the same handling as a stored device's:** it lands in `manualCode` and
+  `payload`, so ADR 0022 encrypts it, nothing logs it, and the exports carry it under the same
+  rules.
+- **Not filtered out anywhere** (the product owner's decision of 2026-11-24 on #358). Drafts
+  replicate, and show in the device list, rooms, the search, the project archive, the Excel sheet
+  and both PDFs, each time marked in words: a "Draft" tag on screen, "Draft: <name>" on paper, a
+  Status column in the sheet. A draft never in service is never disabled.
+- **Finishing** (`planFinishedDevice`) runs every check `planNewDevice` runs, keeps the id,
+  revision, `addedAt` and remarks, and removes `status`. That planner is the only way from a
+  draft to a complete device. A finished device does not become a draft again.
+- **Discarding a draft is deleting it**, confirmed on its page like any delete.
+- No server rule reads these fields: the project database's `validate_doc_update` asks only for a
+  `type`, so a draft replicates exactly as a device does.
+
 #### Encrypted fields: `enc:v1:`
 
 `payload` and `manualCode`, and no other field, are stored as
@@ -677,6 +720,12 @@ devices/<uuid>.json    one device document each, without _rev, _conflicts, _atta
   - A payload that disagrees with its manual code refuses the import.
   - Catalogue links that are not `https:` are dropped.
   - A device without a usable `room` is filed under `Imported`.
+  - A draft (#358) goes through `planDraftDevice` instead: what it has is checked as a device's
+    would be (a code that does not decode, or a malformed room, refuses the import), and what it
+    lacks stays absent. It is not refiled.
+- **The version is the lowest that reads the archive.** An archive with no draft is written as
+  `version: 1`, so an older build still restores it; one holding a draft is `version: 2`, which
+  an older build refuses whole rather than refusing the draft or taking it for a device.
 - **The import is all or nothing.** The zip is read and checked against limits before anything
   is inflated:
   - at most 5 MB as a file and 50 MB inflated;

@@ -271,3 +271,37 @@ that is now the point, and it is met without changing the route table.
 - **The question** is `leave-dialog.ts`: a `wa-dialog` with **Stay** (focused, and what Escape
   means) and **Discard**. Its `LeaveChoice` type is the seam for drafts (#358), which adds
   **Save as draft** as a third choice without touching the shell or the history.
+
+## Drafts (#358)
+
+*Added 2026-11-24, after the owner's decision on #358.* A draft is a device with
+`"status": "draft"` (DATA-MODEL, "Drafts"); this is how the stepper makes and finishes one.
+
+- **Save as draft on every step.** An outlined button beside Next / Save device. It plans with
+  `planDraftDevice`: at least one of setup code, name, room, spot and serial, and every value
+  present must pass its reader. A refusal is shown on the step that owns the field, as Save's is.
+  A stored draft is kept on the form (`stored`), so saving again updates the same document.
+  Saved from the button, the form then leaves for the list as Save device does.
+- **In the leave question.** The dialog asks the draft planner first (`draftOption`). When it
+  would accept, **Save as draft** sits between Stay and Discard. When it would refuse (a code
+  that does not read, say), the dialog says why in a neutral callout instead of offering a button
+  that would fail. Choosing it saves, then answers "leave"; if storage refuses, it answers
+  "stay" and the form shows the storage callout. The shell still only hears leave or stay.
+- **Reopening.** `#/devices/<uuid>/finish` renders `<finish-device-view draft-id=…>`, the add
+  form under the name the route convention needs, keyed by the uuid so another draft is a new
+  form. The draft's values go into the controls (an absent date stays empty), every step is
+  checked, and the form goes to the first step that fails, or to Save when none does. The
+  heading reads "Finish a draft". A draft finished elsewhere meanwhile sends the form to its
+  device page; a missing one says "Draft not found".
+- **Leaving a reopened draft** asks only when a control differs from what the draft holds: the
+  form compares against its *baseline* (empty controls and today for a new device, the draft's
+  values for a reopened one). Its Discard reads "Discard changes", because the draft stays.
+- **Finishing.** Save device on a reopened draft plans with `planFinishedDevice`: the full
+  `planNewDevice` checks, on the draft's own id and revision, its status removed. A refused
+  write re-reads the draft, so a retry is not stuck on a revision that moved on elsewhere.
+- **Discarding a draft** is the delete on its device page, confirmed in a dialog that says what
+  goes with it. The edit route sends a draft to the finish route: `planDeviceEdit` takes only a
+  complete device.
+- **The shell's stopped link.** `AppShell.settleLeave` follows a link on `leave` alone. Its
+  former `holdsInput()` check (#368 review) would now swallow the click, because a draft saved
+  from the question leaves nothing unsaved.
