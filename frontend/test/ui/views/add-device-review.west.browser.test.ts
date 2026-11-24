@@ -16,6 +16,7 @@ describe('Review, west of UTC', () => {
     // pass for the wrong reason, as it does in UTC.
     expect(Intl.DateTimeFormat().resolvedOptions().timeZone).toBe('America/Los_Angeles')
     expect(new Date('2026-08-19').getDate()).toBe(18)
+    expect(navigator.language).toBe('en-US')
   })
 
   it('shows the installation date as the day that was picked', async () => {
@@ -36,7 +37,7 @@ describe('Review, west of UTC', () => {
     expect(date).not.toBeNull()
     await date?.updateComplete
 
-    // `en` and `{ year: 'numeric', month: 'long', day: 'numeric' }`, as Review asks for it.
+    // `en-US`, pinned by the `ui-west` context, with Review's `year`, `month: 'long'`, `day`.
     expect(date?.shadowRoot?.textContent?.trim()).toBe('August 19, 2026')
   })
 })

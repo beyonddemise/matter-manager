@@ -79,14 +79,15 @@ export default defineConfig({
         // `2026-08-19` become 18 August. A project of its own rather than a zone for the whole
         // suite, so no other test starts depending on, or being hidden by, the runner's zone.
         // `timezoneId` is Playwright's context option, which is what `Intl` in the page reads;
-        // `TZ` would move only the Node process.
+        // `TZ` would move only the Node process. The locale is pinned beside it because Review
+        // sets no `lang`, so the date's wording follows the browser's own locale.
         resolve: { conditions: ['module', 'browser', 'production'] },
         test: {
           name: 'ui-west',
           include: [WEST_OF_UTC_TESTS],
           browser: {
             enabled: true,
-            provider: playwright({ contextOptions: { timezoneId: WEST_OF_UTC } }),
+            provider: playwright({ contextOptions: { timezoneId: WEST_OF_UTC, locale: 'en-US' } }),
             headless: true,
             instances: [{ browser: 'chromium' }],
           },
